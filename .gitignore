@@ -1,0 +1,13 @@
+/.env
+backend/.env
+cad-work/
+frontend/node_modules/
+frontend/dist/
+frontend/.tmp-three-pack/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+*.log
+0.27
