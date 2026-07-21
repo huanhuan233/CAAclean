@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { UploadRequestOptions } from 'element-plus';
 import {
   fetchCadEdgeTopology,
@@ -16,6 +16,8 @@ import CadViewer from './modules/CadViewer.vue';
 
 type GeometryTab = 'face' | 'edge' | 'vertex';
 
+const EMPTY_TEXT = '—';
+
 const loadingModels = ref(false);
 const loadingTree = ref(false);
 const loadingMeshes = ref(false);
@@ -31,11 +33,13 @@ const viewerMeshes = ref<Api.Cad.Mesh[]>([]);
 const selectedNode = ref<Api.Cad.TreeNode | null>(null);
 const selectedEntity = ref<Api.Cad.Entity | null>(null);
 const selectedFaceId = ref('');
+const selectedSolidId = ref('');
 const solidFaceIds = ref<string[]>([]);
 const faceTopology = ref<Api.Cad.FaceTopology | null>(null);
 const edgeTopology = ref<Api.Cad.EdgeTopology | null>(null);
 const pollTimer = ref<number | null>(null);
 const entityCache = ref(new Map<string, Api.Cad.Entity>());
+const geometryListRef = ref<HTMLElement | null>(null);
 
 const activeGeometryTab = ref<GeometryTab>('face');
 const geometryKeyword = ref('');
@@ -44,6 +48,9 @@ const geometryPage = ref(1);
 const geometryPageSize = ref(20);
 const geometryRows = ref<Api.Cad.Entity[]>([]);
 const geometryTotal = ref(0);
+
+const isLeftCollapsed = ref(false);
+const isRightCollapsed = ref(false);
 
 const selectedModel = computed(() => models.value.find(item => item.id === selectedModelId.value) ?? null);
 const isProcessing = computed(() => status.value?.status === 'queued' || status.value?.status === 'processing');
@@ -59,6 +66,20 @@ const statusText = computed(() => {
 const faceCount = computed(() => selectedModel.value?.face_count ?? 0);
 const edgeCount = computed(() => selectedModel.value?.edge_count ?? 0);
 const vertexCount = computed(() => selectedModel.value?.vertex_count ?? 0);
+
+const selectedGeometryTitle = computed(() => {
+  if (activeGeometryTab.value === 'face') return '面 Face';
+  if (activeGeometryTab.value === 'edge') return '边 Edge';
+  return '顶点 Vertex';
+});
+
+const geometryTypeOptions = computed(() => {
+  const values = new Set<string>();
+  geometryRows.value.forEach(item => {
+    if (item.geometry_type) values.add(item.geometry_type);
+  });
+  return Array.from(values).sort();
+});
 
 function stopPolling() {
   if (pollTimer.value) {
@@ -129,6 +150,7 @@ async function loadGeometryObjects() {
   loadingEntities.value = true;
   try {
     const result = await fetchCadEntities(selectedRevisionId.value, {
+      parent_entity_id: activeGeometryTab.value === 'face' ? selectedSolidId.value || undefined : undefined,
       entity_type: activeGeometryTab.value,
       geometry_type: geometryTypeFilter.value || undefined,
       keyword: geometryKeyword.value || undefined,
@@ -139,6 +161,8 @@ async function loadGeometryObjects() {
     geometryRows.value = result.data.items;
     geometryTotal.value = result.data.total;
     cacheEntities(result.data.items);
+    await nextTick();
+    scrollSelectedIntoView();
   } finally {
     loadingEntities.value = false;
   }
@@ -155,6 +179,7 @@ function resetSelection() {
   selectedNode.value = null;
   selectedEntity.value = null;
   selectedFaceId.value = '';
+  selectedSolidId.value = '';
   solidFaceIds.value = [];
   faceTopology.value = null;
   edgeTopology.value = null;
@@ -169,6 +194,9 @@ async function selectModel(model: Api.Cad.ModelSummary) {
   viewerMeshes.value = [];
   geometryRows.value = [];
   geometryTotal.value = 0;
+  geometryPage.value = 1;
+  geometryKeyword.value = '';
+  geometryTypeFilter.value = '';
   entityCache.value = new Map();
   resetSelection();
   if (!selectedRevisionId.value) return;
@@ -230,6 +258,11 @@ async function handleTreeClick(node: Api.Cad.TreeNode) {
   solidFaceIds.value = [];
 
   if (node.entity_type === 'solid' && selectedRevisionId.value) {
+    selectedSolidId.value = node.id;
+    activeGeometryTab.value = 'face';
+    geometryKeyword.value = '';
+    geometryTypeFilter.value = '';
+    geometryPage.value = 1;
     const result = await fetchCadMeshes(selectedRevisionId.value, {
       parent_entity_id: node.id,
       page: 1,
@@ -238,6 +271,7 @@ async function handleTreeClick(node: Api.Cad.TreeNode) {
     if (!result.error && result.data) {
       solidFaceIds.value = result.data.items.map(item => item.entity_id);
     }
+    await loadGeometryObjects();
   }
 }
 
@@ -264,22 +298,36 @@ async function selectEntity(entity: Api.Cad.Entity) {
       cacheEntities([...(result.data.vertices ?? []), ...(result.data.faces ?? [])]);
     }
   }
+  await nextTick();
+  scrollSelectedIntoView();
 }
 
 async function handleViewerFaceClick(entityId: string) {
-  const cached = entityCache.value.get(entityId);
-  if (cached) {
-    await selectEntity(cached);
-    return;
+  let entity = entityCache.value.get(entityId);
+  if (!entity && selectedRevisionId.value) {
+    const result = await fetchCadEntity(selectedRevisionId.value, entityId);
+    if (!result.error && result.data) entity = result.data;
   }
-  if (!selectedRevisionId.value) return;
-  const result = await fetchCadEntity(selectedRevisionId.value, entityId);
-  if (!result.error && result.data) await selectEntity(result.data);
+  if (!entity) return;
+
+  activeGeometryTab.value = 'face';
+  if (!geometryRows.value.some(item => item.id === entityId)) {
+    geometryKeyword.value = entity.source_ref ?? '';
+    geometryPage.value = 1;
+    await loadGeometryObjects();
+  }
+  await selectEntity(entity);
 }
 
 function applyGeometrySearch() {
   geometryPage.value = 1;
   runAsync(loadGeometryObjects());
+}
+
+function clearGeometryFilter() {
+  geometryKeyword.value = '';
+  geometryTypeFilter.value = '';
+  applyGeometrySearch();
 }
 
 function nodeLabel(data: Record<string, unknown>) {
@@ -288,36 +336,32 @@ function nodeLabel(data: Record<string, unknown>) {
 }
 
 function displayName(entity: Api.Cad.Entity | Api.Cad.TreeNode | null) {
-  if (!entity) return '—';
+  if (!entity) return EMPTY_TEXT;
   if ('name' in entity) return entity.label || entity.name || entity.source_ref || entity.entity_type;
   return entity.label || entity.source_ref || entity.entity_type;
 }
 
 function empty(value: unknown) {
-  return value === null || value === undefined || value === '' ? '—' : value;
+  return value === null || value === undefined || value === '' ? EMPTY_TEXT : value;
 }
 
 function formatNumber(value: number | null | undefined) {
-  if (value === null || value === undefined) return '—';
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return EMPTY_TEXT;
   return Number(value)
     .toFixed(4)
     .replace(/\.?0+$/, '');
 }
 
-function formatObject(value: unknown) {
-  if (value === null || value === undefined) return '—';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '—';
-  }
-}
-
-function summarizeParams(value: unknown) {
-  const text = formatObject(value);
-  if (text === '—') return text;
-  return text.length > 120 ? `${text.slice(0, 120)}...` : text;
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return EMPTY_TEXT;
+  if (typeof value === 'number') return formatNumber(value);
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(item => formatValue(item)).join(', ');
+  if (typeof value === 'object')
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${key} ${formatValue(item)}`)
+      .join(' · ');
+  return String(value);
 }
 
 function formatPoint(value: unknown) {
@@ -327,21 +371,71 @@ function formatPoint(value: unknown) {
     const values = [point.x, point.y, point.z].filter(item => item !== undefined);
     if (values.length) return values.map(item => formatNumber(Number(item))).join(', ');
   }
-  return '—';
+  return EMPTY_TEXT;
 }
 
 function vertexCoordinate(entity: Api.Cad.Entity) {
   return formatPoint(entity.geometry?.point ?? entity.center);
 }
 
+function vertexCoordinateShort(entity: Api.Cad.Entity) {
+  const raw = entity.geometry?.point ?? entity.center;
+  if (Array.isArray(raw)) {
+    return ['X', 'Y', 'Z'].map((axis, index) => `${axis} ${formatNumber(Number(raw[index]))}`).join(' · ');
+  }
+  if (raw && typeof raw === 'object') {
+    const point = raw as Record<string, unknown>;
+    return ['x', 'y', 'z'].map(axis => `${axis.toUpperCase()} ${formatNumber(Number(point[axis]))}`).join(' · ');
+  }
+  return EMPTY_TEXT;
+}
+
 function entityTypeLabel(type: string) {
   const labels: Record<string, string> = {
+    root: 'Root',
+    imported_object: '导入对象',
+    solid: 'Solid',
     face: '面',
     edge: '边',
-    vertex: '顶点',
-    solid: '实体'
+    vertex: '顶点'
   };
   return labels[type] ?? type;
+}
+
+function getBoundingBoxValue(entity: Api.Cad.Entity | null, key: 'min' | 'max') {
+  const box = entity?.bounding_box as Record<string, unknown> | null;
+  return formatPoint(box?.[key]);
+}
+
+function geometryParamEntries(entity: Api.Cad.Entity | null): { key: string; value: string }[] {
+  if (!entity?.geometry || entity.entity_type === 'vertex') return [];
+  return Object.entries(entity.geometry)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => ({ key, value: formatValue(value) }));
+}
+
+function compactGeometrySummary(entity: Api.Cad.Entity): string {
+  if (entity.entity_type === 'vertex') return vertexCoordinateShort(entity);
+
+  const parts = [entity.geometry_type || EMPTY_TEXT];
+  if (entity.entity_type === 'face') parts.push(`A ${formatNumber(entity.area)}`);
+  if (entity.entity_type === 'edge') parts.push(`L ${formatNumber(entity.length)}`);
+
+  const radius = entity.geometry?.radius ?? entity.geometry?.major_radius ?? entity.geometry?.minor_radius;
+  if (radius !== null && radius !== undefined) parts.push(`R ${formatNumber(Number(radius))}`);
+
+  return parts.filter(item => item && item !== EMPTY_TEXT).join(' · ') || EMPTY_TEXT;
+}
+
+function scrollSelectedIntoView() {
+  const selectedId = selectedEntity.value?.id;
+  if (!selectedId || !geometryListRef.value) return;
+  const item = geometryListRef.value.querySelector(`[data-entity-id="${selectedId}"]`);
+  item?.scrollIntoView({ block: 'nearest' });
+}
+
+function runAsync(task: Promise<unknown>) {
+  task.catch(() => undefined);
 }
 
 watch([activeGeometryTab, geometryPage, geometryPageSize], () => {
@@ -351,10 +445,6 @@ watch([activeGeometryTab, geometryPage, geometryPageSize], () => {
 onMounted(() => {
   runAsync(loadModels());
 });
-
-function runAsync(task: Promise<unknown>) {
-  task.catch(() => undefined);
-}
 
 onBeforeUnmount(() => {
   stopPolling();
@@ -397,14 +487,21 @@ onBeforeUnmount(() => {
           <span>Vertex {{ vertexCount }}</span>
         </div>
       </div>
+
+      <ElButton text @click="isLeftCollapsed = !isLeftCollapsed">
+        {{ isLeftCollapsed ? '展开左侧' : '折叠左侧' }}
+      </ElButton>
+      <ElButton text @click="isRightCollapsed = !isRightCollapsed">
+        {{ isRightCollapsed ? '展开属性' : '折叠属性' }}
+      </ElButton>
     </div>
 
-    <div class="cad-shell">
-      <aside class="left-panel">
-        <section class="panel-block models-block">
+    <div class="cad-shell" :class="{ 'left-collapsed': isLeftCollapsed, 'right-collapsed': isRightCollapsed }">
+      <aside v-show="!isLeftCollapsed" class="left-panel">
+        <section class="panel-section models-section">
           <div class="panel-title">模型</div>
           <ElScrollbar class="models-scroll">
-            <ElEmpty v-if="!models.length && !loadingModels" description="暂无模型" />
+            <ElEmpty v-if="!models.length && !loadingModels" description="暂无模型" :image-size="42" />
             <button
               v-for="model in models"
               :key="model.id"
@@ -419,21 +516,99 @@ onBeforeUnmount(() => {
           </ElScrollbar>
         </section>
 
-        <section class="panel-block tree-block">
+        <section class="panel-section tree-section">
           <div class="panel-title">产品结构</div>
-          <ElSkeleton v-if="loadingTree" :rows="7" animated />
-          <ElEmpty v-else-if="!treeData.length" description="解析完成后显示结构" />
-          <ElTree
-            v-else
-            :data="treeData"
-            node-key="id"
-            default-expand-all
-            highlight-current
-            :props="{ children: 'children', label: nodeLabel }"
-            @node-click="handleTreeClick"
-          />
+          <ElSkeleton v-if="loadingTree" :rows="5" animated />
+          <ElEmpty v-else-if="!treeData.length" description="解析完成后显示结构" :image-size="42" />
+          <ElScrollbar v-else class="tree-scroll">
+            <ElTree
+              :data="treeData"
+              node-key="id"
+              default-expand-all
+              highlight-current
+              :props="{ children: 'children', label: nodeLabel }"
+              @node-click="handleTreeClick"
+            />
+          </ElScrollbar>
+        </section>
+
+        <section class="panel-section geometry-section">
+          <div class="panel-title geometry-title">
+            <span>几何对象</span>
+            <span class="geometry-total">{{ geometryTotal }}</span>
+          </div>
+
+          <ElTabs v-model="activeGeometryTab" class="compact-tabs">
+            <ElTabPane label="面 Face" name="face" />
+            <ElTabPane label="边 Edge" name="edge" />
+            <ElTabPane label="顶点 Vertex" name="vertex" />
+          </ElTabs>
+
+          <div class="geometry-tools">
+            <ElInput
+              v-model="geometryKeyword"
+              clearable
+              size="small"
+              placeholder="source_ref"
+              @clear="applyGeometrySearch"
+              @keyup.enter="applyGeometrySearch"
+            />
+            <ElSelect
+              v-model="geometryTypeFilter"
+              clearable
+              filterable
+              allow-create
+              size="small"
+              placeholder="type"
+              @change="applyGeometrySearch"
+              @clear="applyGeometrySearch"
+            >
+              <ElOption v-for="item in geometryTypeOptions" :key="item" :label="item" :value="item" />
+            </ElSelect>
+            <ElButton size="small" @click="applyGeometrySearch">
+              <template #icon>
+                <icon-ic-round-search />
+              </template>
+            </ElButton>
+            <ElButton size="small" text @click="clearGeometryFilter">清空</ElButton>
+          </div>
+
+          <div ref="geometryListRef" v-loading="loadingEntities" class="geometry-list">
+            <ElEmpty
+              v-if="!geometryRows.length && !loadingEntities"
+              :description="`${selectedGeometryTitle} 暂无数据`"
+            />
+            <button
+              v-for="entity in geometryRows"
+              :key="entity.id"
+              class="geometry-item"
+              :class="{ selected: selectedEntity?.id === entity.id }"
+              :data-entity-id="entity.id"
+              type="button"
+              @click="selectEntity(entity)"
+            >
+              <span class="geometry-item-title">{{ displayName(entity) }}</span>
+              <span class="geometry-item-summary">{{ compactGeometrySummary(entity) }}</span>
+            </button>
+          </div>
+
+          <div class="compact-pagination">
+            <ElPagination
+              v-model:current-page="geometryPage"
+              v-model:page-size="geometryPageSize"
+              small
+              :pager-count="5"
+              :total="geometryTotal"
+              :page-sizes="[20, 50, 100]"
+              layout="prev, pager, next"
+            />
+          </div>
         </section>
       </aside>
+
+      <button v-if="isLeftCollapsed" class="collapse-rail left-rail" type="button" @click="isLeftCollapsed = false">
+        左侧
+      </button>
 
       <main v-loading="loadingMeshes" class="viewer-panel">
         <CadViewer
@@ -444,170 +619,161 @@ onBeforeUnmount(() => {
         />
       </main>
 
-      <aside class="right-panel">
+      <aside v-show="!isRightCollapsed" class="right-panel">
         <div class="panel-title">属性</div>
-        <ElDescriptions v-if="selectedEntity" :column="1" border size="small">
-          <ElDescriptionsItem label="名称">{{ displayName(selectedEntity) }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="UUID">{{ selectedEntity.id }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="source_ref">{{ empty(selectedEntity.source_ref) }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="geometry_type">{{ empty(selectedEntity.geometry_type) }}</ElDescriptionsItem>
-          <ElDescriptionsItem v-if="selectedEntity.entity_type === 'face'" label="area">
-            {{ formatNumber(selectedEntity.area) }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem v-if="selectedEntity.entity_type === 'edge'" label="length">
-            {{ formatNumber(selectedEntity.length) }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem v-if="selectedEntity.entity_type !== 'vertex'" label="center">
-            {{ formatPoint(selectedEntity.center) }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem v-if="selectedEntity.entity_type === 'vertex'" label="坐标">
-            {{ vertexCoordinate(selectedEntity) }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem v-if="selectedEntity.entity_type !== 'vertex'" label="bounding_box">
-            <span class="json-line">{{ formatObject(selectedEntity.bounding_box) }}</span>
-          </ElDescriptionsItem>
-          <ElDescriptionsItem v-if="selectedEntity.entity_type !== 'vertex'" label="geometry 参数">
-            <span class="json-line">{{ formatObject(selectedEntity.geometry) }}</span>
-          </ElDescriptionsItem>
-        </ElDescriptions>
+
+        <template v-if="selectedEntity">
+          <section class="property-group">
+            <div class="property-title">基本信息</div>
+            <dl class="property-grid">
+              <dt>名称</dt>
+              <dd>{{ displayName(selectedEntity) }}</dd>
+              <dt>UUID</dt>
+              <dd>{{ selectedEntity.id }}</dd>
+              <dt>source_ref</dt>
+              <dd>{{ empty(selectedEntity.source_ref) }}</dd>
+              <dt>geometry_type</dt>
+              <dd>{{ empty(selectedEntity.geometry_type) }}</dd>
+            </dl>
+          </section>
+
+          <section class="property-group">
+            <div class="property-title">几何属性</div>
+            <dl class="property-grid">
+              <dt v-if="selectedEntity.entity_type === 'face'">area</dt>
+              <dd v-if="selectedEntity.entity_type === 'face'">{{ formatNumber(selectedEntity.area) }}</dd>
+              <dt v-if="selectedEntity.entity_type === 'edge'">length</dt>
+              <dd v-if="selectedEntity.entity_type === 'edge'">{{ formatNumber(selectedEntity.length) }}</dd>
+              <dt v-if="selectedEntity.entity_type === 'vertex'">坐标</dt>
+              <dd v-if="selectedEntity.entity_type === 'vertex'">{{ vertexCoordinate(selectedEntity) }}</dd>
+              <dt v-if="selectedEntity.entity_type !== 'vertex'">center</dt>
+              <dd v-if="selectedEntity.entity_type !== 'vertex'">{{ formatPoint(selectedEntity.center) }}</dd>
+              <dt v-if="selectedEntity.entity_type !== 'vertex'">bounding_box.min</dt>
+              <dd v-if="selectedEntity.entity_type !== 'vertex'">{{ getBoundingBoxValue(selectedEntity, 'min') }}</dd>
+              <dt v-if="selectedEntity.entity_type !== 'vertex'">bounding_box.max</dt>
+              <dd v-if="selectedEntity.entity_type !== 'vertex'">{{ getBoundingBoxValue(selectedEntity, 'max') }}</dd>
+            </dl>
+          </section>
+
+          <section v-if="selectedEntity.entity_type !== 'vertex'" class="property-group">
+            <div class="property-title">专用几何参数</div>
+            <dl class="property-grid">
+              <template v-if="geometryParamEntries(selectedEntity).length">
+                <template v-for="item in geometryParamEntries(selectedEntity)" :key="item.key">
+                  <dt>{{ item.key }}</dt>
+                  <dd>{{ item.value }}</dd>
+                </template>
+              </template>
+              <template v-else>
+                <dt>参数</dt>
+                <dd>{{ EMPTY_TEXT }}</dd>
+              </template>
+            </dl>
+          </section>
+
+          <section class="property-group">
+            <div class="property-title">拓扑关系</div>
+            <template v-if="selectedEntity.entity_type === 'face'">
+              <div class="sub-title">关联 Edge</div>
+              <div v-if="faceTopology?.edges?.length" class="relation-list">
+                <ElButton
+                  v-for="edge in faceTopology.edges"
+                  :key="edge.id"
+                  link
+                  type="primary"
+                  @click="selectEntity(edge)"
+                >
+                  {{ displayName(edge) }} · {{ empty(edge.geometry_type) }}
+                </ElButton>
+              </div>
+              <div v-else class="empty-inline">{{ EMPTY_TEXT }}</div>
+
+              <div class="sub-title">相邻 Face</div>
+              <div v-if="faceTopology?.adjacent_faces?.length" class="relation-list">
+                <ElButton
+                  v-for="face in faceTopology.adjacent_faces"
+                  :key="face.id"
+                  link
+                  type="primary"
+                  @click="selectEntity(face)"
+                >
+                  {{ displayName(face) }}
+                </ElButton>
+              </div>
+              <div v-else class="empty-inline">{{ EMPTY_TEXT }}</div>
+            </template>
+
+            <template v-else-if="selectedEntity.entity_type === 'edge'">
+              <div class="sub-title">关联 Vertex</div>
+              <div v-if="edgeTopology?.vertices?.length" class="relation-list">
+                <ElButton
+                  v-for="vertex in edgeTopology.vertices"
+                  :key="vertex.id"
+                  link
+                  type="primary"
+                  @click="selectEntity(vertex)"
+                >
+                  {{ displayName(vertex) }} · {{ vertexCoordinateShort(vertex) }}
+                </ElButton>
+              </div>
+              <div v-else class="empty-inline">{{ EMPTY_TEXT }}</div>
+
+              <div class="sub-title">所属 Face</div>
+              <div v-if="edgeTopology?.faces?.length" class="relation-list">
+                <ElButton
+                  v-for="face in edgeTopology.faces"
+                  :key="face.id"
+                  link
+                  type="primary"
+                  @click="selectEntity(face)"
+                >
+                  {{ displayName(face) }}
+                </ElButton>
+              </div>
+              <div v-else class="empty-inline">{{ EMPTY_TEXT }}</div>
+            </template>
+
+            <div v-else class="empty-inline">{{ EMPTY_TEXT }}</div>
+          </section>
+        </template>
 
         <ElDescriptions v-else-if="selectedNode" :column="1" border size="small">
           <ElDescriptionsItem label="名称">{{ displayName(selectedNode) }}</ElDescriptionsItem>
           <ElDescriptionsItem label="UUID">{{ selectedNode.id }}</ElDescriptionsItem>
           <ElDescriptionsItem label="类型">{{ entityTypeLabel(selectedNode.entity_type) }}</ElDescriptionsItem>
           <ElDescriptionsItem label="source_ref">{{ empty(selectedNode.source_ref) }}</ElDescriptionsItem>
+          <ElDescriptionsItem v-if="selectedNode.entity_type === 'solid'" label="Face">
+            {{ solidFaceIds.length || EMPTY_TEXT }}
+          </ElDescriptionsItem>
         </ElDescriptions>
 
         <ElEmpty v-else description="点击结构、面、边或顶点查看属性" />
-
-        <section v-if="selectedEntity?.entity_type === 'face'" class="topology-block">
-          <div class="sub-title">关联 Edge</div>
-          <ElEmpty v-if="!faceTopology?.edges?.length" description="—" :image-size="36" />
-          <div v-else class="relation-list">
-            <ElButton v-for="edge in faceTopology.edges" :key="edge.id" link type="primary" @click="selectEntity(edge)">
-              {{ displayName(edge) }} · {{ empty(edge.geometry_type) }}
-            </ElButton>
-          </div>
-
-          <div class="sub-title">相邻 Face</div>
-          <ElEmpty v-if="!faceTopology?.adjacent_faces?.length" description="—" :image-size="36" />
-          <div v-else class="relation-list">
-            <ElButton
-              v-for="face in faceTopology.adjacent_faces"
-              :key="face.id"
-              link
-              type="primary"
-              @click="selectEntity(face)"
-            >
-              {{ displayName(face) }}
-            </ElButton>
-          </div>
-        </section>
-
-        <section v-if="selectedEntity?.entity_type === 'edge'" class="topology-block">
-          <div class="sub-title">关联 Vertex</div>
-          <ElEmpty v-if="!edgeTopology?.vertices?.length" description="—" :image-size="36" />
-          <div v-else class="relation-list">
-            <ElButton
-              v-for="vertex in edgeTopology.vertices"
-              :key="vertex.id"
-              link
-              type="primary"
-              @click="selectEntity(vertex)"
-            >
-              {{ displayName(vertex) }} · {{ vertexCoordinate(vertex) }}
-            </ElButton>
-          </div>
-
-          <div class="sub-title">所属 Face</div>
-          <ElEmpty v-if="!edgeTopology?.faces?.length" description="—" :image-size="36" />
-          <div v-else class="relation-list">
-            <ElButton v-for="face in edgeTopology.faces" :key="face.id" link type="primary" @click="selectEntity(face)">
-              {{ displayName(face) }}
-            </ElButton>
-          </div>
-        </section>
       </aside>
+
+      <button v-if="isRightCollapsed" class="collapse-rail right-rail" type="button" @click="isRightCollapsed = false">
+        属性
+      </button>
     </div>
-
-    <section class="geometry-panel">
-      <div class="geometry-header">
-        <ElTabs v-model="activeGeometryTab" class="geometry-tabs">
-          <ElTabPane label="面（Face）" name="face" />
-          <ElTabPane label="边（Edge）" name="edge" />
-          <ElTabPane label="顶点（Vertex）" name="vertex" />
-        </ElTabs>
-        <div class="geometry-filters">
-          <ElInput
-            v-model="geometryKeyword"
-            clearable
-            placeholder="source_ref 搜索"
-            @clear="applyGeometrySearch"
-            @keyup.enter="applyGeometrySearch"
-          />
-          <ElInput
-            v-model="geometryTypeFilter"
-            clearable
-            placeholder="geometry_type 筛选"
-            @clear="applyGeometrySearch"
-            @keyup.enter="applyGeometrySearch"
-          />
-          <ElButton type="primary" @click="applyGeometrySearch">查询</ElButton>
-        </div>
-      </div>
-
-      <ElTable
-        v-loading="loadingEntities"
-        :data="geometryRows"
-        height="260"
-        stripe
-        highlight-current-row
-        row-key="id"
-        @row-click="selectEntity"
-      >
-        <ElTableColumn prop="source_ref" label="source_ref" min-width="160" show-overflow-tooltip />
-        <ElTableColumn prop="geometry_type" label="geometry_type" min-width="140" show-overflow-tooltip />
-        <ElTableColumn v-if="activeGeometryTab === 'face'" label="area" width="120">
-          <template #default="{ row }">{{ formatNumber(row.area) }}</template>
-        </ElTableColumn>
-        <ElTableColumn v-if="activeGeometryTab === 'edge'" label="length" width="120">
-          <template #default="{ row }">{{ formatNumber(row.length) }}</template>
-        </ElTableColumn>
-        <ElTableColumn v-if="activeGeometryTab === 'vertex'" label="坐标" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ vertexCoordinate(row) }}</template>
-        </ElTableColumn>
-        <ElTableColumn v-if="activeGeometryTab !== 'vertex'" label="主要参数摘要" min-width="260" show-overflow-tooltip>
-          <template #default="{ row }">{{ summarizeParams(row.geometry) }}</template>
-        </ElTableColumn>
-      </ElTable>
-
-      <div class="pagination-row">
-        <ElPagination
-          v-model:current-page="geometryPage"
-          v-model:page-size="geometryPageSize"
-          :total="geometryTotal"
-          :page-sizes="[20, 50, 100]"
-          layout="total, sizes, prev, pager, next"
-        />
-      </div>
-    </section>
   </div>
 </template>
 
 <style scoped>
 .cad-page {
   display: flex;
-  min-height: calc(100vh - 118px);
+  height: calc(100vh - 118px);
+  min-height: 620px;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .cad-toolbar {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   border-bottom: 1px solid var(--el-border-color-light);
-  padding: 8px 0 12px;
+  padding: 8px 0 10px;
 }
 
 .status-area {
@@ -633,16 +799,28 @@ onBeforeUnmount(() => {
 
 .cad-shell {
   display: grid;
-  min-height: 520px;
+  min-height: 0;
   flex: 1;
-  grid-template-columns: minmax(230px, 280px) minmax(420px, 1fr) minmax(300px, 380px);
-  gap: 12px;
+  grid-template-columns: 360px minmax(420px, 1fr) 340px;
+  gap: 10px;
+}
+
+.cad-shell.left-collapsed {
+  grid-template-columns: 36px minmax(420px, 1fr) 340px;
+}
+
+.cad-shell.right-collapsed {
+  grid-template-columns: 360px minmax(420px, 1fr) 36px;
+}
+
+.cad-shell.left-collapsed.right-collapsed {
+  grid-template-columns: 36px minmax(420px, 1fr) 36px;
 }
 
 .left-panel,
-.right-panel,
-.geometry-panel {
+.right-panel {
   min-width: 0;
+  min-height: 0;
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   background: var(--el-bg-color);
@@ -650,53 +828,69 @@ onBeforeUnmount(() => {
 
 .left-panel {
   display: grid;
-  min-height: 0;
-  grid-template-rows: 210px minmax(0, 1fr);
+  grid-template-rows: 110px 180px minmax(0, 1fr);
+  overflow: hidden;
 }
 
-.panel-block,
-.right-panel,
-.geometry-panel {
+.right-panel {
+  overflow: auto;
   padding: 12px;
 }
 
-.models-block {
+.panel-section {
+  min-height: 0;
   border-bottom: 1px solid var(--el-border-color-light);
+  padding: 10px 12px;
+}
+
+.panel-section:last-child {
+  border-bottom: 0;
 }
 
 .panel-title {
-  margin-bottom: 10px;
+  display: flex;
+  min-height: 22px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
   color: var(--el-text-color-primary);
   font-size: 14px;
   font-weight: 600;
 }
 
 .models-scroll {
-  height: 162px;
+  height: 68px;
 }
 
-.model-row {
+.model-row,
+.geometry-item {
   display: flex;
   width: 100%;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
   border: 0;
   border-radius: 6px;
-  margin-bottom: 6px;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: 8px;
   text-align: left;
 }
 
+.model-row {
+  gap: 3px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+}
+
 .model-row:hover,
-.model-row.active {
+.model-row.active,
+.geometry-item:hover,
+.geometry-item.selected {
   background: var(--el-color-primary-light-9);
 }
 
-.model-name {
+.model-name,
+.geometry-item-title {
   width: 100%;
   overflow: hidden;
   color: var(--el-text-color-primary);
@@ -706,48 +900,148 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.model-meta {
+.model-meta,
+.geometry-item-summary,
+.geometry-total {
   color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
-.tree-block {
-  min-height: 0;
+.tree-section {
   overflow: hidden;
 }
 
-.tree-block :deep(.el-tree-node__label) {
+.tree-scroll {
+  height: 132px;
+}
+
+.tree-section :deep(.el-tree-node__label) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.geometry-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.geometry-title {
+  margin-bottom: 2px;
+}
+
+.compact-tabs {
+  flex: 0 0 auto;
+}
+
+.compact-tabs :deep(.el-tabs__header) {
+  margin-bottom: 8px;
+}
+
+.compact-tabs :deep(.el-tabs__item) {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.geometry-tools {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(110px, 1fr) 92px 32px 42px;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.geometry-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.geometry-item {
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 8px;
+}
+
+.geometry-item.selected {
+  outline: 1px solid var(--el-color-primary);
+}
+
+.compact-pagination {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  border-top: 1px solid var(--el-border-color-lighter);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
 .viewer-panel {
   min-width: 0;
-  min-height: 520px;
-}
-
-.right-panel {
   min-height: 0;
-  overflow: auto;
 }
 
-.json-line {
-  display: inline-block;
-  max-width: 100%;
+.collapse-rail {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  writing-mode: vertical-rl;
+}
+
+.collapse-rail:hover {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary-light-5);
+}
+
+.property-group {
+  border-bottom: 1px solid var(--el-border-color-light);
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+}
+
+.property-group:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.property-title {
+  margin-bottom: 8px;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.property-grid {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.property-grid dt {
+  color: var(--el-text-color-secondary);
+}
+
+.property-grid dd {
+  min-width: 0;
+  margin: 0;
   overflow-wrap: anywhere;
-}
-
-.topology-block {
-  margin-top: 14px;
-  border-top: 1px solid var(--el-border-color-light);
-  padding-top: 12px;
+  color: var(--el-text-color-primary);
 }
 
 .sub-title {
   margin: 10px 0 6px;
   color: var(--el-text-color-regular);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -758,62 +1052,57 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-.geometry-panel {
-  padding-bottom: 10px;
+.empty-inline {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
 }
 
-.geometry-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.geometry-tabs {
-  min-width: 330px;
-}
-
-.geometry-filters {
-  display: grid;
-  width: min(100%, 560px);
-  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto;
-  gap: 8px;
-}
-
-.pagination-row {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 10px;
-}
-
-@media (max-width: 1280px) {
+@media (max-width: 1180px) {
   .cad-shell {
-    grid-template-columns: minmax(220px, 260px) minmax(360px, 1fr);
+    grid-template-columns: 330px minmax(360px, 1fr);
   }
 
-  .right-panel {
-    grid-column: 1 / -1;
+  .right-panel,
+  .right-rail {
+    display: none;
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 820px) {
+  .cad-page {
+    height: auto;
+    min-height: calc(100vh - 118px);
+    overflow: visible;
+  }
+
+  .cad-toolbar {
+    flex-wrap: wrap;
+  }
+
   .cad-shell,
-  .geometry-header,
-  .geometry-filters {
+  .cad-shell.left-collapsed,
+  .cad-shell.right-collapsed,
+  .cad-shell.left-collapsed.right-collapsed {
     display: flex;
     flex-direction: column;
   }
 
   .left-panel {
-    grid-template-rows: auto auto;
+    min-height: 560px;
   }
 
   .viewer-panel {
-    min-height: 420px;
+    min-height: 460px;
   }
 
-  .geometry-filters {
-    width: 100%;
+  .right-panel {
+    display: block;
+    min-height: 360px;
+  }
+
+  .collapse-rail {
+    writing-mode: horizontal-tb;
+    padding: 8px;
   }
 }
 </style>

@@ -108,7 +108,6 @@ declare module "@elegant-router/types" {
     RouteKey,
     | "root"
     | "not-found"
-    | "cad-model"
     | "exception"
     | "exception_403"
     | "exception_404"
@@ -158,7 +157,6 @@ declare module "@elegant-router/types" {
     CustomRouteKey,
     | "root"
     | "not-found"
-    | "cad-model"
     | "exception"
     | "document"
   >;
