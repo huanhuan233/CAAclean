@@ -257,6 +257,57 @@ class CadDrawingFact(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class CadSpecField(Base):
+    __tablename__ = "cad_spec_fields"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_tasks.id", ondelete="CASCADE"), nullable=False)
+    revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), nullable=False)
+    field_name: Mapped[str] = mapped_column(String, nullable=False)
+    profile_id: Mapped[str | None] = mapped_column(String)
+    profile_version: Mapped[str | None] = mapped_column(String)
+    symbol: Mapped[str | None] = mapped_column(String)
+    drawing_value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    measured_value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    normalized_measured_value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    resolved_value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    unit: Mapped[str | None] = mapped_column(String)
+    drawing_fact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_drawing_facts.id", ondelete="SET NULL"))
+    measurement_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_measurements.id", ondelete="SET NULL"))
+    feature_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_feature_candidates.id", ondelete="SET NULL"))
+    source_entity_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    mapping_status: Mapped[str] = mapped_column(String, nullable=False)
+    geometry_match_status: Mapped[str] = mapped_column(String, nullable=False)
+    conformance_status: Mapped[str] = mapped_column(String, nullable=False)
+    review_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    drawing_value_confidence: Mapped[float | None] = mapped_column(Float)
+    measurement_confidence: Mapped[float | None] = mapped_column(Float)
+    mapping_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reason: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="current")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class CadSpecFieldEvidence(Base):
+    __tablename__ = "cad_spec_field_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_fields.id", ondelete="CASCADE"), nullable=False)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_tasks.id", ondelete="CASCADE"), nullable=False)
+    revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String, nullable=False)
+    drawing_fact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_drawing_facts.id", ondelete="SET NULL"))
+    measurement_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_measurements.id", ondelete="SET NULL"))
+    feature_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_feature_candidates.id", ondelete="SET NULL"))
+    source_entity_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 Index("ix_cad_model_revisions_model_id", CadModelRevision.model_id)
 Index("ix_cad_model_revisions_status", CadModelRevision.status)
 Index("ix_cad_entities_revision_id", CadEntity.revision_id)
@@ -283,3 +334,8 @@ Index("ix_cad_drawing_regions_active", CadDrawingRegion.task_id, CadDrawingRegio
 Index("ix_cad_drawing_facts_task_id", CadDrawingFact.task_id)
 Index("ix_cad_drawing_facts_current", CadDrawingFact.task_id, CadDrawingFact.status)
 Index("ix_cad_drawing_facts_task_key", CadDrawingFact.task_id, CadDrawingFact.fact_key)
+Index("ix_cad_spec_fields_task_id", CadSpecField.task_id)
+Index("ix_cad_spec_fields_task_name", CadSpecField.task_id, CadSpecField.field_name)
+Index("ix_cad_spec_fields_current", CadSpecField.task_id, CadSpecField.status)
+Index("ix_cad_spec_field_evidence_field_id", CadSpecFieldEvidence.field_id)
+Index("ix_cad_spec_field_evidence_task_id", CadSpecFieldEvidence.task_id)

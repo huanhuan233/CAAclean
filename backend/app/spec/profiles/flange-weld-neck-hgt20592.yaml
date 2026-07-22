@@ -11,24 +11,37 @@ field_mappings:
   D:
     target_field: flange_outer_diameter
     confidence: 0.95
+    measurement_types: [maximum_radial_diameter]
+    match_tolerance: 0.1
   K:
     target_field: bolt_circle_diameter
     confidence: 0.95
+    measurement_types: [pitch_circle_diameter]
+    match_tolerance: 0.1
   n:
     target_field: bolt_hole_count
     confidence: 0.95
+    measurement_types: [circular_pattern_count]
   L:
     target_field: bolt_hole_diameter
     confidence: 0.95
+    measurement_types: [circle_diameter, cylinder_diameter]
+    match_tolerance: 0.1
   C:
     target_field: flange_thickness
     confidence: 0.95
+    measurement_types: [parallel_plane_distance]
+    match_tolerance: 0.1
   H:
     target_field: overall_height
     confidence: 0.95
+    measurement_types: [overall_length_along_main_axis]
+    match_tolerance: 0.1
   R:
     target_field: root_fillet_radius
     confidence: 0.9
+    measurement_types: [fillet_radius_candidate]
+    match_tolerance: 0.1
   f1:
     target_field: raised_face_height
     confidence: 0.9
@@ -43,6 +56,14 @@ field_mappings:
     confidence: 0.75
     needs_review: true
     require_semantic_confirmation: true
+    measurement_types: [cylinder_diameter, circle_diameter]
+    match_tolerance: 0.1
+  S:
+    target_field: minimum_wall_thickness_candidate
+    confidence: 0.75
+    needs_review: true
+    measurement_types: [wall_thickness_candidate]
+    match_tolerance: 0.1
 ambiguity_candidates:
   H1:
     - target_field: neck_step_height_candidate

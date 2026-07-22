@@ -11,6 +11,8 @@ class FieldMapping(BaseModel):
     confidence: float = 1.0
     needs_review: bool = False
     require_semantic_confirmation: bool = False
+    measurement_types: list[str] = Field(default_factory=list)
+    match_tolerance: float | None = None
 
 
 class ComponentProfile(BaseModel):
@@ -31,4 +33,3 @@ class FieldDefinition(BaseModel):
     source: Literal["drawing", "freecad", "manual", "profile"] = "drawing"
     applicable_types: list[str] = Field(default_factory=list)
     needs_review_default: bool = False
-
