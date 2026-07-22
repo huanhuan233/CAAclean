@@ -137,4 +137,118 @@ declare namespace Api {
       pitch_circle_diameter?: number;
     }
   }
+
+  namespace CadSpec {
+    type LayoutStatusValue =
+      | 'created'
+      | 'preprocessing_image'
+      | 'detecting_layout'
+      | 'cropping_regions'
+      | 'layout_ready'
+      | 'needs_manual_layout'
+      | 'failed'
+      | 'extracting_product_info'
+      | 'extracting_table'
+      | 'extracting_symbols'
+      | 'selecting_target_row'
+      | 'validating_result'
+      | 'review_ready';
+
+    interface Task {
+      task_id: string;
+      revision_id: string;
+      status: LayoutStatusValue;
+    }
+
+    interface LayoutStartResponse {
+      task_id: string;
+      status: LayoutStatusValue;
+    }
+
+    interface LayoutStatus {
+      task_id: string;
+      status: LayoutStatusValue;
+      progress?: number | null;
+      status_message?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+    }
+
+    interface ExtractionStatus {
+      task_id: string;
+      status: LayoutStatusValue;
+      progress?: number | null;
+      status_message?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+    }
+
+    interface Region {
+      id: string;
+      region_type: string;
+      provider: string;
+      provider_region_type: string | null;
+      bbox_normalized: number[];
+      bbox_pixels: number[];
+      padded_bbox_pixels: number[];
+      confidence: number | null;
+      sort_order: number;
+      crop_file_name: string | null;
+      crop_sha256: string | null;
+      crop_width: number | null;
+      crop_height: number | null;
+      metadata: Record<string, unknown>;
+    }
+
+    interface ExtractResponse {
+      task_id: string;
+      status: LayoutStatusValue;
+    }
+
+    interface TargetRowResult {
+      requested_code: string | null;
+      requested_dn: number | null;
+      matched_code: string | null;
+      matched_dn: number | null;
+      selected_row: Record<string, unknown>;
+      row_bbox_local: number[] | null;
+      selection_confidence: number | null;
+      warnings: string[];
+      inferred_from_filename: boolean;
+      needs_review: boolean;
+    }
+
+    interface Fact {
+      id: string | null;
+      fact_key: string;
+      fact_type: string;
+      symbol: string | null;
+      label: string | null;
+      operator: string;
+      raw_value: unknown;
+      normalized_value: unknown;
+      value_type: string | null;
+      unit: string | null;
+      source_region_id: string | null;
+      source_bbox_original: number[] | null;
+      source_bbox_normalized: number[] | null;
+      source_bbox_precision: 'cell' | 'row' | 'region' | string | null;
+      confidence: number | null;
+      needs_review: boolean;
+      metadata: Record<string, unknown>;
+    }
+
+    interface ExtractionResult {
+      task_id: string;
+      source_id: string;
+      product_info: Record<string, unknown>;
+      table: Record<string, unknown>;
+      symbols: Record<string, unknown>;
+      target_row: TargetRowResult;
+      facts: Fact[];
+      model_name: string;
+      prompt_version: string;
+      warnings: string[];
+    }
+  }
 }

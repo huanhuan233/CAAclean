@@ -224,6 +224,8 @@ class DrawingLayoutService:
         symbol: str | None = None,
         needs_review: bool | None = None,
         keyword: str | None = None,
+        target_code: str | None = None,
+        target_dn: int | None = None,
         page: int = 1,
         page_size: int = 20,
     ):
@@ -233,6 +235,8 @@ class DrawingLayoutService:
             symbol=symbol,
             needs_review=needs_review,
             keyword=keyword,
+            target_code=target_code,
+            target_dn=target_dn,
             page=page,
             page_size=page_size,
         )

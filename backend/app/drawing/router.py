@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 import json
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -9,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.session import get_session
+from app.db.session import SessionLocal, get_session
 from app.drawing.providers import AutoLayoutProvider, ManualLayoutProvider, MineruLayoutProvider, VisionLayoutProvider
 from app.drawing.repository import SqlAlchemyDrawingRepository
 from app.drawing.extraction_client import VisionJsonClient, VisionModelError
@@ -39,7 +40,7 @@ def build_layout_provider(settings: Settings):
     return AutoLayoutProvider(mineru=mineru, vision=vision)
 
 
-def get_drawing_service(session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings)) -> DrawingLayoutService:
+def create_drawing_service(session: AsyncSession, settings: Settings) -> DrawingLayoutService:
     layout_repository = SqlAlchemyDrawingRepository(session)
     service = DrawingLayoutService(
         layout_repository,
@@ -58,6 +59,10 @@ def get_drawing_service(session: AsyncSession = Depends(get_session), settings: 
     )
     service._extraction_repository = SqlAlchemyExtractionRepository(session, service)
     return service
+
+
+def get_drawing_service(session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings)) -> DrawingLayoutService:
+    return create_drawing_service(session, settings)
 
 
 def build_vision_client(settings: Settings) -> VisionJsonClient:
@@ -97,9 +102,17 @@ async def create_spec_task(
 
 
 @router.post("/tasks/{task_id}/layout", status_code=status.HTTP_202_ACCEPTED)
-async def start_layout(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
+async def start_layout(
+    task_id: uuid.UUID,
+    service: DrawingLayoutService = Depends(get_drawing_service),
+    settings: Settings = Depends(get_settings),
+):
     try:
-        return await service.start_layout(task_id)
+        task = await service.repository.get_task(task_id)
+        if task is None:
+            raise DrawingError("drawing_invalid", "drawing task not found")
+        schedule_layout_task(task_id, settings)
+        return {"task_id": str(task_id), "status": "preprocessing_image"}
     except DrawingError as exc:
         raise _http_error(exc) from exc
 
@@ -156,10 +169,18 @@ async def put_regions(task_id: uuid.UUID, payload: ManualRegionsIn, service: Dra
 
 
 @router.post("/tasks/{task_id}/extract", status_code=status.HTTP_202_ACCEPTED)
-async def extract_drawing(task_id: uuid.UUID, payload: ExtractRequest, service: DrawingLayoutService = Depends(get_drawing_service)):
+async def extract_drawing(
+    task_id: uuid.UUID,
+    payload: ExtractRequest,
+    service: DrawingLayoutService = Depends(get_drawing_service),
+    settings: Settings = Depends(get_settings),
+):
     try:
-        result = await service.extract_drawing_facts(task_id, target_code=payload.target_code, target_dn=payload.target_dn, force=payload.force)
-        return {"task_id": result["task_id"] if isinstance(result, dict) else result.task_id, "status": "review_ready"}
+        task = await service.repository.get_task(task_id)
+        if task is None:
+            raise DrawingError("drawing_invalid", "drawing task not found")
+        schedule_extraction_task(task_id, settings, target_code=payload.target_code, target_dn=payload.target_dn, force=payload.force)
+        return {"task_id": str(task_id), "status": "extracting_product_info"}
     except (DrawingError, VisionModelError) as exc:
         raise _http_error(exc) from exc
 
@@ -184,6 +205,8 @@ async def drawing_facts(
     symbol: str | None = None,
     needs_review: bool | None = None,
     keyword: str | None = None,
+    target_code: str | None = None,
+    target_dn: int | None = None,
     page: int = 1,
     page_size: int = 20,
     service: DrawingLayoutService = Depends(get_drawing_service),
@@ -194,18 +217,71 @@ async def drawing_facts(
         symbol=symbol,
         needs_review=needs_review,
         keyword=keyword,
+        target_code=target_code,
+        target_dn=target_dn,
         page=page,
         page_size=page_size,
     )
 
 
 @router.post("/tasks/{task_id}/extract/retry", status_code=status.HTTP_202_ACCEPTED)
-async def retry_extract(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
+async def retry_extract(
+    task_id: uuid.UUID,
+    service: DrawingLayoutService = Depends(get_drawing_service),
+    settings: Settings = Depends(get_settings),
+):
     try:
-        result = await service.retry_extraction(task_id)
-        return {"task_id": result["task_id"] if isinstance(result, dict) else result.task_id, "status": "review_ready"}
+        current = await service.get_extraction_status(task_id)
+        if current["status"] not in {"failed", "review_ready"}:
+            raise DrawingError("drawing_extraction_retry_not_allowed", "retry is only allowed after failed or review_ready")
+        schedule_extraction_task(task_id, settings, force=True)
+        return {"task_id": str(task_id), "status": "extracting_product_info"}
     except (DrawingError, VisionModelError) as exc:
         raise _http_error(exc) from exc
+
+
+def schedule_layout_task(task_id: uuid.UUID, settings: Settings) -> None:
+    asyncio.create_task(run_layout_task(task_id, settings))
+
+
+def schedule_extraction_task(
+    task_id: uuid.UUID,
+    settings: Settings,
+    *,
+    target_code: str | None = None,
+    target_dn: int | None = None,
+    force: bool = False,
+) -> None:
+    asyncio.create_task(run_extraction_task(task_id, settings, target_code=target_code, target_dn=target_dn, force=force))
+
+
+async def run_layout_task(task_id: uuid.UUID, settings: Settings) -> None:
+    async with SessionLocal() as session:
+        service = create_drawing_service(session, settings)
+        try:
+            await service.start_layout(task_id)
+        except DrawingError:
+            return
+        except Exception as exc:
+            await service.repository.update_task_status(task_id, "failed", "layout_failed", str(exc))
+
+
+async def run_extraction_task(
+    task_id: uuid.UUID,
+    settings: Settings,
+    *,
+    target_code: str | None = None,
+    target_dn: int | None = None,
+    force: bool = False,
+) -> None:
+    async with SessionLocal() as session:
+        service = create_drawing_service(session, settings)
+        try:
+            await service.extract_drawing_facts(task_id, target_code=target_code, target_dn=target_dn, force=force)
+        except (DrawingError, VisionModelError):
+            return
+        except Exception as exc:
+            await service.extraction_repository.set_status(task_id, "failed", 100, "failed", "drawing_extraction_failed", str(exc))
 
 
 def _http_error(exc: DrawingError) -> HTTPException:

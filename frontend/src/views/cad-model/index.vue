@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import type { UploadRequestOptions } from 'element-plus';
 import {
   fetchCadEdgeTopology,
@@ -20,6 +21,7 @@ import CadViewer from './modules/CadViewer.vue';
 type GeometryTab = 'face' | 'edge' | 'vertex' | 'measurement' | 'feature';
 
 const EMPTY_TEXT = '—';
+const router = useRouter();
 
 const loadingModels = ref(false);
 const loadingTree = ref(false);
@@ -473,6 +475,14 @@ async function recomputeMeasurements() {
   }
 }
 
+function openCadSpecPage() {
+  if (!selectedRevisionId.value) {
+    window.$message?.warning('请先选择已上传的 CAD 模型');
+    return;
+  }
+  router.push({ path: '/cad-spec', query: { revision_id: selectedRevisionId.value } });
+}
+
 function applyGeometrySearch() {
   geometryPage.value = 1;
   runAsync(loadGeometryObjects());
@@ -651,6 +661,13 @@ onBeforeUnmount(() => {
         刷新
       </ElButton>
 
+      <ElButton :disabled="!selectedRevisionId" @click="openCadSpecPage">
+        <template #icon>
+          <icon-carbon-document-requirements />
+        </template>
+        生成组件规范
+      </ElButton>
+
       <div class="status-area">
         <ElTag :type="statusText === '解析完成' ? 'success' : statusText === '解析失败' ? 'danger' : 'info'">
           {{ statusText }}
@@ -827,7 +844,7 @@ onBeforeUnmount(() => {
             <ElPagination
               v-model:current-page="geometryPage"
               v-model:page-size="geometryPageSize"
-              small
+              size="small"
               :pager-count="5"
               :total="activeListTotal"
               :page-sizes="[20, 50, 100]"

@@ -13,7 +13,18 @@ const cadModelRoute = {
   }
 } as unknown as CustomRoute;
 
-const customRoutes: CustomRoute[] = [cadModelRoute];
+const cadSpecRoute = {
+  name: 'cad-spec',
+  path: '/cad-spec',
+  component: 'layout.base$view.cad-spec',
+  meta: {
+    title: '组件规范',
+    icon: 'carbon:document-requirements',
+    order: 2
+  }
+} as unknown as CustomRoute;
+
+const customRoutes: CustomRoute[] = [cadModelRoute, cadSpecRoute];
 
 /** create routes when the auth route mode is static */
 export function createStaticRoutes() {

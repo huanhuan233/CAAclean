@@ -173,6 +173,7 @@ const local: App.I18n.Schema = {
     'document_element-plus': 'Element Plus文档',
     document_alova: 'Alova文档',
     'cad-model': 'CAD 模型解析',
+    'cad-spec': '组件规范',
     'user-center': '个人中心',
     about: '关于',
     function: '系统功能',

@@ -173,6 +173,7 @@ const local: App.I18n.Schema = {
     'document_element-plus': 'Element Plus Document',
     document_alova: 'Alova Document',
     'cad-model': 'CAD Model Parser',
+    'cad-spec': 'Component Spec',
     'user-center': 'User Center',
     about: 'About',
     function: 'System Function',

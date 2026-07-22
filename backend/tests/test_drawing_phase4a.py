@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 from pathlib import Path
+import asyncio
+import time
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -269,6 +271,51 @@ def test_api_does_not_return_absolute_paths(tmp_path):
     assert "D:" not in response.text
 
 
+def test_layout_endpoint_schedules_background_work(tmp_path, monkeypatch):
+    service = SimpleNamespace()
+    task_id = uuid4()
+    scheduled = []
+
+    async def get_task(_task_id):
+        return SimpleNamespace(id=task_id)
+
+    service.repository = SimpleNamespace(get_task=get_task)
+    app.dependency_overrides[get_drawing_service] = lambda: service
+    monkeypatch.setattr("app.drawing.router.schedule_layout_task", lambda scheduled_task_id, _settings: scheduled.append(scheduled_task_id))
+    client = TestClient(app)
+
+    response = client.post(f"/api/cad/spec/tasks/{task_id}/layout")
+
+    app.dependency_overrides.pop(get_drawing_service, None)
+    assert response.status_code == 202
+    assert response.json()["status"] == "preprocessing_image"
+    assert scheduled == [task_id]
+
+
+def test_extract_endpoint_schedules_background_work(tmp_path, monkeypatch):
+    service = SimpleNamespace()
+    task_id = uuid4()
+    scheduled = []
+
+    async def get_task(_task_id):
+        return SimpleNamespace(id=task_id)
+
+    service.repository = SimpleNamespace(get_task=get_task)
+    app.dependency_overrides[get_drawing_service] = lambda: service
+    monkeypatch.setattr(
+        "app.drawing.router.schedule_extraction_task",
+        lambda scheduled_task_id, _settings, **kwargs: scheduled.append((scheduled_task_id, kwargs)),
+    )
+    client = TestClient(app)
+
+    response = client.post(f"/api/cad/spec/tasks/{task_id}/extract", json={"target_code": "XMS06", "target_dn": 80, "force": True})
+
+    app.dependency_overrides.pop(get_drawing_service, None)
+    assert response.status_code == 202
+    assert response.json()["status"] == "extracting_product_info"
+    assert scheduled == [(task_id, {"target_code": "XMS06", "target_dn": 80, "force": True})]
+
+
 @pytest.mark.asyncio
 async def test_repeated_layout_does_not_create_duplicate_active_regions(tmp_path):
     image_path = make_image(tmp_path / "drawing.png", size=(300, 200))
@@ -287,3 +334,41 @@ async def test_repeated_layout_does_not_create_duplicate_active_regions(tmp_path
     regions = await service.list_regions(task.id)
 
     assert len(regions) == 1
+
+
+@pytest.mark.asyncio
+async def test_layout_status_remains_responsive_while_vision_layout_runs(tmp_path):
+    image_path = make_image(tmp_path / "drawing.png", size=(300, 200))
+    layout_started = asyncio.Event()
+    release_layout = asyncio.Event()
+
+    class SlowVisionProvider:
+        async def detect(self, _image_path):
+            layout_started.set()
+            await release_layout.wait()
+            return LayoutDetectionResult(
+                "vision",
+                "slow-test",
+                "completed",
+                [LayoutRegion("parameter_table", [20, 20, 170, 120], 1.0, "vision")],
+            )
+
+    service = DrawingLayoutService(
+        MemoryDrawingRepository(),
+        work_dir=tmp_path / "work",
+        provider=SlowVisionProvider(),
+        max_image_mb=1,
+        inference_max_side=200,
+    )
+    task = await service.create_task(revision_id=uuid4(), drawing_file=image_path, target_code=None, target_dn=None)
+
+    layout_task = asyncio.create_task(service.start_layout(task.id))
+    await asyncio.wait_for(layout_started.wait(), timeout=1)
+    started = time.perf_counter()
+    status = await service.get_layout_status(task.id)
+    elapsed = time.perf_counter() - started
+    release_layout.set()
+    await layout_task
+
+    assert status["status"] == "detecting_layout"
+    assert elapsed < 0.2

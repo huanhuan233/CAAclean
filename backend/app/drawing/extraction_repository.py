@@ -38,6 +38,7 @@ class MemoryExtractionRepository:
 
     async def list_facts(self, task_id, **filters):
         facts = self.current_facts.get(str(task_id), [])
+        facts = _filter_target_rows(facts, filters)
         if filters.get("fact_type"):
             facts = [fact for fact in facts if fact.fact_type == filters["fact_type"]]
         if filters.get("symbol"):
@@ -105,6 +106,7 @@ class SqlAlchemyExtractionRepository:
             clauses.append(CadDrawingFact.needs_review == filters["needs_review"])
         result = await self.session.execute(select(CadDrawingFact).where(*clauses).order_by(CadDrawingFact.fact_key))
         rows = list(result.scalars().all())
+        rows = _filter_target_rows(rows, filters)
         if filters.get("keyword"):
             rows = [row for row in rows if filters["keyword"] in row.fact_key or filters["keyword"] in str(row.raw_value)]
         page = filters.get("page", 1)
@@ -137,3 +139,48 @@ class SqlAlchemyExtractionRepository:
             status="current",
             metadata_json=fact.metadata,
         )
+
+
+def _filter_target_rows(rows, filters: dict):
+    target_code = _normalize_code(filters.get("target_code"))
+    target_dn = _normalize_dn(filters.get("target_dn"))
+    if target_code is None and target_dn is None:
+        return rows
+    filtered = []
+    for row in rows:
+        if getattr(row, "fact_type", None) != "dimension":
+            filtered.append(row)
+            continue
+        metadata = _metadata(row)
+        row_code = _normalize_code(metadata.get("row_code"))
+        row_dn = _normalize_dn(metadata.get("row_dn"))
+        if target_code is not None and row_code is not None and row_code != target_code:
+            continue
+        if target_dn is not None and row_dn != target_dn:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def _metadata(row) -> dict:
+    value = getattr(row, "metadata", None)
+    if isinstance(value, dict):
+        return value
+    value = getattr(row, "metadata_json", None)
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_code(value) -> str | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value).strip().upper()
+
+
+def _normalize_dn(value) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    text = str(value).strip().upper().replace("DN", "").strip()
+    try:
+        return int(float(text))
+    except ValueError:
+        return None

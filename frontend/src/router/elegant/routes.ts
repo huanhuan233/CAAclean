@@ -105,6 +105,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'cad-spec',
+    path: '/cad-spec',
+    component: 'layout.base$view.cad-spec',
+    meta: {
+      title: 'cad-spec',
+      i18nKey: 'route.cad-spec'
+    }
+  },
+  {
     name: 'function',
     path: '/function',
     component: 'layout.base',

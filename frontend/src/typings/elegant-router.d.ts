@@ -40,6 +40,7 @@ declare module "@elegant-router/types" {
     "alova_scenes": "/alova/scenes";
     "alova_user": "/alova/user";
     "cad-model": "/cad-model";
+    "cad-spec": "/cad-spec";
     "function": "/function";
     "function_hide-child": "/function/hide-child";
     "function_hide-child_one": "/function/hide-child/one";
@@ -140,6 +141,7 @@ declare module "@elegant-router/types" {
     | "about"
     | "alova"
     | "cad-model"
+    | "cad-spec"
     | "function"
     | "home"
     | "iframe-page"
@@ -176,6 +178,7 @@ declare module "@elegant-router/types" {
     | "alova_scenes"
     | "alova_user"
     | "cad-model"
+    | "cad-spec"
     | "function_hide-child_one"
     | "function_hide-child_three"
     | "function_hide-child_two"

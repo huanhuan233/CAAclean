@@ -77,6 +77,9 @@ class VisionLayoutProvider:
     provider_version = "heuristic.v1"
 
     async def detect(self, image_path: Path) -> LayoutDetectionResult:
+        return await asyncio.to_thread(self._detect_sync, image_path)
+
+    def _detect_sync(self, image_path: Path) -> LayoutDetectionResult:
         try:
             with Image.open(image_path) as image:
                 rgb = image.convert("RGB")

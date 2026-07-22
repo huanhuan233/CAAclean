@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Any
 
-from app.drawing.extraction_client import VisionModelError
 from app.drawing.extraction_schemas import (
     PROMPT_VERSION,
     DrawingExtractionResult,
@@ -25,6 +25,7 @@ class DrawingExtractionService:
         package = await self.repository.get_crop_package(task_id)
         await self.repository.set_status(task_id, "extracting_product_info", 15, "extracting_product_info")
         await self.vision_client.health_check()
+
         product = ProductInfoResult.model_validate(
             await self.vision_client.complete_json(
                 task_name="product_information",
@@ -33,17 +34,17 @@ class DrawingExtractionService:
                     {
                         "type": "text",
                         "text": (
-                            "从图片中读取目标型号的产品信息，只输出 JSON。"
-                            f"目标型号 target_code={target_code or 'unknown'}。"
-                            "字段必须使用英文 key: component_code, component_type_raw, subtype_raw, facing_type, material, "
-                            "pressure_class, standard_number, standard_title, series, other_metadata。"
-                            "只读可见内容，未知返回 null。"
+                            "Read visible product information from the drawing. Output JSON only. "
+                            "Do not infer hidden values from industry knowledge. Use English keys: "
+                            "component_code, component_name_raw, component_type_raw, subtype_raw, facing_type, "
+                            "material, pressure_class, standard_number, standard_title, series, other_metadata."
                         ),
                     }
                 ],
                 image_paths=_paths_for(package, "product_information"),
             )
         )
+
         await self.repository.set_status(task_id, "extracting_table", 40, "extracting_table")
         table = TableExtractionResult.model_validate(
             await self.vision_client.complete_json(
@@ -53,58 +54,45 @@ class DrawingExtractionService:
                     {
                         "type": "text",
                         "text": (
-                            "读取完整参数表结构，只输出 JSON。不要只提取目标行。"
-                            "字段使用英文 key: title, headers, header_hierarchy, merged_cells, rows, row_identifiers, units, operator_information。"
-                            "rows 中每行包含 row_identifier 和 cells；保留原始字符串。"
+                            "Read the complete visible parameter table. Output JSON only. "
+                            "Do not select only one target row. Preserve original strings. "
+                            "Use English keys: title, headers, header_hierarchy, merged_cells, rows, "
+                            "row_identifiers, units, operator_information. Each row should include "
+                            "row_identifier, cells, and bbox_local when visible."
                         ),
                     }
                 ],
                 image_paths=_paths_for(package, "parameter_table"),
             )
         )
+
         await self.repository.set_status(task_id, "extracting_symbols", 65, "extracting_symbols")
         symbols = SymbolDefinitionResult.model_validate(
             await self.vision_client.complete_json(
                 task_name="symbol_definitions",
                 schema=SymbolDefinitionResult,
-                messages=[{"type": "text", "text": "Extract visible symbols and geometry roles only."}],
-                image_paths=_paths_for(package, "dimension_diagram"),
-            )
-        )
-        await self.repository.set_status(task_id, "selecting_target_row", 85, "selecting_target_row")
-        target = TargetRowResult.model_validate(
-            await self.vision_client.complete_json(
-                task_name="target_row",
-                schema=TargetRowResult,
                 messages=[
                     {
                         "type": "text",
-                        "text": (
-                            "只选择目标规格行并复核，不要混入相邻 DN 行。只输出 JSON。"
-                            f"requested target_code={target_code}; requested target_dn={target_dn}. "
-                            "输出英文 key: requested_code, requested_dn, matched_code, matched_dn, selected_row, row_bbox_local, "
-                            "selection_confidence, warnings, inferred_from_filename, needs_review。"
-                            "selected_row.cells 必须包含目标行可见单元格，例如 A1,D,K,L,n,适用螺栓,C,N,S,H1,R,H,d,f1。"
-                        ),
+                        "text": "Extract visible dimension symbols and geometry roles only. Output JSON only.",
                     }
                 ],
-                image_paths=_paths_for(package, "parameter_table"),
+                image_paths=_paths_for(package, "dimension_diagram"),
             )
         )
-        if target_code and target.matched_code and target.matched_code != target_code and any(str(target_code) in warning for warning in target.warnings):
-            target.matched_code = target_code
+
         await self.repository.set_status(task_id, "validating_result", 100, "validating_result")
-        facts = _build_facts(package, product, table, target, target_code=target_code)
         result = DrawingExtractionResult(
             task_id=uuid.UUID(str(package["task_id"])),
             source_id=uuid.UUID(str(package["source_id"])),
             product_info=product,
             table=table,
             symbols=symbols,
-            target_row=target,
-            facts=facts,
+            target_row=TargetRowResult(),
+            facts=_build_facts(package, product, table),
             model_name=getattr(self.vision_client, "model", "fake-vision"),
             prompt_version=PROMPT_VERSION,
+            warnings=[],
         )
         await self.repository.replace_extraction(task_id, result)
         await self.repository.set_status(task_id, "review_ready", 100, "review_ready")
@@ -126,15 +114,16 @@ def _region(package: dict, region_type: str):
     return next((region for region in package.get("regions", []) if region["region_type"] == region_type), None)
 
 
-def _build_facts(package: dict, product: ProductInfoResult, table: TableExtractionResult, target: TargetRowResult, *, target_code: str | None) -> list[DrawingFact]:
+def _build_facts(package: dict, product: ProductInfoResult, table: TableExtractionResult) -> list[DrawingFact]:
     facts: list[DrawingFact] = []
     product_region = _region(package, "product_information")
     table_region = _region(package, "parameter_table")
     original_width = package["original_image"]["width"]
     original_height = package["original_image"]["height"]
-    product_values = _product_values(product, target_code=target_code)
-    for key in ["component_code", "component_type_raw", "facing_type", "material", "pressure_class", "standard_number", "series"]:
-        value = product_values.get(key)
+
+    for key, value in _product_values(product).items():
+        if key not in {"component_code", "component_type_raw", "facing_type", "material", "pressure_class", "standard_number", "series"}:
+            continue
         if value is None:
             continue
         facts.append(
@@ -154,113 +143,170 @@ def _build_facts(package: dict, product: ProductInfoResult, table: TableExtracti
                 needs_review=True,
             )
         )
-    row = _target_row_dict(target)
-    cells = row.get("cells", {})
-    row_bbox = target.row_bbox_local or row.get("bbox_local")
-    for symbol, raw in cells.items():
-        if symbol in {"代码", "公称尺寸"}:
-            continue
-        symbol_text = str(symbol)
-        raw_for_parse = raw
-        if symbol_text.endswith("≥"):
-            symbol_text = symbol_text[:-1]
-            raw_for_parse = f"≥{raw}"
-        if symbol_text.endswith("≈"):
-            symbol_text = symbol_text[:-1]
-            raw_for_parse = f"≈{raw}"
-        operator, normalized, value_type = parse_operator_and_value(raw_for_parse)
-        bbox_original = None
-        bbox_normalized = None
-        precision = "region"
-        needs_review = True
-        if row_bbox and table_region:
-            mapped = local_bbox_to_original(
-                row_bbox,
-                padded_bbox_pixels=table_region["padded_bbox_pixels"],
-                crop_width=table_region["crop_width"],
-                crop_height=table_region["crop_height"],
-                original_width=original_width,
-                original_height=original_height,
+
+    rows = _table_rows(table)
+    multi_row = len(rows) > 1
+    headers = _leaf_headers(table)
+    for row_index, row in enumerate(rows):
+        cells = _row_cells(row, headers)
+        row_bbox = row.get("bbox_local")
+        row_code, row_dn = _row_identity(row)
+        if row_dn is None:
+            row_dn = _parse_dn(cells.get("dn") or cells.get("DN") or cells.get("公称尺寸") or row.get("row_identifier"))
+        for symbol, raw in cells.items():
+            if _is_identifier_symbol(symbol):
+                continue
+            symbol_text = str(symbol)
+            symbol_text, raw_for_parse = _normalize_symbol_value(symbol_text, raw)
+            operator, normalized, value_type = parse_operator_and_value(raw_for_parse)
+            bbox_original = None
+            bbox_normalized = None
+            precision = "region"
+            needs_review = True
+            if row_bbox and table_region:
+                mapped = local_bbox_to_original(
+                    row_bbox,
+                    padded_bbox_pixels=table_region["padded_bbox_pixels"],
+                    crop_width=table_region["crop_width"],
+                    crop_height=table_region["crop_height"],
+                    original_width=original_width,
+                    original_height=original_height,
+                )
+                bbox_original = mapped.bbox_pixels
+                bbox_normalized = mapped.bbox_normalized
+                precision = "row"
+                needs_review = False
+            facts.append(
+                DrawingFact(
+                    fact_key=_dimension_fact_key(symbol_text, row_index=row_index, row_code=row_code, row_dn=row_dn, multi_row=multi_row),
+                    fact_type="dimension",
+                    symbol=symbol_text,
+                    label=symbol_text,
+                    operator=operator,
+                    raw_value=raw_for_parse,
+                    normalized_value=normalized,
+                    value_type=value_type,
+                    unit="mm" if value_type == "number" else None,
+                    source_region_id=uuid.UUID(str(table_region["id"])) if table_region else None,
+                    source_bbox_original=bbox_original or (table_region.get("padded_bbox_pixels") if table_region else None),
+                    source_bbox_normalized=bbox_normalized or (table_region.get("bbox_normalized") if table_region else None),
+                    source_bbox_precision=precision,
+                    confidence=0.85,
+                    needs_review=needs_review,
+                    metadata={"row_index": row_index, "row_code": row_code, "row_dn": row_dn},
+                )
             )
-            bbox_original = mapped.bbox_pixels
-            bbox_normalized = mapped.bbox_normalized
-            precision = "row"
-            needs_review = False
-        facts.append(
-            DrawingFact(
-                fact_key=f"dimension.{symbol_text}",
-                fact_type="dimension",
-                symbol=symbol_text,
-                label=symbol_text,
-                operator=operator,
-                raw_value=raw_for_parse,
-                normalized_value=normalized,
-                value_type=value_type,
-                unit="mm" if value_type == "number" else None,
-                source_region_id=uuid.UUID(str(table_region["id"])) if table_region else None,
-                source_bbox_original=bbox_original or (table_region.get("padded_bbox_pixels") if table_region else None),
-                source_bbox_normalized=bbox_normalized or (table_region.get("bbox_normalized") if table_region else None),
-                source_bbox_precision=precision,
-                confidence=target.selection_confidence,
-                needs_review=needs_review,
-            )
-        )
     return facts
 
 
-def _product_values(product: ProductInfoResult, *, target_code: str | None) -> dict:
+def _product_values(product: ProductInfoResult) -> dict[str, Any]:
     values = product.model_dump()
     extras = product.model_extra or {}
     aliases = {
-        "component_code": ["code", "型号", "代码"],
-        "component_type_raw": ["component_type", "法兰类型", "类型"],
-        "facing_type": ["facing", "密封面形式"],
-        "material": ["材质"],
-        "pressure_class": ["压力", "公称压力"],
-        "standard_number": ["标准", "参考标准"],
-        "series": ["适用系列", "系列"],
+        "component_code": ["code", "model", "model_code"],
+        "component_type_raw": ["component_type", "type"],
+        "facing_type": ["facing", "face_type"],
+        "material": ["material_raw"],
+        "pressure_class": ["pressure", "pressure_rating"],
+        "standard_number": ["standard", "standard_no"],
+        "series": ["applicable_series"],
     }
     for target, keys in aliases.items():
         if values.get(target) is None:
             for key in keys:
-                if key in extras:
+                if extras.get(key) is not None:
                     values[target] = extras[key]
                     break
     material = values.get("material")
     if isinstance(material, list):
-        values["material"] = material[-1] if target_code and str(target_code).endswith("06") else material[0]
-    if values.get("facing_type") == "突面":
-        values["facing_type"] = "RF"
-    if isinstance(values.get("series"), str) and values["series"].endswith("系列"):
-        values["series"] = values["series"].replace("系列", "")
+        values["material"] = material[0] if material else None
     return values
 
 
-def _target_row_dict(target: TargetRowResult) -> dict:
-    if isinstance(target.selected_row, dict) and target.selected_row:
-        return target.selected_row
-    extra = target.model_extra or {}
-    found = _find_cells_dict(extra)
-    return {"cells": found} if found else {}
+def _table_rows(table: TableExtractionResult) -> list[dict]:
+    rows = []
+    for row in table.rows:
+        if isinstance(row, dict):
+            rows.append(row)
+        elif hasattr(row, "model_dump"):
+            rows.append(row.model_dump(mode="json"))
+    return rows
 
 
-def _find_cells_dict(value):
-    wanted = {"A1", "D", "K", "L", "n", "C", "N", "S", "H1", "R", "H", "d", "f1", "适用螺栓"}
-    if isinstance(value, dict):
-        if len(wanted.intersection(value.keys())) >= 3:
-            return value
-        for key in ["cells", "selected_row", "row", "目标行", "values", "尺寸"]:
-            if key in value:
-                found = _find_cells_dict(value[key])
-                if found:
-                    return found
-        for item in value.values():
-            found = _find_cells_dict(item)
-            if found:
-                return found
-    if isinstance(value, list):
-        for item in value:
-            found = _find_cells_dict(item)
-            if found:
-                return found
+def _leaf_headers(table: TableExtractionResult) -> list[str]:
+    candidates = table.header_hierarchy[-1] if table.header_hierarchy else table.headers
+    return [str(item).strip() for item in candidates if str(item).strip()]
+
+
+def _row_cells(row: dict, headers: list[str]) -> dict:
+    raw_cells = row.get("cells")
+    if isinstance(raw_cells, dict):
+        return raw_cells
+    if not isinstance(raw_cells, list):
+        return {}
+    cell_values = list(raw_cells)
+    if len(headers) == len(cell_values):
+        return dict(zip(headers, cell_values, strict=False))
+    if len(headers) == len(cell_values) + 1:
+        return dict(zip(headers[1:], cell_values, strict=False))
+    return {str(index): value for index, value in enumerate(cell_values)}
+
+
+def _row_identity(row: dict) -> tuple[str | None, int | None]:
+    row_identifier = row.get("row_identifier") if isinstance(row.get("row_identifier"), dict) else {}
+    cells = row.get("cells") if isinstance(row.get("cells"), dict) else {}
+    if isinstance(row.get("row_identifier"), str):
+        cells = cells | {"dn": row["row_identifier"]}
+    code = _first_text(row_identifier, ["code", "component_code", "model", "model_code"]) or _first_text(
+        cells, ["code", "component_code", "model", "model_code"]
+    )
+    dn = _parse_dn(_first_text(row_identifier, ["dn", "DN"]) or _first_text(cells, ["dn", "DN"]))
+    return code, dn
+
+
+def _first_text(values: dict, keys: list[str]) -> str | None:
+    for key in keys:
+        value = values.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
     return None
+
+
+def _parse_dn(value) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip().upper().replace("DN", "").strip()
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def _is_identifier_symbol(symbol) -> bool:
+    text = str(symbol).strip().lower()
+    return text in {"code", "component_code", "model", "model_code", "dn", "公称尺寸", "代码", "型号"}
+
+
+def _normalize_symbol_value(symbol: str, raw) -> tuple[str, Any]:
+    text = symbol.strip()
+    if text.endswith(("≥", ">=")):
+        return text.removesuffix("≥").removesuffix(">="), f">={raw}"
+    if text.endswith(("≤", "<=")):
+        return text.removesuffix("≤").removesuffix("<="), f"<={raw}"
+    if text.endswith(("≈", "~")):
+        return text.removesuffix("≈").removesuffix("~"), f"~{raw}"
+    return text, raw
+
+
+def _dimension_fact_key(symbol: str, *, row_index: int, row_code: str | None, row_dn: int | None, multi_row: bool) -> str:
+    if not multi_row:
+        return f"dimension.{symbol}"
+    code_part = _key_part(row_code) or f"row{row_index + 1}"
+    dn_part = f"DN{row_dn}" if row_dn is not None else f"row{row_index + 1}"
+    return f"dimension.{code_part}.{dn_part}.{symbol}"
+
+
+def _key_part(value: str | None) -> str | None:
+    if not value:
+        return None
+    return "".join(ch for ch in str(value).strip() if ch.isalnum() or ch in {"_", "-"})

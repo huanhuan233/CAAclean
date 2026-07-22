@@ -145,3 +145,108 @@ export function recomputeCadMeasurements(revisionId: string) {
     method: 'post'
   });
 }
+
+export function createCadSpecTask(params: {
+  revision_id: string;
+  drawing_file: File;
+  target_code?: string;
+  target_dn?: string | number;
+}) {
+  const data = new FormData();
+  data.append('revision_id', params.revision_id);
+  data.append('drawing_file', params.drawing_file);
+  if (params.target_code) data.append('target_code', params.target_code);
+  if (params.target_dn !== undefined && params.target_dn !== null && params.target_dn !== '') {
+    data.append('target_dn', String(params.target_dn));
+  }
+
+  return request<Api.CadSpec.Task>({
+    url: '/api/cad/spec/tasks',
+    method: 'post',
+    data,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  });
+}
+
+export function startCadSpecLayout(taskId: string) {
+  return request<Api.CadSpec.LayoutStartResponse>({
+    url: `/api/cad/spec/tasks/${taskId}/layout`,
+    method: 'post'
+  });
+}
+
+export function fetchCadSpecLayoutStatus(taskId: string) {
+  return request<Api.CadSpec.LayoutStatus>({
+    url: `/api/cad/spec/tasks/${taskId}/layout/status`
+  });
+}
+
+export function fetchCadSpecRegions(taskId: string) {
+  return request<Api.Cad.PagedResult<Api.CadSpec.Region>>({
+    url: `/api/cad/spec/tasks/${taskId}/regions`
+  });
+}
+
+export function extractCadSpecTask(
+  taskId: string,
+  payload: { force?: boolean }
+) {
+  return request<Api.CadSpec.ExtractResponse>({
+    url: `/api/cad/spec/tasks/${taskId}/extract`,
+    method: 'post',
+    data: payload
+  });
+}
+
+export function fetchCadSpecExtractionStatus(taskId: string) {
+  return request<Api.CadSpec.ExtractionStatus>({
+    url: `/api/cad/spec/tasks/${taskId}/extraction/status`
+  });
+}
+
+export function fetchCadSpecExtraction(taskId: string) {
+  return request<Api.CadSpec.ExtractionResult>({
+    url: `/api/cad/spec/tasks/${taskId}/extraction`
+  });
+}
+
+export function fetchCadSpecFacts(
+  taskId: string,
+  params: {
+    fact_type?: string;
+    symbol?: string;
+    needs_review?: boolean;
+    keyword?: string;
+    target_code?: string;
+    target_dn?: number | null;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  return request<Api.Cad.PagedResult<Api.CadSpec.Fact>>({
+    url: `/api/cad/spec/tasks/${taskId}/facts`,
+    params
+  });
+}
+
+export function retryCadSpecExtraction(taskId: string) {
+  return request<Api.CadSpec.ExtractResponse>({
+    url: `/api/cad/spec/tasks/${taskId}/extract/retry`,
+    method: 'post'
+  });
+}
+
+export function getCadSpecDrawingImageUrl(taskId: string, variant: 'original' | 'inference' = 'inference') {
+  return `${getCadSpecApiBase()}/api/cad/spec/tasks/${taskId}/drawing/image?variant=${variant}`;
+}
+
+export function getCadSpecRegionImageUrl(taskId: string, regionId: string) {
+  return `${getCadSpecApiBase()}/api/cad/spec/tasks/${taskId}/regions/${regionId}/image`;
+}
+
+function getCadSpecApiBase() {
+  if (import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y') return '/proxy-default';
+  return import.meta.env.VITE_SERVICE_BASE_URL.replace(/\/$/, '');
+}

@@ -121,6 +121,20 @@ class TargetRowResult(BaseModel):
     inferred_from_filename: bool = False
     needs_review: bool = False
 
+    @field_validator("warnings", mode="before")
+    @classmethod
+    def coerce_warnings(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
+
+    @field_validator("inferred_from_filename", "needs_review", mode="before")
+    @classmethod
+    def coerce_nullable_bool(cls, value):
+        return False if value is None else value
+
 
 class DrawingFact(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
