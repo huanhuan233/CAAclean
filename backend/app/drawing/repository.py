@@ -98,6 +98,12 @@ class MemoryDrawingRepository:
     async def list_active_regions(self, task_id):
         return [region for region in self.regions if region.task_id == task_id and region.status == "active"]
 
+    async def list_tasks(self, revision_id=None):
+        tasks = list(self.tasks.values())
+        if revision_id is not None:
+            tasks = [task for task in tasks if task.revision_id == revision_id]
+        return sorted(tasks, key=lambda task: str(task.id))
+
 
 class SqlAlchemyDrawingRepository:
     def __init__(self, session: AsyncSession):
@@ -173,6 +179,13 @@ class SqlAlchemyDrawingRepository:
         result = await self.session.execute(
             select(CadDrawingRegion).where(CadDrawingRegion.task_id == task_id, CadDrawingRegion.status == "active").order_by(CadDrawingRegion.sort_order)
         )
+        return list(result.scalars().all())
+
+    async def list_tasks(self, revision_id=None):
+        clauses = []
+        if revision_id is not None:
+            clauses.append(CadSpecTask.revision_id == revision_id)
+        result = await self.session.execute(select(CadSpecTask).where(*clauses).order_by(CadSpecTask.created_at.desc()))
         return list(result.scalars().all())
 
 

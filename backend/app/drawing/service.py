@@ -56,6 +56,24 @@ class DrawingLayoutService:
             )
         )[0]
 
+    async def list_tasks(self, revision_id: uuid.UUID | None = None) -> dict:
+        tasks = await self.repository.list_tasks(revision_id=revision_id)
+        items = []
+        for task in tasks:
+            source = await self.repository.get_source_for_task(task.id)
+            items.append(
+                {
+                    "task_id": task.id,
+                    "revision_id": task.revision_id,
+                    "status": task.status,
+                    "progress": getattr(task, "progress", 0),
+                    "status_message": getattr(task, "status_message", None),
+                    "file_name": getattr(source, "file_name", None) if source else None,
+                    "created_at": getattr(task, "created_at", None),
+                }
+            )
+        return {"items": items, "total": len(items)}
+
     async def start_layout(self, task_id: uuid.UUID) -> dict:
         task = await self.repository.get_task(task_id)
         source = await self.repository.get_source_for_task(task_id)

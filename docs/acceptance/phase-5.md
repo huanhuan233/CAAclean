@@ -133,3 +133,27 @@ Actual output:
 ## Known Limits
 
 - The page depends on Phase 4B evidence precision. If the model/result only supplies row-level bbox for `D` or `K`, the UI highlights that row-level bbox. Cell-level highlighting will appear automatically when the fact has a cell-level `source_bbox_original`.
+
+## Follow-Up UI Adjustment
+
+- The component spec toolbar now keeps task selection, drawing upload, and the single primary action on the left.
+- The primary action is `创建任务` before a task exists and becomes `重新抽取` after a task is selected or created.
+- Re-extraction uses a confirmation dialog before calling the vision extraction endpoint.
+- `查询结果` is placed in the right-side control group and only reads stored extraction/facts.
+- The revision/task area is a dropdown. Selecting an extracted task reloads its drawing, regions, extraction status, and facts into the review panel.
+
+Latest verification:
+
+```text
+D:\anaconda\envs\3dcad\python.exe -m pytest backend/tests/test_drawing_phase4a.py::test_list_tasks_endpoint_returns_revision_tasks_without_file_paths backend/tests/test_drawing_extraction_phase4b.py -q
+15 passed, 1 warning in 5.88s
+
+node_modules\.bin\eslint.CMD src/views/cad-spec/index.vue src/service/api/cad.ts src/typings/api/cad.d.ts
+Using Node v20.20.2
+
+node_modules\.bin\vue-tsc.CMD --noEmit --skipLibCheck
+Using Node v20.20.2
+
+node_modules\.bin\vite.CMD build --mode prod
+Build successful. Please see dist directory
+```

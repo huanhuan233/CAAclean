@@ -316,6 +316,40 @@ def test_extract_endpoint_schedules_background_work(tmp_path, monkeypatch):
     assert scheduled == [(task_id, {"target_code": "XMS06", "target_dn": 80, "force": True})]
 
 
+def test_list_tasks_endpoint_returns_revision_tasks_without_file_paths():
+    revision_id = uuid4()
+    task_id = uuid4()
+
+    class FakeService:
+        async def list_tasks(self, revision_id=None):
+            return {
+                "items": [
+                    {
+                        "task_id": task_id,
+                        "revision_id": revision_id,
+                        "status": "review_ready",
+                        "progress": 100,
+                        "status_message": "review_ready",
+                        "file_name": "测试.png",
+                        "created_at": None,
+                    }
+                ],
+                "total": 1,
+            }
+
+    app.dependency_overrides[get_drawing_service] = lambda: FakeService()
+    client = TestClient(app)
+
+    response = client.get("/api/cad/spec/tasks", params={"revision_id": str(revision_id)})
+
+    app.dependency_overrides.pop(get_drawing_service, None)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["task_id"] == str(task_id)
+    assert "file_path" not in payload["items"][0]
+
+
 @pytest.mark.asyncio
 async def test_repeated_layout_does_not_create_duplicate_active_regions(tmp_path):
     image_path = make_image(tmp_path / "drawing.png", size=(300, 200))

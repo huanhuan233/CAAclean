@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ElMessageBox } from 'element-plus';
 import {
   createCadSpecTask,
   extractCadSpecTask,
@@ -9,6 +10,7 @@ import {
   fetchCadSpecFacts,
   fetchCadSpecLayoutStatus,
   fetchCadSpecRegions,
+  fetchCadSpecTasks,
   getCadSpecDrawingImageUrl,
   startCadSpecLayout
 } from '@/service/api';
@@ -29,6 +31,7 @@ const drawingFile = ref<File | null>(null);
 const targetCode = ref('XMS06');
 const targetDn = ref('80');
 const taskId = ref('');
+const taskOptions = ref<Api.CadSpec.TaskSummary[]>([]);
 const layoutStatus = ref<Api.CadSpec.LayoutStatus | null>(null);
 const extractionStatus = ref<Api.CadSpec.ExtractionStatus | null>(null);
 const extractionResult = ref<Api.CadSpec.ExtractionResult | null>(null);
@@ -86,6 +89,13 @@ const canReextract = computed(() =>
   Boolean(taskId.value && !busy.value && layoutStatus.value?.status === 'layout_ready')
 );
 const canQuery = computed(() => Boolean(taskId.value && !busy.value));
+const primaryActionLabel = computed(() => (taskId.value ? '重新抽取' : '创建任务'));
+const canRunPrimaryAction = computed(() => (taskId.value ? canReextract.value : canSubmit.value));
+
+const taskSelectOptions = computed(() => [
+  { task_id: '', file_name: '当前 revision', status: 'created' as Api.CadSpec.LayoutStatusValue },
+  ...taskOptions.value
+]);
 
 function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -116,6 +126,7 @@ async function createTaskAndExtract() {
     if (created.error || !created.data) throw new Error('创建任务失败');
     taskId.value = created.data.task_id;
     imageSrc.value = imageUrl('original');
+    await loadTaskOptions();
 
     statusMessage.value = '正在检测版面';
     const layoutStarted = await startCadSpecLayout(taskId.value);
@@ -126,6 +137,7 @@ async function createTaskAndExtract() {
     await nextTick();
 
     await runExtraction(false);
+    await loadTaskOptions();
   } catch (error) {
     handleError(error);
   } finally {
@@ -135,6 +147,15 @@ async function createTaskAndExtract() {
 
 async function reextract() {
   if (!taskId.value) return;
+  try {
+    await ElMessageBox.confirm('这会重新调用视觉模型并替换当前 Drawing Facts。', '确认重新抽取', {
+      confirmButtonText: '重新抽取',
+      cancelButtonText: '取消',
+      type: 'warning'
+    });
+  } catch {
+    return;
+  }
   busy.value = true;
   errorMessage.value = '';
   selectedFact.value = null;
@@ -142,11 +163,20 @@ async function reextract() {
   facts.value = [];
   try {
     await runExtraction(true);
+    await loadTaskOptions();
   } catch (error) {
     handleError(error);
   } finally {
     busy.value = false;
   }
+}
+
+async function runPrimaryAction() {
+  if (taskId.value) {
+    await reextract();
+    return;
+  }
+  await createTaskAndExtract();
 }
 
 async function queryExtractionResult() {
@@ -165,6 +195,42 @@ async function queryExtractionResult() {
     }
     await loadExtraction();
     statusMessage.value = '已查询到抽取结果';
+  } catch (error) {
+    handleError(error);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function loadTaskOptions() {
+  if (!revisionId.value) return;
+  const result = await fetchCadSpecTasks({ revision_id: revisionId.value });
+  if (!result.error && result.data) taskOptions.value = result.data.items;
+}
+
+async function selectTask(nextTaskId: string) {
+  if (!nextTaskId) {
+    resetExtractionState();
+    await loadTaskOptions();
+    return;
+  }
+  resetTaskData();
+  taskId.value = nextTaskId;
+  busy.value = true;
+  errorMessage.value = '';
+  try {
+    const [layout, extraction] = await Promise.all([
+      fetchCadSpecLayoutStatus(taskId.value),
+      fetchCadSpecExtractionStatus(taskId.value)
+    ]);
+    if (!layout.error && layout.data) layoutStatus.value = layout.data;
+    if (!extraction.error && extraction.data) extractionStatus.value = extraction.data;
+    await loadRegions();
+    imageSrc.value = imageUrl(layoutStatus.value?.status === 'layout_ready' ? 'inference' : 'original');
+    if (extractionStatus.value?.status === 'review_ready') await loadExtraction();
+    statusMessage.value = extractionStatus.value
+      ? `已切换任务：${statusText(extractionStatus.value.status)}`
+      : '已切换任务';
   } catch (error) {
     handleError(error);
   } finally {
@@ -248,13 +314,18 @@ async function loadExtraction(attempt = 0): Promise<void> {
   }
   extractionResult.value = extractionResultData.data;
   facts.value = factResult.error || !factResult.data ? extractionResultData.data.facts : factResult.data.items;
-  selectedFact.value = facts.value.find(item => item.symbol === 'D' || item.fact_key === 'dimension.D') ?? facts.value[0] ?? null;
+  selectedFact.value =
+    facts.value.find(item => item.symbol === 'D' || item.fact_key === 'dimension.D') ?? facts.value[0] ?? null;
   return undefined;
 }
 
 function resetExtractionState() {
   stopPolling();
   taskId.value = '';
+  resetTaskData();
+}
+
+function resetTaskData() {
   layoutStatus.value = null;
   extractionStatus.value = null;
   extractionResult.value = null;
@@ -274,12 +345,19 @@ function selectFact(fact: Api.CadSpec.Fact) {
 }
 
 function editFactValue(fact: Api.CadSpec.Fact) {
-  const nextValue = window.prompt('修改显示值', formatValue(fact.normalized_value));
-  if (nextValue === null) return;
-  fact.raw_value = nextValue;
-  fact.normalized_value = normalizeEditedValue(nextValue);
-  fact.needs_review = true;
-  if (selectedFact.value?.fact_key === fact.fact_key) selectedFact.value = fact;
+  ElMessageBox.prompt('修改显示值', '编辑字段', {
+    confirmButtonText: '保存',
+    cancelButtonText: '取消',
+    inputValue: formatValue(fact.normalized_value)
+  })
+    .then(({ value }) => {
+      const nextValue = value ?? '';
+      fact.raw_value = nextValue;
+      fact.normalized_value = normalizeEditedValue(nextValue);
+      fact.needs_review = true;
+      if (selectedFact.value?.fact_key === fact.fact_key) selectedFact.value = fact;
+    })
+    .catch(() => {});
 }
 
 function imageUrl(variant: 'original' | 'inference') {
@@ -426,30 +504,53 @@ function goBackToCad() {
 onBeforeUnmount(() => {
   stopPolling();
 });
+
+onMounted(() => {
+  loadTaskOptions();
+});
 </script>
 
 <template>
   <div class="cad-spec-page">
     <header class="spec-toolbar">
-      <div class="title-block">
-        <div class="page-title">组件规范</div>
-        <div class="page-subtitle">revision_id: {{ revisionId || '未传入' }}</div>
-      </div>
+      <div class="task-left">
+        <div class="title-block">
+          <div class="page-title">组件规范</div>
+          <ElSelect v-model="taskId" class="task-select" filterable placeholder="选择抽取任务" @change="selectTask">
+            <ElOption
+              v-for="task in taskSelectOptions"
+              :key="task.task_id || 'revision'"
+              :label="
+                task.task_id
+                  ? `${task.file_name || '未命名'} · ${statusText(task.status)}`
+                  : `revision_id: ${revisionId || '未传入'}`
+              "
+              :value="task.task_id"
+            />
+          </ElSelect>
+        </div>
 
-      <div class="task-controls">
         <label class="file-picker">
           <input accept=".png,.jpg,.jpeg,.webp" type="file" @change="onFileChange" />
           <span>{{ drawingFile?.name || '选择二维参数图' }}</span>
         </label>
+
+        <ElButton
+          type="primary"
+          :disabled="!canRunPrimaryAction"
+          :loading="busy && !canQuery"
+          @click="runPrimaryAction"
+        >
+          {{ primaryActionLabel }}
+        </ElButton>
+      </div>
+
+      <div class="task-controls">
         <ElInput v-model="targetCode" class="target-input" placeholder="target_code" />
         <ElInput v-model="targetDn" class="target-input small" placeholder="target_dn" />
-        <ElButton type="primary" :disabled="!canSubmit" :loading="busy && !taskId" @click="createTaskAndExtract">
-          创建任务
-        </ElButton>
         <ElButton :disabled="!canQuery" :loading="busy && Boolean(taskId)" @click="queryExtractionResult">
           查询结果
         </ElButton>
-        <ElButton :disabled="!canReextract" :loading="busy && Boolean(taskId)" @click="reextract">重新抽取</ElButton>
         <ElButton text @click="goBackToCad">返回 CAD 页面</ElButton>
       </div>
     </header>
@@ -622,29 +723,40 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
 }
 
+.task-left {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+
 .title-block {
-  min-width: 240px;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
 }
 
 .page-title {
+  flex: 0 0 auto;
   color: var(--el-text-color-primary);
   font-size: 16px;
   font-weight: 700;
 }
 
-.page-subtitle {
-  margin-top: 3px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+.task-select {
+  width: 300px;
 }
 
 .task-controls {
   display: flex;
   min-width: 0;
-  flex: 1;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
 }
 
 .file-picker {
@@ -917,9 +1029,14 @@ onBeforeUnmount(() => {
   }
 
   .spec-toolbar,
+  .task-left,
   .task-controls {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .task-controls {
+    margin-left: 0;
   }
 
   .spec-shell {

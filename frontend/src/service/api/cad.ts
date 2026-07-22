@@ -170,6 +170,13 @@ export function createCadSpecTask(params: {
   });
 }
 
+export function fetchCadSpecTasks(params: { revision_id?: string } = {}) {
+  return request<Api.Cad.PagedResult<Api.CadSpec.TaskSummary>>({
+    url: '/api/cad/spec/tasks',
+    params
+  });
+}
+
 export function startCadSpecLayout(taskId: string) {
   return request<Api.CadSpec.LayoutStartResponse>({
     url: `/api/cad/spec/tasks/${taskId}/layout`,
@@ -189,10 +196,7 @@ export function fetchCadSpecRegions(taskId: string) {
   });
 }
 
-export function extractCadSpecTask(
-  taskId: string,
-  payload: { force?: boolean }
-) {
+export function extractCadSpecTask(taskId: string, payload: { force?: boolean }) {
   return request<Api.CadSpec.ExtractResponse>({
     url: `/api/cad/spec/tasks/${taskId}/extract`,
     method: 'post',

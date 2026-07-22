@@ -363,7 +363,7 @@ def parse(job: dict) -> dict:
                             )
                             vertex_entities.append((vertex_id, vertex))
                         relation(relations, revision_id, edge_id, vertex_ids[vertex_index], "has_vertex")
-
+                        
                 for face_index, face in enumerate(solid.Faces):
                     face_ref = f"Face{face_index + 1}"
                     geometry_type, geometry = face_geometry(face)

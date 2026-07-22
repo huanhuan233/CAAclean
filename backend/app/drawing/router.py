@@ -101,6 +101,14 @@ async def create_spec_task(
         raise _http_error(exc) from exc
 
 
+@router.get("/tasks")
+async def list_spec_tasks(
+    revision_id: uuid.UUID | None = None,
+    service: DrawingLayoutService = Depends(get_drawing_service),
+):
+    return await service.list_tasks(revision_id=revision_id)
+
+
 @router.post("/tasks/{task_id}/layout", status_code=status.HTTP_202_ACCEPTED)
 async def start_layout(
     task_id: uuid.UUID,

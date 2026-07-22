@@ -160,6 +160,16 @@ declare namespace Api {
       status: LayoutStatusValue;
     }
 
+    interface TaskSummary {
+      task_id: string;
+      revision_id: string;
+      status: LayoutStatusValue;
+      progress?: number | null;
+      status_message?: string | null;
+      file_name?: string | null;
+      created_at?: string | null;
+    }
+
     interface LayoutStartResponse {
       task_id: string;
       status: LayoutStatusValue;
