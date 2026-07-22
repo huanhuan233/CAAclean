@@ -119,6 +119,47 @@ class CadMesh(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class CadFeatureCandidate(Base):
+    __tablename__ = "cad_feature_candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), nullable=False)
+    scope_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_entities.id", ondelete="CASCADE"), nullable=False)
+    feature_type: Mapped[str] = mapped_column(String, nullable=False)
+    source_entity_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    parameters: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    axis: Mapped[list | dict | None] = mapped_column(JSONB)
+    center: Mapped[list | dict | None] = mapped_column(JSONB)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    algorithm: Mapped[str] = mapped_column(String, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="candidate")
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class CadMeasurement(Base):
+    __tablename__ = "cad_measurements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), nullable=False)
+    scope_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_entities.id", ondelete="CASCADE"), nullable=False)
+    feature_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cad_feature_candidates.id", ondelete="SET NULL")
+    )
+    measurement_type: Mapped[str] = mapped_column(String, nullable=False)
+    raw_value: Mapped[dict | list] = mapped_column(JSONB, nullable=False)
+    normalized_value: Mapped[dict | list] = mapped_column(JSONB, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String)
+    source_entity_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    method: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    algorithm_version: Mapped[str] = mapped_column(String, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 Index("ix_cad_model_revisions_model_id", CadModelRevision.model_id)
 Index("ix_cad_model_revisions_status", CadModelRevision.status)
 Index("ix_cad_entities_revision_id", CadEntity.revision_id)
@@ -130,3 +171,10 @@ Index("ix_cad_relations_target_entity_id", CadRelation.target_entity_id)
 Index("ix_cad_relations_revision_type", CadRelation.revision_id, CadRelation.relation_type)
 Index("ix_cad_meshes_revision_id", CadMesh.revision_id)
 Index("ix_cad_meshes_entity_id", CadMesh.entity_id)
+Index("ix_cad_feature_candidates_revision_id", CadFeatureCandidate.revision_id)
+Index("ix_cad_feature_candidates_scope_entity_id", CadFeatureCandidate.scope_entity_id)
+Index("ix_cad_feature_candidates_revision_version", CadFeatureCandidate.revision_id, CadFeatureCandidate.algorithm_version)
+Index("ix_cad_measurements_revision_id", CadMeasurement.revision_id)
+Index("ix_cad_measurements_scope_entity_id", CadMeasurement.scope_entity_id)
+Index("ix_cad_measurements_feature_id", CadMeasurement.feature_id)
+Index("ix_cad_measurements_revision_version", CadMeasurement.revision_id, CadMeasurement.algorithm_version)
