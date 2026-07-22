@@ -11,6 +11,7 @@ const props = defineProps<{
   meshes: Api.Cad.Mesh[];
   selectedFaceId?: string;
   highlightFaceIds?: string[];
+  patternEvidence?: Api.Cad.PatternEvidence | null;
 }>();
 
 const emit = defineEmits<{
@@ -29,6 +30,7 @@ let resizeObserver: ResizeObserver | null = null;
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const faceMeshes = new Map<string, THREE.Mesh>();
+const auxiliaryObjects: THREE.Object3D[] = [];
 
 function createMaterial(entityId: string) {
   return new THREE.MeshStandardMaterial({
@@ -108,6 +110,7 @@ function resizeViewer() {
 
 function clearMeshes() {
   if (!scene) return;
+  clearAuxiliaryObjects();
   for (const mesh of faceMeshes.values()) {
     scene.remove(mesh);
     mesh.geometry.dispose();
@@ -119,6 +122,22 @@ function clearMeshes() {
     }
   }
   faceMeshes.clear();
+}
+
+function clearAuxiliaryObjects() {
+  if (!scene) return;
+  for (const object of auxiliaryObjects) {
+    scene.remove(object);
+    const maybeLine = object as THREE.Line;
+    maybeLine.geometry?.dispose();
+    const material = maybeLine.material;
+    if (Array.isArray(material)) {
+      material.forEach(item => item.dispose());
+    } else {
+      material?.dispose();
+    }
+  }
+  auxiliaryObjects.length = 0;
 }
 
 function buildGeometry(meshData: Api.Cad.Mesh) {
@@ -199,6 +218,38 @@ function applyHighlights() {
     }
     material.needsUpdate = true;
   }
+  rebuildAuxiliaryObjects();
+}
+
+function rebuildAuxiliaryObjects() {
+  if (!scene) return;
+  clearAuxiliaryObjects();
+  const evidence = props.patternEvidence;
+  if (!evidence?.center || !evidence.axis || !evidence.pitch_circle_diameter) return;
+
+  const center = new THREE.Vector3(evidence.center[0], evidence.center[1], evidence.center[2]);
+  const axis = new THREE.Vector3(evidence.axis[0], evidence.axis[1], evidence.axis[2]).normalize();
+  const radius = evidence.pitch_circle_diameter / 2;
+  if (!Number.isFinite(radius) || radius <= 0) return;
+
+  const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, Math.PI * 2, false, 0);
+  const points = curve.getPoints(128).map(point => new THREE.Vector3(point.x, point.y, 0));
+  const circleGeometry = new THREE.BufferGeometry().setFromPoints(points);
+  const circle = new THREE.LineLoop(circleGeometry, new THREE.LineBasicMaterial({ color: '#2563eb' }));
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis);
+  circle.quaternion.copy(quaternion);
+  circle.position.copy(center);
+  scene.add(circle);
+  auxiliaryObjects.push(circle);
+
+  const axisLength = radius * 1.4;
+  const axisGeometry = new THREE.BufferGeometry().setFromPoints([
+    center.clone().add(axis.clone().multiplyScalar(-axisLength)),
+    center.clone().add(axis.clone().multiplyScalar(axisLength))
+  ]);
+  const axisLine = new THREE.Line(axisGeometry, new THREE.LineBasicMaterial({ color: '#dc2626' }));
+  scene.add(axisLine);
+  auxiliaryObjects.push(axisLine);
 }
 
 function handlePointerDown(event: PointerEvent) {
@@ -245,7 +296,7 @@ watch(
 );
 
 watch(
-  () => [props.selectedFaceId, props.highlightFaceIds?.join('|') ?? ''],
+  () => [props.selectedFaceId, props.highlightFaceIds?.join('|') ?? '', JSON.stringify(props.patternEvidence ?? null)],
   () => applyHighlights()
 );
 

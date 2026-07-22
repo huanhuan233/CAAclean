@@ -35,6 +35,12 @@ class MemorySession:
             if row.__class__.__name__ == "CadMeasurement":
                 self.measurements.append(row)
 
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
 
 def make_facts(revision_id, algorithm_version):
     scope_id = uuid4()

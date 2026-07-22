@@ -94,3 +94,54 @@ export function fetchCadEdgeTopology(revisionId: string, edgeId: string) {
     url: `/api/cad/revisions/${revisionId}/edges/${edgeId}/topology`
   });
 }
+
+export function fetchCadMeasurements(
+  revisionId: string,
+  params: {
+    measurement_type?: string;
+    scope_entity_id?: string;
+    confidence_min?: number;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  return request<Api.Cad.PagedResult<Api.Cad.Measurement>>({
+    url: `/api/cad/revisions/${revisionId}/measurements`,
+    params
+  });
+}
+
+export function fetchCadMeasurement(revisionId: string, measurementId: string) {
+  return request<Api.Cad.Measurement>({
+    url: `/api/cad/revisions/${revisionId}/measurements/${measurementId}`
+  });
+}
+
+export function fetchCadFeatures(
+  revisionId: string,
+  params: {
+    feature_type?: string;
+    scope_entity_id?: string;
+    confidence_min?: number;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  return request<Api.Cad.PagedResult<Api.Cad.FeatureCandidate>>({
+    url: `/api/cad/revisions/${revisionId}/features`,
+    params
+  });
+}
+
+export function fetchCadFeature(revisionId: string, featureId: string) {
+  return request<Api.Cad.FeatureCandidate>({
+    url: `/api/cad/revisions/${revisionId}/features/${featureId}`
+  });
+}
+
+export function recomputeCadMeasurements(revisionId: string) {
+  return request<{ revision_id: string; algorithm_version: string; feature_count: number; measurement_count: number }>({
+    url: `/api/cad/revisions/${revisionId}/measurements/recompute`,
+    method: 'post'
+  });
+}

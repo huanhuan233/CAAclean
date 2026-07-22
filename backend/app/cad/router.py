@@ -122,6 +122,67 @@ async def edge_topology(revision_id: UUID, edge_id: UUID, service: CadService = 
     return await service.get_edge_topology(revision_id, edge_id)
 
 
+@router.get("/revisions/{revision_id}/measurements", response_model=CadPagedResult)
+async def revision_measurements(
+    revision_id: UUID,
+    measurement_type: str | None = None,
+    scope_entity_id: UUID | None = None,
+    confidence_min: float | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    service: CadService = Depends(get_cad_service),
+) -> dict:
+    return await service.list_revision_measurements(
+        revision_id,
+        measurement_type=measurement_type,
+        scope_entity_id=scope_entity_id,
+        confidence_min=confidence_min,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post("/revisions/{revision_id}/measurements/recompute")
+async def recompute_revision_measurements(revision_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
+    return await service.recompute_revision_measurements(revision_id)
+
+
+@router.get("/revisions/{revision_id}/measurements/{measurement_id}")
+async def revision_measurement(revision_id: UUID, measurement_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
+    try:
+        return await service.get_revision_measurement(revision_id, measurement_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="measurement not found") from exc
+
+
+@router.get("/revisions/{revision_id}/features", response_model=CadPagedResult)
+async def revision_features(
+    revision_id: UUID,
+    feature_type: str | None = None,
+    scope_entity_id: UUID | None = None,
+    confidence_min: float | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    service: CadService = Depends(get_cad_service),
+) -> dict:
+    return await service.list_revision_features(
+        revision_id,
+        feature_type=feature_type,
+        scope_entity_id=scope_entity_id,
+        confidence_min=confidence_min,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/revisions/{revision_id}/features/{feature_id}")
+async def revision_feature(revision_id: UUID, feature_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
+    try:
+        return await service.get_revision_feature(revision_id, feature_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="feature not found") from exc
+
+
 @router.post("/revisions/{revision_id}/exports/v2")
 async def export_v2(revision_id: UUID) -> None:
     raise HTTPException(

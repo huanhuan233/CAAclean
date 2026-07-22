@@ -95,5 +95,46 @@ declare namespace Api {
       vertices: Entity[];
       faces: Entity[];
     }
+
+    interface Measurement {
+      id: string;
+      revision_id: string;
+      scope_entity_id: string;
+      feature_id: string | null;
+      measurement_type: string;
+      raw_value: Record<string, unknown>;
+      normalized_value: Record<string, unknown>;
+      unit: string | null;
+      source_entity_ids: string[];
+      method: string;
+      confidence: number;
+      algorithm_version: string;
+      metadata: Record<string, unknown>;
+      created_at: string;
+    }
+
+    interface FeatureCandidate {
+      id: string;
+      revision_id: string;
+      scope_entity_id: string;
+      feature_type: string;
+      source_entity_ids: string[];
+      parameters: Record<string, unknown>;
+      axis: unknown;
+      center: unknown;
+      confidence: number;
+      algorithm: string;
+      algorithm_version: string;
+      status: 'candidate' | 'confirmed' | 'rejected';
+      metadata: Record<string, unknown>;
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface PatternEvidence {
+      center: number[];
+      axis: number[];
+      pitch_circle_diameter?: number;
+    }
   }
 }

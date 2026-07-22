@@ -17,6 +17,8 @@ from app.cad.repository import CadRepository
 from app.cad.result_validator import validate_parser_result
 from app.core.config import Settings
 from app.db.session import SessionLocal
+from app.measurement.repository import MeasurementRepository
+from app.measurement.service import MeasurementService
 
 
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -249,6 +251,61 @@ class CadService:
             "faces": [self._entity_to_dict(entity) for entity in faces],
         }
 
+    async def list_revision_measurements(
+        self,
+        revision_id: UUID,
+        *,
+        measurement_type: str | None = None,
+        scope_entity_id: UUID | None = None,
+        confidence_min: float | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        rows, total = await MeasurementRepository(self.repository.session).list_measurements(
+            revision_id,
+            measurement_type=measurement_type,
+            scope_entity_id=scope_entity_id,
+            confidence_min=confidence_min,
+            page=page,
+            page_size=page_size,
+        )
+        return {"items": [self._measurement_to_dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
+
+    async def get_revision_measurement(self, revision_id: UUID, measurement_id: UUID) -> dict:
+        measurement = await MeasurementRepository(self.repository.session).get_measurement(measurement_id)
+        if measurement is None or measurement.revision_id != revision_id:
+            raise LookupError("measurement not found")
+        return self._measurement_to_dict(measurement)
+
+    async def list_revision_features(
+        self,
+        revision_id: UUID,
+        *,
+        feature_type: str | None = None,
+        scope_entity_id: UUID | None = None,
+        confidence_min: float | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        rows, total = await MeasurementRepository(self.repository.session).list_features(
+            revision_id,
+            feature_type=feature_type,
+            scope_entity_id=scope_entity_id,
+            confidence_min=confidence_min,
+            page=page,
+            page_size=page_size,
+        )
+        return {"items": [self._feature_to_dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
+
+    async def get_revision_feature(self, revision_id: UUID, feature_id: UUID) -> dict:
+        feature = await MeasurementRepository(self.repository.session).get_feature(feature_id)
+        if feature is None or feature.revision_id != revision_id:
+            raise LookupError("feature not found")
+        return self._feature_to_dict(feature)
+
+    async def recompute_revision_measurements(self, revision_id: UUID) -> dict:
+        return await MeasurementService(MeasurementRepository(self.repository.session)).recompute_revision(revision_id)
+
     def _build_tree(self, entities) -> list[dict]:
         nodes: dict[UUID, dict] = {}
         roots: list[dict] = []
@@ -308,6 +365,43 @@ class CadService:
             "angular_deflection": mesh.angular_deflection,
             "vertex_count": mesh.vertex_count,
             "triangle_count": mesh.triangle_count,
+        }
+
+    def _measurement_to_dict(self, measurement) -> dict:
+        return {
+            "id": measurement.id,
+            "revision_id": measurement.revision_id,
+            "scope_entity_id": measurement.scope_entity_id,
+            "feature_id": measurement.feature_id,
+            "measurement_type": measurement.measurement_type,
+            "raw_value": measurement.raw_value,
+            "normalized_value": measurement.normalized_value,
+            "unit": measurement.unit,
+            "source_entity_ids": measurement.source_entity_ids,
+            "method": measurement.method,
+            "confidence": measurement.confidence,
+            "algorithm_version": measurement.algorithm_version,
+            "metadata": measurement.metadata_json,
+            "created_at": measurement.created_at.isoformat(),
+        }
+
+    def _feature_to_dict(self, feature) -> dict:
+        return {
+            "id": feature.id,
+            "revision_id": feature.revision_id,
+            "scope_entity_id": feature.scope_entity_id,
+            "feature_type": feature.feature_type,
+            "source_entity_ids": feature.source_entity_ids,
+            "parameters": feature.parameters,
+            "axis": feature.axis,
+            "center": feature.center,
+            "confidence": feature.confidence,
+            "algorithm": feature.algorithm,
+            "algorithm_version": feature.algorithm_version,
+            "status": feature.status,
+            "metadata": feature.metadata_json,
+            "created_at": feature.created_at.isoformat(),
+            "updated_at": feature.updated_at.isoformat(),
         }
 
     async def delete_model_files(self, revision_id: UUID) -> None:

@@ -177,6 +177,12 @@ class ReplacingMemorySession:
             if isinstance(row, CadMeasurement):
                 self.measurements.append(row)
 
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
 
 @pytest.mark.asyncio
 async def test_measurement_repository_rerun_is_idempotent_for_counts_and_uuids():

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CadEntity, CadFeatureCandidate, CadMeasurement
@@ -40,7 +40,7 @@ class MeasurementRepository:
         *,
         algorithm_version: str,
     ) -> None:
-        async with self.session.begin():
+        try:
             await self.session.execute(
                 delete(CadMeasurement).where(
                     CadMeasurement.revision_id == revision_id,
@@ -55,6 +55,70 @@ class MeasurementRepository:
             )
             self.session.add_all([self._feature_row(feature) for feature in features])
             self.session.add_all([self._measurement_row(measurement) for measurement in measurements])
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def list_measurements(
+        self,
+        revision_id: uuid.UUID,
+        *,
+        measurement_type: str | None = None,
+        scope_entity_id: uuid.UUID | None = None,
+        confidence_min: float | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        filters = [CadMeasurement.revision_id == revision_id]
+        if measurement_type:
+            filters.append(CadMeasurement.measurement_type == measurement_type)
+        if scope_entity_id:
+            filters.append(CadMeasurement.scope_entity_id == scope_entity_id)
+        if confidence_min is not None:
+            filters.append(CadMeasurement.confidence >= confidence_min)
+        total = await self.session.scalar(select(func.count()).select_from(CadMeasurement).where(*filters))
+        result = await self.session.execute(
+            select(CadMeasurement)
+            .where(*filters)
+            .order_by(CadMeasurement.measurement_type, CadMeasurement.created_at)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), int(total or 0)
+
+    async def get_measurement(self, measurement_id: uuid.UUID) -> CadMeasurement | None:
+        return await self.session.get(CadMeasurement, measurement_id)
+
+    async def list_features(
+        self,
+        revision_id: uuid.UUID,
+        *,
+        feature_type: str | None = None,
+        scope_entity_id: uuid.UUID | None = None,
+        confidence_min: float | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        filters = [CadFeatureCandidate.revision_id == revision_id]
+        if feature_type:
+            filters.append(CadFeatureCandidate.feature_type == feature_type)
+        if scope_entity_id:
+            filters.append(CadFeatureCandidate.scope_entity_id == scope_entity_id)
+        if confidence_min is not None:
+            filters.append(CadFeatureCandidate.confidence >= confidence_min)
+        total = await self.session.scalar(select(func.count()).select_from(CadFeatureCandidate).where(*filters))
+        result = await self.session.execute(
+            select(CadFeatureCandidate)
+            .where(*filters)
+            .order_by(CadFeatureCandidate.feature_type, CadFeatureCandidate.created_at)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), int(total or 0)
+
+    async def get_feature(self, feature_id: uuid.UUID) -> CadFeatureCandidate | None:
+        return await self.session.get(CadFeatureCandidate, feature_id)
 
     def _feature_row(self, feature: FeatureCandidateFact) -> CadFeatureCandidate:
         feature_id = feature.id or stable_uuid(

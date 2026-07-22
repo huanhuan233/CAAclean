@@ -6,15 +6,18 @@ import {
   fetchCadEntities,
   fetchCadEntity,
   fetchCadFaceTopology,
+  fetchCadFeatures,
+  fetchCadMeasurements,
   fetchCadMeshes,
   fetchCadModels,
   fetchCadRevisionStatus,
   fetchCadStructureTree,
+  recomputeCadMeasurements,
   uploadCadModel
 } from '@/service/api';
 import CadViewer from './modules/CadViewer.vue';
 
-type GeometryTab = 'face' | 'edge' | 'vertex';
+type GeometryTab = 'face' | 'edge' | 'vertex' | 'measurement' | 'feature';
 
 const EMPTY_TEXT = '—';
 
@@ -22,6 +25,9 @@ const loadingModels = ref(false);
 const loadingTree = ref(false);
 const loadingMeshes = ref(false);
 const loadingEntities = ref(false);
+const loadingMeasurements = ref(false);
+const loadingFeatures = ref(false);
+const recomputingMeasurements = ref(false);
 const uploading = ref(false);
 
 const models = ref<Api.Cad.ModelSummary[]>([]);
@@ -32,9 +38,13 @@ const treeData = ref<Api.Cad.TreeNode[]>([]);
 const viewerMeshes = ref<Api.Cad.Mesh[]>([]);
 const selectedNode = ref<Api.Cad.TreeNode | null>(null);
 const selectedEntity = ref<Api.Cad.Entity | null>(null);
+const selectedMeasurement = ref<Api.Cad.Measurement | null>(null);
+const selectedFeature = ref<Api.Cad.FeatureCandidate | null>(null);
 const selectedFaceId = ref('');
 const selectedSolidId = ref('');
 const solidFaceIds = ref<string[]>([]);
+const measurementHighlightFaceIds = ref<string[]>([]);
+const selectedPatternEvidence = ref<Api.Cad.PatternEvidence | null>(null);
 const faceTopology = ref<Api.Cad.FaceTopology | null>(null);
 const edgeTopology = ref<Api.Cad.EdgeTopology | null>(null);
 const pollTimer = ref<number | null>(null);
@@ -48,6 +58,10 @@ const geometryPage = ref(1);
 const geometryPageSize = ref(20);
 const geometryRows = ref<Api.Cad.Entity[]>([]);
 const geometryTotal = ref(0);
+const measurementRows = ref<Api.Cad.Measurement[]>([]);
+const measurementTotal = ref(0);
+const featureRows = ref<Api.Cad.FeatureCandidate[]>([]);
+const featureTotal = ref(0);
 
 const isLeftCollapsed = ref(false);
 const isRightCollapsed = ref(false);
@@ -70,7 +84,15 @@ const vertexCount = computed(() => selectedModel.value?.vertex_count ?? 0);
 const selectedGeometryTitle = computed(() => {
   if (activeGeometryTab.value === 'face') return '面 Face';
   if (activeGeometryTab.value === 'edge') return '边 Edge';
+  if (activeGeometryTab.value === 'measurement') return '尺寸';
+  if (activeGeometryTab.value === 'feature') return '特征';
   return '顶点 Vertex';
+});
+
+const activeListTotal = computed(() => {
+  if (activeGeometryTab.value === 'measurement') return measurementTotal.value;
+  if (activeGeometryTab.value === 'feature') return featureTotal.value;
+  return geometryTotal.value;
 });
 
 const geometryTypeOptions = computed(() => {
@@ -147,6 +169,14 @@ async function loadViewerMeshes(revisionId = selectedRevisionId.value) {
 
 async function loadGeometryObjects() {
   if (!selectedRevisionId.value) return;
+  if (activeGeometryTab.value === 'measurement') {
+    await loadMeasurements();
+    return;
+  }
+  if (activeGeometryTab.value === 'feature') {
+    await loadFeatures();
+    return;
+  }
   loadingEntities.value = true;
   try {
     const result = await fetchCadEntities(selectedRevisionId.value, {
@@ -168,6 +198,42 @@ async function loadGeometryObjects() {
   }
 }
 
+async function loadMeasurements() {
+  if (!selectedRevisionId.value) return;
+  loadingMeasurements.value = true;
+  try {
+    const result = await fetchCadMeasurements(selectedRevisionId.value, {
+      measurement_type: geometryKeyword.value || undefined,
+      confidence_min: geometryTypeFilter.value ? Number(geometryTypeFilter.value) : undefined,
+      page: geometryPage.value,
+      page_size: geometryPageSize.value
+    });
+    if (result.error || !result.data) return;
+    measurementRows.value = result.data.items;
+    measurementTotal.value = result.data.total;
+  } finally {
+    loadingMeasurements.value = false;
+  }
+}
+
+async function loadFeatures() {
+  if (!selectedRevisionId.value) return;
+  loadingFeatures.value = true;
+  try {
+    const result = await fetchCadFeatures(selectedRevisionId.value, {
+      feature_type: geometryKeyword.value || undefined,
+      confidence_min: geometryTypeFilter.value ? Number(geometryTypeFilter.value) : undefined,
+      page: geometryPage.value,
+      page_size: geometryPageSize.value
+    });
+    if (result.error || !result.data) return;
+    featureRows.value = result.data.items;
+    featureTotal.value = result.data.total;
+  } finally {
+    loadingFeatures.value = false;
+  }
+}
+
 function startPolling() {
   stopPolling();
   pollTimer.value = window.setInterval(() => {
@@ -178,9 +244,13 @@ function startPolling() {
 function resetSelection() {
   selectedNode.value = null;
   selectedEntity.value = null;
+  selectedMeasurement.value = null;
+  selectedFeature.value = null;
   selectedFaceId.value = '';
   selectedSolidId.value = '';
   solidFaceIds.value = [];
+  measurementHighlightFaceIds.value = [];
+  selectedPatternEvidence.value = null;
   faceTopology.value = null;
   edgeTopology.value = null;
 }
@@ -194,6 +264,10 @@ async function selectModel(model: Api.Cad.ModelSummary) {
   viewerMeshes.value = [];
   geometryRows.value = [];
   geometryTotal.value = 0;
+  measurementRows.value = [];
+  measurementTotal.value = 0;
+  featureRows.value = [];
+  featureTotal.value = 0;
   geometryPage.value = 1;
   geometryKeyword.value = '';
   geometryTypeFilter.value = '';
@@ -232,6 +306,10 @@ async function handleUpload(options: UploadRequestOptions) {
     viewerMeshes.value = [];
     geometryRows.value = [];
     geometryTotal.value = 0;
+    measurementRows.value = [];
+    measurementTotal.value = 0;
+    featureRows.value = [];
+    featureTotal.value = 0;
     resetSelection();
     await loadModels();
     startPolling();
@@ -252,7 +330,11 @@ function beforeUpload(file: File) {
 async function handleTreeClick(node: Api.Cad.TreeNode) {
   selectedNode.value = node;
   selectedEntity.value = null;
+  selectedMeasurement.value = null;
+  selectedFeature.value = null;
   selectedFaceId.value = '';
+  measurementHighlightFaceIds.value = [];
+  selectedPatternEvidence.value = null;
   faceTopology.value = null;
   edgeTopology.value = null;
   solidFaceIds.value = [];
@@ -277,10 +359,14 @@ async function handleTreeClick(node: Api.Cad.TreeNode) {
 
 async function selectEntity(entity: Api.Cad.Entity) {
   selectedEntity.value = entity;
+  selectedMeasurement.value = null;
+  selectedFeature.value = null;
   selectedNode.value = null;
   faceTopology.value = null;
   edgeTopology.value = null;
   solidFaceIds.value = [];
+  measurementHighlightFaceIds.value = [];
+  selectedPatternEvidence.value = null;
   selectedFaceId.value = entity.entity_type === 'face' ? entity.id : '';
   cacheEntities([entity]);
 
@@ -302,6 +388,26 @@ async function selectEntity(entity: Api.Cad.Entity) {
   scrollSelectedIntoView();
 }
 
+async function selectMeasurement(measurement: Api.Cad.Measurement) {
+  selectedMeasurement.value = measurement;
+  selectedFeature.value = null;
+  selectedEntity.value = null;
+  selectedNode.value = null;
+  selectedFaceId.value = '';
+  selectedPatternEvidence.value = null;
+  measurementHighlightFaceIds.value = await resolveSourceFaceIds(measurement.source_entity_ids);
+}
+
+async function selectFeature(feature: Api.Cad.FeatureCandidate) {
+  selectedFeature.value = feature;
+  selectedMeasurement.value = null;
+  selectedEntity.value = null;
+  selectedNode.value = null;
+  selectedFaceId.value = '';
+  measurementHighlightFaceIds.value = await resolveSourceFaceIds(feature.source_entity_ids);
+  selectedPatternEvidence.value = feature.feature_type === 'circular_pattern' ? patternEvidence(feature) : null;
+}
+
 async function handleViewerFaceClick(entityId: string) {
   let entity = entityCache.value.get(entityId);
   if (!entity && selectedRevisionId.value) {
@@ -317,6 +423,54 @@ async function handleViewerFaceClick(entityId: string) {
     await loadGeometryObjects();
   }
   await selectEntity(entity);
+}
+
+async function resolveSourceFaceIds(sourceEntityIds: string[]) {
+  const faceIds = new Set<string>();
+  const entities = await Promise.all(
+    sourceEntityIds.map(async sourceId => {
+      const cached = entityCache.value.get(sourceId);
+      if (cached || !selectedRevisionId.value) return cached ?? null;
+      const result = await fetchCadEntity(selectedRevisionId.value, sourceId);
+      if (!result.error && result.data) {
+        cacheEntities([result.data]);
+        return result.data;
+      }
+      return null;
+    })
+  );
+  entities
+    .filter((entity): entity is Api.Cad.Entity => Boolean(entity))
+    .forEach(entity => {
+      if (entity.entity_type === 'face') {
+        faceIds.add(entity.id);
+      }
+    });
+  const edgeEntities = entities.filter(
+    (entity): entity is Api.Cad.Entity => entity !== null && entity.entity_type === 'edge'
+  );
+  const revisionId = selectedRevisionId.value;
+  if (revisionId) {
+    const topologyResults = await Promise.all(edgeEntities.map(entity => fetchCadEdgeTopology(revisionId, entity.id)));
+    topologyResults.forEach(result => {
+      if (!result.error && result.data?.faces?.length) {
+        result.data.faces.forEach(face => faceIds.add(face.id));
+        cacheEntities(result.data.faces);
+      }
+    });
+  }
+  return Array.from(faceIds);
+}
+
+async function recomputeMeasurements() {
+  if (!selectedRevisionId.value) return;
+  recomputingMeasurements.value = true;
+  try {
+    const result = await recomputeCadMeasurements(selectedRevisionId.value);
+    if (!result.error) await Promise.all([loadMeasurements(), loadFeatures()]);
+  } finally {
+    recomputingMeasurements.value = false;
+  }
 }
 
 function applyGeometrySearch() {
@@ -362,6 +516,27 @@ function formatValue(value: unknown): string {
       .map(([key, item]) => `${key} ${formatValue(item)}`)
       .join(' · ');
   return String(value);
+}
+
+function normalizedValueText(measurement: Api.Cad.Measurement) {
+  return formatValue(measurement.normalized_value);
+}
+
+function confidenceText(value: number | null | undefined) {
+  if (value === null || value === undefined) return EMPTY_TEXT;
+  return `${formatNumber(value * 100)}%`;
+}
+
+function patternEvidence(feature: Api.Cad.FeatureCandidate): Api.Cad.PatternEvidence | null {
+  const center = feature.parameters.center ?? feature.center;
+  const axis = feature.parameters.axis ?? feature.axis;
+  const pitch = feature.parameters.pitch_circle_diameter;
+  if (!Array.isArray(center) || !Array.isArray(axis) || typeof pitch !== 'number') return null;
+  return {
+    center: center.map(item => Number(item)),
+    axis: axis.map(item => Number(item)),
+    pitch_circle_diameter: pitch
+  };
 }
 
 function formatPoint(value: unknown) {
@@ -535,13 +710,15 @@ onBeforeUnmount(() => {
         <section class="panel-section geometry-section">
           <div class="panel-title geometry-title">
             <span>几何对象</span>
-            <span class="geometry-total">{{ geometryTotal }}</span>
+            <span class="geometry-total">{{ activeListTotal }}</span>
           </div>
 
           <ElTabs v-model="activeGeometryTab" class="compact-tabs">
             <ElTabPane label="面 Face" name="face" />
             <ElTabPane label="边 Edge" name="edge" />
             <ElTabPane label="顶点 Vertex" name="vertex" />
+            <ElTabPane label="尺寸" name="measurement" />
+            <ElTabPane label="特征" name="feature" />
           </ElTabs>
 
           <div class="geometry-tools">
@@ -573,22 +750,76 @@ onBeforeUnmount(() => {
             <ElButton size="small" text @click="clearGeometryFilter">清空</ElButton>
           </div>
 
-          <div ref="geometryListRef" v-loading="loadingEntities" class="geometry-list">
+          <div v-if="activeGeometryTab === 'measurement'" class="measurement-action-row">
+            <ElButton size="small" :loading="recomputingMeasurements" @click="recomputeMeasurements">重新计算</ElButton>
+          </div>
+
+          <div
+            ref="geometryListRef"
+            v-loading="loadingEntities || loadingMeasurements || loadingFeatures"
+            class="geometry-list"
+          >
             <ElEmpty
-              v-if="!geometryRows.length && !loadingEntities"
+              v-if="
+                activeGeometryTab !== 'measurement' &&
+                activeGeometryTab !== 'feature' &&
+                !geometryRows.length &&
+                !loadingEntities
+              "
               :description="`${selectedGeometryTitle} 暂无数据`"
             />
+            <template v-if="activeGeometryTab !== 'measurement' && activeGeometryTab !== 'feature'">
+              <button
+                v-for="entity in geometryRows"
+                :key="entity.id"
+                class="geometry-item"
+                :class="{ selected: selectedEntity?.id === entity.id }"
+                :data-entity-id="entity.id"
+                type="button"
+                @click="selectEntity(entity)"
+              >
+                <span class="geometry-item-title">{{ displayName(entity) }}</span>
+                <span class="geometry-item-summary">{{ compactGeometrySummary(entity) }}</span>
+              </button>
+            </template>
+
+            <ElEmpty
+              v-if="activeGeometryTab === 'measurement' && !measurementRows.length && !loadingMeasurements"
+              description="暂无尺寸候选"
+              :image-size="42"
+            />
             <button
-              v-for="entity in geometryRows"
-              :key="entity.id"
+              v-for="measurement in activeGeometryTab === 'measurement' ? measurementRows : []"
+              :key="measurement.id"
               class="geometry-item"
-              :class="{ selected: selectedEntity?.id === entity.id }"
-              :data-entity-id="entity.id"
+              :class="{ selected: selectedMeasurement?.id === measurement.id }"
               type="button"
-              @click="selectEntity(entity)"
+              @click="selectMeasurement(measurement)"
             >
-              <span class="geometry-item-title">{{ displayName(entity) }}</span>
-              <span class="geometry-item-summary">{{ compactGeometrySummary(entity) }}</span>
+              <span class="geometry-item-title">{{ measurement.measurement_type }}</span>
+              <span class="geometry-item-summary">
+                {{ normalizedValueText(measurement) }} {{ measurement.unit ?? '' }} ·
+                {{ confidenceText(measurement.confidence) }} · {{ measurement.algorithm_version }}
+              </span>
+            </button>
+
+            <ElEmpty
+              v-if="activeGeometryTab === 'feature' && !featureRows.length && !loadingFeatures"
+              description="暂无特征候选"
+              :image-size="42"
+            />
+            <button
+              v-for="feature in activeGeometryTab === 'feature' ? featureRows : []"
+              :key="feature.id"
+              class="geometry-item"
+              :class="{ selected: selectedFeature?.id === feature.id }"
+              type="button"
+              @click="selectFeature(feature)"
+            >
+              <span class="geometry-item-title">{{ feature.feature_type }}</span>
+              <span class="geometry-item-summary">
+                {{ confidenceText(feature.confidence) }} · {{ feature.algorithm }} · {{ feature.algorithm_version }}
+              </span>
             </button>
           </div>
 
@@ -598,7 +829,7 @@ onBeforeUnmount(() => {
               v-model:page-size="geometryPageSize"
               small
               :pager-count="5"
-              :total="geometryTotal"
+              :total="activeListTotal"
               :page-sizes="[20, 50, 100]"
               layout="prev, pager, next"
             />
@@ -614,7 +845,8 @@ onBeforeUnmount(() => {
         <CadViewer
           :meshes="viewerMeshes"
           :selected-face-id="selectedFaceId"
-          :highlight-face-ids="solidFaceIds"
+          :highlight-face-ids="[...solidFaceIds, ...measurementHighlightFaceIds]"
+          :pattern-evidence="selectedPatternEvidence"
           @face-click="handleViewerFaceClick"
         />
       </main>
@@ -734,6 +966,84 @@ onBeforeUnmount(() => {
             </template>
 
             <div v-else class="empty-inline">{{ EMPTY_TEXT }}</div>
+          </section>
+        </template>
+
+        <template v-else-if="selectedMeasurement">
+          <section class="property-group">
+            <div class="property-title">测量详情</div>
+            <dl class="property-grid">
+              <dt>类型</dt>
+              <dd>{{ selectedMeasurement.measurement_type }}</dd>
+              <dt>归一化值</dt>
+              <dd>{{ normalizedValueText(selectedMeasurement) }}</dd>
+              <dt>单位</dt>
+              <dd>{{ empty(selectedMeasurement.unit) }}</dd>
+              <dt>置信度</dt>
+              <dd>{{ confidenceText(selectedMeasurement.confidence) }}</dd>
+              <dt>算法</dt>
+              <dd>{{ selectedMeasurement.algorithm_version }}</dd>
+              <dt>method</dt>
+              <dd>{{ selectedMeasurement.method }}</dd>
+              <dt>source</dt>
+              <dd>{{ selectedMeasurement.source_entity_ids.join(', ') }}</dd>
+            </dl>
+          </section>
+
+          <section class="property-group">
+            <div class="property-title">原始/归一化</div>
+            <dl class="property-grid">
+              <dt>raw_value</dt>
+              <dd>{{ formatValue(selectedMeasurement.raw_value) }}</dd>
+              <dt>normalized</dt>
+              <dd>{{ formatValue(selectedMeasurement.normalized_value) }}</dd>
+            </dl>
+          </section>
+        </template>
+
+        <template v-else-if="selectedFeature">
+          <section class="property-group">
+            <div class="property-title">特征详情</div>
+            <dl class="property-grid">
+              <dt>类型</dt>
+              <dd>{{ selectedFeature.feature_type }}</dd>
+              <dt>置信度</dt>
+              <dd>{{ confidenceText(selectedFeature.confidence) }}</dd>
+              <dt>算法</dt>
+              <dd>{{ selectedFeature.algorithm }}</dd>
+              <dt>版本</dt>
+              <dd>{{ selectedFeature.algorithm_version }}</dd>
+              <dt>状态</dt>
+              <dd>{{ selectedFeature.status }}</dd>
+              <dt>source</dt>
+              <dd>{{ selectedFeature.source_entity_ids.join(', ') }}</dd>
+            </dl>
+          </section>
+
+          <section v-if="selectedFeature.feature_type === 'circular_pattern'" class="property-group">
+            <div class="property-title">圆周阵列</div>
+            <dl class="property-grid">
+              <dt>count</dt>
+              <dd>{{ formatValue(selectedFeature.parameters.count) }}</dd>
+              <dt>孔径</dt>
+              <dd>{{ formatValue(selectedFeature.parameters.member_diameter) }}</dd>
+              <dt>PCD</dt>
+              <dd>{{ formatValue(selectedFeature.parameters.pitch_circle_diameter) }}</dd>
+              <dt>角间隔</dt>
+              <dd>{{ formatValue(selectedFeature.parameters.angular_spacing) }}</dd>
+              <dt>fit_residual</dt>
+              <dd>{{ formatValue(selectedFeature.parameters.fit_residual) }}</dd>
+            </dl>
+          </section>
+
+          <section class="property-group">
+            <div class="property-title">参数</div>
+            <dl class="property-grid">
+              <template v-for="[key, value] in Object.entries(selectedFeature.parameters)" :key="key">
+                <dt>{{ key }}</dt>
+                <dd>{{ formatValue(value) }}</dd>
+              </template>
+            </dl>
           </section>
         </template>
 
@@ -951,6 +1261,13 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(110px, 1fr) 92px 32px 42px;
   gap: 6px;
   margin-bottom: 8px;
+}
+
+.measurement-action-row {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin: -2px 0 8px;
 }
 
 .geometry-list {
