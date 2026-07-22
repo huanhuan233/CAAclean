@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "component-spec.schema.json",
+  "title": "ComponentSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "template_mode", "component_type", "parameters", "metadata"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "component_spec_v1"
+    },
+    "template_mode": {
+      "type": "string",
+      "enum": ["skeleton", "field-template"]
+    },
+    "profile_id": {
+      "type": ["string", "null"]
+    },
+    "profile_version": {
+      "type": ["string", "null"]
+    },
+    "component_type": {
+      "type": "string"
+    },
+    "subtype": {
+      "type": ["string", "null"]
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "needs_review", "metadata"],
+        "properties": {
+          "name": { "type": "string" },
+          "symbol": { "type": ["string", "null"] },
+          "raw_value": {},
+          "normalized_value": {},
+          "unit": { "type": ["string", "null"] },
+          "operator": {
+            "type": "string",
+            "enum": ["eq", "gte", "lte", "approx", "between", "categorical", "unknown"]
+          },
+          "source_fact_key": { "type": ["string", "null"] },
+          "source_region_id": { "type": ["string", "null"] },
+          "source_bbox_original": {
+            "type": ["array", "null"],
+            "items": { "type": "number" }
+          },
+          "source_bbox_precision": {
+            "type": ["string", "null"],
+            "enum": ["cell", "row", "region", null]
+          },
+          "confidence": { "type": ["number", "null"] },
+          "needs_review": { "type": "boolean" },
+          "metadata": { "type": "object" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

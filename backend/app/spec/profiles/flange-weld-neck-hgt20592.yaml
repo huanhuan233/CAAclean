@@ -1,0 +1,50 @@
+profile_id: flange-weld-neck-hgt20592
+version: "1.0.0"
+component_type: flange
+subtype: weld_neck
+match_rules:
+  standard_number:
+    any: ["HG/T 20592-2009", "HGT20592"]
+  component_type_raw:
+    any: ["带颈对焊", "WN", "weld neck"]
+field_mappings:
+  D:
+    target_field: flange_outer_diameter
+    confidence: 0.95
+  K:
+    target_field: bolt_circle_diameter
+    confidence: 0.95
+  n:
+    target_field: bolt_hole_count
+    confidence: 0.95
+  L:
+    target_field: bolt_hole_diameter
+    confidence: 0.95
+  C:
+    target_field: flange_thickness
+    confidence: 0.95
+  H:
+    target_field: overall_height
+    confidence: 0.95
+  R:
+    target_field: root_fillet_radius
+    confidence: 0.9
+  f1:
+    target_field: raised_face_height
+    confidence: 0.9
+  A1:
+    target_field: pipe_outer_diameter
+    confidence: 0.9
+  N:
+    target_field: hub_small_end_diameter
+    confidence: 0.9
+  d:
+    target_field: flange_bore_diameter
+    confidence: 0.75
+    needs_review: true
+    require_semantic_confirmation: true
+ambiguity_candidates:
+  H1:
+    - target_field: neck_step_height_candidate
+      reason: H1 appears as a drawing/table symbol but this profile keeps it ambiguous until a human confirms the semantic role.
+      needs_review: true

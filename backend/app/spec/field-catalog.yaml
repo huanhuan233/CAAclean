@@ -1,0 +1,69 @@
+schema_version: field_catalog_v1
+fields:
+  - name: flange_outer_diameter
+    semantic: Flange outside diameter as defined by the selected component profile.
+    aliases: [D, outside_diameter]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: bolt_circle_diameter
+    semantic: Diameter of the bolt center circle in a flange drawing.
+    aliases: [K, pitch_circle_diameter]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: bolt_hole_count
+    semantic: Count of bolt holes in the selected target row.
+    aliases: [n]
+    unit:
+    source: drawing
+    applicable_types: [flange]
+  - name: bolt_hole_diameter
+    semantic: Bolt hole diameter in the selected profile.
+    aliases: [L]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: flange_thickness
+    semantic: Flange thickness from drawing table.
+    aliases: [C]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: overall_height
+    semantic: Overall component height from drawing table.
+    aliases: [H]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: root_fillet_radius
+    semantic: Root fillet radius from drawing table.
+    aliases: [R]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: raised_face_height
+    semantic: Raised face height from drawing table.
+    aliases: [f1]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: pipe_outer_diameter
+    semantic: Pipe outside diameter from drawing table.
+    aliases: [A1]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: hub_small_end_diameter
+    semantic: Hub small end diameter from drawing table.
+    aliases: [N]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+  - name: flange_bore_diameter
+    semantic: Profile-defined bore diameter candidate; requires drawing semantic confirmation.
+    aliases: [d]
+    unit: mm
+    source: drawing
+    applicable_types: [flange]
+    needs_review_default: true

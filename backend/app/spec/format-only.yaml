@@ -1,0 +1,7 @@
+schema_version: component_spec_format_v1
+component:
+  type:
+  subtype:
+  profile_id:
+parameters: []
+metadata: {}

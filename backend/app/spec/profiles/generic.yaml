@@ -1,0 +1,8 @@
+profile_id: generic
+version: "1.0.0"
+component_type: unknown
+subtype:
+match_rules:
+  fallback: true
+field_mappings: {}
+ambiguity_candidates: {}
