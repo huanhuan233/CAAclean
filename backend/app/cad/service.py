@@ -5,25 +5,47 @@ import hashlib
 import re
 import shutil
 from pathlib import Path
+from typing import Callable
 from uuid import UUID
 
 import aiofiles
 from fastapi import UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cad.parser_runner import FreeCadParserError, run_freecad_parser
 from app.cad.repository import CadRepository
 from app.cad.result_validator import validate_parser_result
 from app.core.config import Settings
+from app.db.session import SessionLocal
 
 
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 STRUCTURE_ENTITY_TYPES = {"root", "assembly", "part", "imported_object", "body", "solid"}
+_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
+
+
+def _semaphore_for(limit: int) -> asyncio.Semaphore:
+    safe_limit = max(1, int(limit))
+    if safe_limit not in _SEMAPHORES:
+        _SEMAPHORES[safe_limit] = asyncio.Semaphore(safe_limit)
+    return _SEMAPHORES[safe_limit]
 
 
 class CadService:
-    def __init__(self, repository: CadRepository, settings: Settings):
+    def __init__(
+        self,
+        repository: CadRepository,
+        settings: Settings,
+        *,
+        session_factory: Callable[[], object] = SessionLocal,
+        repository_factory: Callable[[AsyncSession], CadRepository] = CadRepository,
+        concurrency_limiter: asyncio.Semaphore | None = None,
+    ):
         self.repository = repository
         self.settings = settings
+        self.session_factory = session_factory
+        self.repository_factory = repository_factory
+        self.concurrency_limiter = concurrency_limiter or _semaphore_for(settings.cad_max_concurrency)
 
     async def create_model_from_upload(self, file: UploadFile, name: str | None) -> dict:
         filename = Path(file.filename or "").name
@@ -58,10 +80,23 @@ class CadService:
         async with aiofiles.open(source_path, "wb") as out:
             await out.write(content)
         revision.source_file_path = str(source_path)
-        await self.repository.session.commit()
+        commit = getattr(self.repository.session, "commit", None)
+        if commit:
+            await commit()
 
-        asyncio.create_task(self.parse_revision(revision.id))
+        asyncio.create_task(self.parse_revision_in_background(revision.id))
         return {"model_id": model.id, "revision_id": revision.id, "status": revision.status}
+
+    async def parse_revision_in_background(self, revision_id: UUID) -> None:
+        async with self.session_factory() as session:
+            service = CadService(
+                self.repository_factory(session),
+                self.settings,
+                session_factory=self.session_factory,
+                repository_factory=self.repository_factory,
+                concurrency_limiter=self.concurrency_limiter,
+            )
+            await service.parse_revision(revision_id)
 
     async def parse_revision(self, revision_id: UUID) -> None:
         revision = await self.repository.get_revision(revision_id)
@@ -74,12 +109,13 @@ class CadService:
             status_message="running_freecad",
         )
         try:
-            result_data = await run_freecad_parser(
-                Path(revision.source_file_path),
-                revision_id,
-                Path(self.settings.cad_work_dir) / str(revision_id),
-                self.settings,
-            )
+            async with self.concurrency_limiter:
+                result_data = await run_freecad_parser(
+                    Path(revision.source_file_path),
+                    revision_id,
+                    Path(self.settings.cad_work_dir) / str(revision_id),
+                    self.settings,
+                )
             result = validate_parser_result(result_data)
             await self.repository.persist_parser_result(revision_id, result)
         except (FreeCadParserError, ValueError) as exc:
@@ -281,3 +317,17 @@ class CadService:
             raise ValueError("unsafe CAD work directory")
         if revision_dir.exists():
             shutil.rmtree(revision_dir)
+
+
+async def recover_interrupted_revisions(
+    settings: Settings,
+    *,
+    session_factory: Callable[[], object] = SessionLocal,
+    repository_factory: Callable[[AsyncSession], CadRepository] = CadRepository,
+) -> int:
+    async with session_factory() as session:
+        repository = repository_factory(session)
+        return await repository.fail_interrupted_revisions(
+            settings.cad_stale_job_minutes,
+            "interrupted_by_service_restart",
+        )

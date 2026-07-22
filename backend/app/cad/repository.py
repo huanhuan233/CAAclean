@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadRelation
@@ -82,92 +82,133 @@ class CadRepository:
         await self.session.commit()
 
     async def persist_parser_result(self, revision_id: uuid.UUID, result: Any) -> None:
+        try:
+            async with self.session.begin():
+                revision = await self.get_revision(revision_id)
+                if revision is None:
+                    raise ValueError(f"revision not found: {revision_id}")
+
+                await self.session.execute(delete(CadMesh).where(CadMesh.revision_id == revision_id))
+                await self.session.execute(delete(CadRelation).where(CadRelation.revision_id == revision_id))
+                await self.session.execute(delete(CadEntity).where(CadEntity.revision_id == revision_id))
+
+                self.session.add_all(
+                    [
+                        CadEntity(
+                            id=entity.id,
+                            revision_id=entity.revision_id,
+                            parent_entity_id=entity.parent_entity_id,
+                            entity_type=entity.entity_type,
+                            source_ref=entity.source_ref,
+                            source_index=entity.source_index,
+                            name=entity.name,
+                            label=entity.label,
+                            tree_path=entity.tree_path,
+                            sort_order=entity.sort_order,
+                            geometry_type=entity.geometry_type,
+                            area=entity.area,
+                            volume=entity.volume,
+                            length=entity.length,
+                            center=entity.center,
+                            bounding_box=entity.bounding_box,
+                            placement=entity.placement,
+                            geometry=entity.geometry,
+                            metadata_json=entity.metadata,
+                            fingerprint=entity.fingerprint,
+                        )
+                        for entity in result.entities
+                    ]
+                )
+                await self.session.flush()
+                self.session.add_all(
+                    [
+                        CadRelation(
+                            id=relation.id,
+                            revision_id=relation.revision_id,
+                            source_entity_id=relation.source_entity_id,
+                            target_entity_id=relation.target_entity_id,
+                            relation_type=relation.relation_type,
+                            metadata_json=relation.metadata,
+                        )
+                        for relation in result.relations
+                    ]
+                )
+                self.session.add_all(
+                    [
+                        CadMesh(
+                            id=mesh.id,
+                            revision_id=mesh.revision_id,
+                            entity_id=mesh.entity_id,
+                            mesh_type=mesh.mesh_type,
+                            positions=mesh.positions,
+                            indices=mesh.indices,
+                            normals=mesh.normals,
+                            color=mesh.color,
+                            linear_deflection=mesh.linear_deflection,
+                            angular_deflection=mesh.angular_deflection,
+                            vertex_count=mesh.vertex_count,
+                            triangle_count=mesh.triangle_count,
+                        )
+                        for mesh in result.meshes
+                    ]
+                )
+                summary = result.summary
+                revision.status = "completed"
+                revision.progress = 100
+                revision.status_message = "completed"
+                revision.error_code = None
+                revision.error_message = None
+                revision.parser_name = result.parser_name
+                revision.parser_version = result.parser_version
+                revision.schema_version = result.schema_version
+                revision.unit = result.unit
+                revision.object_count = int(summary.get("object_count", 0))
+                revision.solid_count = int(summary.get("solid_count", 0))
+                revision.face_count = int(summary.get("face_count", 0))
+                revision.edge_count = int(summary.get("edge_count", 0))
+                revision.vertex_count = int(summary.get("vertex_count", 0))
+                revision.bounding_box = result.bounding_box
+                revision.summary = summary
+                revision.parse_manifest = result.parse_manifest
+                revision.finished_at = now_utc()
+        except Exception as exc:
+            await self._mark_revision_failed_after_persist_error(revision_id, exc)
+            raise
+
+    async def _mark_revision_failed_after_persist_error(self, revision_id: uuid.UUID, exc: Exception) -> None:
+        rollback = getattr(self.session, "rollback", None)
+        if rollback:
+            await rollback()
         revision = await self.get_revision(revision_id)
         if revision is None:
-            raise ValueError(f"revision not found: {revision_id}")
-
-        await self.session.execute(delete(CadMesh).where(CadMesh.revision_id == revision_id))
-        await self.session.execute(delete(CadRelation).where(CadRelation.revision_id == revision_id))
-        await self.session.execute(delete(CadEntity).where(CadEntity.revision_id == revision_id))
-
-        self.session.add_all(
-            [
-                CadEntity(
-                    id=entity.id,
-                    revision_id=entity.revision_id,
-                    parent_entity_id=entity.parent_entity_id,
-                    entity_type=entity.entity_type,
-                    source_ref=entity.source_ref,
-                    source_index=entity.source_index,
-                    name=entity.name,
-                    label=entity.label,
-                    tree_path=entity.tree_path,
-                    sort_order=entity.sort_order,
-                    geometry_type=entity.geometry_type,
-                    area=entity.area,
-                    volume=entity.volume,
-                    length=entity.length,
-                    center=entity.center,
-                    bounding_box=entity.bounding_box,
-                    placement=entity.placement,
-                    geometry=entity.geometry,
-                    metadata_json=entity.metadata,
-                    fingerprint=entity.fingerprint,
-                )
-                for entity in result.entities
-            ]
-        )
-        await self.session.flush()
-        self.session.add_all(
-            [
-                CadRelation(
-                    id=relation.id,
-                    revision_id=relation.revision_id,
-                    source_entity_id=relation.source_entity_id,
-                    target_entity_id=relation.target_entity_id,
-                    relation_type=relation.relation_type,
-                    metadata_json=relation.metadata,
-                )
-                for relation in result.relations
-            ]
-        )
-        self.session.add_all(
-            [
-                CadMesh(
-                    id=mesh.id,
-                    revision_id=mesh.revision_id,
-                    entity_id=mesh.entity_id,
-                    mesh_type=mesh.mesh_type,
-                    positions=mesh.positions,
-                    indices=mesh.indices,
-                    normals=mesh.normals,
-                    color=mesh.color,
-                    linear_deflection=mesh.linear_deflection,
-                    angular_deflection=mesh.angular_deflection,
-                    vertex_count=mesh.vertex_count,
-                    triangle_count=mesh.triangle_count,
-                )
-                for mesh in result.meshes
-            ]
-        )
-        summary = result.summary
-        revision.status = "completed"
+            return
+        revision.status = "failed"
         revision.progress = 100
-        revision.status_message = "completed"
-        revision.parser_name = result.parser_name
-        revision.parser_version = result.parser_version
-        revision.schema_version = result.schema_version
-        revision.unit = result.unit
-        revision.object_count = int(summary.get("object_count", 0))
-        revision.solid_count = int(summary.get("solid_count", 0))
-        revision.face_count = int(summary.get("face_count", 0))
-        revision.edge_count = int(summary.get("edge_count", 0))
-        revision.vertex_count = int(summary.get("vertex_count", 0))
-        revision.bounding_box = result.bounding_box
-        revision.summary = summary
-        revision.parse_manifest = result.parse_manifest
+        revision.status_message = "failed"
+        revision.error_code = "persist_failed"
+        revision.error_message = str(exc)[:1000]
         revision.finished_at = now_utc()
         await self.session.commit()
+
+    async def fail_interrupted_revisions(self, stale_job_minutes: int, error_code: str) -> int:
+        cutoff = now_utc() - timedelta(minutes=stale_job_minutes)
+        result = await self.session.execute(
+            update(CadModelRevision)
+            .where(
+                CadModelRevision.status.in_(("queued", "processing")),
+                CadModelRevision.updated_at <= cutoff,
+            )
+            .values(
+                status="failed",
+                progress=100,
+                status_message="failed",
+                error_code=error_code,
+                error_message="CAD parse job was interrupted by service restart.",
+                finished_at=now_utc(),
+            )
+        )
+        await self.session.commit()
+        return int(result.rowcount or 0)
 
     async def list_models(self, page: int, page_size: int) -> tuple[list[CadModel], int]:
         total = await self.session.scalar(select(func.count()).select_from(CadModel))

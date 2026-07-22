@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.cad.router import router as cad_router
+from app.cad.service import recover_interrupted_revisions
 from app.core.config import get_settings
 from app.db.session import init_db
 from app.health.router import router as health_router
@@ -18,6 +19,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     if app.state.init_database_on_startup:
         await init_db()
+    await recover_interrupted_revisions(settings)
     yield
 
 

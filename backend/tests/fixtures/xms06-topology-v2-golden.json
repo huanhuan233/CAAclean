@@ -1,0 +1,11 @@
+{
+  "sample": "XMS06-DN80.stp",
+  "schema_version": "cad_parse_v2",
+  "face_count": 38,
+  "edge_count": 80,
+  "vertex_count": 46,
+  "face_mesh_count": 38,
+  "entity_count": 167,
+  "relation_count": 372,
+  "mesh_count": 38
+}

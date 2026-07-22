@@ -15,7 +15,7 @@ except ImportError as exc:
     raise SystemExit(f"FreeCAD modules are not available: {exc}")
 
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "cad_parse_v2"
 NAMESPACE = uuid.UUID("8c5fe5cc-91cb-4f13-8d1c-2a6e3ef93349")
 
 
@@ -36,11 +36,39 @@ def bbox(shape) -> dict:
     }
 
 
+def union_bbox(boxes: list[dict]) -> dict | None:
+    if not boxes:
+        return None
+    return {
+        "min": [min(box["min"][axis] for box in boxes) for axis in range(3)],
+        "max": [max(box["max"][axis] for box in boxes) for axis in range(3)],
+    }
+
+
 def center(shape):
     try:
         return vec(shape.CenterOfMass)
     except Exception:
         return None
+
+
+def attr_vec(value, *names):
+    for name in names:
+        candidate = getattr(value, name, None)
+        if candidate is not None:
+            return vec(candidate)
+    return None
+
+
+def attr_float(value, *names):
+    for name in names:
+        candidate = getattr(value, name, None)
+        if candidate is not None:
+            try:
+                return float(candidate)
+            except Exception:
+                return None
+    return None
 
 
 def face_geometry(face) -> tuple[str, dict]:
@@ -51,9 +79,30 @@ def face_geometry(face) -> tuple[str, dict]:
     if "cylinder" in name:
         return "cylinder", {"radius": float(surface.Radius), "axis": vec(surface.Axis), "center": vec(surface.Center)}
     if "cone" in name:
-        return "cone", {"radius1": float(getattr(surface, "Radius1", 0.0)), "radius2": float(getattr(surface, "Radius2", 0.0)), "axis": vec(surface.Axis)}
+        geometry = {
+            "axis": attr_vec(surface, "Axis"),
+            "apex": attr_vec(surface, "Apex"),
+            "center": attr_vec(surface, "Center"),
+            "semi_angle": attr_float(surface, "SemiAngle"),
+        }
+        radius1 = attr_float(surface, "Radius1")
+        radius2 = attr_float(surface, "Radius2")
+        if radius1 is not None:
+            geometry["radius1"] = radius1
+        if radius2 is not None:
+            geometry["radius2"] = radius2
+        return "cone", {key: value for key, value in geometry.items() if value is not None}
     if "sphere" in name:
         return "sphere", {"radius": float(surface.Radius), "center": vec(surface.Center)}
+    if "torus" in name:
+        return "torus", {
+            "center": vec(surface.Center),
+            "axis": vec(surface.Axis),
+            "major_radius": float(surface.MajorRadius),
+            "minor_radius": float(surface.MinorRadius),
+        }
+    if "bspline" in name or "b-spline" in name:
+        return "bspline_surface", {"surface_class": surface.__class__.__name__}
     return "other", {"surface_class": surface.__class__.__name__}
 
 
@@ -63,12 +112,54 @@ def edge_geometry(edge) -> tuple[str, dict]:
     if "line" in name:
         return "line", {}
     if "circle" in name:
-        return "circle", {"radius": float(curve.Radius), "center": vec(curve.Center)}
+        geometry = {"radius": float(curve.Radius), "center": vec(curve.Center), "axis": attr_vec(curve, "Axis")}
+        return "circle", {key: value for key, value in geometry.items() if value is not None}
     if "ellipse" in name:
         return "ellipse", {}
     if "bspline" in name:
         return "bspline_curve", {}
     return "other", {"curve_class": curve.__class__.__name__}
+
+
+def parser_version() -> str:
+    version = getattr(FreeCAD, "Version", lambda: ["unknown"])()
+    if isinstance(version, (list, tuple)):
+        return ".".join(str(part) for part in version[:3])
+    return str(version)
+
+
+class TopologyIndex:
+    def __init__(self, shapes):
+        self.items = list(shapes)
+        self.buckets: dict[int, list[tuple[int, object]]] = {}
+        for index, shape in enumerate(self.items):
+            self.buckets.setdefault(self._hash(shape), []).append((index, shape))
+
+    def _hash(self, shape) -> int:
+        try:
+            return int(shape.hashCode())
+        except Exception:
+            return id(shape)
+
+    def find(self, candidate):
+        for index, shape in self.buckets.get(self._hash(candidate), []):
+            try:
+                if candidate.isSame(shape):
+                    return index, shape
+            except Exception:
+                if candidate is shape:
+                    return index, shape
+        for index, shape in enumerate(self.items):
+            try:
+                if candidate.isSame(shape):
+                    return index, shape
+            except Exception:
+                if candidate is shape:
+                    return index, shape
+        self.items.append(candidate)
+        index = len(self.items) - 1
+        self.buckets.setdefault(self._hash(candidate), []).append((index, candidate))
+        return index, candidate
 
 
 def tessellate_face(face, deflection: float) -> tuple[list[list[float]], list[list[int]]]:
@@ -151,13 +242,15 @@ def parse(job: dict) -> dict:
 
         face_entities: list[tuple[str, object]] = []
         edge_entities: list[tuple[str, object]] = []
-        vertex_count = 0
+        vertex_entities: list[tuple[str, object]] = []
         solid_count = 0
+        object_boxes = []
 
         for object_index, obj in enumerate(doc.Objects):
             shape = getattr(obj, "Shape", None)
             if shape is None or shape.isNull():
                 continue
+            object_boxes.append(bbox(shape))
             object_id = stable_uuid(revision_id, "imported_object", object_index, obj.Name)
             object_path = f"/root/{object_index}"
             add_entity(
@@ -199,6 +292,77 @@ def parse(job: dict) -> dict:
                     bounding_box=bbox(solid),
                 )
                 relation(relations, revision_id, object_id, solid_id, "has_solid")
+
+                solid_edge_index = TopologyIndex(solid.Edges)
+                solid_vertex_index = TopologyIndex(solid.Vertexes)
+                edge_ids: dict[int, str] = {}
+                vertex_ids: dict[int, str] = {}
+
+                for edge_index, edge in enumerate(solid_edge_index.items):
+                    edge_ref = f"Edge{edge_index + 1}"
+                    curve_type, edge_geom = edge_geometry(edge)
+                    edge_id = stable_uuid(revision_id, "edge", solid_path, edge_ref)
+                    edge_ids[edge_index] = edge_id
+                    add_entity(
+                        entities,
+                        id=edge_id,
+                        revision_id=revision_id,
+                        parent_entity_id=solid_id,
+                        entity_type="edge",
+                        source_ref=edge_ref,
+                        source_index=edge_index,
+                        tree_path=f"{solid_path}/edge-{edge_index}",
+                        sort_order=edge_index,
+                        geometry_type=curve_type,
+                        length=float(getattr(edge, "Length", 0.0) or 0.0),
+                        center=center(edge),
+                        bounding_box=bbox(edge),
+                        geometry=edge_geom,
+                    )
+                    edge_entities.append((edge_id, edge))
+
+                for vertex_index, vertex in enumerate(solid_vertex_index.items):
+                    vertex_ref = f"Vertex{vertex_index + 1}"
+                    vertex_id = stable_uuid(revision_id, "vertex", solid_path, vertex_ref)
+                    vertex_ids[vertex_index] = vertex_id
+                    add_entity(
+                        entities,
+                        id=vertex_id,
+                        revision_id=revision_id,
+                        parent_entity_id=solid_id,
+                        entity_type="vertex",
+                        source_ref=vertex_ref,
+                        source_index=vertex_index,
+                        tree_path=f"{solid_path}/vertex-{vertex_index}",
+                        sort_order=vertex_index,
+                        center=vec(vertex.Point),
+                        geometry={"point": vec(vertex.Point)},
+                    )
+                    vertex_entities.append((vertex_id, vertex))
+
+                for edge_index, edge in enumerate(solid_edge_index.items):
+                    edge_id = edge_ids[edge_index]
+                    for vertex in edge.Vertexes:
+                        vertex_index, _ = solid_vertex_index.find(vertex)
+                        if vertex_index not in vertex_ids:
+                            vertex_ref = f"Vertex{vertex_index + 1}"
+                            vertex_id = stable_uuid(revision_id, "vertex", solid_path, vertex_ref)
+                            vertex_ids[vertex_index] = vertex_id
+                            add_entity(
+                                entities,
+                                id=vertex_id,
+                                revision_id=revision_id,
+                                parent_entity_id=solid_id,
+                                entity_type="vertex",
+                                source_ref=vertex_ref,
+                                source_index=vertex_index,
+                                tree_path=f"{solid_path}/vertex-{vertex_index}",
+                                sort_order=vertex_index,
+                                center=vec(vertex.Point),
+                                geometry={"point": vec(vertex.Point)},
+                            )
+                            vertex_entities.append((vertex_id, vertex))
+                        relation(relations, revision_id, edge_id, vertex_ids[vertex_index], "has_vertex")
 
                 for face_index, face in enumerate(solid.Faces):
                     face_ref = f"Face{face_index + 1}"
@@ -242,47 +406,31 @@ def parse(job: dict) -> dict:
                         }
                     )
 
-                    for edge_index, edge in enumerate(face.Edges):
-                        edge_ref = f"{face_ref}.Edge{edge_index + 1}"
-                        curve_type, edge_geom = edge_geometry(edge)
-                        edge_id = stable_uuid(revision_id, "edge", face_path, edge_ref, edge_index)
-                        edge_path = f"{face_path}/edge-{edge_index}"
-                        add_entity(
-                            entities,
-                            id=edge_id,
-                            revision_id=revision_id,
-                            parent_entity_id=face_id,
-                            entity_type="edge",
-                            source_ref=edge_ref,
-                            source_index=edge_index,
-                            tree_path=edge_path,
-                            sort_order=edge_index,
-                            geometry_type=curve_type,
-                            length=float(getattr(edge, "Length", 0.0) or 0.0),
-                            center=center(edge),
-                            bounding_box=bbox(edge),
-                            geometry=edge_geom,
-                        )
-                        edge_entities.append((edge_id, edge))
-                        relation(relations, revision_id, face_id, edge_id, "bounded_by_edge")
-
-                        for vertex_index, vertex in enumerate(edge.Vertexes):
-                            vertex_count += 1
-                            vertex_id = stable_uuid(revision_id, "vertex", edge_path, vertex_index)
+                    for edge in face.Edges:
+                        edge_index, _ = solid_edge_index.find(edge)
+                        if edge_index not in edge_ids:
+                            edge_ref = f"Edge{edge_index + 1}"
+                            curve_type, edge_geom = edge_geometry(edge)
+                            edge_id = stable_uuid(revision_id, "edge", solid_path, edge_ref)
+                            edge_ids[edge_index] = edge_id
                             add_entity(
                                 entities,
-                                id=vertex_id,
+                                id=edge_id,
                                 revision_id=revision_id,
-                                parent_entity_id=edge_id,
-                                entity_type="vertex",
-                                source_ref=f"{edge_ref}.Vertex{vertex_index + 1}",
-                                source_index=vertex_index,
-                                tree_path=f"{edge_path}/vertex-{vertex_index}",
-                                sort_order=vertex_index,
-                                center=vec(vertex.Point),
-                                geometry={"point": vec(vertex.Point)},
+                                parent_entity_id=solid_id,
+                                entity_type="edge",
+                                source_ref=edge_ref,
+                                source_index=edge_index,
+                                tree_path=f"{solid_path}/edge-{edge_index}",
+                                sort_order=edge_index,
+                                geometry_type=curve_type,
+                                length=float(getattr(edge, "Length", 0.0) or 0.0),
+                                center=center(edge),
+                                bounding_box=bbox(edge),
+                                geometry=edge_geom,
                             )
-                            relation(relations, revision_id, edge_id, vertex_id, "has_vertex")
+                            edge_entities.append((edge_id, edge))
+                        relation(relations, revision_id, face_id, edge_ids[edge_index], "bounded_by_edge")
 
         # Conservative adjacency: faces sharing at least one geometric edge object.
         for left_index, (left_id, left_face) in enumerate(face_entities):
@@ -295,16 +443,16 @@ def parse(job: dict) -> dict:
         return {
             "revision_id": revision_id,
             "parser_name": "FreeCAD",
-            "parser_version": getattr(FreeCAD, "Version", lambda: ["unknown"])()[0],
+            "parser_version": parser_version(),
             "schema_version": SCHEMA_VERSION,
             "unit": "mm",
-            "bounding_box": bbox(doc.Objects[0].Shape) if doc.Objects else None,
+            "bounding_box": union_bbox(object_boxes),
             "summary": {
                 "object_count": len(doc.Objects),
                 "solid_count": solid_count,
                 "face_count": len(face_entities),
                 "edge_count": len(edge_entities),
-                "vertex_count": vertex_count,
+                "vertex_count": len(vertex_entities),
             },
             "entities": entities,
             "relations": relations,
