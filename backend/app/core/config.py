@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     cad_max_concurrency: int = 1
     cad_mesh_deflection: float = 0.1
     cad_stale_job_minutes: int = 30
+    drawing_layout_provider: str = "auto"
+    mineru_layout_mode: str = "disabled"
+    mineru_layout_url: str = ""
+    mineru_layout_command: str = ""
+    mineru_layout_timeout: int = 180
+    drawing_max_image_mb: int = 20
+    drawing_max_side: int = 4096
+    drawing_inference_max_side: int = 2048
+    drawing_crop_padding_ratio: float = 0.03
+    drawing_table_padding_ratio: float = 0.02
+    drawing_diagram_padding_ratio: float = 0.05
+    drawing_region_min_area_ratio: float = 0.003
+    drawing_region_merge_gap_ratio: float = 0.02
+    cad_spec_work_dir: Path = Path("cad-spec-work")
 
     @property
     def database_url(self) -> str:

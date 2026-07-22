@@ -9,6 +9,7 @@ from app.cad.router import router as cad_router
 from app.cad.service import recover_interrupted_revisions
 from app.core.config import get_settings
 from app.db.session import init_db
+from app.drawing.router import router as drawing_router
 from app.health.router import router as health_router
 
 
@@ -34,3 +35,4 @@ app.add_middleware(
 )
 app.include_router(health_router)
 app.include_router(cad_router)
+app.include_router(drawing_router)

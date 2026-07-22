@@ -160,6 +160,73 @@ class CadMeasurement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class CadSpecTask(Base):
+    __tablename__ = "cad_spec_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="created")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_message: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    llm_model: Mapped[str | None] = mapped_column(String)
+    vision_model: Mapped[str | None] = mapped_column(String)
+    selected_component_code: Mapped[str | None] = mapped_column(String)
+    selected_specification: Mapped[str | None] = mapped_column(String)
+    drawing_extraction: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    freecad_facts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    semantic_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    validation_report: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CadSpecSource(Base):
+    __tablename__ = "cad_spec_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_tasks.id", ondelete="CASCADE"), nullable=False)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    file_name: Mapped[str] = mapped_column(String, nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String, nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    template_text: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CadDrawingRegion(Base):
+    __tablename__ = "cad_drawing_regions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_tasks.id", ondelete="CASCADE"), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_sources.id", ondelete="CASCADE"), nullable=False)
+    parent_region_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_drawing_regions.id", ondelete="SET NULL"))
+    region_type: Mapped[str] = mapped_column(String, nullable=False)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    provider_region_type: Mapped[str | None] = mapped_column(String)
+    bbox_normalized: Mapped[list] = mapped_column(JSONB, nullable=False)
+    bbox_pixels: Mapped[list] = mapped_column(JSONB, nullable=False)
+    padded_bbox_pixels: Mapped[list] = mapped_column(JSONB, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    crop_file_path: Mapped[str | None] = mapped_column(Text)
+    crop_file_name: Mapped[str | None] = mapped_column(String)
+    crop_sha256: Mapped[str | None] = mapped_column(String(64))
+    crop_width: Mapped[int | None] = mapped_column(Integer)
+    crop_height: Mapped[int | None] = mapped_column(Integer)
+    raw_provider_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
 Index("ix_cad_model_revisions_model_id", CadModelRevision.model_id)
 Index("ix_cad_model_revisions_status", CadModelRevision.status)
 Index("ix_cad_entities_revision_id", CadEntity.revision_id)
@@ -178,3 +245,8 @@ Index("ix_cad_measurements_revision_id", CadMeasurement.revision_id)
 Index("ix_cad_measurements_scope_entity_id", CadMeasurement.scope_entity_id)
 Index("ix_cad_measurements_feature_id", CadMeasurement.feature_id)
 Index("ix_cad_measurements_revision_version", CadMeasurement.revision_id, CadMeasurement.algorithm_version)
+Index("ix_cad_spec_tasks_revision_id", CadSpecTask.revision_id)
+Index("ix_cad_spec_sources_task_id", CadSpecSource.task_id)
+Index("ix_cad_drawing_regions_task_id", CadDrawingRegion.task_id)
+Index("ix_cad_drawing_regions_source_id", CadDrawingRegion.source_id)
+Index("ix_cad_drawing_regions_active", CadDrawingRegion.task_id, CadDrawingRegion.status)
