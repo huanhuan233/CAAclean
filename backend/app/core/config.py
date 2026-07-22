@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     drawing_region_min_area_ratio: float = 0.003
     drawing_region_merge_gap_ratio: float = 0.02
     cad_spec_work_dir: Path = Path("cad-spec-work")
+    vision_binding: str = "openai"
+    vision_model: str = ""
+    vision_binding_host: str = ""
+    vision_binding_api_key: str = ""
+    vision_enable_thinking: bool = False
+    vision_extra_body: str = ""
+    ai_request_timeout: int = 600
+    ai_max_retries: int = 2
 
     @property
     def database_url(self) -> str:

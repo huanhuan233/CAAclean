@@ -227,6 +227,36 @@ class CadDrawingRegion(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class CadDrawingFact(Base):
+    __tablename__ = "cad_drawing_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_tasks.id", ondelete="CASCADE"), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_sources.id", ondelete="CASCADE"), nullable=False)
+    region_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_drawing_regions.id", ondelete="SET NULL"))
+    fact_key: Mapped[str] = mapped_column(String, nullable=False)
+    fact_type: Mapped[str] = mapped_column(String, nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String)
+    label: Mapped[str | None] = mapped_column(String)
+    operator: Mapped[str] = mapped_column(String, nullable=False)
+    raw_value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    normalized_value: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB)
+    value_type: Mapped[str | None] = mapped_column(String)
+    unit: Mapped[str | None] = mapped_column(String)
+    source_bbox_original: Mapped[list | None] = mapped_column(JSONB)
+    source_bbox_normalized: Mapped[list | None] = mapped_column(JSONB)
+    source_bbox_precision: Mapped[str | None] = mapped_column(String)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    needs_review: Mapped[bool] = mapped_column(default=False, nullable=False)
+    model_name: Mapped[str] = mapped_column(String, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String, nullable=False)
+    generation_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="current")
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
 Index("ix_cad_model_revisions_model_id", CadModelRevision.model_id)
 Index("ix_cad_model_revisions_status", CadModelRevision.status)
 Index("ix_cad_entities_revision_id", CadEntity.revision_id)
@@ -250,3 +280,6 @@ Index("ix_cad_spec_sources_task_id", CadSpecSource.task_id)
 Index("ix_cad_drawing_regions_task_id", CadDrawingRegion.task_id)
 Index("ix_cad_drawing_regions_source_id", CadDrawingRegion.source_id)
 Index("ix_cad_drawing_regions_active", CadDrawingRegion.task_id, CadDrawingRegion.status)
+Index("ix_cad_drawing_facts_task_id", CadDrawingFact.task_id)
+Index("ix_cad_drawing_facts_current", CadDrawingFact.task_id, CadDrawingFact.status)
+Index("ix_cad_drawing_facts_task_key", CadDrawingFact.task_id, CadDrawingFact.fact_key)

@@ -16,6 +16,7 @@ from app.drawing.schemas import (
     bbox_pixels_to_normalized,
 )
 from app.db.models import CadDrawingRegion
+from app.drawing.extraction_service import DrawingExtractionService
 
 
 class DrawingLayoutService:
@@ -30,6 +31,8 @@ class DrawingLayoutService:
         inference_max_side: int,
         crop_padding: dict[str, float] | None = None,
         merge_gap_ratio: float = 0.02,
+        extraction_repository=None,
+        vision_client=None,
     ):
         self.repository = repository
         self.work_dir = Path(work_dir)
@@ -37,6 +40,8 @@ class DrawingLayoutService:
         self.preprocessor = DrawingImagePreprocessor(max_image_mb=max_image_mb, max_side=max_side, inference_max_side=inference_max_side)
         self.crop_padding = crop_padding or PADDING_BY_REGION_TYPE
         self.merge_gap_ratio = merge_gap_ratio
+        self._extraction_repository = extraction_repository or repository
+        self.vision_client = vision_client
 
     async def create_task(self, *, revision_id, drawing_file: Path, target_code: str | None, target_dn: str | None):
         source_path = copy_source_to_task_dir(Path(drawing_file), self.work_dir / "incoming" / str(uuid.uuid4()))
@@ -120,7 +125,8 @@ class DrawingLayoutService:
 
     async def build_crop_package(self, task_id: uuid.UUID) -> DrawingCropPackage:
         source = await self.repository.get_source_for_task(task_id)
-        regions = await self.list_regions(task_id)
+        region_rows = await self.repository.list_active_regions(task_id)
+        regions = [self._region_to_dict(region) | {"crop_file_path": region.crop_file_path} for region in region_rows]
         metadata = getattr(source, "metadata_json", None) or getattr(source, "metadata", {})
         return DrawingCropPackage(
             task_id=task_id,
@@ -134,6 +140,7 @@ class DrawingLayoutService:
                 "width": metadata.get("inference_width"),
                 "height": metadata.get("inference_height"),
                 "sha256": metadata.get("inference_sha256"),
+                "file_path": str(Path(self.work_dir) / str(task_id) / "whole_inference.png"),
             },
             layout={"provider": regions[0]["provider"] if regions else "manual", "provider_version": None, "status": "layout_ready"},
             regions=regions,
@@ -187,6 +194,85 @@ class DrawingLayoutService:
             "crop_height": region.crop_height,
             "provider": region.provider,
             "confidence": region.confidence,
+        }
+
+    async def extract_drawing_facts(self, task_id: uuid.UUID, *, target_code: str | None = None, target_dn: int | None = None, force: bool = False):
+        try:
+            return await self.extraction_service.extract(task_id, target_code=target_code, target_dn=target_dn, force=force)
+        except Exception as exc:
+            code = getattr(exc, "code", "drawing_extraction_failed")
+            message = getattr(exc, "message", "drawing extraction failed")
+            await self.extraction_repository.set_status(task_id, "failed", 100, "failed", code, message)
+            raise
+
+    async def get_extraction_status(self, task_id: uuid.UUID):
+        return await self.extraction_repository.get_status(task_id)
+
+    async def get_extraction_result(self, task_id: uuid.UUID):
+        result = await self.extraction_repository.get_result(task_id)
+        if result is None:
+            raise DrawingError("drawing_extraction_not_found", "drawing extraction result not found")
+        if hasattr(result, "model_dump"):
+            return result.model_dump(mode="json")
+        return result
+
+    async def list_drawing_facts(
+        self,
+        task_id: uuid.UUID,
+        *,
+        fact_type: str | None = None,
+        symbol: str | None = None,
+        needs_review: bool | None = None,
+        keyword: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        rows, total = await self.extraction_repository.list_facts(
+            task_id,
+            fact_type=fact_type,
+            symbol=symbol,
+            needs_review=needs_review,
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+        )
+        return {"items": [self._fact_to_dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
+
+    async def retry_extraction(self, task_id: uuid.UUID):
+        status = await self.extraction_repository.get_status(task_id)
+        if status["status"] not in {"failed", "review_ready"}:
+            raise DrawingError("drawing_extraction_retry_not_allowed", "retry is only allowed after failed or review_ready")
+        return await self.extract_drawing_facts(task_id, force=True)
+
+    @property
+    def extraction_service(self):
+        return DrawingExtractionService(self.extraction_repository, vision_client=self.vision_client)
+
+    @property
+    def extraction_repository(self):
+        return self._extraction_repository
+
+    def _fact_to_dict(self, row) -> dict:
+        if hasattr(row, "model_dump"):
+            return row.model_dump(mode="json")
+        return {
+            "id": row.id,
+            "fact_key": row.fact_key,
+            "fact_type": row.fact_type,
+            "symbol": row.symbol,
+            "label": row.label,
+            "operator": row.operator,
+            "raw_value": row.raw_value,
+            "normalized_value": row.normalized_value,
+            "value_type": row.value_type,
+            "unit": row.unit,
+            "source_region_id": row.region_id,
+            "source_bbox_original": row.source_bbox_original,
+            "source_bbox_normalized": row.source_bbox_normalized,
+            "source_bbox_precision": row.source_bbox_precision,
+            "confidence": row.confidence,
+            "needs_review": row.needs_review,
+            "metadata": row.metadata_json,
         }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -11,6 +12,9 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.drawing.providers import AutoLayoutProvider, ManualLayoutProvider, MineruLayoutProvider, VisionLayoutProvider
 from app.drawing.repository import SqlAlchemyDrawingRepository
+from app.drawing.extraction_client import VisionJsonClient, VisionModelError
+from app.drawing.extraction_repository import SqlAlchemyExtractionRepository
+from app.drawing.extraction_schemas import ExtractRequest, ExtractionStatusOut
 from app.drawing.schemas import DrawingError, DrawingLayoutStatusOut, DrawingRegionListOut, DrawingTaskOut, ManualRegionsIn
 from app.drawing.service import DrawingLayoutService
 
@@ -36,8 +40,9 @@ def build_layout_provider(settings: Settings):
 
 
 def get_drawing_service(session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings)) -> DrawingLayoutService:
-    return DrawingLayoutService(
-        SqlAlchemyDrawingRepository(session),
+    layout_repository = SqlAlchemyDrawingRepository(session)
+    service = DrawingLayoutService(
+        layout_repository,
         work_dir=Path(settings.cad_spec_work_dir),
         provider=build_layout_provider(settings),
         max_image_mb=settings.drawing_max_image_mb,
@@ -49,6 +54,25 @@ def get_drawing_service(session: AsyncSession = Depends(get_session), settings: 
             "parameter_table": settings.drawing_table_padding_ratio,
         },
         merge_gap_ratio=settings.drawing_region_merge_gap_ratio,
+        vision_client=build_vision_client(settings),
+    )
+    service._extraction_repository = SqlAlchemyExtractionRepository(session, service)
+    return service
+
+
+def build_vision_client(settings: Settings) -> VisionJsonClient:
+    extra_body = {}
+    if settings.vision_extra_body:
+        extra_body = json.loads(settings.vision_extra_body)
+    if settings.vision_enable_thinking is False:
+        extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+    return VisionJsonClient(
+        base_url=settings.vision_binding_host,
+        api_key=settings.vision_binding_api_key,
+        model=settings.vision_model,
+        timeout=settings.ai_request_timeout,
+        max_retries=settings.ai_max_retries,
+        extra_body=extra_body,
     )
 
 
@@ -131,8 +155,63 @@ async def put_regions(task_id: uuid.UUID, payload: ManualRegionsIn, service: Dra
         raise _http_error(exc) from exc
 
 
+@router.post("/tasks/{task_id}/extract", status_code=status.HTTP_202_ACCEPTED)
+async def extract_drawing(task_id: uuid.UUID, payload: ExtractRequest, service: DrawingLayoutService = Depends(get_drawing_service)):
+    try:
+        result = await service.extract_drawing_facts(task_id, target_code=payload.target_code, target_dn=payload.target_dn, force=payload.force)
+        return {"task_id": result["task_id"] if isinstance(result, dict) else result.task_id, "status": "review_ready"}
+    except (DrawingError, VisionModelError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/tasks/{task_id}/extraction/status", response_model=ExtractionStatusOut)
+async def extraction_status(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
+    return await service.get_extraction_status(task_id)
+
+
+@router.get("/tasks/{task_id}/extraction")
+async def extraction_result(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
+    try:
+        return await service.get_extraction_result(task_id)
+    except DrawingError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/tasks/{task_id}/facts")
+async def drawing_facts(
+    task_id: uuid.UUID,
+    fact_type: str | None = None,
+    symbol: str | None = None,
+    needs_review: bool | None = None,
+    keyword: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    service: DrawingLayoutService = Depends(get_drawing_service),
+):
+    return await service.list_drawing_facts(
+        task_id,
+        fact_type=fact_type,
+        symbol=symbol,
+        needs_review=needs_review,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post("/tasks/{task_id}/extract/retry", status_code=status.HTTP_202_ACCEPTED)
+async def retry_extract(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
+    try:
+        result = await service.retry_extraction(task_id)
+        return {"task_id": result["task_id"] if isinstance(result, dict) else result.task_id, "status": "review_ready"}
+    except (DrawingError, VisionModelError) as exc:
+        raise _http_error(exc) from exc
+
+
 def _http_error(exc: DrawingError) -> HTTPException:
     status_code = 400
     if exc.code in {"manual_layout_required"}:
         status_code = 409
+    if getattr(exc, "code", "") == "vision_model_not_multimodal":
+        status_code = 422
     return HTTPException(status_code=status_code, detail={"code": exc.code, "message": exc.message})
