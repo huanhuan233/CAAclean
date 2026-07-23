@@ -356,6 +356,9 @@ class ComponentBuildService:
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
         component_spec = await self.repository.get_component_spec(build.id)
+        fusion_ready = bool(build.cad_revision_id or build.drawing_task_id)
+        fusion_status = "completed" if component_spec else "ready" if fusion_ready else "pending"
+        fusion_status_label = "已生成草稿" if component_spec else "可开始" if fusion_ready else "待上传来源"
         projected = self._projected_build_payload(build, step, drawing)
         return {
             "id": str(build.id),
@@ -385,7 +388,16 @@ class ComponentBuildService:
                         self._source_node(build, "drawing", drawing),
                     ],
                 },
-                {"name": DATA_FUSION_LABEL, "node_type": "data_fusion", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
+                {
+                    "id": f"{build.id}:fusion",
+                    "build_id": str(build.id),
+                    "name": DATA_FUSION_LABEL,
+                    "label": DATA_FUSION_LABEL,
+                    "node_type": "data_fusion",
+                    "status": fusion_status,
+                    "status_label": fusion_status_label,
+                    "disabled": not fusion_ready,
+                },
                 {
                     "id": f"{build.id}:component_spec",
                     "build_id": str(build.id),

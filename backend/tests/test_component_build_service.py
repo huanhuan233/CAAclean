@@ -305,7 +305,7 @@ async def test_source_status_reader_projects_source_errors_when_available():
 
 
 @pytest.mark.asyncio
-async def test_tree_enables_component_spec_while_future_workflow_nodes_stay_disabled():
+async def test_tree_keeps_fusion_disabled_until_a_source_is_attached():
     repository = MemoryComponentBuildRepository()
     build = await repository.create_build(component_id="xms06", component_name="XMS06", component_type="flange")
 
@@ -317,12 +317,39 @@ async def test_tree_enables_component_spec_while_future_workflow_nodes_stay_disa
         "folder", "data_fusion", "component_spec", "publish_validation"
     ]
     fusion, component_spec, publish = version_node["children"][1:]
-    assert fusion["disabled"] is True and fusion["status"] == "future"
+    assert fusion["disabled"] is True and fusion["status"] == "pending"
     assert component_spec["disabled"] is False and component_spec["status"] == "draft"
     assert publish["disabled"] is True and publish["status"] == "future"
-    assert fusion["status_label"] == "后续能力"
+    assert fusion["status_label"] == "待上传来源"
     assert component_spec["status_label"] == "待填写"
     assert publish["status_label"] == "后续能力"
+
+
+@pytest.mark.asyncio
+async def test_tree_enables_fusion_when_build_has_a_source_and_marks_saved_draft_completed():
+    model_id = uuid4()
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository(revision_models={revision_id: model_id})
+    build = await repository.create_build(component_id="xms06", component_name="XMS06", component_type="flange")
+    await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    ready_tree = await service.get_tree()
+    ready_fusion = find_build_node(ready_tree, str(build.id))["children"][1]
+
+    assert ready_fusion["id"] == f"{build.id}:fusion"
+    assert ready_fusion["build_id"] == str(build.id)
+    assert ready_fusion["disabled"] is False
+    assert ready_fusion["status"] == "ready"
+    assert ready_fusion["status_label"] == "可开始"
+
+    await repository.save_component_spec(build.id, component_spec_template.blank_data())
+    completed_tree = await service.get_tree()
+    completed_fusion = find_build_node(completed_tree, str(build.id))["children"][1]
+
+    assert completed_fusion["disabled"] is False
+    assert completed_fusion["status"] == "completed"
+    assert completed_fusion["status_label"] == "已生成草稿"
 
 
 @pytest.mark.asyncio
