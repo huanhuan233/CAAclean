@@ -33,7 +33,23 @@ class ComponentBuildService:
 
     async def get_tree(self) -> list[dict]:
         builds = await self.repository.list_builds()
-        return [self._tree_node(build) for build in builds]
+        return [await self._tree_node(build) for build in builds]
+
+    async def create_build(self, **fields) -> dict:
+        build = await self.repository.create_build(**fields)
+        return self._build_payload(build)
+
+    async def attach_step(self, build_id: UUID, *, model_id: UUID, revision_id: UUID) -> dict:
+        build = await self.repository.attach_step(build_id, model_id=model_id, revision_id=revision_id)
+        return self._build_payload(build)
+
+    async def attach_drawing(self, build_id: UUID, *, task_id: UUID) -> dict:
+        build = await self.repository.attach_drawing(build_id, task_id=task_id)
+        return self._build_payload(build)
+
+    async def set_status(self, build_id: UUID, *, status: str, message: str | None = None) -> dict:
+        await self.repository.set_status(build_id, status=status, message=message)
+        return await self.get_build(build_id)
 
     async def get_build(self, build_id: UUID) -> dict:
         build = await self._require_build(build_id)
@@ -103,19 +119,52 @@ class ComponentBuildService:
             "updated_at": build.updated_at,
         }
 
-    def _tree_node(self, build: ComponentBuild) -> dict:
+    async def _tree_node(self, build: ComponentBuild) -> dict:
+        step = await self._step_source(build)
+        drawing = await self._drawing_source(build)
         return {
             "id": str(build.id),
             "build_id": str(build.id),
             "name": build.version,
-            "node_type": "component_build",
+            "label": f"{build.component_name} {build.version}",
+            "node_type": "build",
             "component_id": build.component_id,
             "component_name": build.component_name,
             "status": build.status,
             "children": [
-                {"name": INPUTS_LABEL, "node_type": "inputs", "status": "pending", "disabled": False},
+                {
+                    "id": f"{build.id}:inputs",
+                    "build_id": str(build.id),
+                    "name": INPUTS_LABEL,
+                    "label": INPUTS_LABEL,
+                    "node_type": "folder",
+                    "status": "pending",
+                    "disabled": False,
+                    "children": [
+                        self._source_node(build, "reference_step", step),
+                        self._source_node(build, "drawing", drawing),
+                    ],
+                },
                 {"name": DATA_FUSION_LABEL, "node_type": "data_fusion", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
                 {"name": "ComponentSpec", "node_type": "component_spec", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
                 {"name": PUBLISH_VALIDATION_LABEL, "node_type": "publish_validation", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
             ],
+        }
+
+    @staticmethod
+    def _source_node(build: ComponentBuild, role: str, source: dict) -> dict:
+        labels = {"reference_step": "\u53c2\u8003 STEP", "drawing": "\u4e8c\u7ef4\u56fe\u7eb8"}
+        target = None
+        if source["id"]:
+            target = {"revision_id": str(build.cad_revision_id)} if role == "reference_step" else {"task_id": str(build.drawing_task_id)}
+        return {
+            "id": f"{build.id}:{role}",
+            "build_id": str(build.id),
+            "name": labels[role],
+            "label": labels[role],
+            "node_type": role,
+            "status": source["status"],
+            "progress": source.get("progress"),
+            "disabled": target is None,
+            "target": target,
         }

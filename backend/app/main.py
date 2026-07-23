@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.cad.router import router as cad_router
 from app.cad.service import recover_interrupted_revisions
+from app.component_builds.router import router as component_build_router
 from app.core.config import get_settings
 from app.db.session import init_db
 from app.drawing.router import router as drawing_router
@@ -36,3 +37,4 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(cad_router)
 app.include_router(drawing_router)
+app.include_router(component_build_router)
