@@ -63,6 +63,31 @@ class CadModelRevision(Base):
     model: Mapped[CadModel] = relationship(back_populates="revisions")
 
 
+class ComponentBuild(Base):
+    __tablename__ = "component_builds"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    catalog_node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    component_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    component_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    component_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    component_subtype: Mapped[str | None] = mapped_column(String(80))
+    family: Mapped[str | None] = mapped_column(String(160))
+    standard_number: Mapped[str | None] = mapped_column(String(160))
+    version: Mapped[str] = mapped_column(String(80), nullable=False, default="1.0.0")
+    default_dn: Mapped[int | None] = mapped_column(Integer)
+    default_pn: Mapped[int | None] = mapped_column(Integer)
+    cad_model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_models.id", ondelete="SET NULL"))
+    cad_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="SET NULL"))
+    drawing_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cad_spec_tasks.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(80), nullable=False, default="draft")
+    status_message: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
 class CadEntity(Base):
     __tablename__ = "cad_entities"
 
@@ -310,6 +335,10 @@ class CadSpecFieldEvidence(Base):
 
 Index("ix_cad_model_revisions_model_id", CadModelRevision.model_id)
 Index("ix_cad_model_revisions_status", CadModelRevision.status)
+Index("ix_component_builds_component_id", ComponentBuild.component_id)
+Index("ix_component_builds_cad_revision_id", ComponentBuild.cad_revision_id)
+Index("ix_component_builds_drawing_task_id", ComponentBuild.drawing_task_id)
+Index("ix_component_builds_status", ComponentBuild.status)
 Index("ix_cad_entities_revision_id", CadEntity.revision_id)
 Index("ix_cad_entities_parent_entity_id", CadEntity.parent_entity_id)
 Index("ix_cad_entities_revision_type", CadEntity.revision_id, CadEntity.entity_type)
