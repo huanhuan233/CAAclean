@@ -261,4 +261,100 @@ declare namespace Api {
       warnings: string[];
     }
   }
+
+  namespace ComponentBuild {
+    type NodeType =
+      | 'root'
+      | 'family'
+      | 'type'
+      | 'subtype'
+      | 'component'
+      | 'build'
+      | 'folder'
+      | 'reference_step'
+      | 'drawing'
+      | 'fusion'
+      | 'yaml'
+      | 'future';
+
+    type RetryRole = 'reference_step' | 'drawing';
+
+    interface Target {
+      revision_id?: string;
+      task_id?: string;
+    }
+
+    interface TreeNode {
+      id: string;
+      label: string;
+      node_type: NodeType;
+      status: string;
+      progress: number | null;
+      disabled: boolean;
+      build_id: string | null;
+      target: Target | null;
+      status_label?: string | null;
+      status_message?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+      children: TreeNode[];
+    }
+
+    interface SourceStatus {
+      id: string | null;
+      status: string;
+      progress?: number | null;
+      status_message?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+    }
+
+    interface BuildDetail {
+      id: string;
+      component_id: string;
+      component_name: string;
+      component_type: string;
+      component_subtype: string | null;
+      family: string | null;
+      standard_number: string | null;
+      version: string;
+      default_dn: number | null;
+      default_pn: number | null;
+      cad_model_id: string | null;
+      cad_revision_id: string | null;
+      drawing_task_id: string | null;
+      status: string;
+      status_message: string | null;
+      error_code: string | null;
+      error_message: string | null;
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface BuildStatus {
+      build_id: string;
+      status: string;
+      status_message: string | null;
+      error_code: string | null;
+      error_message: string | null;
+      sources: {
+        reference_step: SourceStatus;
+        drawing: SourceStatus;
+      };
+    }
+
+    interface CreatePayload {
+      component_id: string;
+      component_name: string;
+      component_type: string;
+      component_subtype?: string;
+      family?: string;
+      standard_number?: string;
+      version?: string;
+      default_dn?: number;
+      default_pn?: number;
+      step_file: File;
+      drawing_file: File;
+    }
+  }
 }

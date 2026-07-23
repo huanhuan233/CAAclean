@@ -228,7 +228,8 @@ const local: App.I18n.Schema = {
     plugin_gantt_vtable: 'VTableGantt',
     plugin_typeit: 'Typeit',
     plugin_tables: 'Tables',
-    plugin_tables_vtable: 'VTable'
+    plugin_tables_vtable: 'VTable',
+    'component-build': 'Component Library'
   },
   page: {
     login: {
@@ -541,5 +542,7 @@ const local: App.I18n.Schema = {
     itemCount: 'Total {total} items'
   }
 };
+
+local.route['cad-spec'] = '2D Drawing Parser';
 
 export default local;

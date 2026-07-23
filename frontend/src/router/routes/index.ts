@@ -2,6 +2,17 @@ import type { CustomRoute, ElegantConstRoute, ElegantRoute } from '@elegant-rout
 import { layouts, views } from '../elegant/imports';
 import { transformElegantRoutesToVueRoutes } from '../elegant/transform';
 
+const componentBuildRoute = {
+  name: 'component-build',
+  path: '/component-build',
+  component: 'layout.base$view.component-build',
+  meta: {
+    title: '图元建库',
+    icon: 'carbon:tree-view-alt',
+    order: 1
+  }
+} as unknown as CustomRoute;
+
 const cadModelRoute = {
   name: 'cad-model',
   path: '/cad-model',
@@ -9,7 +20,7 @@ const cadModelRoute = {
   meta: {
     title: 'CAD 模型解析',
     icon: 'carbon:assembly-cluster',
-    order: 1
+    order: 2
   }
 } as unknown as CustomRoute;
 
@@ -20,11 +31,13 @@ const cadSpecRoute = {
   meta: {
     title: '组件规范',
     icon: 'carbon:document-requirements',
-    order: 2
+    order: 3
   }
 } as unknown as CustomRoute;
 
-const customRoutes: CustomRoute[] = [cadModelRoute, cadSpecRoute];
+cadSpecRoute.meta.title = '二维图纸解析';
+
+const customRoutes: CustomRoute[] = [componentBuildRoute, cadModelRoute, cadSpecRoute];
 
 /** create routes when the auth route mode is static */
 export function createStaticRoutes() {

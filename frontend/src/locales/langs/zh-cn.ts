@@ -228,7 +228,8 @@ const local: App.I18n.Schema = {
     plugin_gantt_vtable: 'VTableGantt',
     plugin_typeit: '打字机',
     plugin_tables: '表格',
-    plugin_tables_vtable: 'VTable'
+    plugin_tables_vtable: 'VTable',
+    'component-build': '图元建库'
   },
   page: {
     login: {
@@ -541,5 +542,7 @@ const local: App.I18n.Schema = {
     itemCount: '共 {total} 条'
   }
 };
+
+local.route['cad-spec'] = '二维图纸解析';
 
 export default local;

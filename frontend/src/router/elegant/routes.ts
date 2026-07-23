@@ -114,6 +114,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'component-build',
+    path: '/component-build',
+    component: 'layout.base$view.component-build',
+    meta: {
+      title: 'component-build',
+      i18nKey: 'route.component-build'
+    }
+  },
+  {
     name: 'function',
     path: '/function',
     component: 'layout.base',

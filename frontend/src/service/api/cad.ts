@@ -242,6 +242,56 @@ export function retryCadSpecExtraction(taskId: string) {
   });
 }
 
+export function fetchComponentBuildTree() {
+  return request<Api.ComponentBuild.TreeNode[]>({
+    url: '/api/component-builds/tree'
+  });
+}
+
+export function fetchComponentBuild(buildId: string) {
+  return request<Api.ComponentBuild.BuildDetail>({
+    url: `/api/component-builds/${buildId}`
+  });
+}
+
+export function fetchComponentBuildStatus(buildId: string) {
+  return request<Api.ComponentBuild.BuildStatus>({
+    url: `/api/component-builds/${buildId}/status`
+  });
+}
+
+export function createComponentBuild(params: Api.ComponentBuild.CreatePayload) {
+  const data = new FormData();
+  data.append('component_id', params.component_id);
+  data.append('component_name', params.component_name);
+  data.append('component_type', params.component_type);
+  data.append('version', params.version || '1.0.0');
+  data.append('step_file', params.step_file);
+  data.append('drawing_file', params.drawing_file);
+  if (params.component_subtype) data.append('component_subtype', params.component_subtype);
+  if (params.family) data.append('family', params.family);
+  if (params.standard_number) data.append('standard_number', params.standard_number);
+  if (params.default_dn !== undefined) data.append('default_dn', String(params.default_dn));
+  if (params.default_pn !== undefined) data.append('default_pn', String(params.default_pn));
+
+  return request<Api.ComponentBuild.BuildDetail>({
+    url: '/api/component-builds',
+    method: 'post',
+    data,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  });
+}
+
+export function retryComponentBuild(buildId: string, role: Api.ComponentBuild.RetryRole) {
+  return request<Api.ComponentBuild.BuildDetail>({
+    url: `/api/component-builds/${buildId}/retry`,
+    method: 'post',
+    data: { role }
+  });
+}
+
 export function getCadSpecDrawingImageUrl(taskId: string, variant: 'original' | 'inference' = 'inference') {
   return `${getCadSpecApiBase()}/api/cad/spec/tasks/${taskId}/drawing/image?variant=${variant}`;
 }
