@@ -69,7 +69,7 @@ python backend/scripts/init_database.py
 
 ```bash
 cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 5180 --reload
 ```
 
 ## 测试

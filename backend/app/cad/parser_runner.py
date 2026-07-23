@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import json
 import os
 import signal
+import subprocess
 from pathlib import Path
 from uuid import UUID
 
@@ -52,9 +54,9 @@ async def run_freecad_parser(
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["LIBGL_ALWAYS_SOFTWARE"] = "1"
 
-    process_kwargs = {
-        "stdout": asyncio.subprocess.PIPE,
-        "stderr": asyncio.subprocess.PIPE,
+    process_kwargs: dict[str, object] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
         "env": env,
     }
     command = [settings.freecad_cmd, str(script_path), str(job_path)]
@@ -68,24 +70,41 @@ async def run_freecad_parser(
             f"exec(compile(open(r'{script_path}', encoding='utf-8').read(), r'{script_path}', 'exec'))\n"
         )
         command = [settings.freecad_cmd, "-c"]
-        process_kwargs["stdin"] = asyncio.subprocess.PIPE
+        process_kwargs["stdin"] = subprocess.PIPE
         stdin_payload = bootstrap.encode("utf-8")
     else:
         process_kwargs["start_new_session"] = True
 
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        **process_kwargs,
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        partial(
+            _run_parser_process,
+            command,
+            process_kwargs,
+            stdin_payload,
+            settings.freecad_timeout,
+            result_path,
+        ),
     )
 
+
+def _run_parser_process(
+    command: list[str],
+    process_kwargs: dict[str, object],
+    stdin_payload: bytes | None,
+    timeout: int,
+    result_path: Path,
+) -> dict:
+    process = subprocess.Popen(command, **process_kwargs)
     try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(input=stdin_payload),
-            timeout=settings.freecad_timeout,
-        )
-    except asyncio.TimeoutError as exc:
+        stdout, stderr = process.communicate(input=stdin_payload, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
         _terminate_process(process)
-        raise FreeCadParserError(f"FreeCAD parser timed out after {settings.freecad_timeout}s") from exc
+        stdout, stderr = process.communicate()
+        raise FreeCadParserError(
+            f"FreeCAD parser timed out after {timeout}s; stdout={_truncate(stdout)}; stderr={_truncate(stderr)}"
+        ) from exc
 
     if process.returncode != 0:
         raise FreeCadParserError(
@@ -103,7 +122,7 @@ async def run_freecad_parser(
         raise FreeCadParserError(f"invalid parser result JSON: {exc}") from exc
 
 
-def _terminate_process(process: asyncio.subprocess.Process) -> None:
+def _terminate_process(process) -> None:
     try:
         if os.name != "nt" and process.pid:
             os.killpg(process.pid, signal.SIGTERM)

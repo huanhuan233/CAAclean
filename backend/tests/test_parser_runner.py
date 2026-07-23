@@ -1,10 +1,12 @@
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
+from app.cad import parser_runner
 from app.cad.parser_runner import FreeCadParserError, run_freecad_parser
 from app.core.config import Settings
 
@@ -36,7 +38,7 @@ async def test_runner_invokes_freecad_without_shell_true(tmp_path, monkeypatch):
     class FakeProcess:
         returncode = 0
 
-        async def communicate(self, input=None):
+        def communicate(self, input=None, timeout=None):
             captured["stdin"] = input
             if captured["args"][1] == "-c":
                 text = input.decode("utf-8")
@@ -64,12 +66,17 @@ async def test_runner_invokes_freecad_without_shell_true(tmp_path, monkeypatch):
             )
             return b"ok", b""
 
-    async def fake_create_subprocess_exec(*args, **kwargs):
+    def fake_popen(args, **kwargs):
         captured["args"] = args
         captured["kwargs"] = kwargs
         return FakeProcess()
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError()),
+    )
     settings = Settings(
         freecad_cmd="freecadcmd-test",
         cad_script_dir=script_dir,
@@ -83,8 +90,8 @@ async def test_runner_invokes_freecad_without_shell_true(tmp_path, monkeypatch):
     assert captured["args"][0] == "freecadcmd-test"
     assert str(script_dir / "parse_step.py") in (captured["stdin"] or b"").decode("utf-8") or captured["args"][1] == str(script_dir / "parse_step.py")
     assert "shell" not in captured["kwargs"]
-    assert captured["kwargs"]["stdout"] == asyncio.subprocess.PIPE
-    assert captured["kwargs"]["stderr"] == asyncio.subprocess.PIPE
+    assert captured["kwargs"]["stdout"] == subprocess.PIPE
+    assert captured["kwargs"]["stderr"] == subprocess.PIPE
 
 
 @pytest.mark.asyncio
@@ -98,23 +105,23 @@ async def test_runner_times_out_and_terminates_freecad(tmp_path, monkeypatch):
 
     class SlowProcess:
         pid = 12345
+        returncode = None
+        calls = 0
 
-        async def communicate(self, input=None):
-            await asyncio.sleep(10)
+        def communicate(self, input=None, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(cmd="freecadcmd-test", timeout=timeout)
             return b"", b""
 
         def terminate(self):
             terminated["called"] = True
 
-    async def fake_create_subprocess_exec(*args, **kwargs):
+    def fake_popen(args, **kwargs):
         return SlowProcess()
 
-    async def fake_wait_for(awaitable, timeout):
-        awaitable.close()
-        raise asyncio.TimeoutError
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(parser_runner.os, "name", "nt")
     settings = Settings(
         freecad_cmd="freecadcmd-test",
         cad_script_dir=script_dir,
