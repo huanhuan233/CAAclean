@@ -11,8 +11,8 @@ from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild, utc_now
 class MemoryComponentBuildRepository:
     def __init__(self, *, revision_models: dict[uuid.UUID, uuid.UUID] | None = None, drawing_task_revisions: dict[uuid.UUID, uuid.UUID] | None = None):
         self.builds: dict[uuid.UUID, ComponentBuild] = {}
-        self.revision_models = revision_models or {}
-        self.drawing_task_revisions = drawing_task_revisions or {}
+        self.revision_models = revision_models
+        self.drawing_task_revisions = drawing_task_revisions
 
     async def create_build(self, **fields) -> ComponentBuild:
         now = utc_now()
@@ -33,8 +33,10 @@ class MemoryComponentBuildRepository:
 
     async def attach_step(self, build_id: uuid.UUID, *, model_id: uuid.UUID, revision_id: uuid.UUID) -> ComponentBuild:
         build = await self._require_build(build_id)
-        if self.revision_models.get(revision_id) != model_id:
+        if self.revision_models is not None and self.revision_models.get(revision_id) != model_id:
             raise ValueError("revision does not belong to model")
+        if build.cad_revision_id != revision_id:
+            build.drawing_task_id = None
         build.cad_model_id = model_id
         build.cad_revision_id = revision_id
         build.updated_at = utc_now()
@@ -42,7 +44,9 @@ class MemoryComponentBuildRepository:
 
     async def attach_drawing(self, build_id: uuid.UUID, *, task_id: uuid.UUID) -> ComponentBuild:
         build = await self._require_build(build_id)
-        if build.cad_revision_id is None or self.drawing_task_revisions.get(task_id) != build.cad_revision_id:
+        if build.cad_revision_id is None or (
+            self.drawing_task_revisions is not None and self.drawing_task_revisions.get(task_id) != build.cad_revision_id
+        ):
             raise ValueError("drawing task does not belong to build revision")
         build.drawing_task_id = task_id
         build.updated_at = utc_now()
@@ -85,6 +89,8 @@ class SqlAlchemyComponentBuildRepository:
         revision = await self.session.get(CadModelRevision, revision_id)
         if revision is None or revision.model_id != model_id:
             raise ValueError("revision does not belong to model")
+        if build.cad_revision_id != revision_id:
+            build.drawing_task_id = None
         build.cad_model_id = model_id
         build.cad_revision_id = revision_id
         await self.session.commit()
