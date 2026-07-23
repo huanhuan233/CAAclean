@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cad.router import get_cad_service
 from app.cad.service import CadService
 from app.component_builds.catalog import catalog_payload
+from app.component_builds.fusion import FusionSourceUnavailable
+from app.component_builds.fusion_sources import SqlAlchemyFusionSourceReader
 from app.component_builds.repository import SqlAlchemyComponentBuildRepository
-from app.component_builds.schemas import ComponentBuildRetryIn, ComponentSpecDraftIn
+from app.component_builds.schemas import ComponentBuildFusionIn, ComponentBuildRetryIn, ComponentSpecDraftIn
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal, get_session
@@ -29,6 +31,7 @@ def get_component_build_service(session: AsyncSession = Depends(get_session)) ->
     return ComponentBuildService(
         SqlAlchemyComponentBuildRepository(session),
         source_status_reader=SqlAlchemySourceStatusReader(session),
+        fusion_source_reader=SqlAlchemyFusionSourceReader(session),
     )
 
 
@@ -175,6 +178,26 @@ async def preview_component_spec(
         return {"yaml": await service.preview_component_spec(build_id, payload.data)}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
+
+
+@router.post("/{build_id}/fusion")
+async def fuse_component_build(
+    build_id: UUID,
+    payload: ComponentBuildFusionIn,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.fuse_component_spec(build_id, overwrite=payload.overwrite)
+    except FusionSourceUnavailable as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "no_sources_available", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "component_build_not_found", "message": str(exc)},
+        ) from exc
 
 
 @router.post("/{build_id}/retry", status_code=status.HTTP_202_ACCEPTED)

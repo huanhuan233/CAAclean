@@ -6,6 +6,10 @@ import re
 from typing import Any
 
 
+class FusionSourceUnavailable(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class FusionSources:
     drawing_facts: list[dict]

@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.cad.router import get_cad_service
+from app.component_builds.fusion import FusionSources
 from app.component_builds.repository import MemoryComponentBuildRepository
 from app.component_builds.router import get_component_build_service, run_drawing_pipeline
 from app.component_builds.service import ComponentBuildService
@@ -50,6 +51,14 @@ class FakeSourceStatusReader:
         return {"status": "created", "progress": 0}
 
 
+class FakeFusionSourceReader:
+    def __init__(self):
+        self.sources = FusionSources([], [], [])
+
+    async def read(self, _build):
+        return self.sources
+
+
 class FakeCadService:
     def __init__(self):
         self.model_id = uuid4()
@@ -83,7 +92,12 @@ class FakeDrawingService:
 @pytest.fixture
 def component_client(tmp_path, monkeypatch):
     repository = MemoryComponentBuildRepository()
-    build_service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+    fusion_reader = FakeFusionSourceReader()
+    build_service = ComponentBuildService(
+        repository,
+        source_status_reader=FakeSourceStatusReader(),
+        fusion_source_reader=fusion_reader,
+    )
     cad_service = FakeCadService()
     drawing_service = FakeDrawingService()
     settings = Settings(cad_spec_work_dir=tmp_path)
@@ -123,6 +137,10 @@ def create_build(client: TestClient, *, step_name: str = "XMS06-DN80.stp", drawi
             "drawing_file": (drawing_name, PNG_BYTES, "image/png"),
         },
     )
+
+
+def find_parameter(data: dict, name: str) -> dict:
+    return next(item for item in data["parameters"] if item.get("name") == name)
 
 
 def test_create_build_links_step_and_drawing(component_client):
@@ -404,6 +422,67 @@ def test_component_spec_preview_uses_template_structure_and_comments(component_c
     assert "【必填】（人工） 当前对象的名称" in yaml_text
     assert "parameters:" in yaml_text
     assert "provenance:" in yaml_text
+
+
+def test_component_fusion_endpoint_saves_xms06_draft(component_client):
+    client, _, _, _, build_service = component_client
+    created = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "XMS06-DN80",
+            "standard_number": "HG/T 20592-2009",
+        },
+    ).json()
+    build_service.fusion_source_reader.sources = FusionSources(
+        drawing_facts=[
+            {
+                "fact_key": "product.pressure_class",
+                "fact_type": "pressure_class",
+                "normalized_value": "PN16",
+                "confidence": 0.9,
+                "metadata": {},
+            },
+            {
+                "fact_key": "dimension.DN80.D",
+                "fact_type": "dimension",
+                "symbol": "D",
+                "normalized_value": 200.0,
+                "unit": "mm",
+                "operator": "eq",
+                "confidence": 0.85,
+                "metadata": {"row_dn": 80},
+            },
+        ],
+        measurements=[],
+        features=[],
+    )
+
+    response = client.post(f"/api/component-builds/{created['id']}/fusion", json={"overwrite": False})
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["filled"] > 0
+    spec = client.get(f"/api/component-builds/{created['id']}/component-spec").json()
+    assert find_parameter(spec["data"], "DN")["default"] == 80
+    assert find_parameter(spec["data"], "flange_outer_diameter")["default"] == 200.0
+
+
+def test_component_fusion_returns_conflict_without_sources(component_client):
+    client, _, _, _, _ = component_client
+    created = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "空法兰",
+        },
+    ).json()
+
+    response = client.post(f"/api/component-builds/{created['id']}/fusion", json={})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "no_sources_available"
 
 
 def test_step_retry_starts_existing_revision_parse(component_client):

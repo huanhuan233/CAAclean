@@ -4,7 +4,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.component_builds.component_spec import component_spec_template
 from app.component_builds.repository import MemoryComponentBuildRepository, SqlAlchemyComponentBuildRepository
+from app.component_builds.fusion import FusionSourceUnavailable, FusionSources
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
@@ -27,6 +29,16 @@ class FakeSourceStatusReader:
         return {"status": "review_ready"}
 
 
+class FakeFusionSourceReader:
+    def __init__(self, sources: FusionSources):
+        self.sources = sources
+        self.build_ids = []
+
+    async def read(self, build):
+        self.build_ids.append(build.id)
+        return self.sources
+
+
 def test_component_build_has_source_links():
     columns = ComponentBuild.__table__.columns
 
@@ -34,6 +46,100 @@ def test_component_build_has_source_links():
     assert columns["cad_revision_id"].nullable is True
     assert columns["drawing_task_id"].nullable is True
     assert columns["component_id"].nullable is False
+
+
+@pytest.mark.asyncio
+async def test_fuse_component_spec_saves_normalized_draft_and_returns_report():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="flange-001",
+        component_name="XMS06-DN80",
+        component_type="flange",
+        family="connection-fastening",
+        standard_number="HG/T 20592-2009",
+        version="1.0.0",
+    )
+    reader = FakeFusionSourceReader(
+        FusionSources(
+            drawing_facts=[
+                {
+                    "fact_key": "product.component_type_raw",
+                    "fact_type": "product_info",
+                    "normalized_value": "带颈对焊",
+                    "confidence": 0.9,
+                    "metadata": {},
+                }
+            ],
+            measurements=[],
+            features=[],
+        )
+    )
+    service = ComponentBuildService(
+        repository,
+        source_status_reader=FakeSourceStatusReader(),
+        fusion_source_reader=reader,
+    )
+
+    response = await service.fuse_component_spec(build.id)
+
+    assert reader.build_ids == [build.id]
+    assert response["status"] == "completed"
+    assert response["component_spec"]["identity"]["id"] == "flange-001"
+    assert (await repository.get_component_spec(build.id)).data["identity"]["id"] == "flange-001"
+
+
+@pytest.mark.asyncio
+async def test_fuse_component_spec_preserves_existing_manual_value():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="flange-001",
+        component_name="XMS06-DN80",
+        component_type="flange",
+    )
+    existing = component_spec_template.blank_data()
+    existing["identity"]["name"] = "人工名称"
+    await repository.save_component_spec(build.id, existing)
+    service = ComponentBuildService(
+        repository,
+        source_status_reader=FakeSourceStatusReader(),
+        fusion_source_reader=FakeFusionSourceReader(
+            FusionSources(
+                drawing_facts=[
+                    {
+                        "fact_key": "product.component_type_raw",
+                        "fact_type": "product_info",
+                        "normalized_value": "带颈对焊",
+                        "confidence": 0.9,
+                        "metadata": {},
+                    }
+                ],
+                measurements=[],
+                features=[],
+            )
+        ),
+    )
+
+    response = await service.fuse_component_spec(build.id)
+
+    assert response["component_spec"]["identity"]["name"] == "人工名称"
+
+
+@pytest.mark.asyncio
+async def test_fuse_component_spec_rejects_build_without_available_sources():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="flange-001",
+        component_name="XMS06-DN80",
+        component_type="flange",
+    )
+    service = ComponentBuildService(
+        repository,
+        source_status_reader=FakeSourceStatusReader(),
+        fusion_source_reader=FakeFusionSourceReader(FusionSources([], [], [])),
+    )
+
+    with pytest.raises(FusionSourceUnavailable, match="no_sources_available"):
+        await service.fuse_component_spec(build.id)
 
 
 @pytest.mark.asyncio

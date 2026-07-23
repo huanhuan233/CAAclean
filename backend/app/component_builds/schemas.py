@@ -17,3 +17,7 @@ class ComponentBuildRetryIn(BaseModel):
 
 class ComponentSpecDraftIn(BaseModel):
     data: dict
+
+
+class ComponentBuildFusionIn(BaseModel):
+    overwrite: bool = False

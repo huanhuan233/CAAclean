@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.component_builds.catalog import CATEGORIES, CatalogCategory, CatalogPart, find_part_by_legacy_type, find_part_by_node_id, resolve_part
 from app.component_builds.component_spec import component_spec_template
+from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
@@ -39,9 +40,10 @@ class SqlAlchemySourceStatusReader:
 
 
 class ComponentBuildService:
-    def __init__(self, repository, *, source_status_reader):
+    def __init__(self, repository, *, source_status_reader, fusion_source_reader=None):
         self.repository = repository
         self.source_status_reader = source_status_reader
+        self.fusion_source_reader = fusion_source_reader
 
     async def get_tree(self) -> list[dict]:
         builds = await self.repository.list_builds()
@@ -91,6 +93,32 @@ class ComponentBuildService:
     async def preview_component_spec(self, build_id: UUID, data: dict) -> str:
         await self.repository.get_build(build_id) or self._raise_missing_build(build_id)
         return component_spec_template.render_yaml(data)
+
+    async def fuse_component_spec(self, build_id: UUID, *, overwrite: bool = False) -> dict:
+        build = await self._require_build(build_id)
+        if self.fusion_source_reader is None:
+            raise FusionSourceUnavailable("no_sources_available")
+        sources = await self.fusion_source_reader.read(build)
+        if not sources.available:
+            raise FusionSourceUnavailable("no_sources_available")
+        current_draft = await self.repository.get_component_spec(build_id)
+        current = current_draft.data if current_draft else component_spec_template.blank_data()
+        result = fuse_component_spec(
+            build=self._build_payload(build),
+            current=current,
+            sources=sources,
+            overwrite=overwrite,
+        )
+        normalized = component_spec_template.normalize(result.data)
+        draft = await self.repository.save_component_spec(build_id, normalized)
+        return {
+            "build_id": str(build_id),
+            "status": "completed",
+            "summary": result.summary,
+            "fields": result.fields,
+            "warnings": result.warnings,
+            "component_spec": draft.data,
+        }
 
     async def create_catalog_build(
         self,
