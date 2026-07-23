@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,9 @@ class MemoryComponentBuildRepository:
 
     async def list_builds(self) -> list[ComponentBuild]:
         return sorted(self.builds.values(), key=lambda build: (build.created_at, str(build.id)), reverse=True)
+
+    async def next_component_id(self, prefix: str) -> str:
+        return _next_component_id(prefix, (build.component_id for build in self.builds.values()))
 
     async def attach_step(self, build_id: uuid.UUID, *, model_id: uuid.UUID, revision_id: uuid.UUID) -> ComponentBuild:
         build = await self._require_build(build_id)
@@ -94,6 +98,10 @@ class SqlAlchemyComponentBuildRepository:
         result = await self.session.execute(select(ComponentBuild).order_by(ComponentBuild.created_at.desc(), ComponentBuild.id.desc()))
         return list(result.scalars().all())
 
+    async def next_component_id(self, prefix: str) -> str:
+        result = await self.session.execute(select(ComponentBuild.component_id))
+        return _next_component_id(prefix, result.scalars().all())
+
     async def attach_step(self, build_id: uuid.UUID, *, model_id: uuid.UUID, revision_id: uuid.UUID) -> ComponentBuild:
         build = await self._require_build(build_id)
         revision = await self.session.get(CadModelRevision, revision_id)
@@ -138,3 +146,13 @@ class SqlAlchemyComponentBuildRepository:
         if build is None:
             raise ValueError(f"component build not found: {build_id}")
         return build
+
+
+def _next_component_id(prefix: str, component_ids) -> str:
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    sequence = 0
+    for component_id in component_ids:
+        match = pattern.match(component_id)
+        if match:
+            sequence = max(sequence, int(match.group(1)))
+    return f"{prefix}-{sequence + 1:03d}"

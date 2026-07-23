@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cad.router import get_cad_service
 from app.cad.service import CadService
+from app.component_builds.catalog import catalog_payload
 from app.component_builds.repository import SqlAlchemyComponentBuildRepository
 from app.component_builds.schemas import ComponentBuildRetryIn
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
@@ -33,15 +34,11 @@ def get_component_build_service(session: AsyncSession = Depends(get_session)) ->
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_component_build(
-    component_id: str = Form(...),
+    category_code: str = Form(...),
+    part_type_code: str = Form(...),
     component_name: str = Form(...),
-    component_type: str = Form(...),
-    component_subtype: str | None = Form(default=None),
-    family: str | None = Form(default=None),
     standard_number: str | None = Form(default=None),
     version: str = Form(default="1.0.0"),
-    default_dn: int | None = Form(default=None),
-    default_pn: int | None = Form(default=None),
     step_file: UploadFile = File(...),
     drawing_file: UploadFile = File(...),
     build_service: ComponentBuildService = Depends(get_component_build_service),
@@ -52,16 +49,12 @@ async def create_component_build(
     _validate_uploads(step_file, drawing_file)
     build_id: UUID | None = None
     try:
-        build = await build_service.create_build(
-            component_id=component_id,
+        build = await build_service.create_catalog_build(
+            category_code=category_code,
+            part_type_code=part_type_code,
             component_name=component_name,
-            component_type=component_type,
-            component_subtype=component_subtype,
-            family=family,
             standard_number=standard_number,
             version=version,
-            default_dn=default_dn,
-            default_pn=default_pn,
             status="uploading",
         )
         build_id = UUID(str(build["id"]))
@@ -75,16 +68,16 @@ async def create_component_build(
         drawing_task = await drawing_service.create_task(
             revision_id=UUID(str(cad["revision_id"])),
             drawing_file=drawing_path,
-            target_code=component_id,
-            target_dn=str(default_dn) if default_dn is not None else None,
+            target_code=build["component_id"],
+            target_dn=None,
         )
         await build_service.attach_drawing(build_id, task_id=UUID(str(drawing_task.id)))
         result = await build_service.set_status(build_id, status="parsing_sources", message="sources_queued")
         schedule_drawing_pipeline(
             UUID(str(drawing_task.id)),
             settings,
-            target_code=component_id,
-            target_dn=default_dn,
+            target_code=build["component_id"],
+            target_dn=None,
         )
         return result
     except (DrawingError, ValueError) as exc:
@@ -98,6 +91,11 @@ async def create_component_build(
 @router.get("/tree")
 async def component_build_tree(service: ComponentBuildService = Depends(get_component_build_service)) -> list[dict]:
     return await service.get_tree()
+
+
+@router.get("/catalog")
+async def component_build_catalog() -> dict:
+    return catalog_payload()
 
 
 @router.get("/{build_id}")

@@ -9,6 +9,16 @@ from app.component_builds.service import ComponentBuildService, SqlAlchemySource
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
+def find_build_node(nodes: list[dict], build_id: str) -> dict:
+    for node in nodes:
+        if node.get("node_type") == "build" and node.get("build_id") == build_id:
+            return node
+        found = find_build_node(node.get("children", []), build_id)
+        if found:
+            return found
+    return {}
+
+
 class FakeSourceStatusReader:
     async def get_step_status(self, revision_id):
         return {"status": "processing", "progress": 40}
@@ -98,7 +108,7 @@ async def test_tree_detail_and_status_share_the_same_projected_build_status():
     detail = await service.get_build(build.id)
     source_status = await service.get_status(build.id)
 
-    assert tree[0]["status"] == "sources_ready"
+    assert find_build_node(tree, str(build.id))["status"] == "sources_ready"
     assert detail["status"] == "sources_ready"
     assert source_status["status"] == "sources_ready"
 
@@ -155,7 +165,7 @@ async def test_persisted_source_failure_overrides_ready_and_manual_source_states
     detail = await service.get_build(build.id)
     status = await service.get_status(build.id)
 
-    assert tree[0]["status"] == "source_failed"
+    assert find_build_node(tree, str(build.id))["status"] == "source_failed"
     assert detail["status"] == "source_failed"
     assert status["status"] == "source_failed"
 
@@ -195,13 +205,10 @@ async def test_tree_adds_future_workflow_nodes_as_disabled():
 
     tree = await ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader()).get_tree()
 
-    version_node = tree[0]
+    version_node = find_build_node(tree, str(build.id))
     assert version_node["build_id"] == str(build.id)
-    assert [child["name"] for child in version_node["children"]] == [
-        "输入资料",
-        "数据融合",
-        "ComponentSpec",
-        "发布校验",
+    assert [child["node_type"] for child in version_node["children"]] == [
+        "folder", "data_fusion", "component_spec", "publish_validation"
     ]
     assert all(child["disabled"] is True and child["status"] == "future" for child in version_node["children"][1:])
     assert all(child["status_label"] == "后续能力" for child in version_node["children"][1:])

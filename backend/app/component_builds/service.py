@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.component_builds.catalog import CATEGORIES, CatalogCategory, CatalogPart, find_part_by_legacy_type, find_part_by_node_id, resolve_part
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
@@ -43,11 +44,53 @@ class ComponentBuildService:
 
     async def get_tree(self) -> list[dict]:
         builds = await self.repository.list_builds()
-        return [await self._tree_node(build) for build in builds]
+        grouped: dict[str, dict[str, list[ComponentBuild]]] = {}
+        uncategorized: list[ComponentBuild] = []
+        for build in builds:
+            catalog = self._catalog_for_build(build)
+            if catalog is None:
+                uncategorized.append(build)
+                continue
+            category, part = catalog
+            grouped.setdefault(category.code, {}).setdefault(part.code, []).append(build)
+
+        tree = [
+            await self._category_node(category, grouped.get(category.code, {}))
+            for category in CATEGORIES
+        ]
+        if uncategorized:
+            tree.append(await self._uncategorized_node(uncategorized))
+        return tree
 
     async def create_build(self, **fields) -> dict:
         build = await self.repository.create_build(**fields)
         return self._build_payload(build)
+
+    async def create_catalog_build(
+        self,
+        *,
+        category_code: str,
+        part_type_code: str,
+        component_name: str,
+        standard_number: str | None = None,
+        version: str = "1.0.0",
+        status: str = "draft",
+    ) -> dict:
+        category, part = resolve_part(category_code, part_type_code)
+        component_id = await self.repository.next_component_id(part.id_prefix)
+        return await self.create_build(
+            catalog_node_id=part.catalog_node_id,
+            component_id=component_id,
+            component_name=component_name,
+            component_type=part.code,
+            component_subtype=None,
+            family=category.code,
+            standard_number=standard_number,
+            version=version,
+            default_dn=None,
+            default_pn=None,
+            status=status,
+        )
 
     async def attach_step(self, build_id: UUID, *, model_id: UUID, revision_id: UUID) -> dict:
         build = await self.repository.attach_step(build_id, model_id=model_id, revision_id=revision_id)
@@ -129,10 +172,12 @@ class ComponentBuildService:
             return "parsing_sources"
         return build.status
 
-    @staticmethod
-    def _build_payload(build: ComponentBuild) -> dict:
+    def _build_payload(self, build: ComponentBuild) -> dict:
+        catalog = self._catalog_for_build(build)
         return {
             "id": str(build.id),
+            "catalog_node_id": str(build.catalog_node_id) if build.catalog_node_id else None,
+            "catalog_path": self._catalog_path(catalog),
             "component_id": build.component_id,
             "component_name": build.component_name,
             "component_type": build.component_type,
@@ -158,6 +203,76 @@ class ComponentBuildService:
         payload["status"] = self._project_status(build, step["status"], drawing["status"])
         return payload
 
+    async def _category_node(self, category: CatalogCategory, part_builds: dict[str, list[ComponentBuild]]) -> dict:
+        return {
+            "id": str(category.catalog_node_id),
+            "name": category.label,
+            "label": category.label,
+            "label_en": category.label_en,
+            "node_type": "family",
+            "category_code": category.code,
+            "part_type_code": None,
+            "sort_order": category.sort_order,
+            "children": [
+                await self._part_node(category, part, part_builds.get(part.code, []))
+                for part in category.parts
+            ],
+        }
+
+    async def _part_node(self, category: CatalogCategory, part: CatalogPart, builds: list[ComponentBuild]) -> dict:
+        return {
+            "id": str(part.catalog_node_id),
+            "catalog_node_id": str(part.catalog_node_id),
+            "name": part.label,
+            "label": part.label,
+            "label_en": part.label_en,
+            "node_type": "type",
+            "category_code": category.code,
+            "part_type_code": part.code,
+            "sort_order": part.sort_order,
+            "children": await self._component_nodes(builds),
+        }
+
+    async def _uncategorized_node(self, builds: list[ComponentBuild]) -> dict:
+        return {
+            "id": "catalog:uncategorized",
+            "name": "未分类",
+            "label": "未分类",
+            "label_en": "Uncategorized",
+            "node_type": "family",
+            "category_code": "uncategorized",
+            "part_type_code": None,
+            "sort_order": len(CATEGORIES) + 1,
+            "children": [{
+                "id": "catalog:uncategorized:type",
+                "name": "未分类",
+                "label": "未分类",
+                "label_en": "Uncategorized",
+                "node_type": "type",
+                "category_code": "uncategorized",
+                "part_type_code": "uncategorized",
+                "sort_order": 1,
+                "children": await self._component_nodes(builds),
+            }],
+        }
+
+    async def _component_nodes(self, builds: list[ComponentBuild]) -> list[dict]:
+        grouped: dict[str, list[ComponentBuild]] = {}
+        for build in builds:
+            grouped.setdefault(build.component_id, []).append(build)
+        return [
+            {
+                "id": f"component:{component_id}",
+                "name": component_builds[0].component_name,
+                "label": component_builds[0].component_name,
+                "node_type": "component",
+                "component_id": component_id,
+                "component_name": component_builds[0].component_name,
+                "children": [await self._tree_node(build) for build in component_builds],
+            }
+            for component_id, component_builds in sorted(grouped.items())
+        ]
+
     async def _tree_node(self, build: ComponentBuild) -> dict:
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
@@ -168,6 +283,8 @@ class ComponentBuildService:
             "name": build.version,
             "label": f"{build.component_name} {build.version}",
             "node_type": "build",
+            "catalog_node_id": projected["catalog_node_id"],
+            "catalog_path": projected["catalog_path"],
             "component_id": build.component_id,
             "component_name": build.component_name,
             "status": projected["status"],
@@ -193,6 +310,17 @@ class ComponentBuildService:
                 {"name": PUBLISH_VALIDATION_LABEL, "node_type": "publish_validation", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
             ],
         }
+
+    @staticmethod
+    def _catalog_path(catalog: tuple[CatalogCategory, CatalogPart] | None) -> str:
+        if catalog is None:
+            return "/未分类"
+        category, part = catalog
+        return f"/{category.label}/{part.label}"
+
+    @staticmethod
+    def _catalog_for_build(build: ComponentBuild) -> tuple[CatalogCategory, CatalogPart] | None:
+        return find_part_by_node_id(build.catalog_node_id) or find_part_by_legacy_type(build.component_type)
 
     @staticmethod
     def _source_node(build: ComponentBuild, role: str, source: dict) -> dict:

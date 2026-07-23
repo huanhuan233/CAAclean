@@ -83,12 +83,11 @@ def create_build(client: TestClient, *, step_name: str = "XMS06-DN80.stp", drawi
     return client.post(
         "/api/component-builds",
         data={
-            "component_id": "xms06",
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
             "component_name": "XMS06",
-            "component_type": "flange",
-            "version": "1.0.0",
-            "default_dn": "80",
-            "default_pn": "16",
+            # This legacy value must not influence the generated component ID.
+            "component_id": "user-supplied-id",
         },
         files={
             "step_file": (step_name, b"ISO-10303-21;", "application/octet-stream"),
@@ -103,11 +102,46 @@ def test_create_build_links_step_and_drawing(component_client):
     response = create_build(client)
 
     assert response.status_code == 202
+    assert response.json()["component_id"] == "flange-001"
+    assert response.json()["catalog_path"] == "/连接与紧固类/法兰"
+    assert response.json()["default_dn"] is None
+    assert response.json()["default_pn"] is None
     assert response.json()["cad_revision_id"] == str(cad_service.revision_id)
     assert response.json()["drawing_task_id"] == str(drawing_service.task_id)
     assert drawing_service.created[0][0] == cad_service.revision_id
     assert drawing_service.created[0][1].exists()
-    assert scheduled == [(drawing_service.task_id, "xms06", 80)]
+    assert drawing_service.created[0][2:] == ("flange-001", None)
+    assert scheduled == [(drawing_service.task_id, "flange-001", None)]
+
+
+def test_catalog_endpoint_returns_categories_and_cascading_parts(component_client):
+    client, _, _, _, _ = component_client
+
+    response = client.get("/api/component-builds/catalog")
+
+    assert response.status_code == 200
+    categories = response.json()["categories"]
+    assert [category["category_code"] for category in categories] == [
+        "support-frame", "shaft-transmission", "roller", "connection-fastening", "drive-actuation", "functional"
+    ]
+    assert any(part["part_type_code"] == "flange" for part in categories[3]["parts"])
+
+
+def test_rejects_category_part_mismatch_before_a_build_is_created(component_client):
+    client, _, _, _, build_service = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={"category_code": "roller", "part_type_code": "flange", "component_name": "错误分类"},
+        files={
+            "step_file": ("bad.stp", b"ISO-10303-21;", "application/octet-stream"),
+            "drawing_file": ("bad.png", PNG_BYTES, "image/png"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_catalog_selection"
+    assert build_service.repository.builds == {}
 
 
 def test_tree_exposes_specialist_targets(component_client):
@@ -148,7 +182,7 @@ def test_query_and_drawing_retry_return_projected_build(component_client):
     assert status.json()["sources"]["drawing"]["status"] == "created"
     assert retry.status_code == 202
     assert retry.json()["status"] == "parsing_sources"
-    assert scheduled[-1] == (drawing_service.task_id, "xms06", 80)
+    assert scheduled[-1] == (drawing_service.task_id, "flange-001", None)
 
 
 def test_invalid_extension_is_rejected_before_a_build_is_created(component_client):
