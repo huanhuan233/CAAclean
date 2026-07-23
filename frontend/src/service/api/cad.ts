@@ -347,6 +347,15 @@ export function previewComponentSpec(buildId: string, data: Record<string, any>)
   });
 }
 
+export function fuseComponentBuild(buildId: string, overwrite = false) {
+  return request<Api.ComponentBuild.FusionResponse>({
+    url: `/api/component-builds/${buildId}/fusion`,
+    method: 'post',
+    data: { overwrite },
+    headers: { 'X-Client-Silent-Error': '1' }
+  });
+}
+
 export function getCadSpecDrawingImageUrl(taskId: string, variant: 'original' | 'inference' = 'inference') {
   return `${getCadSpecApiBase()}/api/cad/spec/tasks/${taskId}/drawing/image?variant=${variant}`;
 }

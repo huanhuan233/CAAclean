@@ -449,5 +449,28 @@ declare namespace Api {
       saved: boolean;
       updated_at: string | null;
     }
+
+    interface FusionField {
+      path: string;
+      value: unknown;
+      source: 'build' | 'drawing' | 'step' | 'derived';
+      confidence: number;
+      decision: 'filled' | 'preserved' | 'conflict';
+      needs_review: boolean;
+    }
+
+    interface FusionResponse {
+      build_id: string;
+      status: 'completed';
+      summary: {
+        filled: number;
+        preserved: number;
+        conflicts: number;
+        needs_review: number;
+      };
+      fields: FusionField[];
+      warnings: string[];
+      component_spec: Record<string, any>;
+    }
   }
 }

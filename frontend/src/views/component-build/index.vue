@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
 import { useRoute, useRouter } from 'vue-router';
 import {
@@ -9,6 +10,7 @@ import {
   fetchComponentBuildStatus,
   fetchComponentBuildTree,
   fetchComponentSpec,
+  fuseComponentBuild,
   previewComponentSpec,
   retryComponentBuild,
   saveComponentSpec,
@@ -58,6 +60,8 @@ const componentSpecPreviewing = ref(false);
 const componentSpecPreviewVisible = ref(false);
 const componentSpecYaml = ref('');
 const activeSpecSections = ref<string[]>([]);
+const fusionReport = ref<Api.ComponentBuild.FusionResponse | null>(null);
+const fusionLoading = ref(false);
 
 const componentSpecFallback = componentSpecFallbackSource as Api.ComponentBuild.ComponentSpecDocument;
 
@@ -82,10 +86,22 @@ const isSourceNode = computed(() => {
   const type = selectedNode.value?.node_type;
   return type === 'reference_step' || type === 'drawing';
 });
-const isFutureNode = computed(() => selectedNode.value?.node_type === 'fusion' || selectedNode.value?.node_type === 'yaml' || selectedNode.value?.node_type === 'future');
+const isFusionNode = computed(() => selectedNode.value?.node_type === 'fusion');
+const isFutureNode = computed(() => selectedNode.value?.node_type === 'yaml' || selectedNode.value?.node_type === 'future');
 const isCatalogNode = computed(() => selectedNode.value?.node_type === 'family' || selectedNode.value?.node_type === 'type');
 const isComponentNode = computed(() => selectedNode.value?.node_type === 'component');
 const isComponentSpecNode = computed(() => selectedNode.value?.node_type === 'component_spec');
+const currentFusionReport = computed(() =>
+  fusionReport.value?.build_id === selectedBuildId.value ? fusionReport.value : null
+);
+const fusionFields = computed(() =>
+  [...(currentFusionReport.value?.fields || [])].sort((left, right) => {
+    const priority = { conflict: 0, filled: 1, preserved: 2 };
+    const reviewDelta = Number(right.needs_review) - Number(left.needs_review);
+    return reviewDelta || priority[left.decision] - priority[right.decision] || left.path.localeCompare(right.path);
+  })
+);
+const canFuse = computed(() => Boolean(selectedBuild.value?.cad_revision_id || selectedBuild.value?.drawing_task_id));
 const drawerSize = computed(() => (viewportWidth.value < 520 ? '100%' : 440));
 const isEditing = computed(() => Boolean(editingBuild.value));
 const drawerTitle = computed(() => (isEditing.value ? '编辑图元' : '新建图元'));
@@ -186,7 +202,7 @@ function normalizeTree(nodes: RawTreeNode[], parentBuildId: string | null = null
       node_type: nodeType,
       status: node.status || (nodeType === 'future' || nodeType === 'fusion' || nodeType === 'yaml' ? 'future' : 'pending'),
       progress: typeof node.progress === 'number' ? node.progress : null,
-      disabled: Boolean(node.disabled) || nodeType === 'future' || nodeType === 'fusion' || nodeType === 'yaml',
+      disabled: Boolean(node.disabled) || nodeType === 'future' || nodeType === 'yaml',
       build_id: buildId,
       category_code: node.category_code || null,
       part_type_code: node.part_type_code || null,
@@ -233,6 +249,7 @@ function statusLabel(status: string) {
     saved: '已保存',
     released: '已发布',
     completed: '解析完成',
+    ready: '可开始',
     review_ready: '待审核',
     failed: '解析失败',
     waiting_for_step: '等待 STEP',
@@ -274,7 +291,8 @@ function nodeIconClass(node: ComponentTreeNode) {
   if (node.node_type === 'reference_step') return 'step';
   if (node.node_type === 'drawing') return 'drawing';
   if (node.node_type === 'component_spec') return 'spec';
-  if (node.node_type === 'fusion' || node.node_type === 'yaml' || node.node_type === 'future') return 'future';
+  if (node.node_type === 'fusion') return 'fusion';
+  if (node.node_type === 'yaml' || node.node_type === 'future') return 'future';
   if (node.node_type === 'folder') return 'folder';
   return 'build';
 }
@@ -613,6 +631,77 @@ async function selectNode(data: ComponentTreeNode) {
   if (data.node_type === 'component_spec') await loadComponentSpec(buildId);
 }
 
+function fusionSourceLabel(source: 'build' | 'drawing' | 'step' | 'derived') {
+  return {
+    build: '图元信息',
+    drawing: '二维图纸',
+    step: 'STEP',
+    derived: '规则派生'
+  }[source];
+}
+
+function fusionDecisionLabel(decision: 'filled' | 'preserved' | 'conflict') {
+  return {
+    filled: '已填入',
+    preserved: '保留人工值',
+    conflict: '冲突'
+  }[decision];
+}
+
+function fusionDecisionTagType(decision: 'filled' | 'preserved' | 'conflict') {
+  if (decision === 'conflict') return 'danger';
+  if (decision === 'preserved') return 'info';
+  return 'success';
+}
+
+function formatFusionValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+async function runFusion(overwrite = false) {
+  if (!selectedBuildId.value || !canFuse.value) return;
+  if (overwrite) {
+    try {
+      await ElMessageBox.confirm(
+        '将使用当前解析结果覆盖数据融合负责的字段，其他人工字段不会被清空。',
+        '重新融合并覆盖',
+        {
+          confirmButtonText: '确认覆盖',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      );
+    } catch {
+      return;
+    }
+  }
+  fusionLoading.value = true;
+  try {
+    const result = await fuseComponentBuild(selectedBuildId.value, overwrite);
+    if (result.error || !result.data) throw result.error;
+    fusionReport.value = result.data;
+    componentSpec.value = null;
+    await loadTree({ preserveSelection: true, silent: true });
+    await loadSelectedBuild(selectedBuildId.value, { silent: true });
+    window.$message?.success(overwrite ? '重新融合完成' : '数据融合完成');
+  } catch (error) {
+    window.$message?.error(formatError(error, '数据融合失败'));
+  } finally {
+    fusionLoading.value = false;
+  }
+}
+
+async function openComponentSpecFromFusion() {
+  if (!selectedBuildId.value) return;
+  const node = findNodeById(treeData.value, `${selectedBuildId.value}:component_spec`);
+  if (!node) return;
+  await selectNode(node);
+  await nextTick();
+  treeRef.value?.setCurrentKey(node.id);
+}
+
 function rememberExpanded(data: ComponentTreeNode) {
   if (!expandedNodeIds.value.includes(data.id)) expandedNodeIds.value = [...expandedNodeIds.value, data.id];
 }
@@ -794,6 +883,7 @@ onBeforeUnmount(() => {
                 <span class="node-icon" :class="nodeIconClass(data)">
                   <icon-carbon-document v-if="data.node_type === 'reference_step'" />
                   <icon-carbon-image v-else-if="data.node_type === 'drawing'" />
+                  <icon-carbon-data-structured v-else-if="data.node_type === 'fusion'" />
                   <icon-carbon-document-requirements v-else-if="data.node_type === 'component_spec'" />
                   <icon-carbon-folder v-else-if="data.node_type === 'folder' || data.node_type === 'family' || data.node_type === 'type'" />
                   <icon-carbon-cube v-else-if="data.node_type === 'component' || data.node_type === 'build'" />
@@ -869,6 +959,106 @@ onBeforeUnmount(() => {
             </dl>
             <p>展开图元并选择具体版本，可查看成套文件解析状态与结果。</p>
           </section>
+        </template>
+
+        <template v-else-if="isFusionNode">
+          <div class="detail-heading">
+            <div>
+              <span class="eyebrow">图纸与 STEP 字段对齐</span>
+              <h1>数据融合</h1>
+              <p class="heading-subtitle">{{ selectedBuild?.component_name || selectedNode.label }}</p>
+            </div>
+            <ElTag :type="selectedNode.status === 'completed' ? 'success' : 'info'" effect="plain">
+              {{ selectedNode.status_label || statusLabel(selectedNode.status) }}
+            </ElTag>
+          </div>
+
+          <section class="detail-section fusion-source-section">
+            <span class="section-title">来源状态</span>
+            <dl>
+              <div>
+                <dt>STEP 几何</dt>
+                <dd>{{ statusLabel(selectedBuildStatus?.sources.reference_step.status || 'missing') }}</dd>
+              </div>
+              <div>
+                <dt>二维图纸</dt>
+                <dd>{{ statusLabel(selectedBuildStatus?.sources.drawing.status || 'missing') }}</dd>
+              </div>
+              <div>
+                <dt>目标版本</dt>
+                <dd>{{ selectedBuild?.version || '-' }}</dd>
+              </div>
+              <div>
+                <dt>合并策略</dt>
+                <dd>默认只填空值</dd>
+              </div>
+            </dl>
+            <ElAlert
+              class="fusion-policy"
+              title="系统会保留已填写的人工值；不确定或来源冲突的字段会进入待复核列表。"
+              type="info"
+              :closable="false"
+              show-icon
+            />
+          </section>
+
+          <footer class="detail-actions fusion-actions">
+            <ElButton type="primary" :loading="fusionLoading" :disabled="!canFuse" @click="runFusion(false)">
+              <template #icon><icon-carbon-join-inner /></template>
+              开始数据融合
+            </ElButton>
+            <ElButton :loading="fusionLoading" :disabled="!canFuse" @click="runFusion(true)">
+              <template #icon><icon-ic-round-refresh /></template>
+              重新融合并覆盖
+            </ElButton>
+            <ElButton v-if="currentFusionReport || selectedNode.status === 'completed'" @click="openComponentSpecFromFusion">
+              <template #icon><icon-carbon-document-requirements /></template>
+              查看 ComponentSpec
+            </ElButton>
+          </footer>
+
+          <template v-if="currentFusionReport">
+            <section class="detail-section fusion-summary">
+              <span class="section-title">本次融合结果</span>
+              <dl>
+                <div><dt>已填入</dt><dd>{{ currentFusionReport.summary.filled }}</dd></div>
+                <div><dt>保留人工值</dt><dd>{{ currentFusionReport.summary.preserved }}</dd></div>
+                <div><dt>冲突</dt><dd>{{ currentFusionReport.summary.conflicts }}</dd></div>
+                <div><dt>待复核</dt><dd>{{ currentFusionReport.summary.needs_review }}</dd></div>
+              </dl>
+              <ElAlert
+                v-for="warning in currentFusionReport.warnings"
+                :key="warning"
+                class="fusion-warning"
+                :title="warning"
+                type="warning"
+                :closable="false"
+                show-icon
+              />
+            </section>
+            <section class="detail-section fusion-fields">
+              <span class="section-title">字段明细</span>
+              <ElTable :data="fusionFields" size="small" max-height="420">
+                <ElTableColumn prop="path" label="ComponentSpec 字段" min-width="250" show-overflow-tooltip />
+                <ElTableColumn label="值" min-width="130" show-overflow-tooltip>
+                  <template #default="{ row }">{{ formatFusionValue(row.value) }}</template>
+                </ElTableColumn>
+                <ElTableColumn label="来源" width="100">
+                  <template #default="{ row }">{{ fusionSourceLabel(row.source) }}</template>
+                </ElTableColumn>
+                <ElTableColumn label="处理" width="120">
+                  <template #default="{ row }">
+                    <ElTag :type="fusionDecisionTagType(row.decision)" size="small" effect="plain">
+                      {{ fusionDecisionLabel(row.decision) }}
+                    </ElTag>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="复核" width="72" align="center">
+                  <template #default="{ row }">{{ row.needs_review ? '是' : '-' }}</template>
+                </ElTableColumn>
+              </ElTable>
+            </section>
+          </template>
         </template>
 
         <template v-else-if="isComponentSpecNode">
@@ -1194,7 +1384,7 @@ onBeforeUnmount(() => {
 .tree-node { display: grid; width: 100%; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) 7px auto; align-items: center; gap: 6px; padding-right: 6px; }
 .tree-node.disabled { color: var(--el-text-color-placeholder); cursor: not-allowed; }
 .node-icon { display: inline-flex; color: var(--el-text-color-secondary); font-size: 15px; }
-.node-icon.step { color: var(--el-color-primary); }.node-icon.drawing { color: var(--el-color-success); }.node-icon.folder, .node-icon.catalog { color: var(--el-color-warning); }.node-icon.component { color: var(--el-color-primary); }.node-icon.spec { color: #0f766e; }.node-icon.future { color: var(--el-text-color-placeholder); }
+.node-icon.step { color: var(--el-color-primary); }.node-icon.drawing { color: var(--el-color-success); }.node-icon.folder, .node-icon.catalog { color: var(--el-color-warning); }.node-icon.component { color: var(--el-color-primary); }.node-icon.spec { color: #0f766e; }.node-icon.fusion { color: #2563eb; }.node-icon.future { color: var(--el-text-color-placeholder); }
 .tree-node-label, .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.tree-node-en { margin-left: 4px; color: var(--el-text-color-secondary); font-size: 11px; }.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .status-dot, .pipeline-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-placeholder); }.status-dot.completed, .status-dot.review_ready, .status-dot.sources_ready, .status-dot.sources_partial, .pipeline-dot.completed, .pipeline-dot.review_ready, .pipeline-dot.sources_ready, .pipeline-dot.sources_partial { background: var(--el-color-success); }.status-dot.uploading, .status-dot.parsing_sources, .status-dot.processing, .status-dot.queued, .pipeline-dot.uploading, .pipeline-dot.parsing_sources, .pipeline-dot.processing, .pipeline-dot.queued { background: var(--el-color-primary); }.status-dot.failed, .status-dot.source_failed, .pipeline-dot.failed, .pipeline-dot.source_failed { background: var(--el-color-danger); }.status-dot.review_required, .status-dot.needs_manual_layout, .pipeline-dot.review_required, .pipeline-dot.needs_manual_layout { background: var(--el-color-warning); }.status-dot.future, .pipeline-dot.future { background: var(--el-text-color-placeholder); }
 .tree-progress { color: var(--el-text-color-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1204,6 +1394,11 @@ onBeforeUnmount(() => {
 .spec-heading { position: sticky; z-index: 5; top: -20px; align-items: center; margin: -20px -24px 0; background: var(--el-bg-color); padding: 18px 24px 14px; }
 .spec-actions { display: flex; flex: none; gap: 8px; }
 .component-spec-body { min-height: 460px; padding-top: 16px; }
+.fusion-source-section dl, .fusion-summary dl { margin-top: 14px; }
+.fusion-policy, .fusion-warning { margin-top: 16px; }
+.fusion-actions { border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 18px; }
+.fusion-fields :deep(.el-table) { margin-top: 14px; }
+.fusion-fields :deep(.cell) { word-break: break-word; }
 .spec-collapse { margin-top: 14px; border-top: 1px solid var(--el-border-color-lighter); }
 .spec-collapse :deep(.el-collapse-item__header) { min-height: 58px; height: auto; line-height: 1.4; }
 .spec-collapse :deep(.el-collapse-item__content) { padding: 4px 4px 22px 42px; }
