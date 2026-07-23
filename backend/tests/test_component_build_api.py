@@ -179,6 +179,27 @@ def test_step_upload_failure_marks_build_failed_without_creating_drawing(compone
     assert drawing_service.created == []
 
 
+def test_failure_persistence_error_does_not_mask_step_upload_error(component_client):
+    client, cad_service, _, _, build_service = component_client
+
+    async def fail_step_upload(_file, _name):
+        raise ValueError("invalid STEP payload")
+
+    async def fail_failure_persistence(*_args, **_kwargs):
+        raise RuntimeError("database is unavailable")
+
+    cad_service.create_model_from_upload = fail_step_upload
+    build_service.set_status = fail_failure_persistence
+
+    response = create_build(client)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "component_build_upload_failed",
+        "message": "invalid STEP payload",
+    }
+
+
 def test_drawing_creation_failure_keeps_step_and_marks_build_failed(component_client):
     client, cad_service, drawing_service, _, build_service = component_client
 

@@ -115,14 +115,14 @@ class ComponentBuildService:
 
     @staticmethod
     def _project_status(build: ComponentBuild, step_status: str, drawing_status: str) -> str:
+        if build.status == "source_failed":
+            return "source_failed"
         if step_status == "failed" or drawing_status == "failed":
             return "source_failed"
         if drawing_status == "needs_manual_layout":
             return "review_required"
         if step_status == "completed" and drawing_status == "review_ready":
             return "sources_ready"
-        if build.status == "source_failed":
-            return "source_failed"
         if build.status == "uploading" and not (build.cad_revision_id and build.drawing_task_id):
             return build.status
         if build.cad_revision_id or build.drawing_task_id:

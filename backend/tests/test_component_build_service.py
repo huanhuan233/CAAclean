@@ -122,7 +122,11 @@ async def test_unlinked_build_retains_persisted_upload_failure_status():
 
 
 @pytest.mark.asyncio
-async def test_linked_build_retains_persisted_source_failure_until_a_retry_resets_it():
+@pytest.mark.parametrize(
+    ("step_status", "drawing_status"),
+    [("completed", "review_ready"), ("processing", "needs_manual_layout")],
+)
+async def test_persisted_source_failure_overrides_ready_and_manual_source_states(step_status, drawing_status):
     model_id = uuid4()
     revision_id = uuid4()
     task_id = uuid4()
@@ -138,7 +142,14 @@ async def test_linked_build_retains_persisted_source_failure_until_a_retry_reset
     )
     await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
     await repository.attach_drawing(build.id, task_id=task_id)
-    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+    class SourceStatusReader:
+        async def get_step_status(self, _revision_id):
+            return {"status": step_status, "progress": 100}
+
+        async def get_drawing_status(self, _task_id):
+            return {"status": drawing_status, "progress": 100}
+
+    service = ComponentBuildService(repository, source_status_reader=SourceStatusReader())
 
     tree = await service.get_tree()
     detail = await service.get_build(build.id)
