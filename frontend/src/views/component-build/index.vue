@@ -32,6 +32,7 @@ const drawerVisible = ref(false);
 const searchKeyword = ref('');
 const treeData = ref<ComponentTreeNode[]>([]);
 const selectedNodeId = ref('');
+const expandedNodeIds = ref<string[]>([]);
 const selectedBuild = ref<Api.ComponentBuild.BuildDetail | null>(null);
 const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({});
 const pollTimer = ref<number | null>(null);
@@ -241,6 +242,7 @@ async function restoreSelectionFromRoute() {
   const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
   if (!buildId || !findNodeById(treeData.value, buildId)) return;
   selectedNodeId.value = buildId;
+  if (!expandedNodeIds.value.includes(buildId)) expandedNodeIds.value = [...expandedNodeIds.value, buildId];
   await loadSelectedBuild(buildId);
   await nextTick();
   treeRef.value?.setCurrentKey(buildId);
@@ -257,6 +259,8 @@ async function loadTree(options: { preserveSelection?: boolean; silent?: boolean
     }
     treeData.value = normalizeTree(result.data as unknown as RawTreeNode[]);
     if (!options.preserveSelection || !selectedNode.value) await restoreSelectionFromRoute();
+    await nextTick();
+    expandedNodeIds.value.forEach(id => treeRef.value?.getNode(id)?.expand?.());
     return true;
   } finally {
     treeLoading.value = false;
@@ -311,6 +315,14 @@ async function selectNode(data: ComponentTreeNode) {
   selectedNodeId.value = data.id;
   const buildId = data.node_type === 'build' ? data.id : data.build_id || '';
   await loadSelectedBuild(buildId);
+}
+
+function rememberExpanded(data: ComponentTreeNode) {
+  if (!expandedNodeIds.value.includes(data.id)) expandedNodeIds.value = [...expandedNodeIds.value, data.id];
+}
+
+function forgetExpanded(data: ComponentTreeNode) {
+  expandedNodeIds.value = expandedNodeIds.value.filter(id => id !== data.id);
 }
 
 function openCreateDrawer(build?: Api.ComponentBuild.BuildDetail | null) {
@@ -461,8 +473,10 @@ onBeforeUnmount(() => {
             node-key="id"
             highlight-current
             :filter-node-method="filterTree"
-            :props="{ children: 'children', label: 'label', disabled: 'disabled' }"
+            :props="{ children: 'children', label: 'label', disabled: 'tree_disabled' }"
             @node-click="selectNode"
+            @node-expand="rememberExpanded"
+            @node-collapse="forgetExpanded"
           >
             <template #default="{ data }">
               <div class="tree-node" :class="{ disabled: data.disabled }">
