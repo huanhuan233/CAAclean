@@ -181,6 +181,24 @@ async def test_memory_repository_clears_drawing_when_step_revision_is_replaced()
 
 
 @pytest.mark.asyncio
+async def test_memory_repository_preserves_drawing_when_step_revision_is_reattached():
+    model_id = uuid4()
+    revision_id = uuid4()
+    drawing_task_id = uuid4()
+    repository = MemoryComponentBuildRepository(
+        revision_models={revision_id: model_id},
+        drawing_task_revisions={drawing_task_id: revision_id},
+    )
+    build = await repository.create_build(component_id="xms06", component_name="XMS06", component_type="flange")
+    await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
+    await repository.attach_drawing(build.id, task_id=drawing_task_id)
+
+    await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
+
+    assert build.drawing_task_id == drawing_task_id
+
+
+@pytest.mark.asyncio
 async def test_memory_repository_lists_newest_builds_first_with_uuid_tie_breaker():
     repository = MemoryComponentBuildRepository()
     timestamp = datetime(2026, 7, 23, tzinfo=timezone.utc)
@@ -303,3 +321,25 @@ async def test_sqlalchemy_repository_clears_drawing_when_step_revision_is_replac
 
     assert build.cad_revision_id == revision_b
     assert build.drawing_task_id is None
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_repository_preserves_drawing_when_step_revision_is_reattached():
+    model_id = uuid4()
+    revision_id = uuid4()
+    drawing_task_id = uuid4()
+    build = ComponentBuild(
+        id=uuid4(),
+        component_id="xms06",
+        component_name="XMS06",
+        component_type="flange",
+        cad_model_id=model_id,
+        cad_revision_id=revision_id,
+        drawing_task_id=drawing_task_id,
+    )
+    session = SourceLookupSession(build, SimpleNamespace(model_id=model_id), None)
+    repository = SqlAlchemyComponentBuildRepository(session)
+
+    await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
+
+    assert build.drawing_task_id == drawing_task_id
