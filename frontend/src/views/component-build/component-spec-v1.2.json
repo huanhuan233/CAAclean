@@ -1,0 +1,2717 @@
+{
+  "build_id": "",
+  "schema": {
+    "schema_version": "1.2",
+    "sections": [
+      {
+        "key": "spec",
+        "label": "规范信息",
+        "description": "ComponentSpec 的版本与对象类型",
+        "fields": [
+          {
+            "key": "schema_version",
+            "path": "schema_version",
+            "label": "规范版本；结构不兼容变更时升级主版本",
+            "required": true,
+            "read_only": true,
+            "source": "系统固定",
+            "comment": "【必填】（系统固定） 规范版本；结构不兼容变更时升级主版本",
+            "kind": "text",
+            "fixed_value": "1.2"
+          },
+          {
+            "key": "spec_type",
+            "path": "spec_type",
+            "label": "规范对象类型；图元固定为 component\n\n# ── 1. 身份与版本 ──────────────────────────────────────────",
+            "required": true,
+            "read_only": true,
+            "source": "系统固定",
+            "comment": "【必填】（系统固定） 规范对象类型；图元固定为 component\n\n# ── 1. 身份与版本 ──────────────────────────────────────────",
+            "kind": "text",
+            "fixed_value": "component"
+          }
+        ]
+      },
+      {
+        "key": "identity",
+        "label": "身份与版本",
+        "description": "图元身份、分类、标准及维护信息",
+        "fields": [
+          {
+            "key": "identity",
+            "path": "identity",
+            "label": "图元身份与版本信息",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "图元身份与版本信息",
+            "kind": "object",
+            "children": [
+              {
+                "key": "id",
+                "path": "identity.id",
+                "label": "所属作用域内的唯一标识",
+                "required": true,
+                "read_only": false,
+                "source": "人工",
+                "comment": "【必填】（人工） 所属作用域内的唯一标识",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "name",
+                "path": "identity.name",
+                "label": "当前对象的名称",
+                "required": true,
+                "read_only": false,
+                "source": "人工",
+                "comment": "【必填】（人工） 当前对象的名称",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "name_en",
+                "path": "identity.name_en",
+                "label": "图元英文名称",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 图元英文名称",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "type",
+                "path": "identity.type",
+                "label": "类型枚举；用于解析、检索和校验",
+                "required": true,
+                "read_only": false,
+                "source": "人工",
+                "comment": "【必填】（人工） 类型枚举；用于解析、检索和校验",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "subtype",
+                "path": "identity.subtype",
+                "label": "细分类别；用于区分不同结构",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 细分类别；用于区分不同结构",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "family",
+                "path": "identity.family",
+                "label": "所属功能族",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 所属功能族",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "standard",
+                "path": "identity.standard",
+                "label": "执行或接口标准",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "执行或接口标准",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "number",
+                    "path": "identity.standard.number",
+                    "label": "标准编号",
+                    "required": false,
+                    "read_only": false,
+                    "source": "可关联标准库/已有库，也可AI补全",
+                    "comment": "[选填]（可关联标准库/已有库，也可AI补全） 标准编号",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "edition",
+                    "path": "identity.standard.edition",
+                    "label": "标准版本年份",
+                    "required": false,
+                    "read_only": false,
+                    "source": "可关联标准库/已有库，也可AI补全",
+                    "comment": "[选填]（可关联标准库/已有库，也可AI补全） 标准版本年份",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "title",
+                    "path": "identity.standard.title",
+                    "label": "标准正式名称",
+                    "required": false,
+                    "read_only": false,
+                    "source": "可关联标准库/已有库，也可AI补全",
+                    "comment": "[选填]（可关联标准库/已有库，也可AI补全） 标准正式名称",
+                    "kind": "text",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "description",
+                "path": "identity.description",
+                "label": "用途及结构说明",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 用途及结构说明",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "license",
+                "path": "identity.license",
+                "label": "数据与模型授权方式",
+                "required": false,
+                "read_only": false,
+                "source": "人工Review",
+                "comment": "[选填]（人工Review） 数据与模型授权方式",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "version",
+                "path": "identity.version",
+                "label": "语义化版本号；缺省可自动设为 1.0.0",
+                "required": false,
+                "read_only": false,
+                "source": "自动生成",
+                "comment": "[选填]（自动生成） 语义化版本号；缺省可自动设为 1.0.0",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "author",
+                "path": "identity.author",
+                "label": "首次创建人",
+                "required": false,
+                "read_only": false,
+                "source": "人工Review",
+                "comment": "[选填]（人工Review） 首次创建人",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "maintainer",
+                "path": "identity.maintainer",
+                "label": "当前维护人",
+                "required": false,
+                "read_only": false,
+                "source": "人工Review",
+                "comment": "[选填]（人工Review） 当前维护人",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "created_at",
+                "path": "identity.created_at",
+                "label": "首次创建日期，格式 YYYY-MM-DD",
+                "required": false,
+                "read_only": false,
+                "source": "自动生成",
+                "comment": "[选填]（自动生成） 首次创建日期，格式 YYYY-MM-DD",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "updated_at",
+                "path": "identity.updated_at",
+                "label": "最近更新日期，格式 YYYY-MM-DD",
+                "required": false,
+                "read_only": false,
+                "source": "自动生成",
+                "comment": "[选填]（自动生成） 最近更新日期，格式 YYYY-MM-DD",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "status",
+                "path": "identity.status",
+                "label": "draft / reviewed / released / deprecated",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） draft / reviewed / released / deprecated",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "tags",
+                "path": "identity.tags",
+                "label": "检索标签",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 检索标签",
+                "kind": "scalar_array",
+                "repeatable": false,
+                "value_type": "text"
+              },
+              {
+                "key": "default_preset",
+                "path": "identity.default_preset",
+                "label": "未指定规格时采用的预设",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 未指定规格时采用的预设",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "default_color",
+                "path": "identity.default_color",
+                "label": "3D 预览颜色，十六进制 RGB\n\n# ── 2. 坐标系与建模基准 ────────────────────────────────────\n# 全库建议：连接端面中心作为端口原点，端口 axis 指向零件外部。",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 3D 预览颜色，十六进制 RGB\n\n# ── 2. 坐标系与建模基准 ────────────────────────────────────\n# 全库建议：连接端面中心作为端口原点，端口 axis 指向零件外部。",
+                "kind": "text",
+                "fixed_value": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "coordinate_system",
+        "label": "坐标系与建模基准",
+        "description": "局部坐标系、原点与轴向定义",
+        "fields": [
+          {
+            "key": "coordinate_system",
+            "path": "coordinate_system",
+            "label": "图元局部坐标系",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "图元局部坐标系",
+            "kind": "object",
+            "children": [
+              {
+                "key": "length_unit",
+                "path": "coordinate_system.length_unit",
+                "label": "长度单位",
+                "required": false,
+                "read_only": true,
+                "source": "系统固定",
+                "comment": "[选填]（系统固定） 长度单位",
+                "kind": "text",
+                "fixed_value": "mm"
+              },
+              {
+                "key": "angle_unit",
+                "path": "coordinate_system.angle_unit",
+                "label": "角度单位",
+                "required": false,
+                "read_only": true,
+                "source": "系统固定",
+                "comment": "[选填]（系统固定） 角度单位",
+                "kind": "text",
+                "fixed_value": "deg"
+              },
+              {
+                "key": "handedness",
+                "path": "coordinate_system.handedness",
+                "label": "坐标系手性",
+                "required": false,
+                "read_only": true,
+                "source": "系统固定",
+                "comment": "[选填]（系统固定） 坐标系手性",
+                "kind": "text",
+                "fixed_value": "right_handed"
+              },
+              {
+                "key": "origin",
+                "path": "coordinate_system.origin",
+                "label": "局部原点 [x, y, z]",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 局部原点 [x, y, z]",
+                "kind": "scalar_array",
+                "repeatable": false,
+                "value_type": "number"
+              },
+              {
+                "key": "x_axis",
+                "path": "coordinate_system.x_axis",
+                "label": "局部 X 轴单位向量",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 局部 X 轴单位向量",
+                "kind": "scalar_array",
+                "repeatable": false,
+                "value_type": "number"
+              },
+              {
+                "key": "y_axis",
+                "path": "coordinate_system.y_axis",
+                "label": "局部 Y 轴单位向量",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 局部 Y 轴单位向量",
+                "kind": "scalar_array",
+                "repeatable": false,
+                "value_type": "number"
+              },
+              {
+                "key": "z_axis",
+                "path": "coordinate_system.z_axis",
+                "label": "局部 Z 轴单位向量",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 局部 Z 轴单位向量",
+                "kind": "scalar_array",
+                "repeatable": false,
+                "value_type": "number"
+              },
+              {
+                "key": "origin_definition",
+                "path": "coordinate_system.origin_definition",
+                "label": "原点对应的几何位置",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 原点对应的几何位置",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "z_axis_definition",
+                "path": "coordinate_system.z_axis_definition",
+                "label": "Z 轴的物理方向",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） Z 轴的物理方向",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "zero_rotation_definition",
+                "path": "coordinate_system.zero_rotation_definition",
+                "label": "绕主轴的零旋转方向\n\n# ── 3. 参数定义 ────────────────────────────────────────────\n# required=true 的参数必须由默认值、预设或上游任务显式提供。",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 绕主轴的零旋转方向\n\n# ── 3. 参数定义 ────────────────────────────────────────────\n# required=true 的参数必须由默认值、预设或上游任务显式提供。",
+                "kind": "text",
+                "fixed_value": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "parameters",
+        "label": "参数定义",
+        "description": "可输入或由预设赋值的参数",
+        "fields": [
+          {
+            "key": "parameters",
+            "path": "parameters",
+            "label": "可输入或由预设赋值的参数",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "可输入或由预设赋值的参数",
+            "kind": "object_array",
+            "repeatable": true,
+            "item": {
+              "kind": "object",
+              "children": [
+                {
+                  "key": "name",
+                  "path": "parameters[].name",
+                  "label": "参数标识名，全库唯一英文 key",
+                  "required": true,
+                  "read_only": false,
+                  "source": "人工",
+                  "comment": "【必填】（人工） 参数标识名，全库唯一英文 key",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "label",
+                  "path": "parameters[].label",
+                  "label": "中文显示名称",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全，人工Review",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全，人工Review） 中文显示名称",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "type",
+                  "path": "parameters[].type",
+                  "label": "类型枚举；用于解析、检索和校验",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 类型枚举；用于解析、检索和校验",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "unit",
+                  "path": "parameters[].unit",
+                  "label": "物理单位；DN 为公称尺寸编号，无量纲",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 物理单位；DN 为公称尺寸编号，无量纲",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "default",
+                  "path": "parameters[].default",
+                  "label": "默认规格由建库人员决定",
+                  "required": true,
+                  "read_only": false,
+                  "source": "人工",
+                  "comment": "【必填】（人工） 默认规格由建库人员决定",
+                  "kind": "number",
+                  "fixed_value": null
+                },
+                {
+                  "key": "enum",
+                  "path": "parameters[].enum",
+                  "label": "允许值集合",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 允许值集合",
+                  "kind": "scalar_array",
+                  "repeatable": false,
+                  "value_type": "number"
+                },
+                {
+                  "key": "required",
+                  "path": "parameters[].required",
+                  "label": "是否为生成必填项",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 是否为生成必填项",
+                  "kind": "boolean",
+                  "fixed_value": null
+                },
+                {
+                  "key": "editable",
+                  "path": "parameters[].editable",
+                  "label": "是否允许上游覆盖",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 是否允许上游覆盖",
+                  "kind": "boolean",
+                  "fixed_value": null
+                },
+                {
+                  "key": "affects_geometry",
+                  "path": "parameters[].affects_geometry",
+                  "label": "变化是否影响实体几何",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 变化是否影响实体几何",
+                  "kind": "boolean",
+                  "fixed_value": null
+                },
+                {
+                  "key": "standard_symbol",
+                  "path": "parameters[].standard_symbol",
+                  "label": "标准图表中的尺寸符号",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 标准图表中的尺寸符号",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "min",
+                  "path": "parameters[].min",
+                  "label": "允许的最小值",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 允许的最小值",
+                  "kind": "number",
+                  "fixed_value": null
+                },
+                {
+                  "key": "max",
+                  "path": "parameters[].max",
+                  "label": "允许的最大值",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 允许的最大值",
+                  "kind": "number",
+                  "fixed_value": null
+                }
+              ]
+            }
+          },
+          {
+            "key": "derived_parameters",
+            "path": "derived_parameters",
+            "label": "通过表达式计算的只读参数",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "通过表达式计算的只读参数",
+            "kind": "object_array",
+            "repeatable": true,
+            "item": {
+              "kind": "object",
+              "children": [
+                {
+                  "key": "name",
+                  "path": "derived_parameters[].name",
+                  "label": "当前对象的名称",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 当前对象的名称",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "type",
+                  "path": "derived_parameters[].type",
+                  "label": "类型枚举；用于解析、检索和校验",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 类型枚举；用于解析、检索和校验",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "unit",
+                  "path": "derived_parameters[].unit",
+                  "label": "物理单位；无量纲项填 null",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 物理单位；无量纲项填 null",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "expression",
+                  "path": "derived_parameters[].expression",
+                  "label": "由受限引擎执行的表达式",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 由受限引擎执行的表达式",
+                  "kind": "text",
+                  "fixed_value": null
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "key": "constraints",
+        "label": "参数约束",
+        "description": "参数之间的逻辑和尺寸约束",
+        "fields": [
+          {
+            "key": "constraints",
+            "path": "constraints",
+            "label": "参数间约束",
+            "required": true,
+            "read_only": false,
+            "source": "",
+            "comment": "【必填】 参数间约束",
+            "kind": "object",
+            "children": [
+              {
+                "key": "expression_language",
+                "path": "constraints.expression_language",
+                "label": "安全表达式语法",
+                "required": false,
+                "read_only": true,
+                "source": "系统固定",
+                "comment": "[选填]（系统固定） 安全表达式语法",
+                "kind": "text",
+                "fixed_value": "CEL"
+              },
+              {
+                "key": "rules",
+                "path": "constraints.rules",
+                "label": "约束或兼容规则列表",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "约束或兼容规则列表",
+                "kind": "object_array",
+                "repeatable": true,
+                "item": {
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "id",
+                      "path": "constraints.rules[].id",
+                      "label": "所属作用域内的唯一标识",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 所属作用域内的唯一标识",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "expression",
+                      "path": "constraints.rules[].expression",
+                      "label": "由受限引擎执行的表达式",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 由受限引擎执行的表达式",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "severity",
+                      "path": "constraints.rules[].severity",
+                      "label": "失败等级；error 阻断，warning 提示",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 失败等级；error 阻断，warning 提示",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "message",
+                      "path": "constraints.rules[].message",
+                      "label": "校验失败提示",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 校验失败提示",
+                      "kind": "text",
+                      "fixed_value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "ports",
+        "label": "装配接口",
+        "description": "图元对外连接端口与兼容关系",
+        "fields": [
+          {
+            "key": "ports",
+            "path": "ports",
+            "label": "图元对外连接接口",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "图元对外连接接口",
+            "kind": "object_array",
+            "repeatable": true,
+            "item": {
+              "kind": "object",
+              "children": [
+                {
+                  "key": "id",
+                  "path": "ports[].id",
+                  "label": "所属作用域内的唯一标识",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 所属作用域内的唯一标识",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "name",
+                  "path": "ports[].name",
+                  "label": "当前对象的名称",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 当前对象的名称",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "type",
+                  "path": "ports[].type",
+                  "label": "类型枚举；用于解析、检索和校验",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 类型枚举；用于解析、检索和校验",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "role",
+                  "path": "ports[].role",
+                  "label": "对象在流程中的用途",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 对象在流程中的用途",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "frame",
+                  "path": "ports[].frame",
+                  "label": "端口局部坐标框架",
+                  "required": false,
+                  "read_only": false,
+                  "source": "",
+                  "comment": "端口局部坐标框架",
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "origin",
+                      "path": "ports[].frame.origin",
+                      "label": "局部原点 [x, y, z]",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 局部原点 [x, y, z]",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "number"
+                    },
+                    {
+                      "key": "axis",
+                      "path": "ports[].frame.axis",
+                      "label": "端口外法向或连接轴",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 端口外法向或连接轴",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "number"
+                    },
+                    {
+                      "key": "up",
+                      "path": "ports[].frame.up",
+                      "label": "消除绕轴歧义的参考方向",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 消除绕轴歧义的参考方向",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "number"
+                    }
+                  ]
+                },
+                {
+                  "key": "interface",
+                  "path": "ports[].interface",
+                  "label": "用于配对的接口属性",
+                  "required": false,
+                  "read_only": false,
+                  "source": "",
+                  "comment": "用于配对的接口属性",
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "standard",
+                      "path": "ports[].interface.standard",
+                      "label": "执行或接口标准",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 执行或接口标准",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "DN",
+                      "path": "ports[].interface.DN",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "PN",
+                      "path": "ports[].interface.PN",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "facing_type",
+                      "path": "ports[].interface.facing_type",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_circle_diameter",
+                      "path": "ports[].interface.bolt_circle_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_hole_count",
+                      "path": "ports[].interface.bolt_hole_count",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_hole_diameter",
+                      "path": "ports[].interface.bolt_hole_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "pipe_outer_diameter",
+                      "path": "ports[].interface.pipe_outer_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "wall_thickness",
+                      "path": "ports[].interface.wall_thickness",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bevel_angle",
+                      "path": "ports[].interface.bevel_angle",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    }
+                  ]
+                },
+                {
+                  "key": "compatible_with",
+                  "path": "ports[].compatible_with",
+                  "label": "兼容端口及匹配条件",
+                  "required": false,
+                  "read_only": false,
+                  "source": "",
+                  "comment": "兼容端口及匹配条件",
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "port_types",
+                      "path": "ports[].compatible_with.port_types",
+                      "label": "允许连接的端口类型",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 允许连接的端口类型",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "text"
+                    },
+                    {
+                      "key": "rules",
+                      "path": "ports[].compatible_with.rules",
+                      "label": "约束或兼容规则列表",
+                      "required": false,
+                      "read_only": false,
+                      "source": "",
+                      "comment": "约束或兼容规则列表",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "text"
+                    }
+                  ]
+                },
+                {
+                  "key": "allowed_mates",
+                  "path": "ports[].allowed_mates",
+                  "label": "允许的装配约束类型",
+                  "required": false,
+                  "read_only": false,
+                  "source": "AI补全，人工Review",
+                  "comment": "[选填]（AI补全，人工Review） 允许的装配约束类型",
+                  "kind": "scalar_array",
+                  "repeatable": false,
+                  "value_type": "text"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "key": "geometry",
+        "label": "参数化几何生成",
+        "description": "建模引擎、生成步骤及导出配置",
+        "fields": [
+          {
+            "key": "geometry",
+            "path": "geometry",
+            "label": "参数化几何生成或验证配置",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "参数化几何生成或验证配置",
+            "kind": "object",
+            "children": [
+              {
+                "key": "representation",
+                "path": "geometry.representation",
+                "label": "几何表示方式",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 几何表示方式",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "modeling_kernel",
+                "path": "geometry.modeling_kernel",
+                "label": "CAD 几何内核",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） CAD 几何内核",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "generator",
+                "path": "geometry.generator",
+                "label": "参数化生成器配置",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "参数化生成器配置",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "mode",
+                    "path": "geometry.generator.mode",
+                    "label": "生成器调用方式",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 生成器调用方式",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "preferred_engine",
+                    "path": "geometry.generator.preferred_engine",
+                    "label": "首选建模引擎",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 首选建模引擎",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "engine_version",
+                    "path": "geometry.generator.engine_version",
+                    "label": "兼容的引擎版本",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 兼容的引擎版本",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "script_file",
+                    "path": "geometry.generator.script_file",
+                    "label": "参数化脚本文件名",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 参数化脚本文件名",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "entrypoint",
+                    "path": "geometry.generator.entrypoint",
+                    "label": "建模脚本入口函数",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 建模脚本入口函数",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "script_required_for_release",
+                    "path": "geometry.generator.script_required_for_release",
+                    "label": "发布时是否强制提供脚本",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 发布时是否强制提供脚本",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "construction",
+                "path": "geometry.construction",
+                "label": "顺序执行的建模操作",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "顺序执行的建模操作",
+                "kind": "object_array",
+                "repeatable": true,
+                "item": {
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "id",
+                      "path": "geometry.construction[].id",
+                      "label": "所属作用域内的唯一标识",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 所属作用域内的唯一标识",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "operation",
+                      "path": "geometry.construction[].operation",
+                      "label": "CAD 操作类型",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） CAD 操作类型",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "profile_plane",
+                      "path": "geometry.construction[].profile_plane",
+                      "label": "二维剖面所在平面",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 二维剖面所在平面",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "axis",
+                      "path": "geometry.construction[].axis",
+                      "label": "端口外法向或连接轴",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 端口外法向或连接轴",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "angle",
+                      "path": "geometry.construction[].angle",
+                      "label": "操作角度",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 操作角度",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "profile_definition",
+                      "path": "geometry.construction[].profile_definition",
+                      "label": "剖面构成说明",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 剖面构成说明",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "depends_on",
+                      "path": "geometry.construction[].depends_on",
+                      "label": "依赖的前序操作 ID",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 依赖的前序操作 ID",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "text"
+                    },
+                    {
+                      "key": "hole_diameter",
+                      "path": "geometry.construction[].hole_diameter",
+                      "label": "阵列切孔直径表达式",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 阵列切孔直径表达式",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "pitch_circle_diameter",
+                      "path": "geometry.construction[].pitch_circle_diameter",
+                      "label": "阵列中心圆直径表达式",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 阵列中心圆直径表达式",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "count",
+                      "path": "geometry.construction[].count",
+                      "label": "阵列实例数量表达式",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 阵列实例数量表达式",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "start_angle",
+                      "path": "geometry.construction[].start_angle",
+                      "label": "阵列起始角",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 阵列起始角",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "direction",
+                      "path": "geometry.construction[].direction",
+                      "label": "操作方向向量",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 操作方向向量",
+                      "kind": "scalar_array",
+                      "repeatable": false,
+                      "value_type": "number"
+                    },
+                    {
+                      "key": "through_all",
+                      "path": "geometry.construction[].through_all",
+                      "label": "是否贯穿整个实体",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 是否贯穿整个实体",
+                      "kind": "boolean",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "target",
+                      "path": "geometry.construction[].target",
+                      "label": "命名面、边或特征",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 命名面、边或特征",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "radius",
+                      "path": "geometry.construction[].radius",
+                      "label": "圆角半径表达式",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 圆角半径表达式",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "enabled_when",
+                      "path": "geometry.construction[].enabled_when",
+                      "label": "启用步骤的条件",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 启用步骤的条件",
+                      "kind": "text",
+                      "fixed_value": null
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "output",
+                "path": "geometry.output",
+                "label": "CAD 导出配置",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "CAD 导出配置",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "format",
+                    "path": "geometry.output.format",
+                    "label": "文件格式",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 文件格式",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "application_protocol",
+                    "path": "geometry.output.application_protocol",
+                    "label": "STEP 应用协议",
+                    "required": false,
+                    "read_only": true,
+                    "source": "系统固定",
+                    "comment": "[选填]（系统固定） STEP 应用协议",
+                    "kind": "text",
+                    "fixed_value": "AP242"
+                  },
+                  {
+                    "key": "preserve_names",
+                    "path": "geometry.output.preserve_names",
+                    "label": "是否保留名称",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否保留名称",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "preserve_colors",
+                    "path": "geometry.output.preserve_colors",
+                    "label": "是否保留颜色",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否保留颜色",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "filename_template",
+                    "path": "geometry.output.filename_template",
+                    "label": "输出文件命名模板\n\n# ── 7. 预设规格 ────────────────────────────────────────────\n# 注意：下列数据沿用原始示例，仅用于模板结构展示；正式发布前必须逐项核验\n# 标准表、系列、密封面形式、管外径及颈部尺寸。required 参数不得留 null。",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 输出文件命名模板\n\n# ── 7. 预设规格 ────────────────────────────────────────────\n# 注意：下列数据沿用原始示例，仅用于模板结构展示；正式发布前必须逐项核验\n# 标准表、系列、密封面形式、管外径及颈部尺寸。required 参数不得留 null。",
+                    "kind": "text",
+                    "fixed_value": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "presets",
+        "label": "预设规格",
+        "description": "标准或常用参数组合",
+        "fields": [
+          {
+            "key": "presets",
+            "path": "presets",
+            "label": "标准或常用参数预设",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "标准或常用参数预设",
+            "kind": "object_array",
+            "repeatable": true,
+            "item": {
+              "kind": "object",
+              "children": [
+                {
+                  "key": "name",
+                  "path": "presets[].name",
+                  "label": "当前对象的名称",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 当前对象的名称",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "source_ref",
+                  "path": "presets[].source_ref",
+                  "label": "精确标准数据来源",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 精确标准数据来源",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "verification_status",
+                  "path": "presets[].verification_status",
+                  "label": "数据核验状态",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 数据核验状态",
+                  "kind": "text",
+                  "fixed_value": null
+                },
+                {
+                  "key": "params",
+                  "path": "presets[].params",
+                  "label": "当前预设参数值",
+                  "required": false,
+                  "read_only": false,
+                  "source": "可关联标准库/已有库，也可AI补全",
+                  "comment": "[选填]（可关联标准库/已有库，也可AI补全） 当前预设参数值",
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "DN",
+                      "path": "presets[].params.DN",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "PN",
+                      "path": "presets[].params.PN",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "flange_outer_diameter",
+                      "path": "presets[].params.flange_outer_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_circle_diameter",
+                      "path": "presets[].params.bolt_circle_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_hole_count",
+                      "path": "presets[].params.bolt_hole_count",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_hole_diameter",
+                      "path": "presets[].params.bolt_hole_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bolt_hole_start_angle",
+                      "path": "presets[].params.bolt_hole_start_angle",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "flange_thickness",
+                      "path": "presets[].params.flange_thickness",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "bore_diameter",
+                      "path": "presets[].params.bore_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "number",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "facing_type",
+                      "path": "presets[].params.facing_type",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "pipe_outer_diameter",
+                      "path": "presets[].params.pipe_outer_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "wall_thickness",
+                      "path": "presets[].params.wall_thickness",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "hub_large_end_diameter",
+                      "path": "presets[].params.hub_large_end_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "hub_small_end_diameter",
+                      "path": "presets[].params.hub_small_end_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "hub_height",
+                      "path": "presets[].params.hub_height",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "overall_height",
+                      "path": "presets[].params.overall_height",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "raised_face_diameter",
+                      "path": "presets[].params.raised_face_diameter",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "raised_face_height",
+                      "path": "presets[].params.raised_face_height",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "root_fillet_radius",
+                      "path": "presets[].params.root_fillet_radius",
+                      "label": "配置字段；按图元实际情况填写",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 配置字段；按图元实际情况填写",
+                      "kind": "text",
+                      "fixed_value": null
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "key": "validation",
+        "label": "生成结果验证",
+        "description": "参数、拓扑、几何及发布校验",
+        "fields": [
+          {
+            "key": "validation",
+            "path": "validation",
+            "label": "生成结果验证规则",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "生成结果验证规则",
+            "kind": "object",
+            "children": [
+              {
+                "key": "parameter_validation",
+                "path": "validation.parameter_validation",
+                "label": "生成前参数校验",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "生成前参数校验",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "required_parameters_complete",
+                    "path": "validation.parameter_validation.required_parameters_complete",
+                    "label": "检查必填参数均非空",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查必填参数均非空",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "enum_validation",
+                    "path": "validation.parameter_validation.enum_validation",
+                    "label": "检查枚举参数合法",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查枚举参数合法",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "constraint_validation",
+                    "path": "validation.parameter_validation.constraint_validation",
+                    "label": "执行参数约束",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 执行参数约束",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "topology",
+                "path": "validation.topology",
+                "label": "B-Rep 拓扑要求",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "B-Rep 拓扑要求",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "expected_body_count",
+                    "path": "validation.topology.expected_body_count",
+                    "label": "期望实体数量",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 期望实体数量",
+                    "kind": "number",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "solid_required",
+                    "path": "validation.topology.solid_required",
+                    "label": "是否必须为实体",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否必须为实体",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "closed_shell_required",
+                    "path": "validation.topology.closed_shell_required",
+                    "label": "是否必须为闭合壳",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否必须为闭合壳",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "manifold_required",
+                    "path": "validation.topology.manifold_required",
+                    "label": "是否要求流形拓扑",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否要求流形拓扑",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "self_intersection_allowed",
+                    "path": "validation.topology.self_intersection_allowed",
+                    "label": "是否允许自相交",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否允许自相交",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "geometry",
+                "path": "validation.geometry",
+                "label": "参数化几何生成或验证配置",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "参数化几何生成或验证配置",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "dimensional_tolerance",
+                    "path": "validation.geometry.dimensional_tolerance",
+                    "label": "尺寸容差，单位 mm",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 尺寸容差，单位 mm",
+                    "kind": "number",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "angular_tolerance",
+                    "path": "validation.geometry.angular_tolerance",
+                    "label": "角度容差，单位 deg",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 角度容差，单位 deg",
+                    "kind": "number",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "expected_through_hole_count_expression",
+                    "path": "validation.geometry.expected_through_hole_count_expression",
+                    "label": "期望贯穿孔数量",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 期望贯穿孔数量",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "positive_volume_required",
+                    "path": "validation.geometry.positive_volume_required",
+                    "label": "是否要求体积为正",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否要求体积为正",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "bounding_box_expression",
+                    "path": "validation.geometry.bounding_box_expression",
+                    "label": "预期包围盒尺寸",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 预期包围盒尺寸",
+                    "kind": "object",
+                    "children": [
+                      {
+                        "key": "x_size",
+                        "path": "validation.geometry.bounding_box_expression.x_size",
+                        "label": "预期 X 向尺寸",
+                        "required": false,
+                        "read_only": false,
+                        "source": "自动生成",
+                        "comment": "[选填]（自动生成） 预期 X 向尺寸",
+                        "kind": "text",
+                        "fixed_value": null
+                      },
+                      {
+                        "key": "y_size",
+                        "path": "validation.geometry.bounding_box_expression.y_size",
+                        "label": "预期 Y 向尺寸",
+                        "required": false,
+                        "read_only": false,
+                        "source": "自动生成",
+                        "comment": "[选填]（自动生成） 预期 Y 向尺寸",
+                        "kind": "text",
+                        "fixed_value": null
+                      },
+                      {
+                        "key": "z_size",
+                        "path": "validation.geometry.bounding_box_expression.z_size",
+                        "label": "预期 Z 向尺寸；overall_height 已包含突面高度",
+                        "required": false,
+                        "read_only": false,
+                        "source": "自动生成",
+                        "comment": "[选填]（自动生成） 预期 Z 向尺寸；overall_height 已包含突面高度",
+                        "kind": "text",
+                        "fixed_value": null
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "key": "ports",
+                "path": "validation.ports",
+                "label": "端口校验",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "端口校验",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "validate_frame_orthogonality",
+                    "path": "validation.ports.validate_frame_orthogonality",
+                    "label": "检查端口轴与 up 正交",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查端口轴与 up 正交",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "validate_axis_normalized",
+                    "path": "validation.ports.validate_axis_normalized",
+                    "label": "检查方向向量归一化",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查方向向量归一化",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "validate_origin_on_interface",
+                    "path": "validation.ports.validate_origin_on_interface",
+                    "label": "检查原点位于接口面",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查原点位于接口面",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "validate_interface_geometry",
+                    "path": "validation.ports.validate_interface_geometry",
+                    "label": "检查接口参数与几何一致",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查接口参数与几何一致",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "step_roundtrip",
+                "path": "validation.step_roundtrip",
+                "label": "STEP 往返导入检查",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "STEP 往返导入检查",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "required",
+                    "path": "validation.step_roundtrip.required",
+                    "label": "是否为生成必填项",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否为生成必填项",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "application_protocol",
+                    "path": "validation.step_roundtrip.application_protocol",
+                    "label": "STEP 应用协议",
+                    "required": false,
+                    "read_only": true,
+                    "source": "系统固定",
+                    "comment": "[选填]（系统固定） STEP 应用协议",
+                    "kind": "text",
+                    "fixed_value": "AP242"
+                  },
+                  {
+                    "key": "preserve_product_name",
+                    "path": "validation.step_roundtrip.preserve_product_name",
+                    "label": "检查产品名保留",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查产品名保留",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "preserve_color",
+                    "path": "validation.step_roundtrip.preserve_color",
+                    "label": "检查颜色保留",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查颜色保留",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "preserve_units",
+                    "path": "validation.step_roundtrip.preserve_units",
+                    "label": "检查单位保留",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 检查单位保留",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "review",
+                "path": "validation.review",
+                "label": "人工复核和发布门禁",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "人工复核和发布门禁",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "geometry_reviewer",
+                    "path": "validation.review.geometry_reviewer",
+                    "label": "几何复核人",
+                    "required": false,
+                    "read_only": false,
+                    "source": "人工Review",
+                    "comment": "[选填]（人工Review） 几何复核人",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "data_reviewer",
+                    "path": "validation.review.data_reviewer",
+                    "label": "标准数据复核人",
+                    "required": false,
+                    "read_only": false,
+                    "source": "人工Review",
+                    "comment": "[选填]（人工Review） 标准数据复核人",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "reviewed_at",
+                    "path": "validation.review.reviewed_at",
+                    "label": "复核完成日期",
+                    "required": false,
+                    "read_only": false,
+                    "source": "人工Review",
+                    "comment": "[选填]（人工Review） 复核完成日期",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "release_blocked_when_pending",
+                    "path": "validation.review.release_blocked_when_pending",
+                    "label": "待核验时是否阻止发布\n\n# ── 9. 交付文件与完整性 ────────────────────────────────────",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 待核验时是否阻止发布\n\n# ── 9. 交付文件与完整性 ────────────────────────────────────",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "artifacts",
+        "label": "交付文件与完整性",
+        "description": "基准模型、源文件、预览及缩略图",
+        "fields": [
+          {
+            "key": "artifacts",
+            "path": "artifacts",
+            "label": "配套交付文件",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "配套交付文件",
+            "kind": "object",
+            "children": [
+              {
+                "key": "reference_step",
+                "path": "artifacts.reference_step",
+                "label": "默认预设 STEP 基准",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "默认预设 STEP 基准",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "file",
+                    "path": "artifacts.reference_step.file",
+                    "label": "交付文件名",
+                    "required": true,
+                    "read_only": false,
+                    "source": "人工提供/已有库导入",
+                    "comment": "【必填】（人工提供/已有库导入） 交付文件名",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "role",
+                    "path": "artifacts.reference_step.role",
+                    "label": "对象在流程中的用途",
+                    "required": false,
+                    "read_only": false,
+                    "source": "已有库解析/自动生成",
+                    "comment": "[选填]（已有库解析/自动生成） 对象在流程中的用途",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "format",
+                    "path": "artifacts.reference_step.format",
+                    "label": "文件格式",
+                    "required": false,
+                    "read_only": false,
+                    "source": "已有库解析/自动生成",
+                    "comment": "[选填]（已有库解析/自动生成） 文件格式",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "application_protocol",
+                    "path": "artifacts.reference_step.application_protocol",
+                    "label": "STEP 应用协议",
+                    "required": false,
+                    "read_only": true,
+                    "source": "系统固定",
+                    "comment": "[选填]（系统固定） STEP 应用协议",
+                    "kind": "text",
+                    "fixed_value": "AP242"
+                  },
+                  {
+                    "key": "length_unit",
+                    "path": "artifacts.reference_step.length_unit",
+                    "label": "长度单位",
+                    "required": false,
+                    "read_only": true,
+                    "source": "系统固定",
+                    "comment": "[选填]（系统固定） 长度单位",
+                    "kind": "text",
+                    "fixed_value": "mm"
+                  },
+                  {
+                    "key": "sha256",
+                    "path": "artifacts.reference_step.sha256",
+                    "label": "交付流水线自动回填",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 交付流水线自动回填",
+                    "kind": "text",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "generator_source",
+                "path": "artifacts.generator_source",
+                "label": "参数化建模源文件",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "参数化建模源文件",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "file",
+                    "path": "artifacts.generator_source.file",
+                    "label": "交付文件名",
+                    "required": false,
+                    "read_only": false,
+                    "source": "已有库解析/自动生成",
+                    "comment": "[选填]（已有库解析/自动生成） 交付文件名",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "required",
+                    "path": "artifacts.generator_source.required",
+                    "label": "是否为生成必填项",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否为生成必填项",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "sha256",
+                    "path": "artifacts.generator_source.sha256",
+                    "label": "文件 SHA-256 校验值",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 文件 SHA-256 校验值",
+                    "kind": "text",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "preview_model",
+                "path": "artifacts.preview_model",
+                "label": "轻量预览模型",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "轻量预览模型",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "file",
+                    "path": "artifacts.preview_model.file",
+                    "label": "交付文件名",
+                    "required": false,
+                    "read_only": false,
+                    "source": "已有库解析/自动生成",
+                    "comment": "[选填]（已有库解析/自动生成） 交付文件名",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "required",
+                    "path": "artifacts.preview_model.required",
+                    "label": "是否为生成必填项",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否为生成必填项",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "sha256",
+                    "path": "artifacts.preview_model.sha256",
+                    "label": "文件 SHA-256 校验值",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 文件 SHA-256 校验值",
+                    "kind": "text",
+                    "fixed_value": null
+                  }
+                ]
+              },
+              {
+                "key": "thumbnail",
+                "path": "artifacts.thumbnail",
+                "label": "图元缩略图",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "图元缩略图",
+                "kind": "object",
+                "children": [
+                  {
+                    "key": "file",
+                    "path": "artifacts.thumbnail.file",
+                    "label": "交付文件名",
+                    "required": false,
+                    "read_only": false,
+                    "source": "已有库解析/自动生成",
+                    "comment": "[选填]（已有库解析/自动生成） 交付文件名",
+                    "kind": "text",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "required",
+                    "path": "artifacts.thumbnail.required",
+                    "label": "是否为生成必填项",
+                    "required": false,
+                    "read_only": false,
+                    "source": "AI补全，人工Review",
+                    "comment": "[选填]（AI补全，人工Review） 是否为生成必填项",
+                    "kind": "boolean",
+                    "fixed_value": null
+                  },
+                  {
+                    "key": "sha256",
+                    "path": "artifacts.thumbnail.sha256",
+                    "label": "文件 SHA-256 校验值\n\n# ── 10. 数据来源与审计 ─────────────────────────────────────",
+                    "required": false,
+                    "read_only": false,
+                    "source": "自动生成",
+                    "comment": "[选填]（自动生成） 文件 SHA-256 校验值\n\n# ── 10. 数据来源与审计 ─────────────────────────────────────",
+                    "kind": "text",
+                    "fixed_value": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "provenance",
+        "label": "数据来源与审计",
+        "description": "标准引用、录入方式和核验记录",
+        "fields": [
+          {
+            "key": "provenance",
+            "path": "provenance",
+            "label": "数据来源与审计信息",
+            "required": false,
+            "read_only": false,
+            "source": "",
+            "comment": "数据来源与审计信息",
+            "kind": "object",
+            "children": [
+              {
+                "key": "source_type",
+                "path": "provenance.source_type",
+                "label": "数据和模型来源类别",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 数据和模型来源类别",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "standard_refs",
+                "path": "provenance.standard_refs",
+                "label": "标准引用列表",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "标准引用列表",
+                "kind": "object_array",
+                "repeatable": true,
+                "item": {
+                  "kind": "object",
+                  "children": [
+                    {
+                      "key": "number",
+                      "path": "provenance.standard_refs[].number",
+                      "label": "标准编号",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 标准编号",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "table",
+                      "path": "provenance.standard_refs[].table",
+                      "label": "发布前填写准确表号",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 发布前填写准确表号",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "page",
+                      "path": "provenance.standard_refs[].page",
+                      "label": "发布前填写准确页码",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 发布前填写准确页码",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "series",
+                      "path": "provenance.standard_refs[].series",
+                      "label": "发布前填写管外径系列",
+                      "required": false,
+                      "read_only": false,
+                      "source": "可关联标准库/已有库，也可AI补全",
+                      "comment": "[选填]（可关联标准库/已有库，也可AI补全） 发布前填写管外径系列",
+                      "kind": "text",
+                      "fixed_value": null
+                    },
+                    {
+                      "key": "notes",
+                      "path": "provenance.standard_refs[].notes",
+                      "label": "来源或适用范围说明",
+                      "required": false,
+                      "read_only": false,
+                      "source": "AI补全，人工Review",
+                      "comment": "[选填]（AI补全，人工Review） 来源或适用范围说明",
+                      "kind": "text",
+                      "fixed_value": null
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "data_entry_method",
+                "path": "provenance.data_entry_method",
+                "label": "数据录入方式",
+                "required": false,
+                "read_only": false,
+                "source": "AI补全，人工Review",
+                "comment": "[选填]（AI补全，人工Review） 数据录入方式",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "verified_by",
+                "path": "provenance.verified_by",
+                "label": "最终核验人",
+                "required": false,
+                "read_only": false,
+                "source": "人工Review",
+                "comment": "[选填]（人工Review） 最终核验人",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "verified_at",
+                "path": "provenance.verified_at",
+                "label": "最终核验日期",
+                "required": false,
+                "read_only": false,
+                "source": "人工Review",
+                "comment": "[选填]（人工Review） 最终核验日期",
+                "kind": "text",
+                "fixed_value": null
+              },
+              {
+                "key": "change_note",
+                "path": "provenance.change_note",
+                "label": "本版本变更说明",
+                "required": false,
+                "read_only": false,
+                "source": "",
+                "comment": "本版本变更说明",
+                "kind": "text",
+                "fixed_value": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "data": {
+    "schema_version": "1.2",
+    "spec_type": "component",
+    "identity": {
+      "id": null,
+      "name": null,
+      "name_en": null,
+      "type": null,
+      "subtype": null,
+      "family": null,
+      "standard": {
+        "number": null,
+        "edition": null,
+        "title": null
+      },
+      "description": null,
+      "license": null,
+      "version": null,
+      "author": null,
+      "maintainer": null,
+      "created_at": null,
+      "updated_at": null,
+      "status": null,
+      "tags": [],
+      "default_preset": null,
+      "default_color": null
+    },
+    "coordinate_system": {
+      "length_unit": "mm",
+      "angle_unit": "deg",
+      "handedness": "right_handed",
+      "origin": [],
+      "x_axis": [],
+      "y_axis": [],
+      "z_axis": [],
+      "origin_definition": null,
+      "z_axis_definition": null,
+      "zero_rotation_definition": null
+    },
+    "parameters": [
+      {
+        "name": null,
+        "label": null,
+        "type": null,
+        "unit": null,
+        "default": null,
+        "enum": [],
+        "required": null,
+        "editable": null,
+        "affects_geometry": null,
+        "standard_symbol": null,
+        "min": null,
+        "max": null
+      }
+    ],
+    "derived_parameters": [
+      {
+        "name": null,
+        "type": null,
+        "unit": null,
+        "expression": null
+      }
+    ],
+    "constraints": {
+      "expression_language": "CEL",
+      "rules": [
+        {
+          "id": null,
+          "expression": null,
+          "severity": null,
+          "message": null
+        }
+      ]
+    },
+    "ports": [
+      {
+        "id": null,
+        "name": null,
+        "type": null,
+        "role": null,
+        "frame": {
+          "origin": [],
+          "axis": [],
+          "up": []
+        },
+        "interface": {
+          "standard": null,
+          "DN": null,
+          "PN": null,
+          "facing_type": null,
+          "bolt_circle_diameter": null,
+          "bolt_hole_count": null,
+          "bolt_hole_diameter": null,
+          "pipe_outer_diameter": null,
+          "wall_thickness": null,
+          "bevel_angle": null
+        },
+        "compatible_with": {
+          "port_types": [],
+          "rules": []
+        },
+        "allowed_mates": []
+      }
+    ],
+    "geometry": {
+      "representation": null,
+      "modeling_kernel": null,
+      "generator": {
+        "mode": null,
+        "preferred_engine": null,
+        "engine_version": null,
+        "script_file": null,
+        "entrypoint": null,
+        "script_required_for_release": null
+      },
+      "construction": [
+        {
+          "id": null,
+          "operation": null,
+          "profile_plane": null,
+          "axis": null,
+          "angle": null,
+          "profile_definition": null,
+          "depends_on": [],
+          "hole_diameter": null,
+          "pitch_circle_diameter": null,
+          "count": null,
+          "start_angle": null,
+          "direction": [],
+          "through_all": null,
+          "target": null,
+          "radius": null,
+          "enabled_when": null
+        }
+      ],
+      "output": {
+        "format": null,
+        "application_protocol": "AP242",
+        "preserve_names": null,
+        "preserve_colors": null,
+        "filename_template": null
+      }
+    },
+    "presets": [
+      {
+        "name": null,
+        "source_ref": null,
+        "verification_status": null,
+        "params": {
+          "DN": null,
+          "PN": null,
+          "flange_outer_diameter": null,
+          "bolt_circle_diameter": null,
+          "bolt_hole_count": null,
+          "bolt_hole_diameter": null,
+          "bolt_hole_start_angle": null,
+          "flange_thickness": null,
+          "bore_diameter": null,
+          "facing_type": null,
+          "pipe_outer_diameter": null,
+          "wall_thickness": null,
+          "hub_large_end_diameter": null,
+          "hub_small_end_diameter": null,
+          "hub_height": null,
+          "overall_height": null,
+          "raised_face_diameter": null,
+          "raised_face_height": null,
+          "root_fillet_radius": null
+        }
+      }
+    ],
+    "validation": {
+      "parameter_validation": {
+        "required_parameters_complete": null,
+        "enum_validation": null,
+        "constraint_validation": null
+      },
+      "topology": {
+        "expected_body_count": null,
+        "solid_required": null,
+        "closed_shell_required": null,
+        "manifold_required": null,
+        "self_intersection_allowed": null
+      },
+      "geometry": {
+        "dimensional_tolerance": null,
+        "angular_tolerance": null,
+        "expected_through_hole_count_expression": null,
+        "positive_volume_required": null,
+        "bounding_box_expression": {
+          "x_size": null,
+          "y_size": null,
+          "z_size": null
+        }
+      },
+      "ports": {
+        "validate_frame_orthogonality": null,
+        "validate_axis_normalized": null,
+        "validate_origin_on_interface": null,
+        "validate_interface_geometry": null
+      },
+      "step_roundtrip": {
+        "required": null,
+        "application_protocol": "AP242",
+        "preserve_product_name": null,
+        "preserve_color": null,
+        "preserve_units": null
+      },
+      "review": {
+        "geometry_reviewer": null,
+        "data_reviewer": null,
+        "reviewed_at": null,
+        "release_blocked_when_pending": null
+      }
+    },
+    "artifacts": {
+      "reference_step": {
+        "file": null,
+        "role": null,
+        "format": null,
+        "application_protocol": "AP242",
+        "length_unit": "mm",
+        "sha256": null
+      },
+      "generator_source": {
+        "file": null,
+        "required": null,
+        "sha256": null
+      },
+      "preview_model": {
+        "file": null,
+        "required": null,
+        "sha256": null
+      },
+      "thumbnail": {
+        "file": null,
+        "required": null,
+        "sha256": null
+      }
+    },
+    "provenance": {
+      "source_type": null,
+      "standard_refs": [
+        {
+          "number": null,
+          "table": null,
+          "page": null,
+          "series": null,
+          "notes": null
+        }
+      ],
+      "data_entry_method": null,
+      "verified_by": null,
+      "verified_at": null,
+      "change_note": null
+    }
+  },
+  "saved": false,
+  "updated_at": null
+}

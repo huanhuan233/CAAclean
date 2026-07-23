@@ -8,9 +8,14 @@ import {
   fetchComponentBuildCatalog,
   fetchComponentBuildStatus,
   fetchComponentBuildTree,
+  fetchComponentSpec,
+  previewComponentSpec,
   retryComponentBuild,
+  saveComponentSpec,
   updateComponentBuild
 } from '@/service/api';
+import componentSpecFallbackSource from './component-spec-v1.2.json';
+import ComponentSpecFieldEditor from './modules/ComponentSpecFieldEditor.vue';
 
 defineOptions({ name: 'ComponentBuild' });
 
@@ -44,6 +49,17 @@ const pollTimer = ref<number | null>(null);
 const polling = ref(false);
 const statusUnavailable = ref(false);
 const viewportWidth = ref(window.innerWidth);
+const componentSpec = ref<Api.ComponentBuild.ComponentSpecDocument | null>(null);
+const componentSpecLoading = ref(false);
+const componentSpecSaving = ref(false);
+const componentSpecDirty = ref(false);
+const componentSpecOffline = ref(false);
+const componentSpecPreviewing = ref(false);
+const componentSpecPreviewVisible = ref(false);
+const componentSpecYaml = ref('');
+const activeSpecSections = ref<string[]>([]);
+
+const componentSpecFallback = componentSpecFallbackSource as Api.ComponentBuild.ComponentSpecDocument;
 
 const form = ref(createDefaultForm());
 const stepFile = ref<File | null>(null);
@@ -69,6 +85,7 @@ const isSourceNode = computed(() => {
 const isFutureNode = computed(() => selectedNode.value?.node_type === 'fusion' || selectedNode.value?.node_type === 'yaml' || selectedNode.value?.node_type === 'future');
 const isCatalogNode = computed(() => selectedNode.value?.node_type === 'family' || selectedNode.value?.node_type === 'type');
 const isComponentNode = computed(() => selectedNode.value?.node_type === 'component');
+const isComponentSpecNode = computed(() => selectedNode.value?.node_type === 'component_spec');
 const drawerSize = computed(() => (viewportWidth.value < 520 ? '100%' : 440));
 const isEditing = computed(() => Boolean(editingBuild.value));
 const drawerTitle = computed(() => (isEditing.value ? '编辑图元' : '新建图元'));
@@ -135,7 +152,6 @@ function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file'
 function normalizeNodeType(nodeType?: string): Api.ComponentBuild.NodeType {
   const aliases: Record<string, Api.ComponentBuild.NodeType> = {
     data_fusion: 'fusion',
-    component_spec: 'yaml',
     publish_validation: 'future'
   };
   const supported = new Set<Api.ComponentBuild.NodeType>([
@@ -148,6 +164,7 @@ function normalizeNodeType(nodeType?: string): Api.ComponentBuild.NodeType {
     'folder',
     'reference_step',
     'drawing',
+    'component_spec',
     'fusion',
     'yaml',
     'future'
@@ -213,11 +230,13 @@ function statusLabel(status: string) {
     aligning: '字段对齐中',
     review_required: '待人工处理',
     yaml_ready: 'YAML 就绪',
+    saved: '已保存',
     released: '已发布',
     completed: '解析完成',
     review_ready: '待审核',
     failed: '解析失败',
     waiting_for_step: '等待 STEP',
+    missing: '未上传',
     pending: '等待处理',
     future: '后续能力'
   };
@@ -226,7 +245,7 @@ function statusLabel(status: string) {
 
 function futureLabel(nodeType: Api.ComponentBuild.NodeType) {
   if (nodeType === 'fusion') return '数据融合';
-  if (nodeType === 'yaml') return 'ComponentSpec';
+  if (nodeType === 'yaml' || nodeType === 'component_spec') return 'ComponentSpec';
   return '后续能力';
 }
 
@@ -254,6 +273,7 @@ function nodeIconClass(node: ComponentTreeNode) {
   if (node.node_type === 'component') return 'component';
   if (node.node_type === 'reference_step') return 'step';
   if (node.node_type === 'drawing') return 'drawing';
+  if (node.node_type === 'component_spec') return 'spec';
   if (node.node_type === 'fusion' || node.node_type === 'yaml' || node.node_type === 'future') return 'future';
   if (node.node_type === 'folder') return 'folder';
   return 'build';
@@ -310,6 +330,172 @@ async function loadSelectedBuild(buildId: string, options: { silent?: boolean } 
     buildStatuses.value = { ...buildStatuses.value, [buildId]: statusResult.data };
   }
   return !detailResult.error && Boolean(detailResult.data) && !statusResult.error && Boolean(statusResult.data);
+}
+
+function componentSpecStorageKey(buildId: string) {
+  return `component-spec-v1.2:${buildId}`;
+}
+
+function localComponentSpec(buildId: string): Api.ComponentBuild.ComponentSpecDocument {
+  const document = structuredClone(componentSpecFallback);
+  document.build_id = buildId;
+  const saved = localStorage.getItem(componentSpecStorageKey(buildId));
+  if (!saved) return document;
+  try {
+    const cached = JSON.parse(saved) as { data: Record<string, any>; updated_at: string };
+    document.data = cached.data;
+    document.saved = true;
+    document.updated_at = cached.updated_at;
+  } catch {
+    localStorage.removeItem(componentSpecStorageKey(buildId));
+  }
+  return document;
+}
+
+function yamlScalar(value: any): string {
+  if (value === null || value === undefined || value === '') return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (Array.isArray(value)) return `[${value.map(item => yamlScalar(item)).join(', ')}]`;
+  return String(value);
+}
+
+function yamlComment(field: Api.ComponentBuild.ComponentSpecField) {
+  return field.comment ? `  # ${field.comment}` : '';
+}
+
+function renderYamlField(
+  field: Api.ComponentBuild.ComponentSpecField,
+  value: any,
+  indent: number,
+  sequencePrefix = ''
+): string[] {
+  const prefix = `${' '.repeat(indent)}${sequencePrefix}${field.key}:`;
+  const childIndent = indent + (sequencePrefix ? 4 : 2);
+  if (field.kind === 'object') {
+    const lines = [`${prefix}${yamlComment(field)}`];
+    for (const child of field.children || []) {
+      lines.push(...renderYamlField(child, value?.[child.key], childIndent));
+    }
+    return lines;
+  }
+  if (field.kind === 'object_array') {
+    const items = Array.isArray(value) ? value : [];
+    if (!items.length) return [`${prefix} []${yamlComment(field)}`];
+    const lines = [`${prefix}${yamlComment(field)}`];
+    for (const item of items) {
+      const children = field.item?.children || [];
+      children.forEach((child, index) => {
+        lines.push(
+          ...renderYamlField(
+            child,
+            item?.[child.key],
+            indent + (index === 0 ? 2 : 4),
+            index === 0 ? '- ' : ''
+          )
+        );
+      });
+    }
+    return lines;
+  }
+  return [`${prefix} ${yamlScalar(value)}${yamlComment(field)}`];
+}
+
+function renderLocalComponentSpecYaml(document: Api.ComponentBuild.ComponentSpecDocument) {
+  const lines = [
+    '# ComponentSpec v1.2',
+    '# 本预览按 component-spec-v1.2-template.yaml 的字段顺序与中文注释生成。',
+    ''
+  ];
+  document.schema.sections.forEach((section, index) => {
+    lines.push(`# ── ${index + 1}. ${section.label} ──`);
+    for (const field of section.fields) {
+      lines.push(...renderYamlField(field, document.data[field.key], 0));
+    }
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+async function loadComponentSpec(buildId: string) {
+  if (!buildId) return;
+  componentSpecLoading.value = true;
+  try {
+    const result = await fetchComponentSpec(buildId);
+    if (result.error || !result.data) {
+      componentSpec.value = localComponentSpec(buildId);
+      componentSpecOffline.value = true;
+    } else {
+      componentSpec.value = result.data;
+      componentSpecOffline.value = false;
+    }
+    componentSpecDirty.value = false;
+    activeSpecSections.value = componentSpec.value.schema.sections.map(section => section.key);
+  } catch {
+    componentSpec.value = localComponentSpec(buildId);
+    componentSpecOffline.value = true;
+    componentSpecDirty.value = false;
+    activeSpecSections.value = componentSpec.value.schema.sections.map(section => section.key);
+  } finally {
+    componentSpecLoading.value = false;
+  }
+}
+
+function updateComponentSpecField(key: string, value: any) {
+  if (!componentSpec.value) return;
+  componentSpec.value.data = { ...componentSpec.value.data, [key]: value };
+  componentSpecDirty.value = true;
+}
+
+async function saveCurrentComponentSpec() {
+  if (!componentSpec.value || !selectedBuildId.value) return;
+  componentSpecSaving.value = true;
+  try {
+    const result = await saveComponentSpec(selectedBuildId.value, componentSpec.value.data);
+    if (result.error || !result.data) {
+      const updatedAt = new Date().toISOString();
+      localStorage.setItem(
+        componentSpecStorageKey(selectedBuildId.value),
+        JSON.stringify({ data: componentSpec.value.data, updated_at: updatedAt })
+      );
+      componentSpec.value = { ...componentSpec.value, saved: true, updated_at: updatedAt };
+      componentSpecOffline.value = true;
+      window.$message?.warning('后端模板接口尚未启用，草稿已暂存在当前浏览器');
+    } else {
+      componentSpec.value = result.data;
+      componentSpecOffline.value = false;
+      window.$message?.success('ComponentSpec 草稿已保存');
+    }
+    componentSpecDirty.value = false;
+    await loadTree({ preserveSelection: true, silent: true });
+  } catch (error) {
+    window.$message?.error(formatError(error, 'ComponentSpec 保存失败'));
+  } finally {
+    componentSpecSaving.value = false;
+  }
+}
+
+async function previewCurrentComponentSpec() {
+  if (!componentSpec.value || !selectedBuildId.value) return;
+  componentSpecPreviewing.value = true;
+  try {
+    const result = await previewComponentSpec(selectedBuildId.value, componentSpec.value.data);
+    componentSpecYaml.value =
+      !result.error && result.data
+        ? result.data.yaml
+        : renderLocalComponentSpecYaml(componentSpec.value);
+    componentSpecPreviewVisible.value = true;
+  } catch (error) {
+    componentSpecYaml.value = renderLocalComponentSpecYaml(componentSpec.value);
+    componentSpecPreviewVisible.value = true;
+  } finally {
+    componentSpecPreviewing.value = false;
+  }
+}
+
+async function copyComponentSpecYaml() {
+  await navigator.clipboard.writeText(componentSpecYaml.value);
+  window.$message?.success('YAML 已复制');
 }
 
 async function restoreSelectionFromRoute() {
@@ -424,6 +610,7 @@ async function selectNode(data: ComponentTreeNode) {
   selectedNodeId.value = data.id;
   const buildId = data.node_type === 'build' ? data.id : data.build_id || '';
   await loadSelectedBuild(buildId);
+  if (data.node_type === 'component_spec') await loadComponentSpec(buildId);
 }
 
 function rememberExpanded(data: ComponentTreeNode) {
@@ -607,6 +794,7 @@ onBeforeUnmount(() => {
                 <span class="node-icon" :class="nodeIconClass(data)">
                   <icon-carbon-document v-if="data.node_type === 'reference_step'" />
                   <icon-carbon-image v-else-if="data.node_type === 'drawing'" />
+                  <icon-carbon-document-requirements v-else-if="data.node_type === 'component_spec'" />
                   <icon-carbon-folder v-else-if="data.node_type === 'folder' || data.node_type === 'family' || data.node_type === 'type'" />
                   <icon-carbon-cube v-else-if="data.node_type === 'component' || data.node_type === 'build'" />
                   <icon-carbon-time v-else />
@@ -681,6 +869,79 @@ onBeforeUnmount(() => {
             </dl>
             <p>展开图元并选择具体版本，可查看成套文件解析状态与结果。</p>
           </section>
+        </template>
+
+        <template v-else-if="isComponentSpecNode">
+          <div class="detail-heading spec-heading">
+            <div>
+              <span class="eyebrow">图元规范表单 · v{{ componentSpec?.schema.schema_version || '1.2' }}</span>
+              <h1>ComponentSpec</h1>
+              <p class="heading-subtitle">
+                {{ selectedBuild?.component_name || selectedNode.label }}
+                <span v-if="componentSpec?.updated_at"> · 已保存</span>
+                <span v-else> · 尚未保存</span>
+                <span v-if="componentSpecDirty"> · 有未保存修改</span>
+                <span v-if="componentSpecOffline"> · 本地模板模式</span>
+              </p>
+            </div>
+            <div class="spec-actions">
+              <ElButton
+                :loading="componentSpecPreviewing"
+                :disabled="!componentSpec"
+                @click="previewCurrentComponentSpec"
+              >
+                <template #icon><icon-carbon-code /></template>
+                预览 YAML
+              </ElButton>
+              <ElButton
+                type="primary"
+                :loading="componentSpecSaving"
+                :disabled="!componentSpec"
+                @click="saveCurrentComponentSpec"
+              >
+                <template #icon><icon-carbon-save /></template>
+                保存草稿
+              </ElButton>
+            </div>
+          </div>
+          <div v-loading="componentSpecLoading" class="component-spec-body">
+            <ElAlert
+              :title="
+                componentSpecOffline
+                  ? '后端模板接口暂不可用，已加载内置的完整 v1.2 字段；保存时将暂存在当前浏览器。'
+                  : '当前为人工填写草稿；后续解析结果将回填到同一份表单，仍可继续修改。'
+              "
+              :type="componentSpecOffline ? 'warning' : 'info'"
+              :closable="false"
+              show-icon
+            />
+            <ElCollapse v-if="componentSpec" v-model="activeSpecSections" class="spec-collapse">
+              <ElCollapseItem
+                v-for="(section, sectionIndex) in componentSpec.schema.sections"
+                :key="section.key"
+                :name="section.key"
+              >
+                <template #title>
+                  <div class="spec-section-title">
+                    <span>{{ sectionIndex + 1 }}</span>
+                    <div>
+                      <strong>{{ section.label }}</strong>
+                      <small>{{ section.description }}</small>
+                    </div>
+                  </div>
+                </template>
+                <div class="spec-section-fields">
+                  <ComponentSpecFieldEditor
+                    v-for="field in section.fields"
+                    :key="field.path"
+                    :field="field"
+                    :model-value="componentSpec.data[field.key]"
+                    @update:model-value="updateComponentSpecField(field.key, $event)"
+                  />
+                </div>
+              </ElCollapseItem>
+            </ElCollapse>
+          </div>
         </template>
 
         <template v-else-if="isFutureNode">
@@ -897,6 +1158,21 @@ onBeforeUnmount(() => {
         </ElButton>
       </template>
     </ElDrawer>
+
+    <ElDrawer
+      v-model="componentSpecPreviewVisible"
+      title="ComponentSpec YAML 预览"
+      :size="viewportWidth < 760 ? '100%' : '58%'"
+    >
+      <div class="yaml-preview-toolbar">
+        <span>字段顺序、嵌套结构和中文注释均按 v1.2 模板生成</span>
+        <ElButton size="small" @click="copyComponentSpecYaml">
+          <template #icon><icon-carbon-copy /></template>
+          复制
+        </ElButton>
+      </div>
+      <pre class="yaml-preview">{{ componentSpecYaml }}</pre>
+    </ElDrawer>
   </div>
 </template>
 
@@ -918,12 +1194,26 @@ onBeforeUnmount(() => {
 .tree-node { display: grid; width: 100%; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) 7px auto; align-items: center; gap: 6px; padding-right: 6px; }
 .tree-node.disabled { color: var(--el-text-color-placeholder); cursor: not-allowed; }
 .node-icon { display: inline-flex; color: var(--el-text-color-secondary); font-size: 15px; }
-.node-icon.step { color: var(--el-color-primary); }.node-icon.drawing { color: var(--el-color-success); }.node-icon.folder, .node-icon.catalog { color: var(--el-color-warning); }.node-icon.component { color: var(--el-color-primary); }.node-icon.future { color: var(--el-text-color-placeholder); }
+.node-icon.step { color: var(--el-color-primary); }.node-icon.drawing { color: var(--el-color-success); }.node-icon.folder, .node-icon.catalog { color: var(--el-color-warning); }.node-icon.component { color: var(--el-color-primary); }.node-icon.spec { color: #0f766e; }.node-icon.future { color: var(--el-text-color-placeholder); }
 .tree-node-label, .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.tree-node-en { margin-left: 4px; color: var(--el-text-color-secondary); font-size: 11px; }.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .status-dot, .pipeline-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-placeholder); }.status-dot.completed, .status-dot.review_ready, .status-dot.sources_ready, .status-dot.sources_partial, .pipeline-dot.completed, .pipeline-dot.review_ready, .pipeline-dot.sources_ready, .pipeline-dot.sources_partial { background: var(--el-color-success); }.status-dot.uploading, .status-dot.parsing_sources, .status-dot.processing, .status-dot.queued, .pipeline-dot.uploading, .pipeline-dot.parsing_sources, .pipeline-dot.processing, .pipeline-dot.queued { background: var(--el-color-primary); }.status-dot.failed, .status-dot.source_failed, .pipeline-dot.failed, .pipeline-dot.source_failed { background: var(--el-color-danger); }.status-dot.review_required, .status-dot.needs_manual_layout, .pipeline-dot.review_required, .pipeline-dot.needs_manual_layout { background: var(--el-color-warning); }.status-dot.future, .pipeline-dot.future { background: var(--el-text-color-placeholder); }
 .tree-progress { color: var(--el-text-color-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .detail-panel { min-height: 640px; overflow: auto; padding: 20px 24px; }
 .status-alert { margin-bottom: 16px; }
 .detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 16px; }.detail-heading h1 { max-width: min(680px, 64vw); margin: 3px 0 0; overflow: hidden; font-size: 18px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }.heading-subtitle { margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 13px; }.eyebrow { color: var(--el-text-color-secondary); font-size: 12px; }.detail-section { border-bottom: 1px solid var(--el-border-color-lighter); padding: 18px 0; }.detail-section p { max-width: 760px; margin: 8px 0 0; color: var(--el-text-color-regular); line-height: 1.7; }.muted-section { color: var(--el-text-color-secondary); }.detail-section dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 32px; margin: 0; }.detail-section dl div { min-width: 0; }.detail-section dt { margin-bottom: 4px; color: var(--el-text-color-secondary); font-size: 12px; }.detail-section dd { margin: 0; overflow: hidden; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }.source-summary :deep(.el-progress) { max-width: 520px; margin-top: 18px; }.error-section { border-left: 3px solid var(--el-color-danger); padding-left: 12px; }.error-section p { overflow-wrap: anywhere; color: var(--el-color-danger); }.section-label, .section-title { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 600; }.pipeline-list { display: grid; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }.pipeline-list li { display: grid; min-height: 38px; grid-template-columns: 16px minmax(0, 1fr) minmax(70px, auto) 84px; align-items: center; gap: 8px; }.pipeline-list small { overflow: hidden; color: var(--el-text-color-secondary); font-size: 12px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }.pipeline-list :deep(.el-button) { width: 84px; }.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 18px; }.action-hint { color: var(--el-text-color-secondary); font-size: 13px; }.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }.form-span-2 { grid-column: 1 / -1; }.field-control { width: 100%; }.upload-field { margin-top: 18px; }.upload-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 13px; }.upload-label small, .upload-hint { color: var(--el-text-color-secondary); font-size: 12px; }.upload-hint { margin: 7px 0 0; line-height: 1.5; }.file-input { display: block; position: relative; overflow: hidden; border: 1px dashed var(--el-border-color); padding: 10px 12px; color: var(--el-text-color-regular); cursor: pointer; }.file-input:hover { border-color: var(--el-color-primary); }.file-input input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }.file-input span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spec-heading { position: sticky; z-index: 5; top: -20px; align-items: center; margin: -20px -24px 0; background: var(--el-bg-color); padding: 18px 24px 14px; }
+.spec-actions { display: flex; flex: none; gap: 8px; }
+.component-spec-body { min-height: 460px; padding-top: 16px; }
+.spec-collapse { margin-top: 14px; border-top: 1px solid var(--el-border-color-lighter); }
+.spec-collapse :deep(.el-collapse-item__header) { min-height: 58px; height: auto; line-height: 1.4; }
+.spec-collapse :deep(.el-collapse-item__content) { padding: 4px 4px 22px 42px; }
+.spec-section-title { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.spec-section-title > span { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border: 1px solid var(--el-border-color); border-radius: 4px; color: var(--el-text-color-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.spec-section-title strong, .spec-section-title small { display: block; }
+.spec-section-title strong { font-size: 14px; font-weight: 600; }
+.spec-section-title small { margin-top: 2px; overflow: hidden; color: var(--el-text-color-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.spec-section-fields { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+.yaml-preview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; color: var(--el-text-color-secondary); font-size: 12px; }
+.yaml-preview { min-height: calc(100vh - 150px); margin: 0; overflow: auto; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; background: #f7f8fa; padding: 16px; color: #20252b; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.65; white-space: pre; }
 @media (max-width: 700px) { .component-build-page { padding: 8px; }.workbench-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }.toolbar-actions { width: 100%; }.tree-search { width: auto; flex: 1; }.workbench-shell { grid-template-columns: minmax(0, 1fr); }.tree-panel, .detail-panel { min-height: 360px; }.tree-panel { max-height: 420px; }.detail-panel { padding: 16px; }.detail-heading h1 { max-width: 64vw; }.detail-section dl { grid-template-columns: minmax(0, 1fr); gap: 12px; }.form-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

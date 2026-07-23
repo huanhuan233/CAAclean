@@ -88,6 +88,20 @@ class ComponentBuild(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class ComponentSpecDraft(Base):
+    __tablename__ = "component_spec_drafts"
+
+    build_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("component_builds.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="1.2")
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
 class CadEntity(Base):
     __tablename__ = "cad_entities"
 

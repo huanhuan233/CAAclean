@@ -273,6 +273,7 @@ declare namespace Api {
       | 'folder'
       | 'reference_step'
       | 'drawing'
+      | 'component_spec'
       | 'fusion'
       | 'yaml'
       | 'future';
@@ -408,6 +409,45 @@ declare namespace Api {
 
     interface UpdatePayload extends CreatePayload {
       build_id: string;
+    }
+
+    type ComponentSpecFieldKind = 'object' | 'object_array' | 'scalar_array' | 'text' | 'number' | 'boolean';
+
+    interface ComponentSpecField {
+      key: string;
+      path: string;
+      label: string;
+      required: boolean;
+      read_only: boolean;
+      source: string;
+      comment: string;
+      kind: ComponentSpecFieldKind;
+      repeatable?: boolean;
+      value_type?: 'text' | 'number' | 'boolean';
+      fixed_value?: unknown;
+      children?: ComponentSpecField[];
+      item?: {
+        kind: 'object';
+        children: ComponentSpecField[];
+      };
+    }
+
+    interface ComponentSpecSection {
+      key: string;
+      label: string;
+      description: string;
+      fields: ComponentSpecField[];
+    }
+
+    interface ComponentSpecDocument {
+      build_id: string;
+      schema: {
+        schema_version: string;
+        sections: ComponentSpecSection[];
+      };
+      data: Record<string, any>;
+      saved: boolean;
+      updated_at: string | null;
     }
   }
 }

@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.component_builds.catalog import CATEGORIES, CatalogCategory, CatalogPart, find_part_by_legacy_type, find_part_by_node_id, resolve_part
+from app.component_builds.component_spec import component_spec_template
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
@@ -65,6 +66,31 @@ class ComponentBuildService:
     async def create_build(self, **fields) -> dict:
         build = await self.repository.create_build(**fields)
         return self._build_payload(build)
+
+    async def get_component_spec(self, build_id: UUID) -> dict:
+        draft = await self.repository.get_component_spec(build_id)
+        return {
+            "build_id": str(build_id),
+            "schema": component_spec_template.schema,
+            "data": draft.data if draft else component_spec_template.blank_data(),
+            "saved": draft is not None,
+            "updated_at": draft.updated_at.isoformat() if draft else None,
+        }
+
+    async def save_component_spec(self, build_id: UUID, data: dict) -> dict:
+        normalized = component_spec_template.normalize(data)
+        draft = await self.repository.save_component_spec(build_id, normalized)
+        return {
+            "build_id": str(build_id),
+            "schema": component_spec_template.schema,
+            "data": draft.data,
+            "saved": True,
+            "updated_at": draft.updated_at.isoformat(),
+        }
+
+    async def preview_component_spec(self, build_id: UUID, data: dict) -> str:
+        await self.repository.get_build(build_id) or self._raise_missing_build(build_id)
+        return component_spec_template.render_yaml(data)
 
     async def create_catalog_build(
         self,
@@ -175,7 +201,7 @@ class ComponentBuildService:
 
     async def _drawing_source(self, build: ComponentBuild) -> dict:
         if build.drawing_task_id is None:
-            return {"id": None, "status": "waiting_for_step"}
+            return {"id": None, "status": "missing"}
         source = await self.source_status_reader.get_drawing_status(build.drawing_task_id)
         return {"id": str(build.drawing_task_id), **source}
 
@@ -189,7 +215,7 @@ class ComponentBuildService:
             return "review_required"
         if step_status == "completed" and drawing_status == "review_ready":
             return "sources_ready"
-        if step_status == "completed" and drawing_status == "waiting_for_step":
+        if step_status == "completed" and drawing_status in {"waiting_for_step", "missing"}:
             return "sources_partial"
         if build.status == "uploading" and not (build.cad_revision_id and build.drawing_task_id):
             return build.status
@@ -301,6 +327,7 @@ class ComponentBuildService:
     async def _tree_node(self, build: ComponentBuild) -> dict:
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
+        component_spec = await self.repository.get_component_spec(build.id)
         projected = self._projected_build_payload(build, step, drawing)
         return {
             "id": str(build.id),
@@ -331,7 +358,16 @@ class ComponentBuildService:
                     ],
                 },
                 {"name": DATA_FUSION_LABEL, "node_type": "data_fusion", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
-                {"name": "ComponentSpec", "node_type": "component_spec", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
+                {
+                    "id": f"{build.id}:component_spec",
+                    "build_id": str(build.id),
+                    "name": "ComponentSpec",
+                    "label": "ComponentSpec",
+                    "node_type": "component_spec",
+                    "status": "saved" if component_spec else "draft",
+                    "status_label": "已保存" if component_spec else "待填写",
+                    "disabled": False,
+                },
                 {"name": PUBLISH_VALIDATION_LABEL, "node_type": "publish_validation", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
             ],
         }
@@ -346,6 +382,10 @@ class ComponentBuildService:
     @staticmethod
     def _catalog_for_build(build: ComponentBuild) -> tuple[CatalogCategory, CatalogPart] | None:
         return find_part_by_node_id(build.catalog_node_id) or find_part_by_legacy_type(build.component_type)
+
+    @staticmethod
+    def _raise_missing_build(build_id: UUID):
+        raise ValueError(f"component build not found: {build_id}")
 
     @staticmethod
     def _source_node(build: ComponentBuild, role: str, source: dict) -> dict:

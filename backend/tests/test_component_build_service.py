@@ -49,7 +49,7 @@ async def test_status_projects_linked_source_states():
 
     assert status["status"] == "parsing_sources"
     assert status["sources"]["reference_step"]["status"] == "processing"
-    assert status["sources"]["drawing"]["status"] == "waiting_for_step"
+    assert status["sources"]["drawing"]["status"] == "missing"
 
 
 @pytest.mark.asyncio
@@ -199,7 +199,7 @@ async def test_source_status_reader_projects_source_errors_when_available():
 
 
 @pytest.mark.asyncio
-async def test_tree_adds_future_workflow_nodes_as_disabled():
+async def test_tree_enables_component_spec_while_future_workflow_nodes_stay_disabled():
     repository = MemoryComponentBuildRepository()
     build = await repository.create_build(component_id="xms06", component_name="XMS06", component_type="flange")
 
@@ -210,8 +210,13 @@ async def test_tree_adds_future_workflow_nodes_as_disabled():
     assert [child["node_type"] for child in version_node["children"]] == [
         "folder", "data_fusion", "component_spec", "publish_validation"
     ]
-    assert all(child["disabled"] is True and child["status"] == "future" for child in version_node["children"][1:])
-    assert all(child["status_label"] == "后续能力" for child in version_node["children"][1:])
+    fusion, component_spec, publish = version_node["children"][1:]
+    assert fusion["disabled"] is True and fusion["status"] == "future"
+    assert component_spec["disabled"] is False and component_spec["status"] == "draft"
+    assert publish["disabled"] is True and publish["status"] == "future"
+    assert fusion["status_label"] == "后续能力"
+    assert component_spec["status_label"] == "待填写"
+    assert publish["status_label"] == "后续能力"
 
 
 @pytest.mark.asyncio

@@ -322,6 +322,31 @@ export function retryComponentBuild(buildId: string, role: Api.ComponentBuild.Re
   });
 }
 
+export function fetchComponentSpec(buildId: string) {
+  return request<Api.ComponentBuild.ComponentSpecDocument>({
+    url: `/api/component-builds/${buildId}/component-spec`,
+    headers: { 'X-Client-Silent-Error': '1' }
+  });
+}
+
+export function saveComponentSpec(buildId: string, data: Record<string, any>) {
+  return request<Api.ComponentBuild.ComponentSpecDocument>({
+    url: `/api/component-builds/${buildId}/component-spec`,
+    method: 'put',
+    data: { data },
+    headers: { 'X-Client-Silent-Error': '1' }
+  });
+}
+
+export function previewComponentSpec(buildId: string, data: Record<string, any>) {
+  return request<{ yaml: string }>({
+    url: `/api/component-builds/${buildId}/component-spec/preview`,
+    method: 'post',
+    data: { data },
+    headers: { 'X-Client-Silent-Error': '1' }
+  });
+}
+
 export function getCadSpecDrawingImageUrl(taskId: string, variant: 'original' | 'inference' = 'inference') {
   return `${getCadSpecApiBase()}/api/cad/spec/tasks/${taskId}/drawing/image?variant=${variant}`;
 }

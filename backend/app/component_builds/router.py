@@ -12,7 +12,7 @@ from app.cad.router import get_cad_service
 from app.cad.service import CadService
 from app.component_builds.catalog import catalog_payload
 from app.component_builds.repository import SqlAlchemyComponentBuildRepository
-from app.component_builds.schemas import ComponentBuildRetryIn
+from app.component_builds.schemas import ComponentBuildRetryIn, ComponentSpecDraftIn
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal, get_session
@@ -145,6 +145,38 @@ async def component_build_status(build_id: UUID, service: ComponentBuildService 
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/component-spec")
+async def component_spec_draft(build_id: UUID, service: ComponentBuildService = Depends(get_component_build_service)) -> dict:
+    try:
+        return await service.get_component_spec(build_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
+
+
+@router.put("/{build_id}/component-spec")
+async def save_component_spec(
+    build_id: UUID,
+    payload: ComponentSpecDraftIn,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.save_component_spec(build_id, payload.data)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
+
+
+@router.post("/{build_id}/component-spec/preview")
+async def preview_component_spec(
+    build_id: UUID,
+    payload: ComponentSpecDraftIn,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return {"yaml": await service.preview_component_spec(build_id, payload.data)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
+
+
 @router.post("/{build_id}/retry", status_code=status.HTTP_202_ACCEPTED)
 async def retry_component_build(
     build_id: UUID,
@@ -251,9 +283,9 @@ async def _apply_source_updates(
         drawing_path = await _save_drawing_upload(drawing_file, settings)
     elif step_file:
         staged_drawing_path = _find_pending_drawing(build_id, settings)
-        drawing_path = staged_drawing_path
-        if drawing_path is None and build.get("drawing_task_id"):
-            drawing_path = await _existing_drawing_path(drawing_service, UUID(build["drawing_task_id"]))
+        if staged_drawing_path and staged_drawing_path.exists():
+            staged_drawing_path.unlink()
+            staged_drawing_path = None
 
     if step_file:
         cad = await cad_service.create_model_from_upload(step_file, component_name)
@@ -319,14 +351,6 @@ async def _stage_pending_drawing(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(source_path.read_bytes())
     return target
-
-
-async def _existing_drawing_path(drawing_service: DrawingLayoutService, task_id: UUID) -> Path | None:
-    repository = getattr(drawing_service, "repository", None)
-    if repository is None:
-        return None
-    source = await repository.get_source_for_task(task_id)
-    return Path(source.file_path) if source else None
 
 
 async def _save_drawing_upload(drawing_file: UploadFile, settings: Settings) -> Path:

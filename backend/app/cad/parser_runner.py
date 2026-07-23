@@ -53,6 +53,24 @@ async def run_freecad_parser(
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    if os.name == "nt":
+        inherited_path = next((value for key, value in env.items() if key.lower() == "path"), "")
+        for key in [key for key in env if key.lower() == "path"]:
+            del env[key]
+        freecad_bin = Path(settings.freecad_cmd).resolve().parent
+        if freecad_bin.name.lower() == "bin" and freecad_bin.parent.name.lower() == "library":
+            conda_prefix = freecad_bin.parents[1]
+            runtime_paths = [
+                conda_prefix,
+                conda_prefix / "Library" / "mingw-w64" / "bin",
+                conda_prefix / "Library" / "usr" / "bin",
+                conda_prefix / "Library" / "bin",
+                conda_prefix / "Scripts",
+                conda_prefix / "bin",
+            ]
+        else:
+            runtime_paths = [freecad_bin]
+        env["PATH"] = os.pathsep.join([*(str(path) for path in runtime_paths), inherited_path])
 
     process_kwargs: dict[str, object] = {
         "stdout": subprocess.PIPE,

@@ -77,8 +77,9 @@ async def test_runner_invokes_freecad_without_shell_true(tmp_path, monkeypatch):
         "create_subprocess_exec",
         lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError()),
     )
+    freecad_cmd = tmp_path / "env" / "Library" / "bin" / "freecadcmd.exe"
     settings = Settings(
-        freecad_cmd="freecadcmd-test",
+        freecad_cmd=str(freecad_cmd),
         cad_script_dir=script_dir,
         cad_work_dir=tmp_path,
         freecad_timeout=5,
@@ -87,11 +88,23 @@ async def test_runner_invokes_freecad_without_shell_true(tmp_path, monkeypatch):
     result = await run_freecad_parser(source, revision_id, tmp_path, settings)
 
     assert result["parser_name"] == "FreeCAD"
-    assert captured["args"][0] == "freecadcmd-test"
+    assert captured["args"][0] == str(freecad_cmd)
     assert str(script_dir / "parse_step.py") in (captured["stdin"] or b"").decode("utf-8") or captured["args"][1] == str(script_dir / "parse_step.py")
     assert "shell" not in captured["kwargs"]
     assert captured["kwargs"]["stdout"] == subprocess.PIPE
     assert captured["kwargs"]["stderr"] == subprocess.PIPE
+    conda_prefix = freecad_cmd.parents[2]
+    expected_paths = [
+        conda_prefix,
+        conda_prefix / "Library" / "mingw-w64" / "bin",
+        conda_prefix / "Library" / "usr" / "bin",
+        conda_prefix / "Library" / "bin",
+        conda_prefix / "Scripts",
+        conda_prefix / "bin",
+    ]
+    assert captured["kwargs"]["env"]["PATH"].split(parser_runner.os.pathsep)[:6] == [
+        str(path) for path in expected_paths
+    ]
 
 
 @pytest.mark.asyncio

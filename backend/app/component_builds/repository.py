@@ -6,12 +6,13 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild, utc_now
+from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
 
 
 class MemoryComponentBuildRepository:
     def __init__(self, *, revision_models: dict[uuid.UUID, uuid.UUID] | None = None, drawing_task_revisions: dict[uuid.UUID, uuid.UUID] | None = None):
         self.builds: dict[uuid.UUID, ComponentBuild] = {}
+        self.component_specs: dict[uuid.UUID, ComponentSpecDraft] = {}
         self.revision_models = revision_models
         self.drawing_task_revisions = drawing_task_revisions
 
@@ -41,6 +42,28 @@ class MemoryComponentBuildRepository:
 
     async def next_component_id(self, prefix: str) -> str:
         return _next_component_id(prefix, (build.component_id for build in self.builds.values()))
+
+    async def get_component_spec(self, build_id: uuid.UUID) -> ComponentSpecDraft | None:
+        await self._require_build(build_id)
+        return self.component_specs.get(build_id)
+
+    async def save_component_spec(self, build_id: uuid.UUID, data: dict) -> ComponentSpecDraft:
+        await self._require_build(build_id)
+        now = utc_now()
+        draft = self.component_specs.get(build_id)
+        if draft is None:
+            draft = ComponentSpecDraft(
+                build_id=build_id,
+                schema_version="1.2",
+                data=data,
+                created_at=now,
+                updated_at=now,
+            )
+            self.component_specs[build_id] = draft
+        else:
+            draft.data = data
+            draft.updated_at = now
+        return draft
 
     async def attach_step(self, build_id: uuid.UUID, *, model_id: uuid.UUID, revision_id: uuid.UUID) -> ComponentBuild:
         build = await self._require_build(build_id)
@@ -116,6 +139,23 @@ class SqlAlchemyComponentBuildRepository:
     async def next_component_id(self, prefix: str) -> str:
         result = await self.session.execute(select(ComponentBuild.component_id))
         return _next_component_id(prefix, result.scalars().all())
+
+    async def get_component_spec(self, build_id: uuid.UUID) -> ComponentSpecDraft | None:
+        await self._require_build(build_id)
+        return await self.session.get(ComponentSpecDraft, build_id)
+
+    async def save_component_spec(self, build_id: uuid.UUID, data: dict) -> ComponentSpecDraft:
+        await self._require_build(build_id)
+        draft = await self.session.get(ComponentSpecDraft, build_id)
+        if draft is None:
+            draft = ComponentSpecDraft(build_id=build_id, schema_version="1.2", data=data)
+            self.session.add(draft)
+        else:
+            draft.data = data
+            draft.updated_at = utc_now()
+        await self.session.commit()
+        await self.session.refresh(draft)
+        return draft
 
     async def attach_step(self, build_id: uuid.UUID, *, model_id: uuid.UUID, revision_id: uuid.UUID) -> ComponentBuild:
         build = await self._require_build(build_id)

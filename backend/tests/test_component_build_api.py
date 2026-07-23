@@ -27,6 +27,21 @@ def find_node(nodes: list[dict], node_type: str) -> dict:
     return {}
 
 
+def find_schema_field(fields: list[dict], path: str) -> dict:
+    for field in fields:
+        if field["path"] == path:
+            return field
+        found = find_schema_field(field.get("children", []), path)
+        if found:
+            return found
+        item = field.get("item")
+        if item:
+            found = find_schema_field(item.get("children", []), path)
+            if found:
+                return found
+    return {}
+
+
 class FakeSourceStatusReader:
     async def get_step_status(self, _revision_id):
         return {"status": "queued", "progress": 0}
@@ -169,7 +184,7 @@ def test_create_build_accepts_step_without_drawing(component_client):
     assert scheduled == []
 
 
-def test_drawing_can_be_staged_then_processed_when_step_is_added(component_client):
+def test_step_only_update_does_not_attach_a_previously_staged_drawing(component_client):
     client, cad_service, drawing_service, scheduled, _ = component_client
     created = client.post(
         "/api/component-builds",
@@ -199,9 +214,9 @@ def test_drawing_can_be_staged_then_processed_when_step_is_added(component_clien
 
     assert updated.status_code == 202
     assert updated.json()["cad_revision_id"] == str(cad_service.revision_id)
-    assert updated.json()["drawing_task_id"] == str(drawing_service.task_id)
-    assert drawing_service.created_payloads[0] == PNG_BYTES
-    assert scheduled == [(drawing_service.task_id, "flange-001", None)]
+    assert updated.json()["drawing_task_id"] is None
+    assert drawing_service.created_payloads == []
+    assert scheduled == []
 
 
 def test_edit_metadata_without_files_preserves_existing_sources(component_client):
@@ -230,7 +245,7 @@ def test_edit_metadata_without_files_preserves_existing_sources(component_client
     assert len(scheduled) == 1
 
 
-def test_replacing_step_reuses_existing_drawing_when_no_new_drawing_is_selected(component_client):
+def test_replacing_step_does_not_reuse_existing_drawing_when_no_new_drawing_is_selected(component_client):
     client, cad_service, drawing_service, scheduled, _ = component_client
     created = create_build(client).json()
     cad_service.revision_id = uuid4()
@@ -248,10 +263,9 @@ def test_replacing_step_reuses_existing_drawing_when_no_new_drawing_is_selected(
 
     assert response.status_code == 202
     assert response.json()["cad_revision_id"] == str(cad_service.revision_id)
-    assert response.json()["drawing_task_id"] == str(drawing_service.task_id)
-    assert len(drawing_service.created) == 2
-    assert drawing_service.created_payloads[-1] == PNG_BYTES
-    assert len(scheduled) == 2
+    assert response.json()["drawing_task_id"] is None
+    assert len(drawing_service.created) == 1
+    assert len(scheduled) == 1
 
 
 def test_catalog_endpoint_returns_categories_and_cascading_parts(component_client):
@@ -296,6 +310,100 @@ def test_tree_exposes_specialist_targets(component_client):
     assert step["target"]["revision_id"] == str(cad_service.revision_id)
     assert drawing["target"]["revision_id"] == str(cad_service.revision_id)
     assert drawing["target"]["task_id"] == str(drawing_service.task_id)
+
+
+def test_component_spec_initializes_from_template_with_chinese_labels(component_client):
+    client, _, _, _, _ = component_client
+    build = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "空白法兰",
+        },
+    ).json()
+
+    response = client.get(f"/api/component-builds/{build['id']}/component-spec")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["schema_version"] == "1.2"
+    assert payload["data"]["spec_type"] == "component"
+    assert payload["data"]["identity"]["name"] is None
+    assert len(payload["data"]["parameters"]) == 1
+    assert payload["data"]["parameters"][0]["name"] is None
+    all_fields = [field for section in payload["schema"]["sections"] for field in section["fields"]]
+    identity_name = find_schema_field(all_fields, "identity.name")
+    assert identity_name["label"] == "当前对象的名称"
+    assert identity_name["required"] is True
+    assert identity_name["read_only"] is False
+    parameters = find_schema_field(all_fields, "parameters")
+    assert parameters["kind"] == "object_array"
+    assert parameters["repeatable"] is True
+
+    tree = client.get("/api/component-builds/tree").json()
+    spec_node = find_node(tree, "component_spec")
+    assert spec_node["build_id"] == build["id"]
+    assert spec_node["disabled"] is False
+
+
+def test_component_spec_drafts_are_saved_per_build(component_client):
+    client, _, _, _, _ = component_client
+    first = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "第一件",
+        },
+    ).json()
+    second = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "第二件",
+        },
+    ).json()
+    first_payload = client.get(f"/api/component-builds/{first['id']}/component-spec").json()
+    first_payload["data"]["identity"]["name"] = "带颈对焊钢制管法兰"
+
+    saved = client.put(
+        f"/api/component-builds/{first['id']}/component-spec",
+        json={"data": first_payload["data"]},
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["saved"] is True
+    assert client.get(f"/api/component-builds/{first['id']}/component-spec").json()["data"]["identity"]["name"] == "带颈对焊钢制管法兰"
+    assert client.get(f"/api/component-builds/{second['id']}/component-spec").json()["data"]["identity"]["name"] is None
+
+
+def test_component_spec_preview_uses_template_structure_and_comments(component_client):
+    client, _, _, _, _ = component_client
+    build = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "预览件",
+        },
+    ).json()
+    spec = client.get(f"/api/component-builds/{build['id']}/component-spec").json()
+    spec["data"]["identity"]["name"] = "带颈对焊钢制管法兰"
+
+    response = client.post(
+        f"/api/component-builds/{build['id']}/component-spec/preview",
+        json={"data": spec["data"]},
+    )
+
+    assert response.status_code == 200
+    yaml_text = response.json()["yaml"]
+    assert yaml_text.index("schema_version:") < yaml_text.index("identity:") < yaml_text.index("coordinate_system:")
+    assert 'name: "带颈对焊钢制管法兰"' in yaml_text
+    assert "【必填】（人工） 当前对象的名称" in yaml_text
+    assert "parameters:" in yaml_text
+    assert "provenance:" in yaml_text
 
 
 def test_step_retry_starts_existing_revision_parse(component_client):

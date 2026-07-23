@@ -13,3 +13,7 @@ class ComponentBuildCreateFields(BaseModel):
 
 class ComponentBuildRetryIn(BaseModel):
     role: Literal["reference_step", "drawing"]
+
+
+class ComponentSpecDraftIn(BaseModel):
+    data: dict
