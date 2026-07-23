@@ -35,6 +35,8 @@ const selectedNodeId = ref('');
 const selectedBuild = ref<Api.ComponentBuild.BuildDetail | null>(null);
 const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({});
 const pollTimer = ref<number | null>(null);
+const polling = ref(false);
+const statusUnavailable = ref(false);
 const viewportWidth = ref(window.innerWidth);
 
 const form = ref(createDefaultForm());
@@ -222,16 +224,17 @@ function formatError(error: unknown, fallback: string) {
   return fallback;
 }
 
-async function loadSelectedBuild(buildId: string) {
+async function loadSelectedBuild(buildId: string): Promise<boolean> {
   if (!buildId) {
     selectedBuild.value = null;
-    return;
+    return true;
   }
   const [detailResult, statusResult] = await Promise.all([fetchComponentBuild(buildId), fetchComponentBuildStatus(buildId)]);
   if (!detailResult.error && detailResult.data) selectedBuild.value = detailResult.data;
   if (!statusResult.error && statusResult.data) {
     buildStatuses.value = { ...buildStatuses.value, [buildId]: statusResult.data };
   }
+  return !detailResult.error && Boolean(detailResult.data) && !statusResult.error && Boolean(statusResult.data);
 }
 
 async function restoreSelectionFromRoute() {
@@ -244,16 +247,17 @@ async function restoreSelectionFromRoute() {
   treeRef.value?.getNode(buildId)?.expand?.();
 }
 
-async function loadTree(options: { preserveSelection?: boolean } = {}) {
+async function loadTree(options: { preserveSelection?: boolean; silent?: boolean } = {}): Promise<boolean> {
   treeLoading.value = true;
   try {
     const result = await fetchComponentBuildTree();
     if (result.error || !result.data) {
-      window.$message?.error('图元建库树暂时不可用');
-      return;
+      if (!options.silent) window.$message?.error('图元建库树暂时不可用');
+      return false;
     }
     treeData.value = normalizeTree(result.data as unknown as RawTreeNode[]);
     if (!options.preserveSelection || !selectedNode.value) await restoreSelectionFromRoute();
+    return true;
   } finally {
     treeLoading.value = false;
   }
@@ -262,24 +266,33 @@ async function loadTree(options: { preserveSelection?: boolean } = {}) {
 async function refresh() {
   refreshing.value = true;
   try {
-    await loadTree({ preserveSelection: true });
-    if (selectedBuildId.value) await loadSelectedBuild(selectedBuildId.value);
+    const treeOk = await loadTree({ preserveSelection: true });
+    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value) : true;
+    statusUnavailable.value = !(treeOk && buildOk);
   } finally {
     refreshing.value = false;
   }
 }
 
 async function pollBuilds() {
+  if (polling.value) return;
   const pending = allBuildNodes(treeData.value).filter(node => node.status === 'uploading' || node.status === 'parsing_sources');
   if (!pending.length) return;
-  const results = await Promise.all(pending.map(node => fetchComponentBuildStatus(node.id)));
-  const next = { ...buildStatuses.value };
-  results.forEach((result, index) => {
-    if (!result.error && result.data) next[pending[index].id] = result.data;
-  });
-  buildStatuses.value = next;
-  await loadTree({ preserveSelection: true });
-  if (selectedBuildId.value) await loadSelectedBuild(selectedBuildId.value);
+  polling.value = true;
+  try {
+    const results = await Promise.all(pending.map(node => fetchComponentBuildStatus(node.id)));
+    const next = { ...buildStatuses.value };
+    results.forEach((result, index) => {
+      if (!result.error && result.data) next[pending[index].id] = result.data;
+    });
+    buildStatuses.value = next;
+    const statusesOk = results.every(result => !result.error && Boolean(result.data));
+    const treeOk = await loadTree({ preserveSelection: true, silent: true });
+    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value) : true;
+    statusUnavailable.value = !(statusesOk && treeOk && buildOk);
+  } finally {
+    polling.value = false;
+  }
 }
 
 function syncPolling() {
@@ -398,7 +411,7 @@ watch(treeData, syncPolling, { deep: true });
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize);
-  await loadTree();
+  statusUnavailable.value = !(await loadTree());
   syncPolling();
 });
 
@@ -470,6 +483,14 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="detail-panel">
+        <ElAlert
+          v-if="statusUnavailable"
+          class="status-alert"
+          title="解析状态暂时不可用，页面保留上次成功结果并继续重试。"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
         <ElEmpty v-if="!selectedNode" description="在左侧选择图元或文件查看详情" :image-size="62" />
 
         <template v-else-if="isFutureNode">
@@ -610,6 +631,7 @@ onBeforeUnmount(() => {
 .status-dot, .pipeline-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-placeholder); }.status-dot.completed, .status-dot.review_ready, .status-dot.sources_ready, .pipeline-dot.completed, .pipeline-dot.review_ready, .pipeline-dot.sources_ready { background: var(--el-color-success); }.status-dot.uploading, .status-dot.parsing_sources, .status-dot.processing, .status-dot.queued, .pipeline-dot.uploading, .pipeline-dot.parsing_sources, .pipeline-dot.processing, .pipeline-dot.queued { background: var(--el-color-primary); }.status-dot.failed, .status-dot.source_failed, .pipeline-dot.failed, .pipeline-dot.source_failed { background: var(--el-color-danger); }.status-dot.review_required, .status-dot.needs_manual_layout, .pipeline-dot.review_required, .pipeline-dot.needs_manual_layout { background: var(--el-color-warning); }.status-dot.future, .pipeline-dot.future { background: var(--el-text-color-placeholder); }
 .tree-progress { color: var(--el-text-color-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .detail-panel { min-height: 640px; overflow: auto; padding: 20px 24px; }
+.status-alert { margin-bottom: 16px; }
 .detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 16px; }.detail-heading h1 { max-width: min(680px, 64vw); margin: 3px 0 0; overflow: hidden; font-size: 18px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }.eyebrow { color: var(--el-text-color-secondary); font-size: 12px; }.detail-section { border-bottom: 1px solid var(--el-border-color-lighter); padding: 18px 0; }.detail-section p { max-width: 760px; margin: 8px 0 0; color: var(--el-text-color-regular); line-height: 1.7; }.muted-section { color: var(--el-text-color-secondary); }.detail-section dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 32px; margin: 0; }.detail-section dl div { min-width: 0; }.detail-section dt { margin-bottom: 4px; color: var(--el-text-color-secondary); font-size: 12px; }.detail-section dd { margin: 0; overflow: hidden; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }.source-summary :deep(.el-progress) { max-width: 520px; margin-top: 18px; }.error-section { border-left: 3px solid var(--el-color-danger); padding-left: 12px; }.error-section p { overflow-wrap: anywhere; color: var(--el-color-danger); }.section-label, .section-title { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 600; }.pipeline-list { display: grid; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }.pipeline-list li { display: grid; min-height: 34px; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; }.pipeline-list small { color: var(--el-text-color-secondary); font-size: 12px; }.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 18px; }.action-hint { color: var(--el-text-color-secondary); font-size: 13px; }.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }.number-input { width: 100%; }.upload-field { margin-top: 18px; }.upload-label { display: block; margin-bottom: 8px; font-size: 13px; }.upload-label b { color: var(--el-color-danger); }.file-input { display: block; position: relative; overflow: hidden; border: 1px dashed var(--el-border-color); padding: 10px 12px; color: var(--el-text-color-regular); cursor: pointer; }.file-input:hover { border-color: var(--el-color-primary); }.file-input input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }.file-input span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .component-build-page { padding: 8px; }.workbench-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }.toolbar-actions { width: 100%; }.tree-search { width: auto; flex: 1; }.workbench-shell { grid-template-columns: minmax(0, 1fr); }.tree-panel, .detail-panel { min-height: 360px; }.tree-panel { max-height: 420px; }.detail-panel { padding: 16px; }.detail-heading h1 { max-width: 64vw; }.detail-section dl { grid-template-columns: minmax(0, 1fr); gap: 12px; }.form-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

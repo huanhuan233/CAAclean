@@ -29,13 +29,11 @@ const cadSpecRoute = {
   path: '/cad-spec',
   component: 'layout.base$view.cad-spec',
   meta: {
-    title: '组件规范',
+    title: '二维图纸解析',
     icon: 'carbon:document-requirements',
     order: 3
   }
 } as unknown as CustomRoute;
-
-cadSpecRoute.meta.title = '二维图纸解析';
 
 const customRoutes: CustomRoute[] = [componentBuildRoute, cadModelRoute, cadSpecRoute];
 
