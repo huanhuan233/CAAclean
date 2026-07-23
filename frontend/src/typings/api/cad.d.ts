@@ -289,11 +289,16 @@ declare namespace Api {
     interface TreeNode {
       id: string;
       label: string;
+      label_en?: string | null;
       node_type: NodeType;
       status: string;
       progress: number | null;
       disabled: boolean;
       build_id: string | null;
+      category_code?: string | null;
+      part_type_code?: string | null;
+      component_id?: string | null;
+      component_name?: string | null;
       target: Target | null;
       status_label?: string | null;
       status_message?: string | null;
@@ -306,11 +311,16 @@ declare namespace Api {
       id?: string;
       name?: string;
       label?: string;
+      label_en?: string | null;
       node_type?: RawNodeType | string;
       status?: string;
       progress?: number | null;
       disabled?: boolean;
       build_id?: string | null;
+      category_code?: string | null;
+      part_type_code?: string | null;
+      component_id?: string | null;
+      component_name?: string | null;
       target?: Target | null;
       status_label?: string | null;
       status_message?: string | null;
@@ -330,6 +340,8 @@ declare namespace Api {
 
     interface BuildDetail {
       id: string;
+      catalog_node_id: string | null;
+      catalog_path: string | null;
       component_id: string;
       component_name: string;
       component_type: string;
@@ -350,6 +362,28 @@ declare namespace Api {
       updated_at: string;
     }
 
+    interface CatalogPart {
+      catalog_node_id: string;
+      part_type_code: string;
+      label: string;
+      label_en: string;
+      id_prefix: string;
+      sort_order: number;
+    }
+
+    interface CatalogCategory {
+      catalog_node_id: string;
+      category_code: string;
+      label: string;
+      label_en: string;
+      sort_order: number;
+      parts: CatalogPart[];
+    }
+
+    interface CatalogResponse {
+      categories: CatalogCategory[];
+    }
+
     interface BuildStatus {
       build_id: string;
       status: string;
@@ -363,17 +397,17 @@ declare namespace Api {
     }
 
     interface CreatePayload {
-      component_id: string;
+      category_code: string;
+      part_type_code: string;
       component_name: string;
-      component_type: string;
-      component_subtype?: string;
-      family?: string;
       standard_number?: string;
       version?: string;
-      default_dn?: number;
-      default_pn?: number;
-      step_file: File;
-      drawing_file: File;
+      step_file?: File;
+      drawing_file?: File;
+    }
+
+    interface UpdatePayload extends CreatePayload {
+      build_id: string;
     }
   }
 }

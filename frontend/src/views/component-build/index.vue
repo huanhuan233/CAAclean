@@ -5,9 +5,11 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   createComponentBuild,
   fetchComponentBuild,
+  fetchComponentBuildCatalog,
   fetchComponentBuildStatus,
   fetchComponentBuildTree,
-  retryComponentBuild
+  retryComponentBuild,
+  updateComponentBuild
 } from '@/service/api';
 
 defineOptions({ name: 'ComponentBuild' });
@@ -26,12 +28,14 @@ const treeRef = ref<{
 const formRef = ref<FormInstance>();
 
 const treeLoading = ref(false);
+const catalogLoading = ref(false);
 const refreshing = ref(false);
 const submitting = ref(false);
-const retrying = ref(false);
+const parsingRole = ref<Api.ComponentBuild.RetryRole | null>(null);
 const drawerVisible = ref(false);
 const searchKeyword = ref('');
 const treeData = ref<ComponentTreeNode[]>([]);
+const catalog = ref<Api.ComponentBuild.CatalogCategory[]>([]);
 const selectedNodeId = ref('');
 const expandedNodeIds = ref<string[]>([]);
 const selectedBuild = ref<Api.ComponentBuild.BuildDetail | null>(null);
@@ -44,20 +48,12 @@ const viewportWidth = ref(window.innerWidth);
 const form = ref(createDefaultForm());
 const stepFile = ref<File | null>(null);
 const drawingFile = ref<File | null>(null);
+const editingBuild = ref<Api.ComponentBuild.BuildDetail | null>(null);
 
 const formRules: FormRules = {
-  component_id: [
-    { required: true, message: '请输入图元 ID', trigger: 'blur' },
-    {
-      pattern: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-      message: '图元 ID 只能使用英文小写、数字和连字符',
-      trigger: 'blur'
-    }
-  ],
+  category_code: [{ required: true, message: '请选择大类', trigger: 'change' }],
+  part_type_code: [{ required: true, message: '请选择部件类型', trigger: 'change' }],
   component_name: [{ required: true, message: '请输入图元名称', trigger: 'blur' }],
-  component_type: [{ required: true, message: '请输入图元类型', trigger: 'blur' }],
-  default_dn: [{ required: true, message: '请输入默认 DN', trigger: 'change' }],
-  default_pn: [{ required: true, message: '请输入默认 PN', trigger: 'change' }]
 };
 
 const selectedNode = computed(() => findNodeById(treeData.value, selectedNodeId.value));
@@ -71,7 +67,29 @@ const isSourceNode = computed(() => {
   return type === 'reference_step' || type === 'drawing';
 });
 const isFutureNode = computed(() => selectedNode.value?.node_type === 'fusion' || selectedNode.value?.node_type === 'yaml' || selectedNode.value?.node_type === 'future');
+const isCatalogNode = computed(() => selectedNode.value?.node_type === 'family' || selectedNode.value?.node_type === 'type');
+const isComponentNode = computed(() => selectedNode.value?.node_type === 'component');
 const drawerSize = computed(() => (viewportWidth.value < 520 ? '100%' : 440));
+const isEditing = computed(() => Boolean(editingBuild.value));
+const drawerTitle = computed(() => (isEditing.value ? '编辑图元' : '新建图元'));
+const selectedCategory = computed(
+  () => catalog.value.find(item => item.category_code === form.value.category_code) || null
+);
+const availablePartTypes = computed(() => selectedCategory.value?.parts || []);
+const selectedPartType = computed(
+  () => availablePartTypes.value.find(item => item.part_type_code === form.value.part_type_code) || null
+);
+const selectedCatalogPath = computed(() => {
+  const labels = [selectedCategory.value?.label, selectedPartType.value?.label].filter(Boolean);
+  return labels.length ? `/${labels.join('/')}` : '请先选择大类和部件类型';
+});
+const generatedIdPreview = computed(() =>
+  editingBuild.value
+    ? editingBuild.value.component_id
+    : selectedPartType.value
+      ? `${selectedPartType.value.id_prefix}-###（系统自动递增）`
+      : '选择部件类型后自动生成'
+);
 
 const sourceStatus = computed(() => {
   if (!selectedNode.value || !selectedBuildStatus.value) return null;
@@ -91,13 +109,6 @@ const canViewSource = computed(() => {
   );
 });
 
-const canRetryDrawing = computed(() => selectedNode.value?.node_type === 'drawing' && isFailure(selectedNode.value.status));
-const canReuploadStep = computed(
-  () =>
-    selectedNode.value?.node_type === 'reference_step' &&
-    (isFailure(selectedNode.value.status) ||
-      (selectedBuild.value?.status === 'source_failed' && !selectedBuild.value.cad_revision_id))
-);
 const canReuploadBuildStep = computed(
   () =>
     !isSourceNode.value &&
@@ -113,15 +124,11 @@ const canHandleManualLayout = computed(
 
 function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file' | 'drawing_file'> {
   return {
-    component_id: '',
+    category_code: '',
+    part_type_code: '',
     component_name: '',
-    component_type: '',
-    component_subtype: '',
-    family: '',
     standard_number: '',
-    version: '1.0.0',
-    default_dn: undefined,
-    default_pn: undefined
+    version: '1.0.0'
   };
 }
 
@@ -158,11 +165,16 @@ function normalizeTree(nodes: RawTreeNode[], parentBuildId: string | null = null
     return {
       id,
       label: node.label || node.name || futureLabel(nodeType),
+      label_en: node.label_en || null,
       node_type: nodeType,
       status: node.status || (nodeType === 'future' || nodeType === 'fusion' || nodeType === 'yaml' ? 'future' : 'pending'),
       progress: typeof node.progress === 'number' ? node.progress : null,
       disabled: Boolean(node.disabled) || nodeType === 'future' || nodeType === 'fusion' || nodeType === 'yaml',
       build_id: buildId,
+      category_code: node.category_code || null,
+      part_type_code: node.part_type_code || null,
+      component_id: node.component_id || null,
+      component_name: node.component_name || null,
       target: node.target || null,
       status_label: node.status_label || null,
       status_message: node.status_message || null,
@@ -197,6 +209,7 @@ function statusLabel(status: string) {
     parsing_sources: '解析中',
     source_failed: '来源失败',
     sources_ready: '来源就绪',
+    sources_partial: '部分来源就绪',
     aligning: '字段对齐中',
     review_required: '待人工处理',
     yaml_ready: 'YAML 就绪',
@@ -221,7 +234,24 @@ function isFailure(status: string) {
   return status === 'failed' || status === 'source_failed';
 }
 
+function sourceIsParsing(role: Api.ComponentBuild.RetryRole) {
+  const source = selectedBuildStatus.value?.sources[role];
+  if (!source) return false;
+  return !['failed', 'completed', 'review_ready', 'needs_manual_layout', 'waiting_for_step', 'missing'].includes(
+    source.status
+  );
+}
+
+function canStartParsing(role: Api.ComponentBuild.RetryRole) {
+  if (!selectedBuild.value || sourceIsParsing(role) || parsingRole.value !== null) return false;
+  return role === 'reference_step'
+    ? Boolean(selectedBuild.value.cad_revision_id)
+    : Boolean(selectedBuild.value.drawing_task_id);
+}
+
 function nodeIconClass(node: ComponentTreeNode) {
+  if (node.node_type === 'family' || node.node_type === 'type') return 'catalog';
+  if (node.node_type === 'component') return 'component';
   if (node.node_type === 'reference_step') return 'step';
   if (node.node_type === 'drawing') return 'drawing';
   if (node.node_type === 'fusion' || node.node_type === 'yaml' || node.node_type === 'future') return 'future';
@@ -233,7 +263,19 @@ function filterTree(keyword: string, data: unknown) {
   const node = data as ComponentTreeNode;
   if (!keyword) return true;
   const normalized = keyword.trim().toLowerCase();
-  return `${node.label} ${node.status}`.toLowerCase().includes(normalized);
+  return [
+    node.label,
+    node.label_en,
+    node.status,
+    node.category_code,
+    node.part_type_code,
+    node.component_id,
+    node.component_name
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .includes(normalized);
 }
 
 function formatProgress(progress: number | null | undefined) {
@@ -282,7 +324,8 @@ async function restoreSelectionFromRoute() {
 }
 
 async function loadTree(options: { preserveSelection?: boolean; silent?: boolean } = {}): Promise<boolean> {
-  treeLoading.value = true;
+  const showLoading = !options.silent;
+  if (showLoading) treeLoading.value = true;
   try {
     const result = await fetchComponentBuildTree({
       signal: requestController.signal,
@@ -299,16 +342,38 @@ async function loadTree(options: { preserveSelection?: boolean; silent?: boolean
     expandedNodeIds.value.forEach(id => treeRef.value?.getNode(id)?.expand?.());
     return true;
   } finally {
-    treeLoading.value = false;
+    if (showLoading) treeLoading.value = false;
+  }
+}
+
+async function loadCatalog(options: { silent?: boolean } = {}): Promise<boolean> {
+  catalogLoading.value = true;
+  try {
+    const result = await fetchComponentBuildCatalog({
+      signal: requestController.signal,
+      silent: options.silent
+    });
+    if (requestController.signal.aborted) return false;
+    if (result.error || !result.data) {
+      if (!options.silent) window.$message?.error('图元分类目录暂时不可用');
+      return false;
+    }
+    catalog.value = result.data.categories;
+    return true;
+  } finally {
+    catalogLoading.value = false;
   }
 }
 
 async function refresh() {
   refreshing.value = true;
   try {
-    const treeOk = await loadTree({ preserveSelection: true });
+    const [treeOk, catalogOk] = await Promise.all([
+      loadTree({ preserveSelection: true }),
+      loadCatalog()
+    ]);
     const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value) : true;
-    statusUnavailable.value = !(treeOk && buildOk);
+    statusUnavailable.value = !(treeOk && catalogOk && buildOk);
   } finally {
     refreshing.value = false;
   }
@@ -369,20 +434,21 @@ function forgetExpanded(data: ComponentTreeNode) {
   expandedNodeIds.value = expandedNodeIds.value.filter(id => id !== data.id);
 }
 
+function handleCategoryChange() {
+  form.value.part_type_code = '';
+  void nextTick(() => formRef.value?.clearValidate('part_type_code'));
+}
+
 function openCreateDrawer(build?: Api.ComponentBuild.BuildDetail | null) {
-  form.value = build
-    ? {
-        component_id: build.component_id,
-        component_name: build.component_name,
-        component_type: build.component_type,
-        component_subtype: build.component_subtype || '',
-        family: build.family || '',
-        standard_number: build.standard_number || '',
-        version: build.version,
-        default_dn: build.default_dn ?? undefined,
-        default_pn: build.default_pn ?? undefined
-      }
-    : createDefaultForm();
+  const node = selectedNode.value;
+  editingBuild.value = build || null;
+  form.value = {
+    category_code: build?.family || node?.category_code || '',
+    part_type_code: build?.component_type || node?.part_type_code || '',
+    component_name: build?.component_name || '',
+    standard_number: build?.standard_number || '',
+    version: build?.version || '1.0.0'
+  };
   stepFile.value = null;
   drawingFile.value = null;
   drawerVisible.value = true;
@@ -405,20 +471,24 @@ function pickFile(role: 'step' | 'drawing', event: Event) {
 async function submitBuild() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
-  if (!stepFile.value || !drawingFile.value) {
-    window.$message?.warning('请同时选择 STEP 文件和二维图纸');
-    return;
-  }
   submitting.value = true;
   try {
-    const result = await createComponentBuild({ ...form.value, step_file: stepFile.value, drawing_file: drawingFile.value });
+    const payload = {
+      ...form.value,
+      ...(stepFile.value ? { step_file: stepFile.value } : {}),
+      ...(drawingFile.value ? { drawing_file: drawingFile.value } : {})
+    };
+    const result = editingBuild.value
+      ? await updateComponentBuild({ ...payload, build_id: editingBuild.value.id })
+      : await createComponentBuild(payload);
     if (result.error || !result.data) throw result.error;
     drawerVisible.value = false;
     await router.replace({ path: '/component-build', query: { build_id: result.data.id } });
     await loadTree();
-    window.$message?.success('图元建库任务已提交');
+    await loadSelectedBuild(result.data.id);
+    window.$message?.success(isEditing.value ? '图元修改已保存' : '图元已创建');
   } catch (error) {
-    window.$message?.error(formatError(error, '图元建库提交失败'));
+    window.$message?.error(formatError(error, isEditing.value ? '图元修改保存失败' : '图元创建失败'));
   } finally {
     submitting.value = false;
   }
@@ -438,11 +508,6 @@ function viewSourceResult() {
   }
 }
 
-function reuploadStep() {
-  window.$message?.warning('当前接口要求新建图元并重新上传成套资料；原失败记录会保留用于审计。');
-  openCreateDrawer(selectedBuild.value);
-}
-
 function handleManualLayout() {
   const node = selectedNode.value;
   if (!node?.target?.revision_id || !node.target.task_id || !node.build_id) return;
@@ -456,18 +521,18 @@ function handleManualLayout() {
   });
 }
 
-async function retryDrawing() {
-  if (!selectedBuildId.value) return;
-  retrying.value = true;
+async function startParsing(role: Api.ComponentBuild.RetryRole) {
+  if (!selectedBuild.value || !canStartParsing(role)) return;
+  parsingRole.value = role;
   try {
-    const result = await retryComponentBuild(selectedBuildId.value, 'drawing');
+    const result = await retryComponentBuild(selectedBuild.value.id, role);
     if (result.error) throw result.error;
     await refresh();
-    window.$message?.success('二维图纸已重新进入解析队列');
+    window.$message?.success(role === 'reference_step' ? 'STEP 已进入解析队列' : '二维图纸已进入解析队列');
   } catch (error) {
-    window.$message?.error(formatError(error, '二维图纸重试失败'));
+    window.$message?.error(formatError(error, role === 'reference_step' ? 'STEP 解析启动失败' : '二维图纸解析启动失败'));
   } finally {
-    retrying.value = false;
+    parsingRole.value = null;
   }
 }
 
@@ -480,7 +545,8 @@ watch(treeData, syncPolling, { deep: true });
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize);
-  statusUnavailable.value = !(await loadTree());
+  const [treeOk, catalogOk] = await Promise.all([loadTree(), loadCatalog()]);
+  statusUnavailable.value = !(treeOk && catalogOk);
   syncPolling();
 });
 
@@ -541,12 +607,19 @@ onBeforeUnmount(() => {
                 <span class="node-icon" :class="nodeIconClass(data)">
                   <icon-carbon-document v-if="data.node_type === 'reference_step'" />
                   <icon-carbon-image v-else-if="data.node_type === 'drawing'" />
-                  <icon-carbon-folder v-else-if="data.node_type === 'folder'" />
-                  <icon-carbon-cube v-else-if="data.node_type === 'build'" />
+                  <icon-carbon-folder v-else-if="data.node_type === 'folder' || data.node_type === 'family' || data.node_type === 'type'" />
+                  <icon-carbon-cube v-else-if="data.node_type === 'component' || data.node_type === 'build'" />
                   <icon-carbon-time v-else />
                 </span>
-                <span class="tree-node-label">{{ data.label }}</span>
-                <span class="status-dot" :class="data.status" />
+                <span class="tree-node-label" :title="[data.label, data.label_en].filter(Boolean).join(' · ')">
+                  {{ data.label }}
+                  <small v-if="data.label_en" class="tree-node-en">{{ data.label_en }}</small>
+                </span>
+                <span
+                  v-if="!['family', 'type', 'component'].includes(data.node_type)"
+                  class="status-dot"
+                  :class="data.status"
+                />
                 <span v-if="formatProgress(data.progress)" class="tree-progress">{{ formatProgress(data.progress) }}</span>
               </div>
             </template>
@@ -564,6 +637,51 @@ onBeforeUnmount(() => {
           show-icon
         />
         <ElEmpty v-if="!selectedNode" description="在左侧选择图元或文件查看详情" :image-size="62" />
+
+        <template v-else-if="isCatalogNode">
+          <div class="detail-heading">
+            <div>
+              <span class="eyebrow">{{ selectedNode.node_type === 'family' ? '图元大类' : '部件类型' }}</span>
+              <h1>{{ selectedNode.label }}</h1>
+              <p v-if="selectedNode.label_en" class="heading-subtitle">{{ selectedNode.label_en }}</p>
+            </div>
+          </div>
+          <section class="detail-section catalog-summary">
+            <dl>
+              <div><dt>当前目录</dt><dd>/{{ selectedNode.label }}</dd></div>
+              <div>
+                <dt>{{ selectedNode.node_type === 'family' ? '部件类型数' : '图元实例数' }}</dt>
+                <dd>{{ selectedNode.children.length }}</dd>
+              </div>
+            </dl>
+            <p>
+              {{
+                selectedNode.node_type === 'family'
+                  ? '新建时将预选该大类，再选择具体部件类型。'
+                  : '新建图元会自动归档到当前部件类型，图元 ID 由系统生成。'
+              }}
+            </p>
+          </section>
+          <footer class="detail-actions">
+            <ElButton type="primary" @click="openCreateDrawer()">在此分类新建图元</ElButton>
+          </footer>
+        </template>
+
+        <template v-else-if="isComponentNode">
+          <div class="detail-heading">
+            <div>
+              <span class="eyebrow">图元实例</span>
+              <h1>{{ selectedNode.component_name || selectedNode.label }}</h1>
+            </div>
+          </div>
+          <section class="detail-section build-summary">
+            <dl>
+              <div><dt>图元 ID</dt><dd class="mono">{{ selectedNode.component_id || '-' }}</dd></div>
+              <div><dt>版本数</dt><dd>{{ selectedNode.children.length }}</dd></div>
+            </dl>
+            <p>展开图元并选择具体版本，可查看成套文件解析状态与结果。</p>
+          </section>
+        </template>
 
         <template v-else-if="isFutureNode">
           <div class="detail-heading">
@@ -608,10 +726,17 @@ onBeforeUnmount(() => {
           <footer class="detail-actions">
             <ElButton v-if="canViewSource" type="primary" @click="viewSourceResult">查看解析结果</ElButton>
             <ElButton v-if="canHandleManualLayout" type="primary" @click="handleManualLayout">处理版面</ElButton>
-            <ElButton v-if="canRetryDrawing" :loading="retrying" @click="retryDrawing">重试二维图纸</ElButton>
-            <ElButton v-if="canReuploadStep" @click="reuploadStep">重新上传成套资料</ElButton>
+            <ElButton
+              v-if="selectedNode.node_type === 'drawing' && selectedBuild?.drawing_task_id"
+              :loading="parsingRole === 'drawing'"
+              :disabled="!canStartParsing('drawing')"
+              @click="startParsing('drawing')"
+            >
+              开始解析
+            </ElButton>
+            <ElButton v-if="selectedBuild" @click="openCreateDrawer(selectedBuild)">编辑图元</ElButton>
             <span
-              v-if="!canViewSource && !canHandleManualLayout && !canRetryDrawing && !canReuploadStep"
+              v-if="!canViewSource && !canHandleManualLayout && !selectedBuild"
               class="action-hint"
             >
               解析达到可查看状态后可进入专业页面。
@@ -631,66 +756,145 @@ onBeforeUnmount(() => {
           </div>
           <section class="detail-section build-summary">
             <dl>
-              <div><dt>图元 ID</dt><dd>{{ selectedBuild?.component_id || '-' }}</dd></div>
+              <div><dt>图元 ID（系统生成）</dt><dd class="mono">{{ selectedBuild?.component_id || '-' }}</dd></div>
               <div><dt>版本</dt><dd>{{ selectedBuild?.version || '-' }}</dd></div>
-              <div><dt>分类</dt><dd>{{ [selectedBuild?.family, selectedBuild?.component_type, selectedBuild?.component_subtype].filter(Boolean).join(' / ') || '-' }}</dd></div>
+              <div><dt>归档路径</dt><dd>{{ selectedBuild?.catalog_path || '-' }}</dd></div>
               <div><dt>标准</dt><dd>{{ selectedBuild?.standard_number || '-' }}</dd></div>
-              <div><dt>默认规格</dt><dd>{{ selectedBuild?.default_dn ? `DN${selectedBuild.default_dn}` : '-' }} {{ selectedBuild?.default_pn ? `PN${selectedBuild.default_pn}` : '' }}</dd></div>
             </dl>
           </section>
           <section class="detail-section pipeline-section">
             <div class="section-title">建库流水线</div>
             <ol class="pipeline-list">
-              <li><span class="pipeline-dot" :class="selectedBuild?.status || selectedNode.status" /><span>成套文件提交</span><small>{{ statusLabel(selectedBuild?.status || selectedNode.status) }}</small></li>
-              <li><span class="pipeline-dot" :class="selectedBuildStatus?.sources.reference_step.status || 'pending'" /><span>STEP 几何解析</span><small>{{ statusLabel(selectedBuildStatus?.sources.reference_step.status || 'pending') }}</small></li>
-              <li><span class="pipeline-dot" :class="selectedBuildStatus?.sources.drawing.status || 'pending'" /><span>二维图纸抽取</span><small>{{ statusLabel(selectedBuildStatus?.sources.drawing.status || 'pending') }}</small></li>
-              <li><span class="pipeline-dot future" /><span>字段融合</span><small>后续能力</small></li>
-              <li><span class="pipeline-dot future" /><span>ComponentSpec</span><small>待生成</small></li>
+              <li>
+                <span class="pipeline-dot" :class="selectedBuild?.status || selectedNode.status" />
+                <span>成套文件提交</span>
+                <small>{{ statusLabel(selectedBuild?.status || selectedNode.status) }}</small>
+                <span />
+              </li>
+              <li>
+                <span class="pipeline-dot" :class="selectedBuildStatus?.sources.reference_step.status || 'pending'" />
+                <span>STEP 几何解析</span>
+                <small>{{ statusLabel(selectedBuildStatus?.sources.reference_step.status || 'pending') }}</small>
+                <ElButton
+                  size="small"
+                  :loading="parsingRole === 'reference_step'"
+                  :disabled="!canStartParsing('reference_step')"
+                  :title="selectedBuild?.cad_revision_id ? '重新启动 STEP 几何解析' : '请先编辑并上传 STEP 文件'"
+                  @click="startParsing('reference_step')"
+                >
+                  开始解析
+                </ElButton>
+              </li>
+              <li>
+                <span class="pipeline-dot" :class="selectedBuildStatus?.sources.drawing.status || 'pending'" />
+                <span>二维图纸抽取</span>
+                <small>{{ statusLabel(selectedBuildStatus?.sources.drawing.status || 'pending') }}</small>
+                <ElButton
+                  size="small"
+                  :loading="parsingRole === 'drawing'"
+                  :disabled="!canStartParsing('drawing')"
+                  :title="selectedBuild?.drawing_task_id ? '重新启动二维图纸解析' : '请先编辑并上传二维图纸'"
+                  @click="startParsing('drawing')"
+                >
+                  开始解析
+                </ElButton>
+              </li>
+              <li><span class="pipeline-dot future" /><span>字段融合</span><small>后续能力</small><span /></li>
+              <li><span class="pipeline-dot future" /><span>ComponentSpec</span><small>待生成</small><span /></li>
             </ol>
           </section>
           <section v-if="selectedBuild?.error_message" class="detail-section error-section">
             <span class="section-label">错误信息</span>
             <p>{{ selectedBuild.error_message }}</p>
           </section>
-          <footer v-if="canReuploadBuildStep" class="detail-actions">
-            <ElButton type="primary" @click="reuploadStep">重新上传成套资料</ElButton>
-            <span class="action-hint">将新建一条 build，原失败记录继续保留用于审计。</span>
+          <footer v-if="selectedBuild" class="detail-actions">
+            <ElButton type="primary" @click="openCreateDrawer(selectedBuild)">编辑图元</ElButton>
+            <span v-if="canReuploadBuildStep" class="action-hint">可在编辑抽屉中补传或替换来源文件。</span>
           </footer>
         </template>
       </section>
     </main>
 
-    <ElDrawer v-model="drawerVisible" :size="drawerSize" title="新建图元建库任务" destroy-on-close>
-      <ElForm ref="formRef" :model="form" :rules="formRules" label-position="top">
+    <ElDrawer v-model="drawerVisible" :size="drawerSize" :title="drawerTitle" destroy-on-close>
+      <ElForm ref="formRef" v-loading="catalogLoading" :model="form" :rules="formRules" label-position="top">
         <div class="form-grid">
-          <ElFormItem label="图元 ID" prop="component_id">
-            <ElInput v-model="form.component_id" placeholder="例如 flange-weld-neck-gbt9124" />
+          <ElFormItem label="大类" prop="category_code">
+            <ElSelect
+              v-model="form.category_code"
+              filterable
+              class="field-control"
+              placeholder="请选择大类"
+              @change="handleCategoryChange"
+            >
+              <ElOption
+                v-for="category in catalog"
+                :key="category.category_code"
+                :label="`${category.label} · ${category.label_en}`"
+                :value="category.category_code"
+              />
+            </ElSelect>
           </ElFormItem>
-          <ElFormItem label="图元名称" prop="component_name"><ElInput v-model="form.component_name" placeholder="例如 带颈对焊法兰" /></ElFormItem>
-          <ElFormItem label="图元类型" prop="component_type"><ElInput v-model="form.component_type" placeholder="例如 法兰" /></ElFormItem>
-          <ElFormItem label="子类型"><ElInput v-model="form.component_subtype" placeholder="可选" /></ElFormItem>
-          <ElFormItem label="产品族"><ElInput v-model="form.family" placeholder="可选" /></ElFormItem>
+          <ElFormItem label="部件类型" prop="part_type_code">
+            <ElSelect
+              v-model="form.part_type_code"
+              filterable
+              class="field-control"
+              :disabled="!form.category_code"
+              placeholder="请先选择大类"
+            >
+              <ElOption
+                v-for="part in availablePartTypes"
+                :key="part.part_type_code"
+                :label="`${part.label} · ${part.label_en}`"
+                :value="part.part_type_code"
+              />
+            </ElSelect>
+          </ElFormItem>
+          <ElFormItem class="form-span-2" label="归档路径">
+            <ElInput :model-value="selectedCatalogPath" readonly />
+          </ElFormItem>
+          <ElFormItem label="图元名称" prop="component_name">
+            <ElInput v-model="form.component_name" placeholder="例如 带颈对焊法兰" />
+          </ElFormItem>
+          <ElFormItem label="图元 ID">
+            <ElInput :model-value="generatedIdPreview" readonly />
+          </ElFormItem>
           <ElFormItem label="标准号"><ElInput v-model="form.standard_number" placeholder="可选" /></ElFormItem>
           <ElFormItem label="版本"><ElInput v-model="form.version" /></ElFormItem>
-          <ElFormItem label="默认 DN" prop="default_dn">
-            <ElInputNumber v-model="form.default_dn" :min="1" controls-position="right" class="number-input" />
-          </ElFormItem>
-          <ElFormItem label="默认 PN" prop="default_pn">
-            <ElInputNumber v-model="form.default_pn" :min="1" controls-position="right" class="number-input" />
-          </ElFormItem>
         </div>
         <section class="upload-field">
-          <span class="upload-label">参考 STEP <b>*</b></span>
-          <label class="file-input"><input accept=".step,.stp" type="file" @change="pickFile('step', $event)" /><span>{{ stepFile?.name || '选择 STEP / STP 文件' }}</span></label>
+          <span class="upload-label">参考 STEP <small>可稍后补充</small></span>
+          <label class="file-input">
+            <input accept=".step,.stp" type="file" @change="pickFile('step', $event)" />
+            <span>
+              {{
+                stepFile?.name ||
+                (editingBuild?.cad_revision_id ? '已有关联 STEP；选择新文件可替换' : '选择 STEP / STP 文件')
+              }}
+            </span>
+          </label>
         </section>
         <section class="upload-field">
-          <span class="upload-label">二维参数图 <b>*</b></span>
-          <label class="file-input"><input accept=".png,.jpg,.jpeg,.webp" type="file" @change="pickFile('drawing', $event)" /><span>{{ drawingFile?.name || '选择 PNG、JPG、JPEG 或 WEBP 图纸' }}</span></label>
+          <span class="upload-label">二维参数图 <small>可稍后补充</small></span>
+          <label class="file-input">
+            <input accept=".png,.jpg,.jpeg,.webp" type="file" @change="pickFile('drawing', $event)" />
+            <span>
+              {{
+                drawingFile?.name ||
+                (editingBuild?.drawing_task_id ? '已有关联图纸；选择新文件可替换' : '选择 PNG、JPG、JPEG 或 WEBP 图纸')
+              }}
+            </span>
+          </label>
+          <p class="upload-hint">
+            {{ isEditing ? '未选择新文件时保留当前来源。' : '可以先创建图元，之后再补传任意来源文件。' }}
+          </p>
         </section>
       </ElForm>
       <template #footer>
         <ElButton @click="drawerVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="submitting" @click="submitBuild">提交成套资料</ElButton>
+        <ElButton type="primary" :loading="submitting" :disabled="catalogLoading || !catalog.length" @click="submitBuild">
+          {{ isEditing ? '保存修改' : '创建图元' }}
+        </ElButton>
       </template>
     </ElDrawer>
   </div>
@@ -714,12 +918,12 @@ onBeforeUnmount(() => {
 .tree-node { display: grid; width: 100%; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) 7px auto; align-items: center; gap: 6px; padding-right: 6px; }
 .tree-node.disabled { color: var(--el-text-color-placeholder); cursor: not-allowed; }
 .node-icon { display: inline-flex; color: var(--el-text-color-secondary); font-size: 15px; }
-.node-icon.step { color: var(--el-color-primary); }.node-icon.drawing { color: var(--el-color-success); }.node-icon.folder { color: var(--el-color-warning); }.node-icon.future { color: var(--el-text-color-placeholder); }
-.tree-node-label, .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.status-dot, .pipeline-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-placeholder); }.status-dot.completed, .status-dot.review_ready, .status-dot.sources_ready, .pipeline-dot.completed, .pipeline-dot.review_ready, .pipeline-dot.sources_ready { background: var(--el-color-success); }.status-dot.uploading, .status-dot.parsing_sources, .status-dot.processing, .status-dot.queued, .pipeline-dot.uploading, .pipeline-dot.parsing_sources, .pipeline-dot.processing, .pipeline-dot.queued { background: var(--el-color-primary); }.status-dot.failed, .status-dot.source_failed, .pipeline-dot.failed, .pipeline-dot.source_failed { background: var(--el-color-danger); }.status-dot.review_required, .status-dot.needs_manual_layout, .pipeline-dot.review_required, .pipeline-dot.needs_manual_layout { background: var(--el-color-warning); }.status-dot.future, .pipeline-dot.future { background: var(--el-text-color-placeholder); }
+.node-icon.step { color: var(--el-color-primary); }.node-icon.drawing { color: var(--el-color-success); }.node-icon.folder, .node-icon.catalog { color: var(--el-color-warning); }.node-icon.component { color: var(--el-color-primary); }.node-icon.future { color: var(--el-text-color-placeholder); }
+.tree-node-label, .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.tree-node-en { margin-left: 4px; color: var(--el-text-color-secondary); font-size: 11px; }.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.status-dot, .pipeline-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-placeholder); }.status-dot.completed, .status-dot.review_ready, .status-dot.sources_ready, .status-dot.sources_partial, .pipeline-dot.completed, .pipeline-dot.review_ready, .pipeline-dot.sources_ready, .pipeline-dot.sources_partial { background: var(--el-color-success); }.status-dot.uploading, .status-dot.parsing_sources, .status-dot.processing, .status-dot.queued, .pipeline-dot.uploading, .pipeline-dot.parsing_sources, .pipeline-dot.processing, .pipeline-dot.queued { background: var(--el-color-primary); }.status-dot.failed, .status-dot.source_failed, .pipeline-dot.failed, .pipeline-dot.source_failed { background: var(--el-color-danger); }.status-dot.review_required, .status-dot.needs_manual_layout, .pipeline-dot.review_required, .pipeline-dot.needs_manual_layout { background: var(--el-color-warning); }.status-dot.future, .pipeline-dot.future { background: var(--el-text-color-placeholder); }
 .tree-progress { color: var(--el-text-color-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .detail-panel { min-height: 640px; overflow: auto; padding: 20px 24px; }
 .status-alert { margin-bottom: 16px; }
-.detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 16px; }.detail-heading h1 { max-width: min(680px, 64vw); margin: 3px 0 0; overflow: hidden; font-size: 18px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }.eyebrow { color: var(--el-text-color-secondary); font-size: 12px; }.detail-section { border-bottom: 1px solid var(--el-border-color-lighter); padding: 18px 0; }.detail-section p { max-width: 760px; margin: 8px 0 0; color: var(--el-text-color-regular); line-height: 1.7; }.muted-section { color: var(--el-text-color-secondary); }.detail-section dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 32px; margin: 0; }.detail-section dl div { min-width: 0; }.detail-section dt { margin-bottom: 4px; color: var(--el-text-color-secondary); font-size: 12px; }.detail-section dd { margin: 0; overflow: hidden; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }.source-summary :deep(.el-progress) { max-width: 520px; margin-top: 18px; }.error-section { border-left: 3px solid var(--el-color-danger); padding-left: 12px; }.error-section p { overflow-wrap: anywhere; color: var(--el-color-danger); }.section-label, .section-title { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 600; }.pipeline-list { display: grid; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }.pipeline-list li { display: grid; min-height: 34px; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; }.pipeline-list small { color: var(--el-text-color-secondary); font-size: 12px; }.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 18px; }.action-hint { color: var(--el-text-color-secondary); font-size: 13px; }.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }.number-input { width: 100%; }.upload-field { margin-top: 18px; }.upload-label { display: block; margin-bottom: 8px; font-size: 13px; }.upload-label b { color: var(--el-color-danger); }.file-input { display: block; position: relative; overflow: hidden; border: 1px dashed var(--el-border-color); padding: 10px 12px; color: var(--el-text-color-regular); cursor: pointer; }.file-input:hover { border-color: var(--el-color-primary); }.file-input input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }.file-input span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 16px; }.detail-heading h1 { max-width: min(680px, 64vw); margin: 3px 0 0; overflow: hidden; font-size: 18px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }.heading-subtitle { margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 13px; }.eyebrow { color: var(--el-text-color-secondary); font-size: 12px; }.detail-section { border-bottom: 1px solid var(--el-border-color-lighter); padding: 18px 0; }.detail-section p { max-width: 760px; margin: 8px 0 0; color: var(--el-text-color-regular); line-height: 1.7; }.muted-section { color: var(--el-text-color-secondary); }.detail-section dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 32px; margin: 0; }.detail-section dl div { min-width: 0; }.detail-section dt { margin-bottom: 4px; color: var(--el-text-color-secondary); font-size: 12px; }.detail-section dd { margin: 0; overflow: hidden; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }.source-summary :deep(.el-progress) { max-width: 520px; margin-top: 18px; }.error-section { border-left: 3px solid var(--el-color-danger); padding-left: 12px; }.error-section p { overflow-wrap: anywhere; color: var(--el-color-danger); }.section-label, .section-title { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 600; }.pipeline-list { display: grid; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }.pipeline-list li { display: grid; min-height: 38px; grid-template-columns: 16px minmax(0, 1fr) minmax(70px, auto) 84px; align-items: center; gap: 8px; }.pipeline-list small { overflow: hidden; color: var(--el-text-color-secondary); font-size: 12px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }.pipeline-list :deep(.el-button) { width: 84px; }.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 18px; }.action-hint { color: var(--el-text-color-secondary); font-size: 13px; }.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }.form-span-2 { grid-column: 1 / -1; }.field-control { width: 100%; }.upload-field { margin-top: 18px; }.upload-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 13px; }.upload-label small, .upload-hint { color: var(--el-text-color-secondary); font-size: 12px; }.upload-hint { margin: 7px 0 0; line-height: 1.5; }.file-input { display: block; position: relative; overflow: hidden; border: 1px dashed var(--el-border-color); padding: 10px 12px; color: var(--el-text-color-regular); cursor: pointer; }.file-input:hover { border-color: var(--el-color-primary); }.file-input input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }.file-input span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .component-build-page { padding: 8px; }.workbench-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }.toolbar-actions { width: 100%; }.tree-search { width: auto; flex: 1; }.workbench-shell { grid-template-columns: minmax(0, 1fr); }.tree-panel, .detail-panel { min-height: 360px; }.tree-panel { max-height: 420px; }.detail-panel { padding: 16px; }.detail-heading h1 { max-width: 64vw; }.detail-section dl { grid-template-columns: minmax(0, 1fr); gap: 12px; }.form-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

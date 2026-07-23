@@ -29,6 +29,13 @@ class MemoryComponentBuildRepository:
     async def get_build(self, build_id: uuid.UUID) -> ComponentBuild | None:
         return self.builds.get(build_id)
 
+    async def update_build(self, build_id: uuid.UUID, **fields) -> ComponentBuild:
+        build = await self._require_build(build_id)
+        for name, value in fields.items():
+            setattr(build, name, value)
+        build.updated_at = utc_now()
+        return build
+
     async def list_builds(self) -> list[ComponentBuild]:
         return sorted(self.builds.values(), key=lambda build: (build.created_at, str(build.id)), reverse=True)
 
@@ -93,6 +100,14 @@ class SqlAlchemyComponentBuildRepository:
 
     async def get_build(self, build_id: uuid.UUID) -> ComponentBuild | None:
         return await self.session.get(ComponentBuild, build_id)
+
+    async def update_build(self, build_id: uuid.UUID, **fields) -> ComponentBuild:
+        build = await self._require_build(build_id)
+        for name, value in fields.items():
+            setattr(build, name, value)
+        await self.session.commit()
+        await self.session.refresh(build)
+        return build
 
     async def list_builds(self) -> list[ComponentBuild]:
         result = await self.session.execute(select(ComponentBuild).order_by(ComponentBuild.created_at.desc(), ComponentBuild.id.desc()))

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import type { UploadRequestOptions } from 'element-plus';
 import {
   fetchCadEdgeTopology,
@@ -21,7 +21,11 @@ import CadViewer from './modules/CadViewer.vue';
 type GeometryTab = 'face' | 'edge' | 'vertex' | 'measurement' | 'feature';
 
 const EMPTY_TEXT = '—';
+const route = useRoute();
 const router = useRouter();
+
+const requestedRevisionId = computed(() => String(route.query.revision_id || ''));
+const buildId = computed(() => String(route.query.build_id || ''));
 
 const loadingModels = ref(false);
 const loadingTree = ref(false);
@@ -118,6 +122,11 @@ function cacheEntities(items: Api.Cad.Entity[]) {
   entityCache.value = next;
 }
 
+function findRequestedModel(items: Api.Cad.ModelSummary[]) {
+  if (!requestedRevisionId.value) return null;
+  return items.find(item => item.current_revision_id === requestedRevisionId.value) ?? null;
+}
+
 async function loadModels() {
   loadingModels.value = true;
   try {
@@ -125,7 +134,7 @@ async function loadModels() {
     if (result.error || !result.data) return;
     models.value = result.data.items;
     if (!selectedModelId.value && result.data.items.length > 0) {
-      await selectModel(result.data.items[0]);
+      await selectModel(findRequestedModel(result.data.items) ?? result.data.items[0]);
     }
   } finally {
     loadingModels.value = false;
@@ -480,7 +489,18 @@ function openCadSpecPage() {
     window.$message?.warning('请先选择已上传的 CAD 模型');
     return;
   }
-  router.push({ path: '/cad-spec', query: { revision_id: selectedRevisionId.value } });
+  router.push({
+    path: '/cad-spec',
+    query: {
+      revision_id: selectedRevisionId.value,
+      ...(buildId.value ? { build_id: buildId.value } : {})
+    }
+  });
+}
+
+function goBackToComponentBuild() {
+  if (!buildId.value) return;
+  router.push({ path: '/component-build', query: { build_id: buildId.value } });
 }
 
 function applyGeometrySearch() {
@@ -660,6 +680,8 @@ onBeforeUnmount(() => {
         </template>
         刷新
       </ElButton>
+
+      <ElButton v-if="buildId" @click="goBackToComponentBuild">返回图元建库</ElButton>
 
       <ElButton :disabled="!selectedRevisionId" @click="openCadSpecPage">
         <template #icon>

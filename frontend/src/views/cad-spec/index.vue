@@ -27,6 +27,8 @@ const route = useRoute();
 const router = useRouter();
 
 const revisionId = computed(() => String(route.query.revision_id || ''));
+const requestedTaskId = computed(() => String(route.query.task_id || ''));
+const buildId = computed(() => String(route.query.build_id || ''));
 const drawingFile = ref<File | null>(null);
 const targetCode = ref('XMS06');
 const targetDn = ref('80');
@@ -205,7 +207,13 @@ async function queryExtractionResult() {
 async function loadTaskOptions() {
   if (!revisionId.value) return;
   const result = await fetchCadSpecTasks({ revision_id: revisionId.value });
-  if (!result.error && result.data) taskOptions.value = result.data.items;
+  if (result.error || !result.data) return;
+  taskOptions.value = result.data.items;
+
+  if (requestedTaskId.value && requestedTaskId.value !== taskId.value) {
+    const requestedTask = taskOptions.value.find(item => item.task_id === requestedTaskId.value);
+    if (requestedTask) await selectTask(requestedTask.task_id);
+  }
 }
 
 async function selectTask(nextTaskId: string) {
@@ -498,6 +506,10 @@ function stopPolling() {
 }
 
 function goBackToCad() {
+  if (buildId.value) {
+    router.push({ path: '/component-build', query: { build_id: buildId.value } });
+    return;
+  }
   router.push({ path: '/cad-model' });
 }
 
@@ -551,7 +563,7 @@ onMounted(() => {
         <ElButton :disabled="!canQuery" :loading="busy && Boolean(taskId)" @click="queryExtractionResult">
           查询结果
         </ElButton>
-        <ElButton text @click="goBackToCad">返回 CAD 页面</ElButton>
+        <ElButton text @click="goBackToCad">{{ buildId ? '返回图元建库' : '返回 CAD 页面' }}</ElButton>
       </div>
     </header>
 

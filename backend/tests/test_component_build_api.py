@@ -40,6 +40,7 @@ class FakeCadService:
         self.model_id = uuid4()
         self.revision_id = uuid4()
         self.uploads = []
+        self.parses = []
 
     async def create_model_from_upload(self, file, name):
         self.uploads.append((file.filename, name))
@@ -50,10 +51,18 @@ class FakeDrawingService:
     def __init__(self):
         self.task_id = uuid4()
         self.created = []
+        self.created_payloads = []
+        self.repository = self
 
     async def create_task(self, *, revision_id, drawing_file, target_code, target_dn):
         self.created.append((revision_id, drawing_file, target_code, target_dn))
+        self.created_payloads.append(drawing_file.read_bytes())
         return SimpleNamespace(id=self.task_id)
+
+    async def get_source_for_task(self, _task_id):
+        if not self.created:
+            return None
+        return SimpleNamespace(file_path=str(self.created[-1][1]))
 
 
 @pytest.fixture
@@ -69,6 +78,11 @@ def component_client(tmp_path, monkeypatch):
         scheduled.append((task_id, target_code, target_dn))
 
     monkeypatch.setattr("app.component_builds.router.schedule_drawing_pipeline", schedule)
+    monkeypatch.setattr(
+        "app.component_builds.router.schedule_step_pipeline",
+        lambda revision_id, _service: cad_service.parses.append(revision_id),
+        raising=False,
+    )
     app.dependency_overrides[get_component_build_service] = lambda: build_service
     app.dependency_overrides[get_cad_service] = lambda: cad_service
     app.dependency_overrides[get_drawing_service] = lambda: drawing_service
@@ -112,6 +126,132 @@ def test_create_build_links_step_and_drawing(component_client):
     assert drawing_service.created[0][1].exists()
     assert drawing_service.created[0][2:] == ("flange-001", None)
     assert scheduled == [(drawing_service.task_id, "flange-001", None)]
+
+
+def test_create_build_without_sources_creates_editable_draft(component_client):
+    client, cad_service, drawing_service, scheduled, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "待补资料法兰",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "draft"
+    assert response.json()["cad_revision_id"] is None
+    assert response.json()["drawing_task_id"] is None
+    assert cad_service.uploads == []
+    assert drawing_service.created == []
+    assert scheduled == []
+
+
+def test_create_build_accepts_step_without_drawing(component_client):
+    client, cad_service, drawing_service, scheduled, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "仅 STEP 法兰",
+        },
+        files={"step_file": ("flange.stp", b"ISO-10303-21;", "application/octet-stream")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["cad_revision_id"] == str(cad_service.revision_id)
+    assert response.json()["drawing_task_id"] is None
+    assert drawing_service.created == []
+    assert scheduled == []
+
+
+def test_drawing_can_be_staged_then_processed_when_step_is_added(component_client):
+    client, cad_service, drawing_service, scheduled, _ = component_client
+    created = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "先图纸法兰",
+        },
+        files={"drawing_file": ("flange.png", PNG_BYTES, "image/png")},
+    )
+
+    assert created.status_code == 202
+    assert created.json()["cad_revision_id"] is None
+    assert created.json()["drawing_task_id"] is None
+    assert drawing_service.created == []
+
+    updated = client.patch(
+        f"/api/component-builds/{created.json()['id']}",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "先图纸法兰",
+            "version": "1.0.0",
+        },
+        files={"step_file": ("flange.stp", b"ISO-10303-21;", "application/octet-stream")},
+    )
+
+    assert updated.status_code == 202
+    assert updated.json()["cad_revision_id"] == str(cad_service.revision_id)
+    assert updated.json()["drawing_task_id"] == str(drawing_service.task_id)
+    assert drawing_service.created_payloads[0] == PNG_BYTES
+    assert scheduled == [(drawing_service.task_id, "flange-001", None)]
+
+
+def test_edit_metadata_without_files_preserves_existing_sources(component_client):
+    client, cad_service, drawing_service, scheduled, _ = component_client
+    created = create_build(client).json()
+
+    response = client.patch(
+        f"/api/component-builds/{created['id']}",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "已改名法兰",
+            "standard_number": "GB/T EDITED",
+            "version": "1.1.0",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["component_name"] == "已改名法兰"
+    assert response.json()["standard_number"] == "GB/T EDITED"
+    assert response.json()["version"] == "1.1.0"
+    assert response.json()["cad_revision_id"] == str(cad_service.revision_id)
+    assert response.json()["drawing_task_id"] == str(drawing_service.task_id)
+    assert len(cad_service.uploads) == 1
+    assert len(drawing_service.created) == 1
+    assert len(scheduled) == 1
+
+
+def test_replacing_step_reuses_existing_drawing_when_no_new_drawing_is_selected(component_client):
+    client, cad_service, drawing_service, scheduled, _ = component_client
+    created = create_build(client).json()
+    cad_service.revision_id = uuid4()
+
+    response = client.patch(
+        f"/api/component-builds/{created['id']}",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "XMS06",
+            "version": "1.0.0",
+        },
+        files={"step_file": ("replacement.stp", b"ISO-10303-21;", "application/octet-stream")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["cad_revision_id"] == str(cad_service.revision_id)
+    assert response.json()["drawing_task_id"] == str(drawing_service.task_id)
+    assert len(drawing_service.created) == 2
+    assert drawing_service.created_payloads[-1] == PNG_BYTES
+    assert len(scheduled) == 2
 
 
 def test_catalog_endpoint_returns_categories_and_cascading_parts(component_client):
@@ -158,14 +298,15 @@ def test_tree_exposes_specialist_targets(component_client):
     assert drawing["target"]["task_id"] == str(drawing_service.task_id)
 
 
-def test_step_retry_requires_reupload(component_client):
-    client, _, _, _, _ = component_client
+def test_step_retry_starts_existing_revision_parse(component_client):
+    client, cad_service, _, _, _ = component_client
     build = create_build(client).json()
 
     response = client.post(f"/api/component-builds/{build['id']}/retry", json={"role": "reference_step"})
 
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "step_reupload_required"
+    assert response.status_code == 202
+    assert response.json()["status"] == "parsing_sources"
+    assert cad_service.parses == [cad_service.revision_id]
 
 
 def test_query_and_drawing_retry_return_projected_build(component_client):

@@ -96,6 +96,29 @@ class ComponentBuildService:
         build = await self.repository.attach_step(build_id, model_id=model_id, revision_id=revision_id)
         return self._build_payload(build)
 
+    async def update_catalog_build(
+        self,
+        build_id: UUID,
+        *,
+        category_code: str,
+        part_type_code: str,
+        component_name: str,
+        standard_number: str | None = None,
+        version: str = "1.0.0",
+    ) -> dict:
+        category, part = resolve_part(category_code, part_type_code)
+        build = await self.repository.update_build(
+            build_id,
+            catalog_node_id=part.catalog_node_id,
+            component_name=component_name,
+            component_type=part.code,
+            component_subtype=None,
+            family=category.code,
+            standard_number=standard_number,
+            version=version,
+        )
+        return self._build_payload(build)
+
     async def attach_drawing(self, build_id: UUID, *, task_id: UUID) -> dict:
         build = await self.repository.attach_drawing(build_id, task_id=task_id)
         return self._build_payload(build)
@@ -166,6 +189,8 @@ class ComponentBuildService:
             return "review_required"
         if step_status == "completed" and drawing_status == "review_ready":
             return "sources_ready"
+        if step_status == "completed" and drawing_status == "waiting_for_step":
+            return "sources_partial"
         if build.status == "uploading" and not (build.cad_revision_id and build.drawing_task_id):
             return build.status
         if build.cad_revision_id or build.drawing_task_id:

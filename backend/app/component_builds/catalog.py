@@ -124,12 +124,23 @@ def find_part_by_node_id(catalog_node_id: UUID | None) -> tuple[CatalogCategory,
 
 
 def find_part_by_legacy_type(component_type: str | None) -> tuple[CatalogCategory, CatalogPart] | None:
-    normalized = (component_type or "").strip().lower().replace("_", "-").replace(" ", "-")
+    normalized = _normalize_catalog_term(component_type)
     for category in CATEGORIES:
         for part in category.parts:
-            if normalized in {part.code, part.id_prefix, part.label_en.lower().replace(" ", "-")}:
+            aliases = {
+                part.code,
+                part.id_prefix,
+                _normalize_catalog_term(part.label_en),
+                _normalize_catalog_term(part.label),
+                *(_normalize_catalog_term(alias) for alias in part.label.replace("／", "/").split("/")),
+            }
+            if normalized in aliases:
                 return category, part
     return None
+
+
+def _normalize_catalog_term(value: str | None) -> str:
+    return (value or "").strip().lower().replace("_", "-").replace(" ", "-").replace("／", "/")
 
 
 def catalog_payload() -> dict:

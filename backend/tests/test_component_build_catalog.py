@@ -98,6 +98,11 @@ async def test_memory_and_sql_repositories_use_the_same_next_id_rule():
 async def test_tree_keeps_empty_catalog_groups_and_preserves_legacy_builds():
     repository = MemoryComponentBuildRepository()
     flange = await repository.create_build(component_id="legacy-flange", component_name="旧法兰", component_type="flange")
+    chinese_flange = await repository.create_build(
+        component_id="legacy-flange-cn",
+        component_name="中文旧法兰",
+        component_type="法兰",
+    )
     unknown = await repository.create_build(component_id="legacy-other", component_name="旧未知件", component_type="legacy-thing")
     tree = await ComponentBuildService(repository, source_status_reader=SourceStatusReader()).get_tree()
 
@@ -106,8 +111,11 @@ async def test_tree_keeps_empty_catalog_groups_and_preserves_legacy_builds():
     ]
     flange_part = _find(tree, node_type="type", code="flange")
     assert flange_part["label_en"] == "Flange"
-    assert flange_part["children"][0]["node_type"] == "component"
-    assert flange_part["children"][0]["component_id"] == flange.component_id
-    assert flange_part["children"][0]["children"][0]["node_type"] == "build"
+    assert {node["component_id"] for node in flange_part["children"]} == {
+        flange.component_id,
+        chinese_flange.component_id,
+    }
+    assert all(node["node_type"] == "component" for node in flange_part["children"])
+    assert all(node["children"][0]["node_type"] == "build" for node in flange_part["children"])
     assert _find(tree, node_type="family", code="uncategorized")["children"][0]["children"][0]["component_id"] == unknown.component_id
     assert _find(tree, node_type="type", code="motor")["children"] == []
