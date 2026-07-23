@@ -13,10 +13,11 @@ import {
 defineOptions({ name: 'ComponentBuild' });
 
 type ComponentTreeNode = Api.ComponentBuild.TreeNode;
-type RawTreeNode = Partial<ComponentTreeNode> & { name?: string; node_type?: string };
+type RawTreeNode = Api.ComponentBuild.RawTreeNode;
 
 const route = useRoute();
 const router = useRouter();
+const requestController = new AbortController();
 const treeRef = ref<{
   filter: (keyword: string) => void;
   getNode: (key: string) => { expand?: () => void } | undefined;
@@ -45,9 +46,18 @@ const stepFile = ref<File | null>(null);
 const drawingFile = ref<File | null>(null);
 
 const formRules: FormRules = {
-  component_id: [{ required: true, message: '请输入图元 ID', trigger: 'blur' }],
+  component_id: [
+    { required: true, message: '请输入图元 ID', trigger: 'blur' },
+    {
+      pattern: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      message: '图元 ID 只能使用英文小写、数字和连字符',
+      trigger: 'blur'
+    }
+  ],
   component_name: [{ required: true, message: '请输入图元名称', trigger: 'blur' }],
-  component_type: [{ required: true, message: '请输入图元类型', trigger: 'blur' }]
+  component_type: [{ required: true, message: '请输入图元类型', trigger: 'blur' }],
+  default_dn: [{ required: true, message: '请输入默认 DN', trigger: 'change' }],
+  default_pn: [{ required: true, message: '请输入默认 PN', trigger: 'change' }]
 };
 
 const selectedNode = computed(() => findNodeById(treeData.value, selectedNodeId.value));
@@ -82,7 +92,24 @@ const canViewSource = computed(() => {
 });
 
 const canRetryDrawing = computed(() => selectedNode.value?.node_type === 'drawing' && isFailure(selectedNode.value.status));
-const canReuploadStep = computed(() => selectedNode.value?.node_type === 'reference_step' && isFailure(selectedNode.value.status));
+const canReuploadStep = computed(
+  () =>
+    selectedNode.value?.node_type === 'reference_step' &&
+    (isFailure(selectedNode.value.status) ||
+      (selectedBuild.value?.status === 'source_failed' && !selectedBuild.value.cad_revision_id))
+);
+const canReuploadBuildStep = computed(
+  () =>
+    !isSourceNode.value &&
+    selectedBuild.value?.status === 'source_failed' &&
+    !selectedBuild.value.cad_revision_id
+);
+const canHandleManualLayout = computed(
+  () =>
+    selectedNode.value?.node_type === 'drawing' &&
+    selectedNode.value.status === 'needs_manual_layout' &&
+    Boolean(selectedNode.value.target?.revision_id && selectedNode.value.target?.task_id)
+);
 
 function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file' | 'drawing_file'> {
   return {
@@ -225,12 +252,17 @@ function formatError(error: unknown, fallback: string) {
   return fallback;
 }
 
-async function loadSelectedBuild(buildId: string): Promise<boolean> {
+async function loadSelectedBuild(buildId: string, options: { silent?: boolean } = {}): Promise<boolean> {
   if (!buildId) {
     selectedBuild.value = null;
     return true;
   }
-  const [detailResult, statusResult] = await Promise.all([fetchComponentBuild(buildId), fetchComponentBuildStatus(buildId)]);
+  const queryOptions = { signal: requestController.signal, silent: options.silent };
+  const [detailResult, statusResult] = await Promise.all([
+    fetchComponentBuild(buildId, queryOptions),
+    fetchComponentBuildStatus(buildId, queryOptions)
+  ]);
+  if (requestController.signal.aborted) return false;
   if (!detailResult.error && detailResult.data) selectedBuild.value = detailResult.data;
   if (!statusResult.error && statusResult.data) {
     buildStatuses.value = { ...buildStatuses.value, [buildId]: statusResult.data };
@@ -252,12 +284,16 @@ async function restoreSelectionFromRoute() {
 async function loadTree(options: { preserveSelection?: boolean; silent?: boolean } = {}): Promise<boolean> {
   treeLoading.value = true;
   try {
-    const result = await fetchComponentBuildTree();
+    const result = await fetchComponentBuildTree({
+      signal: requestController.signal,
+      silent: options.silent
+    });
+    if (requestController.signal.aborted) return false;
     if (result.error || !result.data) {
       if (!options.silent) window.$message?.error('图元建库树暂时不可用');
       return false;
     }
-    treeData.value = normalizeTree(result.data as unknown as RawTreeNode[]);
+    treeData.value = normalizeTree(result.data);
     if (!options.preserveSelection || !selectedNode.value) await restoreSelectionFromRoute();
     await nextTick();
     expandedNodeIds.value.forEach(id => treeRef.value?.getNode(id)?.expand?.());
@@ -284,7 +320,15 @@ async function pollBuilds() {
   if (!pending.length) return;
   polling.value = true;
   try {
-    const results = await Promise.all(pending.map(node => fetchComponentBuildStatus(node.id)));
+    const results = await Promise.all(
+      pending.map(node =>
+        fetchComponentBuildStatus(node.id, {
+          signal: requestController.signal,
+          silent: true
+        })
+      )
+    );
+    if (requestController.signal.aborted) return;
     const next = { ...buildStatuses.value };
     results.forEach((result, index) => {
       if (!result.error && result.data) next[pending[index].id] = result.data;
@@ -292,7 +336,7 @@ async function pollBuilds() {
     buildStatuses.value = next;
     const statusesOk = results.every(result => !result.error && Boolean(result.data));
     const treeOk = await loadTree({ preserveSelection: true, silent: true });
-    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value) : true;
+    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value, { silent: true }) : true;
     statusUnavailable.value = !(statusesOk && treeOk && buildOk);
   } finally {
     polling.value = false;
@@ -395,8 +439,21 @@ function viewSourceResult() {
 }
 
 function reuploadStep() {
-  window.$message?.warning('当前接口要求新建图元并重新上传 STEP；原失败记录会保留用于审计。');
+  window.$message?.warning('当前接口要求新建图元并重新上传成套资料；原失败记录会保留用于审计。');
   openCreateDrawer(selectedBuild.value);
+}
+
+function handleManualLayout() {
+  const node = selectedNode.value;
+  if (!node?.target?.revision_id || !node.target.task_id || !node.build_id) return;
+  void router.push({
+    path: '/cad-spec',
+    query: {
+      revision_id: node.target.revision_id,
+      task_id: node.target.task_id,
+      build_id: node.build_id
+    }
+  });
 }
 
 async function retryDrawing() {
@@ -430,6 +487,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize);
   if (pollTimer.value) window.clearInterval(pollTimer.value);
+  requestController.abort();
 });
 </script>
 
@@ -549,9 +607,15 @@ onBeforeUnmount(() => {
           </section>
           <footer class="detail-actions">
             <ElButton v-if="canViewSource" type="primary" @click="viewSourceResult">查看解析结果</ElButton>
+            <ElButton v-if="canHandleManualLayout" type="primary" @click="handleManualLayout">处理版面</ElButton>
             <ElButton v-if="canRetryDrawing" :loading="retrying" @click="retryDrawing">重试二维图纸</ElButton>
-            <ElButton v-if="canReuploadStep" @click="reuploadStep">重新上传 STEP</ElButton>
-            <span v-if="!canViewSource && !canRetryDrawing && !canReuploadStep" class="action-hint">解析达到可查看状态后可进入专业页面。</span>
+            <ElButton v-if="canReuploadStep" @click="reuploadStep">重新上传成套资料</ElButton>
+            <span
+              v-if="!canViewSource && !canHandleManualLayout && !canRetryDrawing && !canReuploadStep"
+              class="action-hint"
+            >
+              解析达到可查看状态后可进入专业页面。
+            </span>
           </footer>
         </template>
 
@@ -588,6 +652,10 @@ onBeforeUnmount(() => {
             <span class="section-label">错误信息</span>
             <p>{{ selectedBuild.error_message }}</p>
           </section>
+          <footer v-if="canReuploadBuildStep" class="detail-actions">
+            <ElButton type="primary" @click="reuploadStep">重新上传成套资料</ElButton>
+            <span class="action-hint">将新建一条 build，原失败记录继续保留用于审计。</span>
+          </footer>
         </template>
       </section>
     </main>
@@ -595,15 +663,21 @@ onBeforeUnmount(() => {
     <ElDrawer v-model="drawerVisible" :size="drawerSize" title="新建图元建库任务" destroy-on-close>
       <ElForm ref="formRef" :model="form" :rules="formRules" label-position="top">
         <div class="form-grid">
-          <ElFormItem label="图元 ID" prop="component_id"><ElInput v-model="form.component_id" placeholder="例如 XMS06" /></ElFormItem>
+          <ElFormItem label="图元 ID" prop="component_id">
+            <ElInput v-model="form.component_id" placeholder="例如 flange-weld-neck-gbt9124" />
+          </ElFormItem>
           <ElFormItem label="图元名称" prop="component_name"><ElInput v-model="form.component_name" placeholder="例如 带颈对焊法兰" /></ElFormItem>
           <ElFormItem label="图元类型" prop="component_type"><ElInput v-model="form.component_type" placeholder="例如 法兰" /></ElFormItem>
           <ElFormItem label="子类型"><ElInput v-model="form.component_subtype" placeholder="可选" /></ElFormItem>
           <ElFormItem label="产品族"><ElInput v-model="form.family" placeholder="可选" /></ElFormItem>
           <ElFormItem label="标准号"><ElInput v-model="form.standard_number" placeholder="可选" /></ElFormItem>
           <ElFormItem label="版本"><ElInput v-model="form.version" /></ElFormItem>
-          <ElFormItem label="默认 DN"><ElInputNumber v-model="form.default_dn" :min="0" controls-position="right" class="number-input" /></ElFormItem>
-          <ElFormItem label="默认 PN"><ElInputNumber v-model="form.default_pn" :min="0" controls-position="right" class="number-input" /></ElFormItem>
+          <ElFormItem label="默认 DN" prop="default_dn">
+            <ElInputNumber v-model="form.default_dn" :min="1" controls-position="right" class="number-input" />
+          </ElFormItem>
+          <ElFormItem label="默认 PN" prop="default_pn">
+            <ElInputNumber v-model="form.default_pn" :min="1" controls-position="right" class="number-input" />
+          </ElFormItem>
         </div>
         <section class="upload-field">
           <span class="upload-label">参考 STEP <b>*</b></span>

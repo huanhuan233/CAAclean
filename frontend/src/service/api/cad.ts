@@ -242,21 +242,36 @@ export function retryCadSpecExtraction(taskId: string) {
   });
 }
 
-export function fetchComponentBuildTree() {
-  return request<Api.ComponentBuild.TreeNode[]>({
-    url: '/api/component-builds/tree'
+interface ComponentBuildQueryOptions {
+  signal?: AbortSignal;
+  silent?: boolean;
+}
+
+function componentBuildQueryConfig(options?: ComponentBuildQueryOptions) {
+  return {
+    signal: options?.signal,
+    headers: options?.silent ? { 'X-Client-Silent-Error': '1' } : undefined
+  };
+}
+
+export function fetchComponentBuildTree(options?: ComponentBuildQueryOptions) {
+  return request<Api.ComponentBuild.RawTreeNode[]>({
+    url: '/api/component-builds/tree',
+    ...componentBuildQueryConfig(options)
   });
 }
 
-export function fetchComponentBuild(buildId: string) {
+export function fetchComponentBuild(buildId: string, options?: ComponentBuildQueryOptions) {
   return request<Api.ComponentBuild.BuildDetail>({
-    url: `/api/component-builds/${buildId}`
+    url: `/api/component-builds/${buildId}`,
+    ...componentBuildQueryConfig(options)
   });
 }
 
-export function fetchComponentBuildStatus(buildId: string) {
+export function fetchComponentBuildStatus(buildId: string, options?: ComponentBuildQueryOptions) {
   return request<Api.ComponentBuild.BuildStatus>({
-    url: `/api/component-builds/${buildId}/status`
+    url: `/api/component-builds/${buildId}/status`,
+    ...componentBuildQueryConfig(options)
   });
 }
 

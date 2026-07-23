@@ -173,7 +173,7 @@ const local: App.I18n.Schema = {
     'document_element-plus': 'Element Plus文档',
     document_alova: 'Alova文档',
     'cad-model': 'CAD 模型解析',
-    'cad-spec': '组件规范',
+    'cad-spec': '二维图纸解析',
     'user-center': '个人中心',
     about: '关于',
     function: '系统功能',
@@ -542,7 +542,5 @@ const local: App.I18n.Schema = {
     itemCount: '共 {total} 条'
   }
 };
-
-local.route['cad-spec'] = '二维图纸解析';
 
 export default local;

@@ -277,6 +277,8 @@ declare namespace Api {
       | 'yaml'
       | 'future';
 
+    type RawNodeType = NodeType | 'data_fusion' | 'component_spec' | 'publish_validation';
+
     type RetryRole = 'reference_step' | 'drawing';
 
     interface Target {
@@ -298,6 +300,23 @@ declare namespace Api {
       error_code?: string | null;
       error_message?: string | null;
       children: TreeNode[];
+    }
+
+    interface RawTreeNode {
+      id?: string;
+      name?: string;
+      label?: string;
+      node_type?: RawNodeType | string;
+      status?: string;
+      progress?: number | null;
+      disabled?: boolean;
+      build_id?: string | null;
+      target?: Target | null;
+      status_label?: string | null;
+      status_message?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+      children?: RawTreeNode[];
     }
 
     interface SourceStatus {

@@ -107,6 +107,10 @@ export const request = createFlatRequest(
     onError(error) {
       // when the request is fail, you can show error message
 
+      if (error.config?.headers?.get('X-Client-Silent-Error') === '1') {
+        return;
+      }
+
       let message = error.message;
       let backendErrorCode = '';
 

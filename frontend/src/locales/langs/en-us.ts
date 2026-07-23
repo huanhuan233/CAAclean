@@ -173,7 +173,7 @@ const local: App.I18n.Schema = {
     'document_element-plus': 'Element Plus Document',
     document_alova: 'Alova Document',
     'cad-model': 'CAD Model Parser',
-    'cad-spec': 'Component Spec',
+    'cad-spec': '2D Drawing Parser',
     'user-center': 'User Center',
     about: 'About',
     function: 'System Function',
@@ -542,7 +542,5 @@ const local: App.I18n.Schema = {
     itemCount: 'Total {total} items'
   }
 };
-
-local.route['cad-spec'] = '2D Drawing Parser';
 
 export default local;
