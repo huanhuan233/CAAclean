@@ -100,7 +100,7 @@ def dimension_row(dn, **values):
             value,
             symbol=symbol,
             row_dn=dn,
-            unit=None if symbol == "n" else "mm",
+            unit="mm",
             operator=operators.get(symbol, "eq"),
         )
         for symbol, value in values.items()
@@ -145,6 +145,14 @@ def xms06_sources(*, confirm_bore=True):
         ),
         measurements=measurements,
         features=features,
+        revision={
+            "source_file_name": "XMS06-DN80.stp",
+            "source_sha256": "abc123",
+            "parser_name": "FreeCAD",
+            "unit": "mm",
+            "object_count": 1,
+            "solid_count": 1,
+        },
     )
 
 
@@ -196,9 +204,14 @@ def test_flange_fusion_maps_only_dn80_and_builds_matching_preset():
     assert parameter(result.data, "flange_outer_diameter")["default"] == 200.0
     assert parameter(result.data, "bolt_circle_diameter")["default"] == 160.0
     assert parameter(result.data, "bolt_hole_count")["default"] == 8
+    assert parameter(result.data, "bolt_hole_count")["unit"] is None
     assert parameter(result.data, "bore_diameter")["default"] == 82.6
     assert result.data["presets"][0]["name"] == "DN80-PN16"
     assert result.data["presets"][0]["params"]["raised_face_diameter"] == 138.0
+    assert result.data["validation"]["topology"]["expected_body_count"] == 1
+    assert result.data["validation"]["topology"]["solid_required"] is True
+    assert result.data["artifacts"]["reference_step"]["file"] == "XMS06-DN80.stp"
+    assert result.data["artifacts"]["reference_step"]["sha256"] == "abc123"
     review_paths = {item["path"] for item in result.fields if item["needs_review"]}
     assert "parameters.wall_thickness.default" in review_paths
     assert "parameters.hub_height.default" in review_paths
@@ -223,6 +236,7 @@ def test_overwrite_mode_replaces_owned_fields_but_default_mode_preserves_them():
     ).data
     manual = deepcopy(initial)
     parameter(manual, "flange_outer_diameter")["default"] = 999.0
+    parameter(manual, "bolt_hole_count")["unit"] = "mm"
     manual["identity"]["description"] = "人工说明"
 
     preserved = fuse_component_spec(
@@ -239,4 +253,5 @@ def test_overwrite_mode_replaces_owned_fields_but_default_mode_preserves_them():
 
     assert parameter(preserved.data, "flange_outer_diameter")["default"] == 999.0
     assert parameter(overwritten.data, "flange_outer_diameter")["default"] == 200.0
+    assert parameter(overwritten.data, "bolt_hole_count")["unit"] is None
     assert overwritten.data["identity"]["description"] == "人工说明"

@@ -15,10 +15,11 @@ class FusionSources:
     drawing_facts: list[dict]
     measurements: list[dict]
     features: list[dict]
+    revision: dict | None = None
 
     @property
     def available(self) -> bool:
-        return bool(self.drawing_facts or self.measurements or self.features)
+        return bool(self.drawing_facts or self.measurements or self.features or self.revision)
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,14 @@ def fuse_component_spec(
     assign("identity.status", "draft", source="derived")
     assign("identity.standard.number", standard_number, source="build" if build.get("standard_number") else "drawing")
     assign("identity.standard.edition", _standard_edition(standard_number), source="derived")
+    _fuse_revision_metadata(assign, sources.revision)
+    if sources.drawing_facts and sources.revision:
+        assign("provenance.source_type", "drawing_and_step", source="derived", needs_review=True)
+    elif sources.drawing_facts:
+        assign("provenance.source_type", "drawing", source="derived", needs_review=True)
+    elif sources.revision:
+        assign("provenance.source_type", "step", source="derived", needs_review=True)
+    assign("provenance.data_entry_method", "automatic_fusion", source="derived")
     if build.get("component_type") == "flange" and subtype_raw and "带颈对焊" in str(subtype_raw):
         assign("identity.subtype", "weld_neck", source="drawing", confidence=0.9)
         assign("identity.name_en", "Weld Neck Flange", source="derived", confidence=0.8, needs_review=True)
@@ -109,6 +118,12 @@ def fuse_component_spec(
             target_dn=target_dn,
             overwrite=overwrite,
         )
+        if _get_parameter(data, "bolt_hole_count") is not None:
+            assign(
+                "validation.geometry.expected_through_hole_count_expression",
+                "bolt_hole_count",
+                source="derived",
+            )
 
     summary = {
         "filled": sum(item["decision"] == "filled" for item in fields),
@@ -117,6 +132,51 @@ def fuse_component_spec(
         "needs_review": sum(bool(item["needs_review"]) for item in fields),
     }
     return FusionResult(data=data, summary=summary, fields=fields, warnings=warnings)
+
+
+def _fuse_revision_metadata(assign, revision: dict | None) -> None:
+    if not revision:
+        return
+
+    solid_count = revision.get("solid_count")
+    if isinstance(solid_count, int) and solid_count > 0:
+        assign(
+            "validation.topology.expected_body_count",
+            solid_count,
+            source="step",
+        )
+        assign(
+            "validation.topology.solid_required",
+            True,
+            source="step",
+        )
+
+    assign(
+        "artifacts.reference_step.file",
+        revision.get("source_file_name"),
+        source="step",
+    )
+    assign(
+        "artifacts.reference_step.role",
+        "默认预设的几何回归基准",
+        source="derived",
+    )
+    assign("artifacts.reference_step.format", "STEP", source="derived")
+    assign(
+        "artifacts.reference_step.application_protocol",
+        "AP242",
+        source="system",
+    )
+    assign(
+        "artifacts.reference_step.length_unit",
+        revision.get("unit") or "mm",
+        source="step",
+    )
+    assign(
+        "artifacts.reference_step.sha256",
+        revision.get("source_sha256"),
+        source="step",
+    )
 
 
 def _fuse_flange(
@@ -159,7 +219,7 @@ def _fuse_flange(
             value,
             label=label,
             value_type=value_type,
-            unit=fact.get("unit"),
+            unit=None if value_type == "integer" else fact.get("unit"),
             source="drawing",
             confidence=float(fact.get("confidence") or 0),
             needs_review=needs_review,
@@ -256,6 +316,18 @@ def _upsert_parameter(
             "max": None,
         }
         parameters.append(parameter)
+    elif overwrite:
+        parameter.update(
+            {
+                "label": label,
+                "type": value_type,
+                "unit": unit,
+                "required": True,
+                "editable": name in {"DN", "PN", "wall_thickness", "facing_type"},
+                "affects_geometry": True,
+                "standard_symbol": standard_symbol,
+            }
+        )
     _assign_simple(
         parameter,
         fields,
@@ -287,6 +359,10 @@ def _upsert_preset(data: dict, fields: list[dict], name: str, source_ref: str | 
         overwrite,
         report_path=f"presets.{name}.source_ref",
     )
+
+
+def _get_parameter(data: dict, name: str) -> dict | None:
+    return next((item for item in data.get("parameters", []) if item.get("name") == name), None)
 
 
 def _assign_simple(

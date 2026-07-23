@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.component_builds.fusion import FusionSources
-from app.db.models import CadDrawingFact, CadFeatureCandidate, CadMeasurement, ComponentBuild
+from app.db.models import CadDrawingFact, CadFeatureCandidate, CadMeasurement, CadModelRevision, ComponentBuild
 
 
 class SqlAlchemyFusionSourceReader:
@@ -15,6 +15,7 @@ class SqlAlchemyFusionSourceReader:
         drawing_facts = []
         measurements = []
         features = []
+        revision_data = None
 
         if build.drawing_task_id is not None:
             result = await self.session.execute(
@@ -28,6 +29,10 @@ class SqlAlchemyFusionSourceReader:
             drawing_facts = [self._drawing_fact(row) for row in result.scalars().all()]
 
         if build.cad_revision_id is not None:
+            revision = await self.session.get(CadModelRevision, build.cad_revision_id)
+            if revision is not None:
+                revision_data = self._revision(revision)
+
             measurement_result = await self.session.execute(
                 select(CadMeasurement)
                 .where(CadMeasurement.revision_id == build.cad_revision_id)
@@ -46,7 +51,26 @@ class SqlAlchemyFusionSourceReader:
             drawing_facts=drawing_facts,
             measurements=measurements,
             features=features,
+            revision=revision_data,
         )
+
+    @staticmethod
+    def _revision(row: CadModelRevision) -> dict:
+        return {
+            "id": str(row.id),
+            "source_file_name": row.source_file_name,
+            "source_sha256": row.source_sha256,
+            "parser_name": row.parser_name,
+            "parser_version": row.parser_version,
+            "unit": row.unit,
+            "object_count": row.object_count,
+            "solid_count": row.solid_count,
+            "face_count": row.face_count,
+            "edge_count": row.edge_count,
+            "vertex_count": row.vertex_count,
+            "bounding_box": row.bounding_box,
+            "summary": row.summary or {},
+        }
 
     @staticmethod
     def _drawing_fact(row: CadDrawingFact) -> dict:
