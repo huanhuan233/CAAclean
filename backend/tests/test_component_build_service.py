@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.component_builds.repository import MemoryComponentBuildRepository, SqlAlchemyComponentBuildRepository
-from app.component_builds.service import ComponentBuildService
+from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
@@ -65,6 +65,116 @@ async def test_status_prioritizes_failed_sources_and_manual_layout_review():
     status = await ComponentBuildService(repository, source_status_reader=FailedStepStatusReader()).get_status(build.id)
 
     assert status["status"] == "source_failed"
+
+
+@pytest.mark.asyncio
+async def test_tree_detail_and_status_share_the_same_projected_build_status():
+    model_id = uuid4()
+    revision_id = uuid4()
+    task_id = uuid4()
+    repository = MemoryComponentBuildRepository(
+        revision_models={revision_id: model_id},
+        drawing_task_revisions={task_id: revision_id},
+    )
+    build = await repository.create_build(
+        component_id="xms06",
+        component_name="XMS06",
+        component_type="flange",
+        status="parsing_sources",
+    )
+    await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
+    await repository.attach_drawing(build.id, task_id=task_id)
+
+    class ReadySourceStatusReader:
+        async def get_step_status(self, _revision_id):
+            return {"status": "completed", "progress": 100}
+
+        async def get_drawing_status(self, _task_id):
+            return {"status": "review_ready", "progress": 100}
+
+    service = ComponentBuildService(repository, source_status_reader=ReadySourceStatusReader())
+
+    tree = await service.get_tree()
+    detail = await service.get_build(build.id)
+    source_status = await service.get_status(build.id)
+
+    assert tree[0]["status"] == "sources_ready"
+    assert detail["status"] == "sources_ready"
+    assert source_status["status"] == "sources_ready"
+
+
+@pytest.mark.asyncio
+async def test_unlinked_build_retains_persisted_upload_failure_status():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="xms06",
+        component_name="XMS06",
+        component_type="flange",
+        status="source_failed",
+    )
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    detail = await service.get_build(build.id)
+    status = await service.get_status(build.id)
+
+    assert detail["status"] == "source_failed"
+    assert status["status"] == "source_failed"
+
+
+@pytest.mark.asyncio
+async def test_linked_build_retains_persisted_source_failure_until_a_retry_resets_it():
+    model_id = uuid4()
+    revision_id = uuid4()
+    task_id = uuid4()
+    repository = MemoryComponentBuildRepository(
+        revision_models={revision_id: model_id},
+        drawing_task_revisions={task_id: revision_id},
+    )
+    build = await repository.create_build(
+        component_id="xms06",
+        component_name="XMS06",
+        component_type="flange",
+        status="source_failed",
+    )
+    await repository.attach_step(build.id, model_id=model_id, revision_id=revision_id)
+    await repository.attach_drawing(build.id, task_id=task_id)
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    tree = await service.get_tree()
+    detail = await service.get_build(build.id)
+    status = await service.get_status(build.id)
+
+    assert tree[0]["status"] == "source_failed"
+    assert detail["status"] == "source_failed"
+    assert status["status"] == "source_failed"
+
+
+@pytest.mark.asyncio
+async def test_source_status_reader_projects_source_errors_when_available():
+    revision = SimpleNamespace(
+        status="failed",
+        progress=100,
+        status_message="parser failed",
+        error_code="freecad_failed",
+        error_message="FreeCAD exited",
+    )
+    task = SimpleNamespace(status="failed", progress=100)
+
+    class Session:
+        async def get(self, model, _identifier):
+            return revision if model is CadModelRevision else task
+
+    reader = SqlAlchemySourceStatusReader(Session())
+
+    step = await reader.get_step_status(uuid4())
+    drawing = await reader.get_drawing_status(uuid4())
+
+    assert step["status_message"] == "parser failed"
+    assert step["error_code"] == "freecad_failed"
+    assert step["error_message"] == "FreeCAD exited"
+    assert drawing["status_message"] is None
+    assert drawing["error_code"] is None
+    assert drawing["error_message"] is None
 
 
 @pytest.mark.asyncio

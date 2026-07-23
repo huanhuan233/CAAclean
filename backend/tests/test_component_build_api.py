@@ -6,9 +6,10 @@ from fastapi.testclient import TestClient
 
 from app.cad.router import get_cad_service
 from app.component_builds.repository import MemoryComponentBuildRepository
-from app.component_builds.router import get_component_build_service
+from app.component_builds.router import get_component_build_service, run_drawing_pipeline
 from app.component_builds.service import ComponentBuildService
 from app.core.config import Settings, get_settings
+from app.drawing.schemas import DrawingError
 from app.drawing.router import get_drawing_service
 from app.main import app
 
@@ -73,12 +74,12 @@ def component_client(tmp_path, monkeypatch):
     app.dependency_overrides[get_drawing_service] = lambda: drawing_service
     app.dependency_overrides[get_settings] = lambda: settings
     try:
-        yield TestClient(app), cad_service, drawing_service, scheduled
+        yield TestClient(app), cad_service, drawing_service, scheduled, build_service
     finally:
         app.dependency_overrides.clear()
 
 
-def create_build(client: TestClient):
+def create_build(client: TestClient, *, step_name: str = "XMS06-DN80.stp", drawing_name: str = "XMS06.png"):
     return client.post(
         "/api/component-builds",
         data={
@@ -90,14 +91,14 @@ def create_build(client: TestClient):
             "default_pn": "16",
         },
         files={
-            "step_file": ("XMS06-DN80.stp", b"ISO-10303-21;", "application/octet-stream"),
-            "drawing_file": ("XMS06.png", PNG_BYTES, "image/png"),
+            "step_file": (step_name, b"ISO-10303-21;", "application/octet-stream"),
+            "drawing_file": (drawing_name, PNG_BYTES, "image/png"),
         },
     )
 
 
 def test_create_build_links_step_and_drawing(component_client):
-    client, cad_service, drawing_service, scheduled = component_client
+    client, cad_service, drawing_service, scheduled, _ = component_client
 
     response = create_build(client)
 
@@ -110,7 +111,7 @@ def test_create_build_links_step_and_drawing(component_client):
 
 
 def test_tree_exposes_specialist_targets(component_client):
-    client, cad_service, drawing_service, _ = component_client
+    client, cad_service, drawing_service, _, _ = component_client
     create_build(client)
 
     response = client.get("/api/component-builds/tree")
@@ -119,11 +120,12 @@ def test_tree_exposes_specialist_targets(component_client):
     step = find_node(response.json(), "reference_step")
     drawing = find_node(response.json(), "drawing")
     assert step["target"]["revision_id"] == str(cad_service.revision_id)
+    assert drawing["target"]["revision_id"] == str(cad_service.revision_id)
     assert drawing["target"]["task_id"] == str(drawing_service.task_id)
 
 
 def test_step_retry_requires_reupload(component_client):
-    client, _, _, _ = component_client
+    client, _, _, _, _ = component_client
     build = create_build(client).json()
 
     response = client.post(f"/api/component-builds/{build['id']}/retry", json={"role": "reference_step"})
@@ -133,7 +135,7 @@ def test_step_retry_requires_reupload(component_client):
 
 
 def test_query_and_drawing_retry_return_projected_build(component_client):
-    client, _, drawing_service, scheduled = component_client
+    client, _, drawing_service, scheduled, _ = component_client
     build = create_build(client).json()
 
     detail = client.get(f"/api/component-builds/{build['id']}")
@@ -147,3 +149,129 @@ def test_query_and_drawing_retry_return_projected_build(component_client):
     assert retry.status_code == 202
     assert retry.json()["status"] == "parsing_sources"
     assert scheduled[-1] == (drawing_service.task_id, "xms06", 80)
+
+
+def test_invalid_extension_is_rejected_before_a_build_is_created(component_client):
+    client, _, _, _, build_service = component_client
+
+    response = create_build(client, step_name="XMS06.txt")
+
+    assert response.status_code == 400
+    assert build_service.repository.builds == {}
+
+
+def test_step_upload_failure_marks_build_failed_without_creating_drawing(component_client):
+    client, cad_service, drawing_service, _, build_service = component_client
+
+    async def fail_step_upload(_file, _name):
+        raise ValueError("invalid STEP payload")
+
+    cad_service.create_model_from_upload = fail_step_upload
+
+    response = create_build(client)
+
+    build = next(iter(build_service.repository.builds.values()))
+    assert response.status_code == 400
+    assert build.status == "source_failed"
+    assert build.error_code == "component_build_upload_failed"
+    assert build.error_message == "invalid STEP payload"
+    assert build.cad_revision_id is None
+    assert drawing_service.created == []
+
+
+def test_drawing_creation_failure_keeps_step_and_marks_build_failed(component_client):
+    client, cad_service, drawing_service, _, build_service = component_client
+
+    async def fail_drawing_create(**_kwargs):
+        raise DrawingError("drawing_decode_failed", "drawing is invalid")
+
+    drawing_service.create_task = fail_drawing_create
+
+    response = create_build(client)
+
+    build = next(iter(build_service.repository.builds.values()))
+    assert response.status_code == 400
+    assert build.status == "source_failed"
+    assert build.error_code == "drawing_decode_failed"
+    assert build.error_message == "drawing is invalid"
+    assert build.cad_revision_id == cad_service.revision_id
+    assert build.drawing_task_id is None
+
+
+def test_missing_build_returns_not_found(component_client):
+    client, _, _, _, _ = component_client
+
+    response = client.get("/api/component-builds/00000000-0000-0000-0000-000000000000")
+
+    assert response.status_code == 404
+
+
+class FakeSessionContext:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, _exc_type, _exc, _traceback):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_drawing_pipeline_persists_unexpected_layout_failure(monkeypatch, tmp_path):
+    task_id = uuid4()
+    layout_updates = []
+
+    class Drawing:
+        repository = SimpleNamespace(
+            update_task_status=lambda *args: layout_updates.append(args),
+        )
+        extraction_repository = SimpleNamespace()
+
+        async def start_layout(self, _task_id):
+            raise RuntimeError("layout crashed")
+
+    drawing = Drawing()
+
+    async def update_task_status(*args):
+        layout_updates.append(args)
+
+    drawing.repository.update_task_status = update_task_status
+    monkeypatch.setattr("app.component_builds.router.SessionLocal", lambda: FakeSessionContext())
+    monkeypatch.setattr("app.component_builds.router.create_drawing_service", lambda _session, _settings: drawing)
+
+    await run_drawing_pipeline(task_id, Settings(cad_spec_work_dir=tmp_path), target_code="xms06", target_dn=80)
+
+    assert layout_updates == [(task_id, "failed", "layout_failed", "layout crashed")]
+
+
+@pytest.mark.asyncio
+async def test_drawing_pipeline_persists_unexpected_extraction_failure_separately(monkeypatch, tmp_path):
+    task_id = uuid4()
+    layout_updates = []
+    extraction_updates = []
+
+    class Drawing:
+        repository = SimpleNamespace()
+        extraction_repository = SimpleNamespace()
+
+        async def start_layout(self, _task_id):
+            return {"status": "layout_ready"}
+
+        async def extract_drawing_facts(self, _task_id, *, target_code, target_dn):
+            raise RuntimeError("extraction crashed")
+
+    drawing = Drawing()
+
+    async def update_task_status(*args):
+        layout_updates.append(args)
+
+    async def set_status(*args):
+        extraction_updates.append(args)
+
+    drawing.repository.update_task_status = update_task_status
+    drawing.extraction_repository.set_status = set_status
+    monkeypatch.setattr("app.component_builds.router.SessionLocal", lambda: FakeSessionContext())
+    monkeypatch.setattr("app.component_builds.router.create_drawing_service", lambda _session, _settings: drawing)
+
+    await run_drawing_pipeline(task_id, Settings(cad_spec_work_dir=tmp_path), target_code="xms06", target_dn=80)
+
+    assert layout_updates == []
+    assert extraction_updates == [(task_id, "failed", 100, "failed", "drawing_extraction_failed", "extraction crashed")]

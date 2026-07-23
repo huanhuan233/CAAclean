@@ -19,11 +19,21 @@ class SqlAlchemySourceStatusReader:
 
     async def get_step_status(self, revision_id: UUID) -> dict:
         revision = await self.session.get(CadModelRevision, revision_id)
-        return {"status": revision.status, "progress": revision.progress} if revision else {"status": "missing"}
+        return self._source_status(revision) if revision else {"status": "missing"}
 
     async def get_drawing_status(self, task_id: UUID) -> dict:
         task = await self.session.get(CadSpecTask, task_id)
-        return {"status": task.status, "progress": task.progress} if task else {"status": "missing"}
+        return self._source_status(task) if task else {"status": "missing"}
+
+    @staticmethod
+    def _source_status(source) -> dict:
+        return {
+            "status": source.status,
+            "progress": source.progress,
+            "status_message": getattr(source, "status_message", None),
+            "error_code": getattr(source, "error_code", None),
+            "error_message": getattr(source, "error_message", None),
+        }
 
 
 class ComponentBuildService:
@@ -47,21 +57,41 @@ class ComponentBuildService:
         build = await self.repository.attach_drawing(build_id, task_id=task_id)
         return self._build_payload(build)
 
-    async def set_status(self, build_id: UUID, *, status: str, message: str | None = None) -> dict:
-        await self.repository.set_status(build_id, status=status, message=message)
+    async def set_status(
+        self,
+        build_id: UUID,
+        *,
+        status: str,
+        message: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> dict:
+        await self.repository.set_status(
+            build_id,
+            status=status,
+            message=message,
+            error_code=error_code,
+            error_message=error_message,
+        )
         return await self.get_build(build_id)
 
     async def get_build(self, build_id: UUID) -> dict:
         build = await self._require_build(build_id)
-        return self._build_payload(build)
+        step = await self._step_source(build)
+        drawing = await self._drawing_source(build)
+        return self._projected_build_payload(build, step, drawing)
 
     async def get_status(self, build_id: UUID) -> dict:
         build = await self._require_build(build_id)
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
+        projected = self._projected_build_payload(build, step, drawing)
         return {
             "build_id": str(build.id),
-            "status": self._project_status(build, step["status"], drawing["status"]),
+            "status": projected["status"],
+            "status_message": build.status_message,
+            "error_code": build.error_code,
+            "error_message": build.error_message,
             "sources": {"reference_step": step, "drawing": drawing},
         }
 
@@ -91,9 +121,13 @@ class ComponentBuildService:
             return "review_required"
         if step_status == "completed" and drawing_status == "review_ready":
             return "sources_ready"
+        if build.status == "source_failed":
+            return "source_failed"
+        if build.status == "uploading" and not (build.cad_revision_id and build.drawing_task_id):
+            return build.status
         if build.cad_revision_id or build.drawing_task_id:
             return "parsing_sources"
-        return "draft"
+        return build.status
 
     @staticmethod
     def _build_payload(build: ComponentBuild) -> dict:
@@ -119,9 +153,15 @@ class ComponentBuildService:
             "updated_at": build.updated_at,
         }
 
+    def _projected_build_payload(self, build: ComponentBuild, step: dict, drawing: dict) -> dict:
+        payload = self._build_payload(build)
+        payload["status"] = self._project_status(build, step["status"], drawing["status"])
+        return payload
+
     async def _tree_node(self, build: ComponentBuild) -> dict:
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
+        projected = self._projected_build_payload(build, step, drawing)
         return {
             "id": str(build.id),
             "build_id": str(build.id),
@@ -130,7 +170,10 @@ class ComponentBuildService:
             "node_type": "build",
             "component_id": build.component_id,
             "component_name": build.component_name,
-            "status": build.status,
+            "status": projected["status"],
+            "status_message": build.status_message,
+            "error_code": build.error_code,
+            "error_message": build.error_message,
             "children": [
                 {
                     "id": f"{build.id}:inputs",
@@ -156,7 +199,11 @@ class ComponentBuildService:
         labels = {"reference_step": "\u53c2\u8003 STEP", "drawing": "\u4e8c\u7ef4\u56fe\u7eb8"}
         target = None
         if source["id"]:
-            target = {"revision_id": str(build.cad_revision_id)} if role == "reference_step" else {"task_id": str(build.drawing_task_id)}
+            target = (
+                {"revision_id": str(build.cad_revision_id)}
+                if role == "reference_step"
+                else {"revision_id": str(build.cad_revision_id), "task_id": str(build.drawing_task_id)}
+            )
         return {
             "id": f"{build.id}:{role}",
             "build_id": str(build.id),
@@ -165,6 +212,9 @@ class ComponentBuildService:
             "node_type": role,
             "status": source["status"],
             "progress": source.get("progress"),
+            "status_message": source.get("status_message"),
+            "error_code": source.get("error_code"),
+            "error_message": source.get("error_message"),
             "disabled": target is None,
             "target": target,
         }

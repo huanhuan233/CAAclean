@@ -52,10 +52,20 @@ class MemoryComponentBuildRepository:
         build.updated_at = utc_now()
         return build
 
-    async def set_status(self, build_id: uuid.UUID, *, status: str, message: str | None = None) -> None:
+    async def set_status(
+        self,
+        build_id: uuid.UUID,
+        *,
+        status: str,
+        message: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
         build = await self._require_build(build_id)
         build.status = status
         build.status_message = message
+        build.error_code = error_code
+        build.error_message = error_message
         build.updated_at = utc_now()
 
     async def _require_build(self, build_id: uuid.UUID) -> ComponentBuild:
@@ -107,10 +117,20 @@ class SqlAlchemyComponentBuildRepository:
         await self.session.refresh(build)
         return build
 
-    async def set_status(self, build_id: uuid.UUID, *, status: str, message: str | None = None) -> None:
+    async def set_status(
+        self,
+        build_id: uuid.UUID,
+        *,
+        status: str,
+        message: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
         build = await self._require_build(build_id)
         build.status = status
         build.status_message = message
+        build.error_code = error_code
+        build.error_message = error_message
         await self.session.commit()
 
     async def _require_build(self, build_id: uuid.UUID) -> ComponentBuild:

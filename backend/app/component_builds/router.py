@@ -50,6 +50,7 @@ async def create_component_build(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     _validate_uploads(step_file, drawing_file)
+    build_id: UUID | None = None
     try:
         build = await build_service.create_build(
             component_id=component_id,
@@ -63,9 +64,10 @@ async def create_component_build(
             default_pn=default_pn,
             status="uploading",
         )
+        build_id = UUID(str(build["id"]))
         cad = await cad_service.create_model_from_upload(step_file, component_name)
         await build_service.attach_step(
-            UUID(str(build["id"])),
+            build_id,
             model_id=UUID(str(cad["model_id"])),
             revision_id=UUID(str(cad["revision_id"])),
         )
@@ -76,8 +78,8 @@ async def create_component_build(
             target_code=component_id,
             target_dn=str(default_dn) if default_dn is not None else None,
         )
-        await build_service.attach_drawing(UUID(str(build["id"])), task_id=UUID(str(drawing_task.id)))
-        result = await build_service.set_status(UUID(str(build["id"])), status="parsing_sources", message="sources_queued")
+        await build_service.attach_drawing(build_id, task_id=UUID(str(drawing_task.id)))
+        result = await build_service.set_status(build_id, status="parsing_sources", message="sources_queued")
         schedule_drawing_pipeline(
             UUID(str(drawing_task.id)),
             settings,
@@ -86,7 +88,11 @@ async def create_component_build(
         )
         return result
     except (DrawingError, ValueError) as exc:
+        await _mark_build_failed(build_service, build_id, exc)
         raise HTTPException(status_code=400, detail=_error_detail(exc)) from exc
+    except Exception as exc:
+        await _mark_build_failed(build_service, build_id, exc)
+        raise HTTPException(status_code=500, detail=_error_detail(exc)) from exc
 
 
 @router.get("/tree")
@@ -156,12 +162,26 @@ async def run_drawing_pipeline(
         drawing = create_drawing_service(session, settings)
         try:
             layout = await drawing.start_layout(task_id)
-            if layout["status"] == "layout_ready":
-                await drawing.extract_drawing_facts(task_id, target_code=target_code, target_dn=target_dn)
         except (DrawingError, VisionModelError):
             return
         except Exception as exc:
             await drawing.repository.update_task_status(task_id, "failed", "layout_failed", str(exc))
+            return
+        if layout["status"] != "layout_ready":
+            return
+        try:
+            await drawing.extract_drawing_facts(task_id, target_code=target_code, target_dn=target_dn)
+        except (DrawingError, VisionModelError):
+            return
+        except Exception as exc:
+            await drawing.extraction_repository.set_status(
+                task_id,
+                "failed",
+                100,
+                "failed",
+                "drawing_extraction_failed",
+                str(exc),
+            )
 
 
 def _validate_uploads(step_file: UploadFile, drawing_file: UploadFile) -> None:
@@ -189,3 +209,18 @@ async def _get_build_or_404(service: ComponentBuildService, build_id: UUID) -> d
 
 def _error_detail(exc: Exception) -> dict:
     return {"code": getattr(exc, "code", "component_build_upload_failed"), "message": str(exc)}
+
+
+async def _mark_build_failed(service: ComponentBuildService, build_id: UUID | None, exc: Exception) -> None:
+    if build_id is None:
+        return
+    try:
+        await service.set_status(
+            build_id,
+            status="source_failed",
+            message="source_failed",
+            error_code=getattr(exc, "code", "component_build_upload_failed"),
+            error_message=str(exc),
+        )
+    except Exception:
+        return
