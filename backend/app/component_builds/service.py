@@ -7,6 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
+INPUTS_LABEL = "\u8f93\u5165\u8d44\u6599"
+DATA_FUSION_LABEL = "\u6570\u636e\u878d\u5408"
+PUBLISH_VALIDATION_LABEL = "\u53d1\u5e03\u6821\u9a8c"
+FUTURE_STATUS_LABEL = "\u540e\u7eed\u80fd\u529b"
+
+
 class SqlAlchemySourceStatusReader:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -91,6 +97,8 @@ class ComponentBuildService:
             "drawing_task_id": str(build.drawing_task_id) if build.drawing_task_id else None,
             "status": build.status,
             "status_message": build.status_message,
+            "error_code": build.error_code,
+            "error_message": build.error_message,
             "created_at": build.created_at,
             "updated_at": build.updated_at,
         }
@@ -105,9 +113,9 @@ class ComponentBuildService:
             "component_name": build.component_name,
             "status": build.status,
             "children": [
-                {"name": "杈撳叆璧勬枡", "node_type": "inputs", "status": "pending", "disabled": False},
-                {"name": "鏁版嵁铻嶅悎", "node_type": "data_fusion", "status": "future", "disabled": True},
-                {"name": "ComponentSpec", "node_type": "component_spec", "status": "future", "disabled": True},
-                {"name": "鍙戝竷鏍￠獙", "node_type": "publish_validation", "status": "future", "disabled": True},
+                {"name": INPUTS_LABEL, "node_type": "inputs", "status": "pending", "disabled": False},
+                {"name": DATA_FUSION_LABEL, "node_type": "data_fusion", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
+                {"name": "ComponentSpec", "node_type": "component_spec", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
+                {"name": PUBLISH_VALIDATION_LABEL, "node_type": "publish_validation", "status": "future", "status_label": FUTURE_STATUS_LABEL, "disabled": True},
             ],
         }
