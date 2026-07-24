@@ -15,7 +15,7 @@ BACKEND_ROOT = REPOSITORY_ROOT / "backend"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(REPOSITORY_ROOT / ".env", BACKEND_ROOT / ".env"),
+        env_file=(BACKEND_ROOT / ".env", REPOSITORY_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
