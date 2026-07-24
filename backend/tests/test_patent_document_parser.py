@@ -1,4 +1,8 @@
-from app.patent_annotation.document_parser import parse_patent_structure
+import pytest
+
+from app.core.mineru import MineruError
+from app.patent_annotation.document_parser import PatentDocumentParser, mineru_payload_to_content, parse_patent_structure
+from app.patent_annotation.errors import PatentAnnotationError
 from app.patent_annotation.schemas import PatentDocumentContent, PatentDocumentPage
 
 
@@ -23,6 +27,65 @@ def make_content(*pages: str) -> PatentDocumentContent:
         full_text="\n".join(pages),
         parser="pypdf",
     )
+
+
+class FakeMineru:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = 0
+
+    async def fetch_payload(self, path):
+        self.calls += 1
+        return self.payload
+
+
+class FailingMineru:
+    def __init__(self, code="mineru_timeout"):
+        self.code = code
+        self.calls = 0
+
+    async def fetch_payload(self, path):
+        self.calls += 1
+        raise MineruError(self.code, self.code)
+
+
+def make_text_pdf(tmp_path, text="selectable patent text"):
+    path = tmp_path / "sample.pdf"
+    encoded = text.encode("ascii")
+    stream = b"BT /F1 12 Tf 72 720 Td (" + encoded + b") Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    chunks = [b"%PDF-1.4\n"]
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(sum(len(chunk) for chunk in chunks))
+        chunks.append(str(index).encode("ascii") + b" 0 obj\n" + obj + b"\nendobj\n")
+    xref_offset = sum(len(chunk) for chunk in chunks)
+    chunks.append(b"xref\n0 6\n0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        chunks.append(f"{offset:010d} 00000 n \n".encode("ascii"))
+    chunks.append(b"trailer << /Root 1 0 R /Size 6 >>\nstartxref\n")
+    chunks.append(str(xref_offset).encode("ascii") + b"\n%%EOF\n")
+    path.write_bytes(b"".join(chunks))
+    return path
+
+
+def make_blank_pdf(tmp_path):
+    path = tmp_path / "blank.pdf"
+    path.write_bytes(
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n"
+        b"trailer << /Root 1 0 R /Size 4 >>\nstartxref\n186\n%%EOF\n"
+    )
+    return path
 
 
 def test_parse_patent_structure_extracts_legend_figures_and_detail_marker():
@@ -145,6 +208,36 @@ def test_parenthetical_fallback_does_not_scan_claim_body_without_a_naming_sectio
     assert result.components == []
 
 
+def test_abstract_figure_legend_does_not_preempt_drawing_section_legend():
+    """Searching the whole document for the first 图中 legend must make this test fail."""
+    text = """摘要
+示意图中：9、摘要区域。
+说明书
+附图说明
+图1为结构示意图。
+图中：1、壳体；2、盖板。
+具体实施方式
+"""
+
+    result = parse_patent_structure(make_content(text), file_name="legend.pdf")
+
+    assert [(item.ref_no, item.name) for item in result.components] == [("1", "壳体"), ("2", "盖板")]
+
+
+def test_inline_component_name_phrase_is_not_a_naming_section():
+    """Treating inline 部件名称 text as a heading must make this test fail."""
+    text = """摘要
+本摘要说明部件名称包括壳体（1）和盖板（2）。
+说明书
+具体实施方式
+壳体用于安装盖板。
+"""
+
+    result = parse_patent_structure(make_content(text), file_name="inline.pdf")
+
+    assert result.components == []
+
+
 def test_detail_marker_identifier_is_not_returned_as_a_component():
     """Keeping an identified detail marker in components must make this test fail."""
     text = """附图说明
@@ -187,3 +280,74 @@ def test_explicit_reference_matching_does_not_match_number_prefixes():
     result = parse_patent_structure(make_content(text), file_name="overlap.pdf")
 
     assert result.figures[0].explicit_ref_nos == ["10"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_success_reports_parser(tmp_path):
+    parser = PatentDocumentParser(mineru_client=FakeMineru({"pages": [{"page_no": 1, "text": PATENT_TEXT}]}))
+
+    result = await parser.parse(make_text_pdf(tmp_path), file_name="sample.pdf")
+
+    assert result.parser == "mineru"
+    assert [item.ref_no for item in result.components] == ["1", "2", "61", "68"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_timeout_falls_back_to_pypdf(tmp_path):
+    parser = PatentDocumentParser(mineru_client=FailingMineru("mineru_timeout"))
+
+    result = await parser.parse(make_text_pdf(tmp_path), file_name="sample.pdf")
+
+    assert result.parser == "pypdf"
+    assert "mineru_timeout" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_skips_mineru(tmp_path):
+    mineru = FakeMineru({"pages": [{"page_no": 1, "text": PATENT_TEXT}]})
+    parser = PatentDocumentParser(mineru_client=mineru)
+
+    result = await parser.parse(make_text_pdf(tmp_path), file_name="sample.pdf", fast=True)
+
+    assert result.parser == "pypdf"
+    assert mineru.calls == 0
+
+
+def test_mineru_payload_normalization_accepts_nested_shapes():
+    content = mineru_payload_to_content(
+        {
+            "result": {
+                "content_list": [
+                    {"page_idx": 0, "text": "page one", "img_path": "p1.png"},
+                    {"page": 2, "type": "text", "content": "page two", "image_refs": ["p2.png"]},
+                ],
+                "markdown": "# title\nbody",
+            }
+        }
+    )
+
+    assert content.parser == "mineru"
+    assert content.full_text == "page one\npage two\n# title\nbody"
+    assert [page.page_no for page in content.pages] == [1, 2]
+    assert content.pages[0].image_refs == ["p1.png"]
+    assert content.pages[1].image_refs == ["p2.png"]
+
+
+@pytest.mark.asyncio
+async def test_empty_mineru_payload_falls_back_to_text_pdf(tmp_path):
+    parser = PatentDocumentParser(mineru_client=FakeMineru({"pages": [{"page_no": 1, "text": "   "}]}))
+
+    result = await parser.parse(make_text_pdf(tmp_path), file_name="sample.pdf")
+
+    assert result.parser == "pypdf"
+    assert "mineru_no_text" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_both_parsers_empty_raise_no_text(tmp_path):
+    parser = PatentDocumentParser(mineru_client=FakeMineru({"pages": [{"page_no": 1, "text": ""}]}))
+
+    with pytest.raises(PatentAnnotationError) as exc:
+        await parser.parse(make_blank_pdf(tmp_path), file_name="blank.pdf")
+
+    assert exc.value.code == "patent_document_no_text"

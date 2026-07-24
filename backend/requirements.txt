@@ -10,3 +10,4 @@ ruamel.yaml
 pytest
 pytest-asyncio
 httpx
+pypdf>=5,<6

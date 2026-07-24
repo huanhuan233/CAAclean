@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import Any
 
+from app.core.mineru import MineruClient, MineruError
+from app.patent_annotation.errors import PatentAnnotationError
 from app.patent_annotation.schemas import (
     PatentComponent,
     PatentDetailMarker,
+    PatentDocumentPage,
     PatentDocumentContent,
     PatentDocumentParseResult,
     PatentFigure,
@@ -12,7 +17,11 @@ from app.patent_annotation.schemas import (
 
 
 SECTION_HEADING_RE = re.compile(r"(?:具体实施方式|实施例|权利要求书?|发明内容|摘要|背景技术|技术领域)")
-COMPONENT_NAMING_SECTION_RE = re.compile(r"(?:附图标记说明|附图标记|标号说明|部件名称说明|部件名称)")
+DRAWING_SECTION_RE = re.compile(r"附\s*图\s*说\s*明\s*[:：]?")
+COMPONENT_NAMING_SECTION_RE = re.compile(
+    r"(?:^|[\n\r。；;])\s*(?:附图标记说明|附图标记|标号说明|部件名称说明|部件名称)\s*(?:[:：]|\n|$)",
+    re.MULTILINE,
+)
 FIGURE_SECTION_END_RE = re.compile(r"(?:图\s*中\s*[:：]|具体实施方式|实施例|权利要求书?|发明内容|摘要)")
 LEGEND_ENTRY_RE = re.compile(
     r"(?P<ref>[A-Za-z]|\d+[A-Za-z]?)\s*(?:、|,|，|\.|．|:|：)\s*"
@@ -39,19 +48,117 @@ def normalize_match_text(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _unwrap_mineru_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    current: dict[str, Any] = payload
+    while True:
+        for key in ("data", "result"):
+            nested = current.get(key)
+            if isinstance(nested, dict):
+                current = nested
+                break
+        else:
+            return current
+
+
+def _as_text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _as_image_refs(item: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for key in ("image_refs", "images"):
+        value = item.get(key)
+        if isinstance(value, list):
+            refs.extend(str(ref) for ref in value if ref)
+    for key in ("img_path", "image_path"):
+        value = item.get(key)
+        if value:
+            refs.append(str(value))
+    return refs
+
+
+def _page_no(item: dict[str, Any], fallback: int) -> int:
+    for key in ("page_no", "page"):
+        value = item.get(key)
+        if isinstance(value, int) and value >= 1:
+            return value
+    page_idx = item.get("page_idx")
+    if isinstance(page_idx, int) and page_idx >= 0:
+        return page_idx + 1
+    return fallback
+
+
+def _item_text(item: dict[str, Any]) -> str:
+    return "\n".join(
+        part
+        for part in (
+            _as_text(item.get("text")),
+            _as_text(item.get("content")),
+            _as_text(item.get("markdown")),
+        )
+        if part.strip()
+    )
+
+
+def mineru_payload_to_content(payload: dict[str, Any]) -> PatentDocumentContent:
+    """Normalize common MinerU payload shapes to the public patent text schema."""
+    if not isinstance(payload, dict):
+        raise PatentAnnotationError("mineru_invalid_result", "MinerU returned an invalid result")
+    data = _unwrap_mineru_payload(payload)
+    pages: list[PatentDocumentPage] = []
+    fragments: list[str] = []
+
+    source_items = data.get("pages")
+    if not isinstance(source_items, list):
+        source_items = data.get("content_list")
+    if isinstance(source_items, list):
+        for index, raw_item in enumerate(source_items, start=1):
+            if not isinstance(raw_item, dict):
+                continue
+            text = _item_text(raw_item)
+            if text.strip():
+                fragments.append(text)
+            pages.append(
+                PatentDocumentPage(
+                    page_no=_page_no(raw_item, index),
+                    text=text,
+                    markdown=_as_text(raw_item.get("markdown")) or None,
+                    image_refs=_as_image_refs(raw_item),
+                    parser="mineru",
+                )
+            )
+
+    canonical_full_text = _as_text(data.get("full_text"))
+    if canonical_full_text.strip():
+        full_text = canonical_full_text
+    else:
+        for key in ("text", "markdown"):
+            text = _as_text(data.get(key))
+            if text.strip():
+                fragments.append(text)
+        full_text = "\n".join(fragment for fragment in fragments if fragment.strip())
+    if not full_text.strip():
+        raise PatentAnnotationError("mineru_no_text", "MinerU returned no usable text")
+    if not pages:
+        pages.append(PatentDocumentPage(page_no=1, text=full_text, parser="mineru"))
+    return PatentDocumentContent(pages=pages, full_text=full_text, parser="mineru")
+
+
 def _component_scope(text: str) -> tuple[str, bool]:
     """Return a bounded component-naming scope and whether it is a 图中 legend."""
     normalized = normalize_match_text(text)
-    legend_match = re.search(r"图\s*中\s*[:：]", normalized)
+    drawing_match = DRAWING_SECTION_RE.search(text)
+    legend_source = normalize_match_text(text[drawing_match.end() :]) if drawing_match else normalized
+    legend_match = re.search(r"图\s*中\s*[:：]", legend_source)
     if legend_match:
-        scope = normalized[legend_match.end() :]
+        scope = legend_source[legend_match.end() :]
         end = SECTION_HEADING_RE.search(scope)
         return (scope[: end.start()] if end else scope), True
 
-    naming_match = COMPONENT_NAMING_SECTION_RE.search(normalized)
+    naming_match = COMPONENT_NAMING_SECTION_RE.search(text)
     if not naming_match:
         return "", False
-    scope = normalized[naming_match.end() :]
+    scope = normalize_match_text(text[naming_match.end() :])
     end = SECTION_HEADING_RE.search(scope)
     return (scope[: end.start()] if end else scope), False
 
@@ -150,3 +257,61 @@ def parse_patent_structure(content: PatentDocumentContent, file_name: str) -> Pa
         figures=extract_figures(text, components),
         warnings=content.warnings,
     )
+
+
+def _pypdf_to_content(pdf_path: Path) -> PatentDocumentContent:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise PatentAnnotationError("patent_document_parse_failed", "pypdf is not installed") from exc
+
+    warnings: list[str] = []
+    try:
+        reader = PdfReader(str(pdf_path))
+        if reader.is_encrypted:
+            decrypt_result = reader.decrypt("")
+            if decrypt_result == 0:
+                raise PatentAnnotationError("patent_document_parse_failed", "PDF is encrypted")
+        pages: list[PatentDocumentPage] = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if not text.strip():
+                warnings.append(f"pypdf_page_{index}_no_text")
+            pages.append(PatentDocumentPage(page_no=index, text=text, parser="pypdf"))
+    except PatentAnnotationError:
+        raise
+    except Exception as exc:
+        raise PatentAnnotationError("patent_document_parse_failed", "PDF text extraction failed") from exc
+
+    full_text = "\n".join(page.text for page in pages)
+    return PatentDocumentContent(pages=pages, full_text=full_text, parser="pypdf", warnings=warnings)
+
+
+class PatentDocumentParser:
+    """Parse a patent PDF into deterministic figure/component structure."""
+
+    def __init__(self, mineru_client: MineruClient | None = None):
+        self.mineru_client = mineru_client or MineruClient()
+
+    async def parse(self, pdf_path: Path, *, file_name: str, fast: bool = False) -> PatentDocumentParseResult:
+        warnings: list[str] = []
+        if not fast:
+            try:
+                payload = await self.mineru_client.fetch_payload(Path(pdf_path))
+                content = mineru_payload_to_content(payload)
+                return parse_patent_structure(content, file_name=file_name)
+            except MineruError as exc:
+                warnings.append(exc.code)
+            except PatentAnnotationError as exc:
+                if exc.code not in {"mineru_invalid_result", "mineru_no_text"}:
+                    raise
+                warnings.append(exc.code)
+
+        content = _pypdf_to_content(Path(pdf_path))
+        content.warnings[:] = [*warnings, *content.warnings]
+        if not content.full_text.strip():
+            raise PatentAnnotationError(
+                "patent_document_no_text",
+                "当前版本仅支持带文字层或 MinerU 可识别的 PDF",
+            )
+        return parse_patent_structure(content, file_name=file_name)
