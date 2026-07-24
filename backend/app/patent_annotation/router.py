@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import TypeAdapter, ValidationError
 
 from app.core.config import Settings, get_settings
-from app.core.mineru import MineruClient
+from app.core.mineru import MineruClient, MineruDocumentClient
 from app.core.vision import build_vision_client
 from app.drawing.extraction_client import VisionModelError
 from app.patent_annotation.document_parser import PatentDocumentParser
@@ -24,6 +24,22 @@ IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 
 def get_document_parser(settings: Settings = Depends(get_settings)) -> PatentDocumentParser:
+    if settings.mineru_api_url.strip():
+        return PatentDocumentParser(
+            mineru_client=MineruDocumentClient(
+                api_url=settings.mineru_api_url,
+                endpoint=settings.mineru_parse_endpoint,
+                backend=settings.mineru_backend,
+                ocr_lang=settings.mineru_ocr_lang,
+                result_mode=settings.mineru_result_mode,
+                enable_table=settings.mineru_enable_table,
+                enable_formula=settings.mineru_enable_formula,
+                enable_image_analysis=settings.mineru_enable_image_analysis,
+                enable_ocr=settings.mineru_enable_ocr,
+                server_url=settings.mineru_vlm_url or None,
+                timeout=settings.mineru_request_timeout,
+            )
+        )
     return PatentDocumentParser(
         mineru_client=MineruClient(
             mode=settings.mineru_layout_mode,

@@ -9,9 +9,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = REPOSITORY_ROOT / "backend"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        env_file=(REPOSITORY_ROOT / ".env", BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -44,6 +48,17 @@ class Settings(BaseSettings):
     mineru_layout_url: str = ""
     mineru_layout_command: str = ""
     mineru_layout_timeout: int = 180
+    mineru_api_url: str = ""
+    mineru_backend: str = "hybrid-auto-engine"
+    mineru_ocr_lang: str = "ch"
+    mineru_parse_endpoint: str = "file_parse"
+    mineru_result_mode: str = "zip"
+    mineru_enable_table: bool = True
+    mineru_enable_formula: bool = True
+    mineru_enable_image_analysis: bool = True
+    mineru_enable_ocr: bool = True
+    mineru_request_timeout: int = 3600
+    mineru_vlm_url: str = ""
     drawing_max_image_mb: int = 20
     drawing_max_side: int = 4096
     drawing_inference_max_side: int = 2048

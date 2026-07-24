@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.core.config import Settings, get_settings
+from app.core.mineru import MineruClient, MineruDocumentClient
 from app.main import app
 from app.patent_annotation.router import get_document_parser, get_localization_service
 from app.patent_annotation.schemas import (
@@ -65,6 +66,40 @@ def clear_overrides():
     app.dependency_overrides.pop(get_document_parser, None)
     app.dependency_overrides.pop(get_localization_service, None)
     app.dependency_overrides.pop(get_settings, None)
+
+
+def test_document_parser_prefers_mineru_v3_api_configuration():
+    parser = get_document_parser(
+        Settings(
+            mineru_api_url="http://mineru.test",
+            mineru_parse_endpoint="file_parse",
+            mineru_backend="hybrid-auto-engine",
+            mineru_ocr_lang="ch",
+            mineru_result_mode="zip",
+            mineru_enable_table=True,
+            mineru_enable_formula=True,
+            mineru_enable_image_analysis=True,
+            mineru_enable_ocr=True,
+            mineru_request_timeout=3600,
+        )
+    )
+
+    assert isinstance(parser.mineru_client, MineruDocumentClient)
+    assert parser.mineru_client.endpoint_url == "http://mineru.test/file_parse"
+    assert parser.mineru_client.timeout == 3600
+
+
+def test_document_parser_keeps_legacy_layout_configuration_compatible():
+    parser = get_document_parser(
+        Settings(
+            mineru_api_url="",
+            mineru_layout_mode="http",
+            mineru_layout_url="http://legacy-mineru.test/layout",
+        )
+    )
+
+    assert isinstance(parser.mineru_client, MineruClient)
+    assert parser.mineru_client.mode == "http"
 
 
 def test_parse_document_rejects_non_pdf():
