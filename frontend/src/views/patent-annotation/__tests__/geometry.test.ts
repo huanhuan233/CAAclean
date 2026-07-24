@@ -15,6 +15,30 @@ test('clamp01 and client coordinates stay normalized', () => {
     x: 0.25,
     y: 0.25
   });
+  assert.deepEqual(clientPointToNormalized(500, -10, { left: 100, top: 50, width: 200, height: 100 }), {
+    x: 1,
+    y: 0
+  });
+});
+
+test('CAD scene points use normalized renderer coordinates', async () => {
+  const interaction = (await import('../../cad-model/modules/cad-viewer-interaction').catch(() => ({}))) as {
+    normalizeScenePoint?: (
+      clientX: number,
+      clientY: number,
+      rect: { left: number; top: number; width: number; height: number }
+    ) => { x: number; y: number };
+  };
+
+  assert.equal(typeof interaction.normalizeScenePoint, 'function');
+  assert.deepEqual(interaction.normalizeScenePoint?.(150, 125, { left: 100, top: 50, width: 200, height: 100 }), {
+    x: 0.25,
+    y: 0.75
+  });
+  assert.deepEqual(interaction.normalizeScenePoint?.(500, -10, { left: 100, top: 50, width: 200, height: 100 }), {
+    x: 1,
+    y: 0
+  });
 });
 
 test('default leader flips left near the right edge', () => {

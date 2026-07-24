@@ -12,10 +12,12 @@ const props = withDefaults(
     stageWidth: number;
     stageHeight: number;
     interactive?: boolean;
+    passThrough?: boolean;
   }>(),
   {
     selectedId: '',
-    interactive: true
+    interactive: true,
+    passThrough: false
   }
 );
 
@@ -84,6 +86,7 @@ function stopHandleDrag(event: PointerEvent) {
   <svg
     ref="svgRef"
     class="leader-overlay"
+    :class="{ 'pass-through': passThrough }"
     :viewBox="viewBox"
     preserveAspectRatio="none"
     aria-label="专利附图标注层"
@@ -151,6 +154,10 @@ function stopHandleDrag(event: PointerEvent) {
   user-select: none;
 }
 
+.leader-overlay.pass-through {
+  pointer-events: none;
+}
+
 .leader-line {
   stroke: var(--el-text-color-primary);
   pointer-events: stroke;
@@ -165,6 +172,7 @@ function stopHandleDrag(event: PointerEvent) {
   fill: var(--el-text-color-primary);
   stroke: #fff;
   stroke-width: 1;
+  pointer-events: all;
   cursor: pointer;
 }
 
@@ -188,6 +196,7 @@ function stopHandleDrag(event: PointerEvent) {
   fill: #fff;
   stroke: var(--el-color-primary);
   stroke-width: 2;
+  pointer-events: all;
   cursor: move;
 }
 </style>

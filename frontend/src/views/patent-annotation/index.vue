@@ -4,6 +4,7 @@ import { ElMessageBox } from 'element-plus';
 import { usePatentAnnotations } from './composables/usePatentAnnotations';
 import AnnotationInspector from './modules/AnnotationInspector.vue';
 import PdfAnnotationWorkspace from './modules/PdfAnnotationWorkspace.vue';
+import StepAnnotationWorkspace from './modules/StepAnnotationWorkspace.vue';
 import type { PatentAnnotation, SourceKind } from './types';
 
 defineOptions({ name: 'PatentAnnotationPage' });
@@ -81,7 +82,7 @@ async function importJson(event: Event) {
     annotationStore.replaceDocument(JSON.parse(raw));
     activeSourceId.value = '';
     activePage.value = 1;
-    window.$message?.success('标注 JSON 已导入，请重新上传对应 PDF 以恢复预览');
+    window.$message?.success('标注 JSON 已导入，请重新选择或上传对应源文件以恢复预览');
   } catch (error) {
     const message = error instanceof Error ? error.message : '无法读取标注 JSON';
     window.$message?.error(message);
@@ -106,7 +107,7 @@ function changeMode(nextMode: string | number | boolean | undefined) {
       </div>
       <ElRadioGroup :model-value="mode" size="small" @update:model-value="changeMode">
         <ElRadioButton value="pdf">PDF 附图</ElRadioButton>
-        <ElRadioButton value="step" disabled>STEP 模型</ElRadioButton>
+        <ElRadioButton value="step">STEP 模型</ElRadioButton>
       </ElRadioGroup>
       <div class="toolbar-spacer" />
       <input ref="jsonInputRef" class="hidden-input" type="file" accept="application/json,.json" @change="importJson" />
@@ -117,7 +118,7 @@ function changeMode(nextMode: string | number | boolean | undefined) {
 
     <main class="annotation-shell">
       <PdfAnnotationWorkspace v-if="mode === 'pdf'" :store="annotationStore" @active-change="handleActiveChange" />
-      <ElEmpty v-else description="STEP 标注模式将在下一阶段接入" />
+      <StepAnnotationWorkspace v-else :store="annotationStore" @active-change="handleActiveChange" />
       <AnnotationInspector
         :annotations="currentAnnotations"
         :selected-annotation="annotationStore.selectedAnnotation.value"

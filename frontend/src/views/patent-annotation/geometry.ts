@@ -1,29 +1,17 @@
+import { clamp01, clientPointToNormalized } from '../../utils/normalized-coordinates';
 import type { PatentAnnotation, PatentAnnotationDocument, PatentSource, Point2D, SourceKind } from './types';
 
-type RectLike = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>;
 type UnknownRecord = Record<string, unknown>;
 type NumberRange = { min: number; max: number; fallback: number };
 
 const SOURCE_KINDS = new Set<SourceKind>(['pdf', 'step']);
 
-export function clamp01(value: number) {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
-}
+export { clamp01, clientPointToNormalized };
 
 export function normalizePoint(point: Point2D): Point2D {
   return {
     x: clamp01(Number(point.x)),
     y: clamp01(Number(point.y))
-  };
-}
-
-export function clientPointToNormalized(clientX: number, clientY: number, rect: RectLike): Point2D {
-  if (rect.width <= 0 || rect.height <= 0) return { x: 0, y: 0 };
-
-  return {
-    x: clamp01((clientX - rect.left) / rect.width),
-    y: clamp01((clientY - rect.top) / rect.height)
   };
 }
 

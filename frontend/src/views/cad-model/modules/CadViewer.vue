@@ -2,20 +2,32 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { normalizeScenePoint } from './cad-viewer-interaction';
+import type { CadSceneClick } from './cad-viewer-interaction';
 
 defineOptions({
   name: 'CadViewer'
 });
 
-const props = defineProps<{
-  meshes: Api.Cad.Mesh[];
-  selectedFaceId?: string;
-  highlightFaceIds?: string[];
-  patternEvidence?: Api.Cad.PatternEvidence | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    meshes: Api.Cad.Mesh[];
+    selectedFaceId?: string;
+    highlightFaceIds?: string[];
+    patternEvidence?: Api.Cad.PatternEvidence | null;
+    cameraLocked?: boolean;
+  }>(),
+  {
+    selectedFaceId: '',
+    highlightFaceIds: () => [],
+    patternEvidence: null,
+    cameraLocked: false
+  }
+);
 
 const emit = defineEmits<{
   (e: 'faceClick', entityId: string): void;
+  (e: 'sceneClick', payload: CadSceneClick): void;
 }>();
 
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -72,6 +84,7 @@ function initScene() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
+  controls.enabled = !props.cameraLocked;
 
   const ambient = new THREE.HemisphereLight('#ffffff', '#b8c0cc', 2.4);
   scene.add(ambient);
@@ -259,8 +272,16 @@ function handlePointerDown(event: PointerEvent) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects([...faceMeshes.values()], false);
-  const entityId = hits[0]?.object.userData.entityId;
-  if (entityId) emit('faceClick', entityId);
+  const hit = hits[0];
+  const entityId = hit?.object.userData.entityId;
+  if (!hit || !entityId) return;
+
+  emit('faceClick', entityId);
+  emit('sceneClick', {
+    entityId,
+    worldPoint: [hit.point.x, hit.point.y, hit.point.z],
+    screen: normalizeScenePoint(event.clientX, event.clientY, rect)
+  });
 }
 
 function disposeViewer() {
@@ -298,6 +319,13 @@ watch(
 watch(
   () => [props.selectedFaceId, props.highlightFaceIds?.join('|') ?? '', JSON.stringify(props.patternEvidence ?? null)],
   () => applyHighlights()
+);
+
+watch(
+  () => props.cameraLocked,
+  locked => {
+    if (controls) controls.enabled = !locked;
+  }
 );
 
 onMounted(() => {
