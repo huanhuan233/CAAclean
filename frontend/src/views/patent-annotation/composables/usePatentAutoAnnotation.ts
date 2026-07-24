@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { autoLayoutAnnotations, inferFigureNo, snapPointToInk } from '../auto-annotation';
+import { autoLayoutAnnotations, inferFigureNoForSource, snapPointToInk } from '../auto-annotation';
 import { createDefaultLeaderPoints } from '../geometry';
 import type { PatentAnnotation, PatentSource, Point2D, SourceKind } from '../types';
 import type { PatentAnnotationStore } from './usePatentAnnotations';
@@ -76,16 +76,21 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
   const progressText = ref('');
 
   async function parseDocument(file: File, options: { fast?: boolean; sources?: PatentSource[] } = {}) {
+    if (localizing.value) throw new Error('当前附图正在自动标注，请稍后再解析说明书');
     parsing.value = true;
-    progressText.value = 'Parsing PDF';
+    progressText.value = '正在解析说明书 PDF';
     try {
       const { parsePatentDocument } = await import('@/service/api/patent-annotation');
       const result = await unwrapApi<Api.PatentAnnotation.DocumentParseResult>(
-        parsePatentDocument(file, { fast: options.fast }) as Promise<ApiResponse<Api.PatentAnnotation.DocumentParseResult>>
+        parsePatentDocument(file, { fast: options.fast }) as Promise<
+          ApiResponse<Api.PatentAnnotation.DocumentParseResult>
+        >
       );
       parseResult.value = result;
       selectedRefs.value = new Set(result.components.map(component => component.ref_no));
-      assignFigureNumbers(options.sources ?? store.document.value.sources.filter(source => source.kind === 'pdf'), result.figures);
+      ensureSourceFigureNos(options.sources ?? store.document.value.sources.filter(source => source.kind === 'pdf'), {
+        reset: true
+      });
       return result;
     } catch (error) {
       throw new Error(requestMessage(error), { cause: error });
@@ -105,40 +110,80 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
     };
   }
 
+  function ensureSourceFigureNos(sources: PatentSource[], options: { reset?: boolean } = {}) {
+    const result = parseResult.value;
+    if (!result) return;
+    const pdfSources = sources.filter(item => item.kind === 'pdf');
+    const validFigureNos = new Set(result.figures.map(figure => figure.figure_no));
+    const usedFigureNos = new Set<string>();
+    const pendingSources: PatentSource[] = [];
+
+    for (const source of pdfSources) {
+      const keepExisting =
+        !options.reset &&
+        Boolean(source.figureNo && validFigureNos.has(source.figureNo) && !usedFigureNos.has(source.figureNo));
+      if (keepExisting && source.figureNo) {
+        usedFigureNos.add(source.figureNo);
+      } else {
+        if (source.figureNo) store.updateSource(source.id, { figureNo: undefined });
+        pendingSources.push(source);
+      }
+    }
+
+    for (const source of pendingSources) {
+      const preferred = inferFigureNoForSource({ ...source, figureNo: undefined }, pdfSources, result.figures);
+      const figureNo =
+        preferred && !usedFigureNos.has(preferred)
+          ? preferred
+          : result.figures.find(figure => !usedFigureNos.has(figure.figure_no))?.figure_no;
+      if (figureNo) {
+        store.updateSource(source.id, { figureNo });
+        usedFigureNos.add(figureNo);
+      }
+    }
+  }
+
   async function localizeCurrentPage(params: {
     workspace: PdfWorkspaceCapture;
     sourceId: string;
     page: number;
     confirmReplace?: () => Promise<boolean> | boolean;
   }) {
-    if (!parseResult.value) throw new Error('Parse a PDF first');
-    const source = store.document.value.sources.find(item => item.id === params.sourceId);
-    if (!source) throw new Error('Current PDF source was not found');
-    const oldAuto = store
-      .annotationsFor(params.sourceId, params.page)
-      .some(annotation => annotation.origin === 'automatic');
-    if (oldAuto && params.confirmReplace && !(await params.confirmReplace())) {
-      return { added: 0, reviewCount: 0, warnings: [] as string[] };
-    }
+    if (parsing.value) throw new Error('说明书正在解析，请稍后再自动标注');
+    if (localizing.value) throw new Error('当前页正在自动标注');
+    if (!parseResult.value) throw new Error('请先上传并解析专利说明书 PDF');
+    const mappedSource = store.document.value.sources.find(item => item.id === params.sourceId);
+    if (!mappedSource) throw new Error('当前附图 PDF 不存在');
+    if (!mappedSource?.figureNo) throw new Error('请先为当前附图选择对应图号');
 
     localizing.value = true;
-    progressText.value = 'Localizing current page';
+    progressText.value = '正在渲染当前附图';
     try {
-      const figure = figureForSource(source, parseResult.value.figures);
+      const figure = figureForSource(mappedSource, parseResult.value.figures);
+      if (!figure) throw new Error('当前图号不在说明书解析结果中，请重新选择图号');
+      const oldAuto = store
+        .annotationsFor(params.sourceId, params.page)
+        .some(annotation => annotation.origin === 'automatic');
+      if (oldAuto && params.confirmReplace && !(await params.confirmReplace())) {
+        return { added: 0, reviewCount: 0, warnings: [] as string[] };
+      }
       const candidates = candidatesForFigure(figure, parseResult.value, selectedRefs.value);
+      if (!candidates.length) throw new Error('请至少选择一个候选部件');
       const imageFile = await params.workspace.getCurrentPageImageBlob({ scale: 1 });
       const imageData = params.workspace.getCurrentPageImageData();
+      progressText.value = '正在识别可见部件';
       const { localizePatentPage } = await import('@/service/api/patent-annotation');
       const localization = await unwrapApi<Api.PatentAnnotation.NormalizedLocalizationResult>(
         localizePatentPage({
           imageFile,
-          fileName: `${source.fileName || 'page'}-${params.page}.png`,
-          figureNo: figure?.figure_no || source.figureNo || String(params.page),
-          figureDescription: figure?.description,
-          figureContext: figure?.context,
+          fileName: `${mappedSource.fileName || 'page'}-${params.page}.png`,
+          figureNo: figure.figure_no,
+          figureDescription: figure.description,
+          figureContext: figure.context,
           components: candidates
         }) as Promise<ApiResponse<Api.PatentAnnotation.NormalizedLocalizationResult>>
       );
+      progressText.value = '正在生成引线布局';
       const suggestions = buildAutoAnnotationSuggestions({
         sourceId: params.sourceId,
         sourceKind: 'pdf',
@@ -166,14 +211,6 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
     }
   }
 
-  function assignFigureNumbers(sources: PatentSource[], figures: Api.PatentAnnotation.Figure[]) {
-    sources
-      .filter(source => source.kind === 'pdf' && !source.figureNo)
-      .forEach((source, index) => {
-        store.updateSource(source.id, { figureNo: inferFigureNo(source.fileName, figures, index) });
-      });
-  }
-
   return {
     parseResult,
     selectedRefs,
@@ -182,6 +219,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
     progressText,
     parseDocument,
     updateComponentName,
+    ensureSourceFigureNos,
     localizeCurrentPage
   };
 }
@@ -204,14 +242,14 @@ function candidatesForFigure(
   for (const marker of figure?.detail_markers ?? []) {
     candidates.push({
       ref_no: marker.marker,
-      name: `Detail ${marker.marker} of figure ${marker.parent_figure_no}`
+      name: `图 ${marker.parent_figure_no} 的局部放大 ${marker.marker}`
     });
   }
   return candidates;
 }
 
 function figureForSource(source: PatentSource, figures: Api.PatentAnnotation.Figure[]) {
-  return figures.find(figure => figure.figure_no === source.figureNo) ?? figures[0];
+  return figures.find(figure => figure.figure_no === source.figureNo);
 }
 
 function toPoint(point: Api.PatentAnnotation.NormalizedPoint): Point2D {
@@ -225,7 +263,7 @@ async function unwrapApi<T>(promise: Promise<ApiResponse<T>>) {
   if (response && typeof response === 'object' && 'error' in response) {
     const wrapped = response as { data?: T; error?: unknown };
     if (wrapped.error) throw wrapped.error;
-    if (wrapped.data === undefined || wrapped.data === null) throw new Error('Auto annotation request failed');
+    if (wrapped.data === undefined || wrapped.data === null) throw new Error('自动标注请求失败');
     return wrapped.data;
   }
   return response as T;
@@ -233,5 +271,5 @@ async function unwrapApi<T>(promise: Promise<ApiResponse<T>>) {
 
 function requestMessage(error: unknown) {
   const candidate = error as { response?: { data?: { detail?: { message?: string } } }; message?: string };
-  return candidate.response?.data?.detail?.message ?? candidate.message ?? 'Auto annotation request failed';
+  return candidate.response?.data?.detail?.message ?? candidate.message ?? '自动标注请求失败';
 }

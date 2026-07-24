@@ -26,6 +26,7 @@ const selectedBboxText = computed(() => {
   if (!bbox) return '';
   return `${percent(bbox.xMin)}, ${percent(bbox.yMin)} - ${percent(bbox.xMax)}, ${percent(bbox.yMax)}`;
 });
+const reviewCount = computed(() => props.annotations.filter(annotation => annotation.reviewState === 'review').length);
 
 function coordinate(point: Point2D, axis: keyof Point2D) {
   return Math.round(point[axis] * 10000) / 100;
@@ -56,10 +57,18 @@ function statusType(annotation: PatentAnnotation) {
 }
 
 function statusLabel(annotation: PatentAnnotation) {
-  if (annotation.origin === 'manual') return 'Manual';
+  if (annotation.origin === 'manual') return '人工';
   const confidence = annotation.confidence === undefined ? '' : ` ${Math.round(annotation.confidence * 100)}%`;
-  if (annotation.reviewState === 'review') return `Review${confidence}`;
-  return `Auto${confidence}`;
+  if (annotation.reviewState === 'review') return `待审核${confidence}`;
+  return `自动${confidence}`;
+}
+
+function pointLabel(point: AnnotationPointKey) {
+  return {
+    anchor: '部件锚点',
+    elbow: '引线折点',
+    label: '编号位置'
+  }[point];
 }
 
 function acceptSelected() {
@@ -77,11 +86,14 @@ function percent(value: number) {
   <aside class="annotation-inspector">
     <section class="annotation-list-section">
       <div class="section-title">
-        <span>Current page annotations</span>
-        <ElTag size="small" type="info">{{ annotations.length }}</ElTag>
+        <span>标注结果</span>
+        <div class="title-tags">
+          <ElTag v-if="reviewCount" size="small" type="warning">{{ reviewCount }} 条待审核</ElTag>
+          <ElTag size="small" type="info">{{ annotations.length }} 条</ElTag>
+        </div>
       </div>
       <ElScrollbar class="annotation-list">
-        <ElEmpty v-if="!annotations.length" description="No annotations on this page" :image-size="52" />
+        <ElEmpty v-if="!annotations.length" description="自动标注或手动添加引线后，结果会显示在这里" :image-size="52" />
         <template v-else>
           <button
             v-for="annotation in annotations"
@@ -91,25 +103,25 @@ function percent(value: number) {
             :class="{ selected: annotation.id === selectedAnnotation?.id }"
             @click="emit('select', annotation.id)"
           >
-            <span class="annotation-ref">{{ annotation.refNo || 'No ref' }}</span>
-            <span class="annotation-name">{{ annotation.partName || 'Unnamed part' }}</span>
+            <span class="annotation-ref">{{ annotation.refNo || '未编号' }}</span>
+            <span class="annotation-name">{{ annotation.partName || '未填写部件名称' }}</span>
             <ElTag size="small" :type="statusType(annotation)">{{ statusLabel(annotation) }}</ElTag>
-            <ElTag v-if="!annotation.visible" size="small" type="info">Hidden</ElTag>
+            <ElTag v-if="!annotation.visible" size="small" type="info">隐藏</ElTag>
           </button>
         </template>
       </ElScrollbar>
     </section>
 
     <section class="annotation-property-section">
-      <div class="section-title">Annotation properties</div>
-      <ElEmpty v-if="!selectedAnnotation" description="Select an annotation to edit it" :image-size="52" />
+      <div class="section-title">编辑所选标注</div>
+      <ElEmpty v-if="!selectedAnnotation" description="选择上方任一标注即可编辑" :image-size="52" />
       <ElScrollbar v-else class="property-scroll">
         <ElForm label-position="top" size="small">
           <div class="two-columns">
-            <ElFormItem label="Reference">
+            <ElFormItem label="编号">
               <ElInput :model-value="selectedAnnotation.refNo" @update:model-value="updateField('refNo', $event)" />
             </ElFormItem>
-            <ElFormItem label="Part name">
+            <ElFormItem label="部件名称">
               <ElInput
                 :model-value="selectedAnnotation.partName"
                 @update:model-value="updateField('partName', $event)"
@@ -118,7 +130,7 @@ function percent(value: number) {
           </div>
 
           <div v-for="point in ['anchor', 'elbow', 'label'] as AnnotationPointKey[]" :key="point">
-            <div class="coordinate-title">{{ point }}</div>
+            <div class="coordinate-title">{{ pointLabel(point) }}</div>
             <div class="two-columns">
               <ElFormItem label="X (%)">
                 <ElInputNumber
@@ -144,7 +156,7 @@ function percent(value: number) {
           </div>
 
           <div class="two-columns">
-            <ElFormItem label="Line width">
+            <ElFormItem label="线宽">
               <ElInputNumber
                 :model-value="selectedAnnotation.lineWidth"
                 :min="0.5"
@@ -154,7 +166,7 @@ function percent(value: number) {
                 @update:model-value="updateField('lineWidth', $event)"
               />
             </ElFormItem>
-            <ElFormItem label="Font size">
+            <ElFormItem label="字号">
               <ElInputNumber
                 :model-value="selectedAnnotation.fontSize"
                 :min="8"
@@ -165,32 +177,44 @@ function percent(value: number) {
             </ElFormItem>
           </div>
 
-          <ElFormItem label="Visible">
+          <ElFormItem label="显示">
             <ElSwitch :model-value="selectedAnnotation.visible" @update:model-value="updateField('visible', $event)" />
           </ElFormItem>
 
           <div v-if="selectedAnnotation.origin === 'automatic'" class="auto-detail">
             <div class="detail-row">
-              <span>Confidence</span>
-              <strong>{{ selectedAnnotation.confidence === undefined ? '-' : `${Math.round(selectedAnnotation.confidence * 100)}%` }}</strong>
+              <span>置信度</span>
+              <strong>
+                {{
+                  selectedAnnotation.confidence === undefined
+                    ? '-'
+                    : `${Math.round(selectedAnnotation.confidence * 100)}%`
+                }}
+              </strong>
             </div>
             <div class="detail-row">
-              <span>Status</span>
+              <span>状态</span>
               <ElTag size="small" :type="statusType(selectedAnnotation)">{{ statusLabel(selectedAnnotation) }}</ElTag>
             </div>
             <div v-if="selectedAnnotation.modelName" class="detail-row">
-              <span>Model</span>
+              <span>模型</span>
               <strong>{{ selectedAnnotation.modelName }}</strong>
             </div>
             <div v-if="selectedAnnotation.modelReason" class="detail-reason">{{ selectedAnnotation.modelReason }}</div>
             <div v-if="selectedBboxText" class="detail-reason">bbox {{ selectedBboxText }}</div>
-            <ElButton v-if="selectedAnnotation.reviewState === 'review'" type="success" plain class="delete-button" @click="acceptSelected">
-              Accept
+            <ElButton
+              v-if="selectedAnnotation.reviewState === 'review'"
+              type="success"
+              plain
+              class="delete-button"
+              @click="acceptSelected"
+            >
+              接受
             </ElButton>
           </div>
 
           <ElButton type="danger" plain class="delete-button" @click="emit('delete', selectedAnnotation.id)">
-            Delete annotation
+            删除标注
           </ElButton>
         </ElForm>
       </ElScrollbar>
@@ -231,6 +255,12 @@ function percent(value: number) {
   padding: 0 14px;
   color: var(--el-text-color-primary);
   font-weight: 600;
+}
+
+.title-tags {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .annotation-list,
@@ -291,7 +321,6 @@ function percent(value: number) {
   color: var(--el-text-color-secondary);
   font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
 }
 
 .annotation-property-section :deep(.el-input-number) {

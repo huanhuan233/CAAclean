@@ -8,13 +8,20 @@ import LeaderOverlay from './LeaderOverlay.vue';
 
 defineOptions({ name: 'PdfAnnotationWorkspace' });
 
-const props = defineProps<{
-  store: PatentAnnotationStore;
-}>();
+const props = withDefaults(
+  defineProps<{
+    store: PatentAnnotationStore;
+    busy?: boolean;
+  }>(),
+  {
+    busy: false
+  }
+);
 const store = props.store;
 
 const emit = defineEmits<{
   (event: 'activeChange', payload: { sourceId: string; page: number }): void;
+  (event: 'sourcesChange', sourceIds: string[]): void;
 }>();
 
 interface PdfRuntimeSource {
@@ -65,6 +72,7 @@ const stageStyle = computed(() => ({
 }));
 
 function openFilePicker() {
+  if (props.busy) return;
   fileInputRef.value?.click();
 }
 
@@ -72,14 +80,17 @@ function handleFileSelection(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files ?? []);
   input.value = '';
+  if (props.busy) return;
   addPdfFiles(files);
 }
 
 function addPdfFiles(files: File[]) {
+  let accepted = false;
   for (const file of files) {
     if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
       window.$message?.error(`${file.name} 不是 PDF 文件`);
     } else {
+      accepted = true;
       const fileKey = `${file.name}:${file.size}:${file.lastModified}`;
       const source = store.getOrCreateSource({
         kind: 'pdf',
@@ -108,19 +119,30 @@ function addPdfFiles(files: File[]) {
       .find(item => files.some(file => `${file.name}:${file.size}:${file.lastModified}` === item.fileKey));
     if (lastAccepted) activeSourceId.value = lastAccepted.sourceId;
   }
+  if (accepted) emitRuntimeSources();
 }
 
 function removeActiveFile() {
+  if (props.busy) return;
   const index = runtimeSources.value.findIndex(item => item.sourceId === activeSourceId.value);
   if (index < 0) return;
   const [removed] = runtimeSources.value.splice(index, 1);
   URL.revokeObjectURL(removed.objectUrl);
   const next = runtimeSources.value[Math.min(index, runtimeSources.value.length - 1)];
   activeSourceId.value = next?.sourceId ?? '';
+  emitRuntimeSources();
 }
 
 function selectSource(sourceId: string) {
+  if (props.busy) return;
   activeSourceId.value = sourceId;
+}
+
+function emitRuntimeSources() {
+  emit(
+    'sourcesChange',
+    runtimeSources.value.map(item => item.sourceId)
+  );
 }
 
 async function onPdfRendered() {
@@ -263,6 +285,7 @@ function updateLeaderPoint(payload: AnnotationPointUpdate) {
 }
 
 function setCurrentPage(page: number) {
+  if (props.busy) return;
   currentPage.value = Math.min(pageCount.value, Math.max(1, page));
 }
 
@@ -315,7 +338,8 @@ onBeforeUnmount(() => {
 
 defineExpose({
   getCurrentPageImageBlob,
-  getCurrentPageImageData
+  getCurrentPageImageData,
+  openFilePicker
 });
 </script>
 
@@ -330,29 +354,34 @@ defineExpose({
         multiple
         @change="handleFileSelection"
       />
-      <ElButton type="primary" plain @click="openFilePicker">上传 PDF</ElButton>
+      <div class="workspace-name">
+        <strong>附图画布</strong>
+        <span>无引线 PDF</span>
+      </div>
+      <ElButton type="primary" plain :disabled="busy" @click="openFilePicker">添加附图 PDF</ElButton>
       <ElSelect
         :model-value="activeSourceId"
         class="source-select"
-        placeholder="选择当前 PDF"
-        :disabled="!runtimeSources.length"
+        placeholder="选择当前附图"
+        :disabled="!runtimeSources.length || busy"
         @change="selectSource"
       >
         <ElOption v-for="item in runtimeSources" :key="item.sourceId" :label="item.file.name" :value="item.sourceId" />
       </ElSelect>
-      <ElButton :disabled="!activeRuntime" @click="removeActiveFile">移除文件</ElButton>
+      <ElButton :disabled="!activeRuntime || busy" @click="removeActiveFile">移除</ElButton>
       <div class="toolbar-divider" />
       <ElPagination
         v-if="activeRuntime"
-        small
+        size="small"
         background
         layout="prev, pager, next"
         :pager-count="5"
         :current-page="currentPage"
         :page-count="pageCount"
+        :disabled="busy"
         @current-change="setCurrentPage"
       />
-      <ElButton :type="addMode ? 'primary' : 'default'" :disabled="!activeRuntime" @click="addMode = !addMode">
+      <ElButton :type="addMode ? 'primary' : 'default'" :disabled="!activeRuntime || busy" @click="addMode = !addMode">
         {{ addMode ? '点击图面放置引线' : '添加引线' }}
       </ElButton>
       <ElButton :disabled="!activeRuntime" @click="fitStage">适应窗口</ElButton>
@@ -371,7 +400,12 @@ defineExpose({
       @pointercancel="stopPan"
       @wheel.prevent="onWheel"
     >
-      <ElEmpty v-if="!activeRuntime" description="上传一个或多个 PDF 后开始标注" />
+      <div v-if="!activeRuntime" class="workspace-empty">
+        <div class="empty-mark">PDF</div>
+        <strong>上传无引线专利附图</strong>
+        <span>可一次选择资源 527、528 等多个 PDF；上传后会按顺序自动匹配图号</span>
+        <ElButton type="primary" :disabled="busy" @click="openFilePicker">选择附图 PDF</ElButton>
+      </div>
       <div v-else ref="stageRef" class="pdf-stage" :style="stageStyle" @pointerdown="onStagePointerDown">
         <VuePdfEmbed
           :key="activeRuntime.sourceId"
@@ -417,6 +451,22 @@ defineExpose({
   border-bottom: 1px solid var(--el-border-color-light);
   padding: 8px 10px;
   white-space: nowrap;
+}
+
+.workspace-name {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  margin-right: 2px;
+  color: var(--el-text-color-primary);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.workspace-name span {
+  color: var(--el-text-color-secondary);
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .hidden-input {
@@ -472,6 +522,37 @@ defineExpose({
 
 .pdf-viewport.add-mode {
   cursor: crosshair;
+}
+
+.workspace-empty {
+  display: flex;
+  max-width: 440px;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px;
+  color: var(--el-text-color-primary);
+  text-align: center;
+}
+
+.workspace-empty span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.empty-mark {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 14px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
 }
 
 .pdf-stage {

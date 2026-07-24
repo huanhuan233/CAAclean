@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { nextTick } from 'vue';
 import { usePatentAnnotations } from '../composables/usePatentAnnotations';
-import { buildAutoAnnotationSuggestions } from '../composables/usePatentAutoAnnotation';
+import { buildAutoAnnotationSuggestions, usePatentAutoAnnotation } from '../composables/usePatentAutoAnnotation';
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -75,6 +75,54 @@ test('rebinding a saved PDF does not reduce its known page count', () => {
 
   assert.equal(rebound.id, source.id);
   assert.equal(rebound.pageCount, 8);
+});
+
+test('batch figure PDFs uploaded after parsing all receive a figure mapping', () => {
+  const store = usePatentAnnotations({ storage: null });
+  const first = store.getOrCreateSource({
+    kind: 'pdf',
+    fileKey: 'resource-527',
+    fileName: '\u8D44\u6E90527.pdf',
+    pageCount: 1
+  });
+  const second = store.getOrCreateSource({
+    kind: 'pdf',
+    fileKey: 'resource-528',
+    fileName: '\u8D44\u6E90528.pdf',
+    pageCount: 1
+  });
+  const automation = usePatentAutoAnnotation(store);
+  automation.parseResult.value = {
+    file_name: 'specification.pdf',
+    parser: 'pypdf',
+    components: [{ ref_no: '1', name: 'part' }],
+    figures: [
+      { figure_no: '1', description: '', context: '', explicit_ref_nos: [], candidate_ref_nos: [], detail_markers: [] },
+      { figure_no: '2', description: '', context: '', explicit_ref_nos: [], candidate_ref_nos: [], detail_markers: [] }
+    ],
+    warnings: []
+  };
+  const ensureSourceFigureNos = (
+    automation as typeof automation & { ensureSourceFigureNos?: (sources: typeof store.document.value.sources) => void }
+  ).ensureSourceFigureNos;
+
+  assert.equal(typeof ensureSourceFigureNos, 'function');
+  ensureSourceFigureNos?.([first, second]);
+  assert.deepEqual(
+    store.document.value.sources.map(source => source.figureNo),
+    ['1', '2']
+  );
+
+  const third = store.getOrCreateSource({
+    kind: 'pdf',
+    fileKey: 'resource-529',
+    fileName: '\u8D44\u6E90529.pdf',
+    pageCount: 1
+  });
+  ensureSourceFigureNos?.([second, third]);
+
+  assert.equal(second.figureNo, '2');
+  assert.equal(third.figureNo, '1');
 });
 
 test('clearPage removes only the selected source and page', () => {
@@ -202,7 +250,10 @@ test('auto suggestion replacement preserves manual conflicts and unrelated pages
     { sourceId: source.id, page: 1, replaceAuto: true }
   );
 
-  const pageRefs = store.annotationsFor(source.id, 1).map(item => `${item.origin}:${item.refNo}:${item.id}`).sort();
+  const pageRefs = store
+    .annotationsFor(source.id, 1)
+    .map(item => `${item.origin}:${item.refNo}:${item.id}`)
+    .sort();
   assert.deepEqual(pageRefs, [`automatic:2:new-auto-2`, `automatic:3:new-auto-3`, `manual:1:${manual.id}`].sort());
   assert.equal(store.annotationsFor(source.id, 2).length, 1);
   assert.equal(store.annotationsFor(other.id, 1).length, 1);
@@ -229,7 +280,13 @@ test('acceptPageAutoAnnotations accepts only review automatic annotations on the
   assert.equal(store.document.value.annotations.find(item => item.id === 'review-other-page')?.reviewState, 'review');
 });
 
-function suggested(input: { id: string; sourceId: string; page: number; refNo: string; reviewState?: 'review' | 'accepted' }) {
+function suggested(input: {
+  id: string;
+  sourceId: string;
+  page: number;
+  refNo: string;
+  reviewState?: 'review' | 'accepted';
+}) {
   return {
     id: input.id,
     sourceId: input.sourceId,

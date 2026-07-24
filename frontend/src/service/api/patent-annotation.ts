@@ -1,5 +1,8 @@
 import { request } from '../request';
 
+const PATENT_DOCUMENT_TIMEOUT_MS = 4 * 60 * 1000;
+const PATENT_LOCALIZATION_TIMEOUT_MS = 11 * 60 * 1000;
+
 export function parsePatentDocument(file: File, options: { fast?: boolean } = {}) {
   const data = new FormData();
   data.append('pdf_file', file);
@@ -10,8 +13,10 @@ export function parsePatentDocument(file: File, options: { fast?: boolean } = {}
     method: 'post',
     data,
     headers: {
-      'Content-Type': 'multipart/form-data'
-    }
+      'Content-Type': 'multipart/form-data',
+      'X-Client-Silent-Error': '1'
+    },
+    timeout: PATENT_DOCUMENT_TIMEOUT_MS
   });
 }
 
@@ -35,7 +40,9 @@ export function localizePatentPage(params: {
     method: 'post',
     data,
     headers: {
-      'Content-Type': 'multipart/form-data'
-    }
+      'Content-Type': 'multipart/form-data',
+      'X-Client-Silent-Error': '1'
+    },
+    timeout: PATENT_LOCALIZATION_TIMEOUT_MS
   });
 }

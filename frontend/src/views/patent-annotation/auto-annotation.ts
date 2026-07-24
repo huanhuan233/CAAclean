@@ -20,6 +20,13 @@ export interface PatentFigureLike {
   figure_no: string;
 }
 
+export interface PatentSourceLike {
+  id: string;
+  kind: 'pdf' | 'step';
+  fileName: string;
+  figureNo?: string;
+}
+
 export function snapPointToInk(point: Point2D, imageData: ImageData, options: SnapOptions = {}): Point2D {
   const radius = Math.max(0, Math.trunc(options.radius ?? 12));
   const threshold = options.threshold ?? 180;
@@ -36,7 +43,9 @@ export function snapPointToInk(point: Point2D, imageData: ImageData, options: Sn
         const offset = (y * width + x) * 4;
         const alpha = imageData.data[offset + 3] ?? 0;
         const darkness =
-          ((imageData.data[offset] ?? 255) + (imageData.data[offset + 1] ?? 255) + (imageData.data[offset + 2] ?? 255)) /
+          ((imageData.data[offset] ?? 255) +
+            (imageData.data[offset + 1] ?? 255) +
+            (imageData.data[offset + 2] ?? 255)) /
           3;
         if (alpha > 0 && darkness < threshold && (!best || distance < best.distance)) best = { x, y, distance };
       }
@@ -50,7 +59,10 @@ export function snapPointToInk(point: Point2D, imageData: ImageData, options: Sn
   };
 }
 
-export function autoLayoutAnnotations(anchors: AutoLayoutAnchor[], options: { minSpacing?: number } = {}): AutoLayoutItem[] {
+export function autoLayoutAnnotations(
+  anchors: AutoLayoutAnchor[],
+  options: { minSpacing?: number } = {}
+): AutoLayoutItem[] {
   const minSpacing = options.minSpacing ?? 0.055;
   const left = anchors.filter(item => item.anchor.x > 0.5);
   const right = anchors.filter(item => item.anchor.x <= 0.5);
@@ -61,15 +73,36 @@ export function autoLayoutAnnotations(anchors: AutoLayoutAnchor[], options: { mi
 
 export function inferFigureNo(fileName: string, figures: PatentFigureLike[], sourceIndex: number): string {
   const chinese = /图\s*(\d+)/i.exec(fileName);
-  if (chinese) return chinese[1];
   const english = /figure\s*(\d+)/i.exec(fileName);
-  if (english) return english[1];
+  const explicitFigureNo = chinese?.[1] ?? english?.[1];
+  if (explicitFigureNo) {
+    return figures.some(figure => figure.figure_no === explicitFigureNo) ? explicitFigureNo : '';
+  }
   return figures[sourceIndex]?.figure_no ?? figures[0]?.figure_no ?? '';
 }
 
+export function inferFigureNoForSource(
+  source: PatentSourceLike,
+  sources: PatentSourceLike[],
+  figures: PatentFigureLike[]
+): string {
+  if (source.figureNo) return source.figureNo;
+  const pdfSources = sources.filter(item => item.kind === 'pdf');
+  const sourceIndex = Math.max(
+    0,
+    pdfSources.findIndex(item => item.id === source.id)
+  );
+  return inferFigureNo(source.fileName, figures, sourceIndex);
+}
+
 function layoutGroup(items: AutoLayoutAnchor[], side: 'left' | 'right', minSpacing: number): AutoLayoutItem[] {
-  const sorted = [...items].sort((a, b) => a.anchor.y - b.anchor.y || a.refNo.localeCompare(b.refNo, undefined, { numeric: true }));
-  const ys = distribute(sorted.map(item => clamp01(item.anchor.y)), minSpacing);
+  const sorted = [...items].sort(
+    (a, b) => a.anchor.y - b.anchor.y || a.refNo.localeCompare(b.refNo, undefined, { numeric: true })
+  );
+  const ys = distribute(
+    sorted.map(item => clamp01(item.anchor.y)),
+    minSpacing
+  );
   return sorted.map((item, index) => {
     const anchor = normalizePoint(item.anchor);
     const label = { x: side === 'left' ? 0.06 : 0.94, y: ys[index] };
