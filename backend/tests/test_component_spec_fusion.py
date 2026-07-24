@@ -120,9 +120,24 @@ def xms06_sources(*, confirm_bore=True):
         {
             "feature_type": "main_axis_candidate",
             "axis": [0.0, 1.0, 0.0],
+            "center": [0.0, -25.0, 0.0],
             "confidence": 0.95,
-            "parameters": {},
-        }
+            "parameters": {"axis_origin": [0.0, -25.0, 0.0]},
+        },
+        {
+            "feature_type": "circular_pattern",
+            "axis": [0.0, 1.0, 0.0],
+            "center": [0.0, -40.0, 0.0],
+            "confidence": 0.85,
+            "parameters": {
+                "count": 8,
+                "member_diameter": 18.0,
+                "pitch_circle_diameter": 160.0,
+                "center": [0.0, -40.0, 0.0],
+                "axis": [0.0, 1.0, 0.0],
+                "start_angle": 0.0,
+            },
+        },
     ]
     return FusionSources(
         drawing_facts=product_facts()
@@ -152,6 +167,10 @@ def xms06_sources(*, confirm_bore=True):
             "unit": "mm",
             "object_count": 1,
             "solid_count": 1,
+            "bounding_box": {
+                "min": [-100.0, -50.0, -100.0],
+                "max": [100.0, 0.0, 100.0],
+            },
         },
     )
 
@@ -212,9 +231,38 @@ def test_flange_fusion_maps_only_dn80_and_builds_matching_preset():
     assert result.data["validation"]["topology"]["solid_required"] is True
     assert result.data["artifacts"]["reference_step"]["file"] == "XMS06-DN80.stp"
     assert result.data["artifacts"]["reference_step"]["sha256"] == "abc123"
+    assert result.data["coordinate_system"]["origin"] == [0.0, -50.0, 0.0]
+    assert result.data["coordinate_system"]["x_axis"] == [0.0, 0.0, -1.0]
+    assert result.data["coordinate_system"]["y_axis"] == [-1.0, 0.0, 0.0]
+    assert result.data["coordinate_system"]["z_axis"] == [0.0, 1.0, 0.0]
+    assert result.data["coordinate_system"]["origin_definition"].startswith("法兰密封端面中心")
+    assert result.data["geometry"]["representation"] == "parametric_recipe"
+    assert result.data["geometry"]["modeling_kernel"] == "OpenCascade"
+    assert result.data["geometry"]["generator"] == {
+        "mode": "dsl_or_script",
+        "preferred_engine": "CadQuery",
+        "engine_version": "2.x",
+        "script_file": "flange-weld-neck.py",
+        "entrypoint": "build_component",
+        "script_required_for_release": True,
+    }
+    assert [step["operation"] for step in result.data["geometry"]["construction"]] == [
+        "revolve_profile",
+        "polar_pattern_cut",
+        "fillet",
+    ]
+    assert result.data["geometry"]["construction"][1]["count"] == "${bolt_hole_count}"
+    assert result.data["geometry"]["output"]["filename_template"] == "${component_id}-${preset_name}.step"
+    assert result.data["validation"]["geometry"]["bounding_box_expression"] == {
+        "x_size": "flange_outer_diameter",
+        "y_size": "flange_outer_diameter",
+        "z_size": "overall_height",
+    }
+    assert result.data["validation"]["review"]["release_blocked_when_pending"] is True
     review_paths = {item["path"] for item in result.fields if item["needs_review"]}
     assert "parameters.wall_thickness.default" in review_paths
     assert "parameters.hub_height.default" in review_paths
+    assert "coordinate_system.origin_definition" in review_paths
 
 
 def test_bore_diameter_requires_matching_step_measurement():
