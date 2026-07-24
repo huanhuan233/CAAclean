@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.db.session import init_db
 from app.drawing.router import router as drawing_router
 from app.health.router import router as health_router
+from app.patent_annotation.router import router as patent_annotation_router
 
 
 settings = get_settings()
@@ -38,3 +39,4 @@ app.include_router(health_router)
 app.include_router(cad_router)
 app.include_router(drawing_router)
 app.include_router(component_build_router)
+app.include_router(patent_annotation_router)
