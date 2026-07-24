@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import shlex
-import urllib.request
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
 from PIL import Image
 
+from app.core.mineru import MineruClient, MineruError
 from app.drawing.layout import LayoutDetectionResult, LayoutRegion, merge_regions, provider_type_to_region_type
 from app.drawing.schemas import DrawingError
 
@@ -28,49 +26,20 @@ class MineruLayoutProvider:
         timeout: int = 180,
         transport: Callable[[Path], Awaitable[dict]] | None = None,
     ):
-        self.mode = mode
-        self.url = url
-        self.command = command
-        self.timeout = timeout
-        self.transport = transport
+        self.client = MineruClient(
+            mode=mode,
+            url=url,
+            command=command,
+            timeout=timeout,
+            transport=transport,
+        )
 
     async def detect(self, image_path: Path) -> LayoutDetectionResult:
-        if self.mode == "disabled":
-            raise DrawingError("mineru_not_configured", "MinerU layout provider is disabled")
         try:
-            if self.transport:
-                payload = await asyncio.wait_for(self.transport(image_path), timeout=self.timeout)
-            elif self.mode == "http":
-                payload = await asyncio.wait_for(asyncio.to_thread(self._http_detect, image_path), timeout=self.timeout)
-            elif self.mode == "command":
-                payload = await asyncio.wait_for(self._command_detect(image_path), timeout=self.timeout)
-            else:
-                raise DrawingError("mineru_not_configured", "unsupported MinerU layout mode")
-        except TimeoutError as exc:
-            raise DrawingError("mineru_timeout", "MinerU layout detection timed out") from exc
-        except DrawingError:
-            raise
-        except Exception as exc:
-            raise DrawingError("mineru_connection_failed", "MinerU layout detection failed") from exc
+            payload = await self.client.fetch_payload(image_path)
+        except MineruError as exc:
+            raise DrawingError(exc.code, exc.message) from exc
         return _parse_provider_payload(payload, provider="mineru")
-
-    def _http_detect(self, image_path: Path) -> dict:
-        if not self.url:
-            raise DrawingError("mineru_not_configured", "MINERU_LAYOUT_URL is not configured")
-        data = image_path.read_bytes()
-        request = urllib.request.Request(self.url, data=data, method="POST", headers={"Content-Type": "application/octet-stream"})
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-
-    async def _command_detect(self, image_path: Path) -> dict:
-        if not self.command:
-            raise DrawingError("mineru_not_configured", "MINERU_LAYOUT_COMMAND is not configured")
-        args = [*shlex.split(self.command), str(image_path)]
-        process = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _stderr = await process.communicate()
-        if process.returncode != 0:
-            raise DrawingError("mineru_connection_failed", "MinerU command failed")
-        return json.loads(stdout.decode("utf-8"))
 
 
 class VisionLayoutProvider:

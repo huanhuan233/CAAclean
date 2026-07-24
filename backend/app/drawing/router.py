@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-import json
 import asyncio
 from pathlib import Path
 
@@ -10,10 +9,11 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.vision import build_vision_client
 from app.db.session import SessionLocal, get_session
 from app.drawing.providers import AutoLayoutProvider, ManualLayoutProvider, MineruLayoutProvider, VisionLayoutProvider
 from app.drawing.repository import SqlAlchemyDrawingRepository
-from app.drawing.extraction_client import VisionJsonClient, VisionModelError
+from app.drawing.extraction_client import VisionModelError
 from app.drawing.extraction_repository import SqlAlchemyExtractionRepository
 from app.drawing.extraction_schemas import ExtractRequest, ExtractionStatusOut
 from app.drawing.schemas import DrawingError, DrawingLayoutStatusOut, DrawingRegionListOut, DrawingTaskOut, ManualRegionsIn
@@ -63,22 +63,6 @@ def create_drawing_service(session: AsyncSession, settings: Settings) -> Drawing
 
 def get_drawing_service(session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings)) -> DrawingLayoutService:
     return create_drawing_service(session, settings)
-
-
-def build_vision_client(settings: Settings) -> VisionJsonClient:
-    extra_body = {}
-    if settings.vision_extra_body:
-        extra_body = json.loads(settings.vision_extra_body)
-    if settings.vision_enable_thinking is False:
-        extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-    return VisionJsonClient(
-        base_url=settings.vision_binding_host,
-        api_key=settings.vision_binding_api_key,
-        model=settings.vision_model,
-        timeout=settings.ai_request_timeout,
-        max_retries=settings.ai_max_retries,
-        extra_body=extra_body,
-    )
 
 
 @router.post("/tasks", response_model=DrawingTaskOut, status_code=status.HTTP_202_ACCEPTED)

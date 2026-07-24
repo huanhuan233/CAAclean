@@ -12,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.core.config import Settings
+from app.core.vision import build_vision_client
 from app.drawing.cropper import crop_regions
 from app.drawing.layout import LayoutDetectionResult, LayoutRegion, merge_regions
 from app.drawing.preprocessing import DrawingImagePreprocessor
@@ -116,19 +118,34 @@ def test_adjacent_text_regions_merge_into_business_region():
 
 
 @pytest.mark.asyncio
-async def test_mineru_provider_accepts_mock_http_result(tmp_path):
-    path = make_image(tmp_path / "sample.png")
+async def test_mineru_layout_uses_shared_payload_client(tmp_path):
+    seen = []
 
-    async def transport(_path):
-        return {
-            "provider_version": "mock",
-            "regions": [{"type": "table", "bbox": [10, 20, 100, 70], "score": 0.95}],
-        }
+    async def transport(path):
+        seen.append(path)
+        return {"regions": [{"type": "table", "bbox": [1, 2, 30, 40]}]}
 
-    result = await MineruLayoutProvider(mode="http", url="http://mock", transport=transport).detect(path)
+    image = make_image(tmp_path / "drawing.png")
+    result = await MineruLayoutProvider(mode="http", transport=transport).detect(image)
 
+    assert seen == [image]
     assert result.provider == "mineru"
-    assert result.regions[0].region_type == "parameter_table"
+
+
+def test_build_vision_client_preserves_model_and_extra_body_configuration():
+    settings = Settings(
+        vision_model="vision-json-test",
+        vision_extra_body='{"provider_options": {"json_mode": true}, "chat_template_kwargs": {"temperature": 0.2}}',
+        vision_enable_thinking=False,
+    )
+
+    client = build_vision_client(settings)
+
+    assert client.model == "vision-json-test"
+    assert client.extra_body == {
+        "provider_options": {"json_mode": True},
+        "chat_template_kwargs": {"temperature": 0.2, "enable_thinking": False},
+    }
 
 
 @pytest.mark.asyncio
