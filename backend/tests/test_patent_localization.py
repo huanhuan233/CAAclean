@@ -62,6 +62,16 @@ def test_prepare_patent_images_rejects_bad_and_oversized_input(tmp_path):
     assert large_exc.value.code == "patent_image_too_large"
 
 
+def test_prepare_patent_images_rejects_disguised_unsupported_format(tmp_path):
+    path = tmp_path / "renamed.png"
+    Image.new("RGB", (10, 10), "white").save(path, format="BMP")
+
+    with pytest.raises(PatentAnnotationError) as exc:
+        prepare_patent_images(path, tmp_path / "work", max_image_mb=1)
+
+    assert exc.value.code == "patent_image_invalid"
+
+
 class FakeVisionClient:
     def __init__(self, outputs=None, error=None):
         self.outputs = list(outputs or [])
@@ -105,6 +115,42 @@ async def test_localize_normalizes_anchor_and_accepts_high_confidence(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_localize_review_thresholds_and_outside_bbox_preserve_rejected(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {
+                "items": [
+                    {"ref_no": "1", "visible": True, "confidence": 0.44, "anchor": {"x": 100, "y": 100}},
+                    {"ref_no": "2", "visible": True, "confidence": 0.45, "anchor": {"x": 100, "y": 100}},
+                    {"ref_no": "3", "visible": True, "confidence": 0.72, "anchor": {"x": 100, "y": 100}},
+                    {
+                        "ref_no": "4",
+                        "visible": True,
+                        "confidence": 0.2,
+                        "anchor": {"x": 900, "y": 900},
+                        "bbox": {"x_min": 0, "y_min": 0, "x_max": 100, "y_max": 100},
+                    },
+                ]
+            }
+        ]
+    )
+
+    result = await PatentLocalizationService(client).localize(
+        image_path,
+        figure_no="1",
+        figure_description="",
+        figure_context="",
+        candidates=[candidate("1"), candidate("2"), candidate("3"), candidate("4")],
+        work_dir=tmp_path / "work",
+    )
+
+    states = {item.ref_no: item.review_state for item in result.items}
+    assert states == {"1": "rejected", "2": "review", "3": "accepted", "4": "rejected"}
+
+
+@pytest.mark.asyncio
 async def test_localize_filters_unknown_refs_and_keeps_highest_duplicate(tmp_path):
     image_path = tmp_path / "figure.png"
     Image.new("RGB", (100, 100), "white").save(image_path)
@@ -132,6 +178,60 @@ async def test_localize_filters_unknown_refs_and_keeps_highest_duplicate(tmp_pat
     assert [item.ref_no for item in result.items] == ["1"]
     assert result.items[0].anchor.x == 0.3
     assert "unknown_ref_9" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_localize_treats_other_batch_refs_as_unknown(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {"items": [{"ref_no": "16", "visible": True, "confidence": 0.99, "anchor": {"x": 100, "y": 100}}]},
+            {"items": [{"ref_no": "16", "visible": True, "confidence": 0.6, "anchor": {"x": 300, "y": 300}}]},
+        ]
+    )
+    candidates = [candidate(str(index)) for index in range(17)]
+
+    result = await PatentLocalizationService(client).localize(
+        image_path,
+        figure_no="1",
+        figure_description="",
+        figure_context="",
+        candidates=candidates,
+        work_dir=tmp_path / "work",
+    )
+
+    assert result.items[0].ref_no == "16"
+    assert result.items[0].confidence == 0.6
+    assert "unknown_ref_16" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_localize_keeps_valid_items_when_one_model_item_is_invalid(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {
+                "items": [
+                    {"ref_no": "1", "visible": True, "confidence": 0.9, "anchor": {"x": 100, "y": 100}},
+                    {"ref_no": "2", "visible": True, "confidence": 2, "anchor": {"x": 100, "y": 100}},
+                ]
+            }
+        ]
+    )
+
+    result = await PatentLocalizationService(client).localize(
+        image_path,
+        figure_no="1",
+        figure_description="",
+        figure_context="",
+        candidates=[candidate("1"), candidate("2")],
+        work_dir=tmp_path / "work",
+    )
+
+    assert [item.ref_no for item in result.items] == ["1"]
+    assert "invalid_model_item_2" in result.warnings
 
 
 @pytest.mark.asyncio
@@ -211,6 +311,38 @@ async def test_localize_clamps_out_of_range_model_coordinates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_localize_warns_and_clamps_non_finite_coordinates(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {
+                "items": [
+                    {
+                        "ref_no": "1",
+                        "visible": True,
+                        "confidence": 0.9,
+                        "anchor": {"x": float("nan"), "y": 500},
+                    }
+                ]
+            }
+        ]
+    )
+
+    result = await PatentLocalizationService(client).localize(
+        image_path,
+        figure_no="1",
+        figure_description="",
+        figure_context="",
+        candidates=[candidate("1")],
+        work_dir=tmp_path / "work",
+    )
+
+    assert result.items[0].anchor.x == 0
+    assert "non_finite_coordinate_1" in result.warnings
+
+
+@pytest.mark.asyncio
 async def test_localize_batches_candidates_in_groups_of_16(tmp_path):
     image_path = tmp_path / "figure.png"
     Image.new("RGB", (100, 100), "white").save(image_path)
@@ -232,14 +364,14 @@ async def test_localize_batches_candidates_in_groups_of_16(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_localize_propagates_vision_model_error(tmp_path):
+async def test_localize_maps_vision_model_error_to_patent_error(tmp_path):
     image_path = tmp_path / "figure.png"
     Image.new("RGB", (100, 100), "white").save(image_path)
     service = PatentLocalizationService(
         FakeVisionClient(error=VisionModelError("vision_request_failed", "bad")),
     )
 
-    with pytest.raises(VisionModelError) as exc:
+    with pytest.raises(PatentAnnotationError) as exc:
         await service.localize(
             image_path,
             figure_no="1",
@@ -249,4 +381,4 @@ async def test_localize_propagates_vision_model_error(tmp_path):
             work_dir=tmp_path / "work",
         )
 
-    assert exc.value.code == "vision_request_failed"
+    assert exc.value.code == "patent_localization_failed"

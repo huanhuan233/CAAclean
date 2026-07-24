@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from app.drawing.extraction_client import VisionModelError
 from app.patent_annotation.image_utils import prepare_patent_images
+from app.patent_annotation.errors import PatentAnnotationError
 from app.patent_annotation.schemas import (
     LocalizationCandidate,
     ModelLocalizationBox,
+    ModelLocalizationItem,
     ModelLocalizationOutput,
     NormalizedBox,
     NormalizedLocalizationItem,
@@ -48,9 +54,8 @@ class PatentLocalizationService:
         assets = prepare_patent_images(image_path, work_dir)
         merged: dict[str, NormalizedLocalizationItem] = {}
         warnings: list[str] = []
-        allowed_refs = {candidate.ref_no for candidate in candidates}
-
         for batch in _chunks(candidates, self.batch_size):
+            batch_refs = {candidate.ref_no for candidate in batch}
             prompt = build_patent_localization_prompt(
                 figure_no=figure_no,
                 figure_description=figure_description,
@@ -58,15 +63,17 @@ class PatentLocalizationService:
                 candidates=batch,
                 model_name=self.model_name,
             )
-            payload = await self.vision_client.complete_json(
-                task_name="patent_page_localization",
-                schema=ModelLocalizationOutput,
-                messages=[{"type": "text", "text": prompt}],
-                image_paths=[assets.clean_path, assets.grid_path],
-            )
-            output = ModelLocalizationOutput.model_validate(payload)
-            for item in output.items:
-                if item.ref_no not in allowed_refs:
+            try:
+                payload = await self.vision_client.complete_json(
+                    task_name="patent_page_localization",
+                    schema=ModelLocalizationOutput,
+                    messages=[{"type": "text", "text": prompt}],
+                    image_paths=[assets.clean_path, assets.grid_path],
+                )
+            except VisionModelError as exc:
+                raise PatentAnnotationError("patent_localization_failed", exc.message) from exc
+            for item in _valid_model_items(payload, warnings):
+                if item.ref_no not in batch_refs:
                     warnings.append(f"unknown_ref_{item.ref_no}")
                     continue
                 normalized, item_warnings = _normalize_item(item)
@@ -107,8 +114,25 @@ def _chunks(items: list[LocalizationCandidate], size: int):
         yield items[index : index + size]
 
 
+def _valid_model_items(payload, warnings: list[str]) -> list[ModelLocalizationItem]:
+    raw_items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(raw_items, list):
+        warnings.append("invalid_model_output")
+        return []
+    items: list[ModelLocalizationItem] = []
+    for index, raw_item in enumerate(raw_items):
+        try:
+            items.append(ModelLocalizationItem.model_validate(raw_item))
+        except ValidationError:
+            ref = raw_item.get("ref_no") if isinstance(raw_item, dict) else index
+            warnings.append(f"invalid_model_item_{ref}")
+    return items
+
+
 def _normalize_item(item) -> tuple[NormalizedLocalizationItem, list[str]]:
     warnings: list[str] = []
+    if _has_non_finite_coordinates(item):
+        warnings.append(f"non_finite_coordinate_{item.ref_no}")
     anchor = _normalize_point(item.anchor) if item.anchor else None
     bbox = _normalize_box(item.bbox) if item.bbox else None
     visible = item.visible
@@ -119,7 +143,8 @@ def _normalize_item(item) -> tuple[NormalizedLocalizationItem, list[str]]:
 
     review_state = _review_state(visible, item.confidence)
     if visible and anchor and bbox and not _point_inside_bbox(anchor, bbox):
-        review_state = "review"
+        if review_state != "rejected":
+            review_state = "review"
         warnings.append(f"anchor_outside_bbox_{item.ref_no}")
 
     return (
@@ -137,9 +162,9 @@ def _normalize_item(item) -> tuple[NormalizedLocalizationItem, list[str]]:
 
 
 def _review_state(visible: bool, confidence: float) -> str:
-    if not visible or confidence < 0.5:
+    if not visible or confidence < 0.45:
         return "rejected"
-    if confidence >= 0.75:
+    if confidence >= 0.72:
         return "accepted"
     return "review"
 
@@ -160,7 +185,18 @@ def _point_inside_bbox(point: NormalizedPoint, bbox: NormalizedBox) -> bool:
     return bbox.x_min <= point.x <= bbox.x_max and bbox.y_min <= point.y <= bbox.y_max
 
 
+def _has_non_finite_coordinates(item: ModelLocalizationItem) -> bool:
+    values: list[float] = []
+    if item.anchor:
+        values.extend([item.anchor.x, item.anchor.y])
+    if item.bbox:
+        values.extend([item.bbox.x_min, item.bbox.y_min, item.bbox.x_max, item.bbox.y_max])
+    return any(not math.isfinite(value) for value in values)
+
+
 def _clamp(value: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
     return max(0.0, min(1.0, value))
 
 

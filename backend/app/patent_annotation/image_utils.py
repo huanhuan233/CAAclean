@@ -31,6 +31,8 @@ def prepare_patent_images(
 
     try:
         with Image.open(source) as opened:
+            if opened.format not in {"PNG", "JPEG", "WEBP"}:
+                raise PatentAnnotationError("patent_image_invalid", "only PNG, JPG, JPEG, or WEBP images are supported")
             image = ImageOps.exif_transpose(opened)
             if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
                 image = image.convert("RGBA")
@@ -39,6 +41,8 @@ def prepare_patent_images(
                 image = background.convert("RGB")
             else:
                 image = image.convert("RGB")
+    except PatentAnnotationError:
+        raise
     except (UnidentifiedImageError, OSError) as exc:
         raise PatentAnnotationError("patent_image_decode_failed", "patent image cannot be decoded") from exc
 
