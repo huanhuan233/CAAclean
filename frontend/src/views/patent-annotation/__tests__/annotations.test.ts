@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { nextTick } from 'vue';
 import { usePatentAnnotations } from '../composables/usePatentAnnotations';
+import { buildAutoAnnotationSuggestions } from '../composables/usePatentAutoAnnotation';
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -238,3 +239,55 @@ function suggested(id: string, sourceId: string, page: number, refNo: string, re
     confidence: 0.8
   };
 }
+
+test('buildAutoAnnotationSuggestions snaps, lays out, and excludes rejected items', () => {
+  const data = new Uint8ClampedArray(10 * 10 * 4);
+  data.fill(255);
+  for (let index = 3; index < data.length; index += 4) data[index] = 255;
+  const offset = (6 * 10 + 7) * 4;
+  data[offset] = 0;
+  data[offset + 1] = 0;
+  data[offset + 2] = 0;
+
+  const suggestions = buildAutoAnnotationSuggestions({
+    sourceId: 's1',
+    sourceKind: 'pdf',
+    page: 1,
+    components: [
+      { ref_no: '1', name: 'shell' },
+      { ref_no: '2', name: 'cover' }
+    ],
+    localization: {
+      warnings: [],
+      items: [
+        {
+          ref_no: '1',
+          visible: true,
+          confidence: 0.8,
+          reason: 'visible',
+          anchor: { x: 0.68, y: 0.6 },
+          bbox: { x_min: 0.1, y_min: 0.2, x_max: 0.3, y_max: 0.4 },
+          review_state: 'review'
+        },
+        {
+          ref_no: '2',
+          visible: true,
+          confidence: 0.2,
+          reason: 'hidden',
+          anchor: { x: 0.2, y: 0.2 },
+          bbox: null,
+          review_state: 'rejected'
+        }
+      ]
+    },
+    imageData: { width: 10, height: 10, data } as ImageData,
+    modelName: 'vision-test'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].origin, 'automatic');
+  assert.equal(suggestions[0].reviewState, 'review');
+  assert.equal(suggestions[0].partName, 'shell');
+  assert.equal(suggestions[0].anchor.x, 7 / 9);
+  assert.equal(suggestions[0].modelName, 'vision-test');
+});
