@@ -48,6 +48,7 @@ const addMode = ref(false);
 const spacePressed = ref(false);
 const panning = ref(false);
 const panState = ref<PanState | null>(null);
+const PDF_CAPTURE_UNAVAILABLE = '当前 PDF 页尚未渲染';
 
 const activeRuntime = computed(() => runtimeSources.value.find(item => item.sourceId === activeSourceId.value) ?? null);
 const activeSource = computed(
@@ -215,6 +216,42 @@ function onStagePointerDown(event: PointerEvent) {
   addMode.value = false;
 }
 
+async function getCurrentPageImageBlob(options: { scale?: number } = {}) {
+  const canvas = captureCanvas(options);
+  const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error(PDF_CAPTURE_UNAVAILABLE);
+  return blob;
+}
+
+function getCurrentPageImageData() {
+  const canvas = captureCanvas();
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function captureCanvas(options: { scale?: number } = {}) {
+  const source = stageRef.value?.querySelector('canvas');
+  if (!source) throw new Error(PDF_CAPTURE_UNAVAILABLE);
+  const sourceContext = source.getContext('2d');
+  if (!sourceContext) throw new Error(PDF_CAPTURE_UNAVAILABLE);
+
+  const longest = Math.max(source.width, source.height, 1);
+  const targetLongest = options.scale
+    ? Math.min(2048, Math.max(1600, longest * options.scale))
+    : Math.min(2048, Math.max(1600, longest));
+  const ratio = targetLongest / longest;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(source.width * ratio));
+  canvas.height = Math.max(1, Math.round(source.height * ratio));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error(PDF_CAPTURE_UNAVAILABLE);
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
 function selectAnnotation(annotationId: string) {
   store.selectedAnnotationId.value = annotationId;
 }
@@ -272,6 +309,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('keyup', onKeyUp);
   window.removeEventListener('blur', clearKeyboardState);
   revokeAllObjectUrls();
+});
+
+defineExpose({
+  getCurrentPageImageBlob,
+  getCurrentPageImageData
 });
 </script>
 
