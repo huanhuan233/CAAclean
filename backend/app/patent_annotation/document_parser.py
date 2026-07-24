@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -48,16 +49,27 @@ def normalize_match_text(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _mineru_payload_score(payload: dict[str, Any]) -> int:
+    score = 0
+    for key in ("full_text", "text", "markdown"):
+        if _as_text(payload.get(key)).strip():
+            score += 10
+    for key in ("pages", "content_list"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict) and _item_text(item).strip():
+                    score += 1
+    return score
+
+
 def _unwrap_mineru_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    current: dict[str, Any] = payload
-    while True:
-        for key in ("data", "result"):
-            nested = current.get(key)
-            if isinstance(nested, dict):
-                current = nested
-                break
-        else:
-            return current
+    candidates = [payload]
+    for key in ("data", "result"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            candidates.append(_unwrap_mineru_payload(nested))
+    return max(candidates, key=_mineru_payload_score)
 
 
 def _as_text(value: Any) -> str:
@@ -109,9 +121,37 @@ def mineru_payload_to_content(payload: dict[str, Any]) -> PatentDocumentContent:
     fragments: list[str] = []
 
     source_items = data.get("pages")
-    if not isinstance(source_items, list):
+    is_content_list = False
+    if not isinstance(source_items, list) or not source_items:
         source_items = data.get("content_list")
-    if isinstance(source_items, list):
+        is_content_list = isinstance(source_items, list)
+    if isinstance(source_items, list) and is_content_list:
+        page_groups: dict[int, dict[str, Any]] = {}
+        for index, raw_item in enumerate(source_items, start=1):
+            if not isinstance(raw_item, dict):
+                continue
+            page_no = _page_no(raw_item, index)
+            group = page_groups.setdefault(page_no, {"texts": [], "markdown": [], "image_refs": []})
+            text = _item_text(raw_item)
+            if text.strip():
+                group["texts"].append(text)
+                fragments.append(text)
+            markdown = _as_text(raw_item.get("markdown"))
+            if markdown.strip():
+                group["markdown"].append(markdown)
+            group["image_refs"].extend(_as_image_refs(raw_item))
+        for page_no, group in page_groups.items():
+            page_text = "\n".join(group["texts"])
+            pages.append(
+                PatentDocumentPage(
+                    page_no=page_no,
+                    text=page_text,
+                    markdown="\n".join(group["markdown"]) or None,
+                    image_refs=_dedupe_strings(group["image_refs"]),
+                    parser="mineru",
+                )
+            )
+    elif isinstance(source_items, list):
         for index, raw_item in enumerate(source_items, start=1):
             if not isinstance(raw_item, dict):
                 continue
@@ -140,8 +180,23 @@ def mineru_payload_to_content(payload: dict[str, Any]) -> PatentDocumentContent:
     if not full_text.strip():
         raise PatentAnnotationError("mineru_no_text", "MinerU returned no usable text")
     if not pages:
-        pages.append(PatentDocumentPage(page_no=1, text=full_text, parser="mineru"))
+        pages.append(
+            PatentDocumentPage(
+                page_no=1,
+                text=full_text,
+                markdown=_as_text(data.get("markdown")) or None,
+                parser="mineru",
+            )
+        )
     return PatentDocumentContent(pages=pages, full_text=full_text, parser="mineru")
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
 
 
 def _component_scope(text: str) -> tuple[str, bool]:
@@ -307,7 +362,7 @@ class PatentDocumentParser:
                     raise
                 warnings.append(exc.code)
 
-        content = _pypdf_to_content(Path(pdf_path))
+        content = await asyncio.to_thread(_pypdf_to_content, Path(pdf_path))
         content.warnings[:] = [*warnings, *content.warnings]
         if not content.full_text.strip():
             raise PatentAnnotationError(

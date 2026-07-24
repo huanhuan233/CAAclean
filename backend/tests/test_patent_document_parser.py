@@ -75,6 +75,32 @@ def make_text_pdf(tmp_path, text="selectable patent text"):
     return path
 
 
+def make_partial_text_pdf(tmp_path):
+    path = tmp_path / "partial.pdf"
+    stream = b"BT /F1 12 Tf 72 720 Td (selectable text) Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    chunks = [b"%PDF-1.4\n"]
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(sum(len(chunk) for chunk in chunks))
+        chunks.append(str(index).encode("ascii") + b" 0 obj\n" + obj + b"\nendobj\n")
+    xref_offset = sum(len(chunk) for chunk in chunks)
+    chunks.append(b"xref\n0 7\n0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        chunks.append(f"{offset:010d} 00000 n \n".encode("ascii"))
+    chunks.append(b"trailer << /Root 1 0 R /Size 7 >>\nstartxref\n")
+    chunks.append(str(xref_offset).encode("ascii") + b"\n%%EOF\n")
+    path.write_bytes(b"".join(chunks))
+    return path
+
+
 def make_blank_pdf(tmp_path):
     path = tmp_path / "blank.pdf"
     path.write_bytes(
@@ -333,6 +359,36 @@ def test_mineru_payload_normalization_accepts_nested_shapes():
     assert content.pages[1].image_refs == ["p2.png"]
 
 
+def test_mineru_payload_prefers_populated_result_when_data_is_empty():
+    content = mineru_payload_to_content({"data": {}, "result": {"text": "usable text"}})
+
+    assert content.full_text == "usable text"
+
+
+def test_mineru_content_list_groups_same_page_blocks():
+    content = mineru_payload_to_content(
+        {
+            "pages": [],
+            "content_list": [
+                {"page_idx": 0, "text": "first", "img_path": "a.png"},
+                {"page_idx": 0, "text": "second", "img_path": "b.png"},
+                {"page_idx": 1, "text": "third"},
+            ],
+        }
+    )
+
+    assert [(page.page_no, page.text, page.image_refs) for page in content.pages] == [
+        (1, "first\nsecond", ["a.png", "b.png"]),
+        (2, "third", []),
+    ]
+
+
+def test_mineru_markdown_only_payload_preserves_page_markdown():
+    content = mineru_payload_to_content({"markdown": "# title"})
+
+    assert content.pages[0].markdown == "# title"
+
+
 @pytest.mark.asyncio
 async def test_empty_mineru_payload_falls_back_to_text_pdf(tmp_path):
     parser = PatentDocumentParser(mineru_client=FakeMineru({"pages": [{"page_no": 1, "text": "   "}]}))
@@ -341,6 +397,45 @@ async def test_empty_mineru_payload_falls_back_to_text_pdf(tmp_path):
 
     assert result.parser == "pypdf"
     assert "mineru_no_text" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_pypdf_partial_empty_pages_are_reported(tmp_path):
+    result = await PatentDocumentParser(mineru_client=FailingMineru()).parse(
+        make_partial_text_pdf(tmp_path),
+        file_name="partial.pdf",
+    )
+
+    assert result.parser == "pypdf"
+    assert "pypdf_page_1_no_text" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_malformed_pdf_raises_parse_failed(tmp_path):
+    path = tmp_path / "bad.pdf"
+    path.write_bytes(b"not a pdf")
+
+    with pytest.raises(PatentAnnotationError) as exc:
+        await PatentDocumentParser(mineru_client=FailingMineru()).parse(path, file_name="bad.pdf")
+
+    assert exc.value.code == "patent_document_parse_failed"
+
+
+@pytest.mark.asyncio
+async def test_encrypted_pdf_raises_parse_failed(tmp_path):
+    from pypdf import PdfWriter
+
+    path = tmp_path / "encrypted.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt("secret")
+    with path.open("wb") as handle:
+        writer.write(handle)
+
+    with pytest.raises(PatentAnnotationError) as exc:
+        await PatentDocumentParser(mineru_client=FailingMineru()).parse(path, file_name="encrypted.pdf")
+
+    assert exc.value.code == "patent_document_parse_failed"
 
 
 @pytest.mark.asyncio
