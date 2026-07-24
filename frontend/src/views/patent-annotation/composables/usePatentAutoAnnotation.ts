@@ -77,7 +77,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
 
   async function parseDocument(file: File, options: { fast?: boolean; sources?: PatentSource[] } = {}) {
     parsing.value = true;
-    progressText.value = '解析 PDF';
+    progressText.value = 'Parsing PDF';
     try {
       const { parsePatentDocument } = await import('@/service/api/patent-annotation');
       const result = await unwrapApi<Api.PatentAnnotation.DocumentParseResult>(
@@ -88,7 +88,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
       assignFigureNumbers(options.sources ?? store.document.value.sources.filter(source => source.kind === 'pdf'), result.figures);
       return result;
     } catch (error) {
-      throw new Error(requestMessage(error));
+      throw new Error(requestMessage(error), { cause: error });
     } finally {
       parsing.value = false;
       progressText.value = '';
@@ -111,9 +111,9 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
     page: number;
     confirmReplace?: () => Promise<boolean> | boolean;
   }) {
-    if (!parseResult.value) throw new Error('请先解析 PDF');
+    if (!parseResult.value) throw new Error('Parse a PDF first');
     const source = store.document.value.sources.find(item => item.id === params.sourceId);
-    if (!source) throw new Error('当前 PDF 来源不存在');
+    if (!source) throw new Error('Current PDF source was not found');
     const oldAuto = store
       .annotationsFor(params.sourceId, params.page)
       .some(annotation => annotation.origin === 'automatic');
@@ -122,7 +122,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
     }
 
     localizing.value = true;
-    progressText.value = '定位当前页';
+    progressText.value = 'Localizing current page';
     try {
       const figure = figureForSource(source, parseResult.value.figures);
       const candidates = candidatesForFigure(figure, parseResult.value, selectedRefs.value);
@@ -143,7 +143,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
         sourceId: params.sourceId,
         sourceKind: 'pdf',
         page: params.page,
-        components: parseResult.value.components,
+        components: candidates,
         localization,
         imageData,
         modelName: localization.warnings.find(item => item.startsWith('model:'))?.slice(6)
@@ -159,7 +159,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
         warnings: localization.warnings
       };
     } catch (error) {
-      throw new Error(requestMessage(error));
+      throw new Error(requestMessage(error), { cause: error });
     } finally {
       localizing.value = false;
       progressText.value = '';
@@ -195,10 +195,19 @@ function candidatesForFigure(
   for (const refNo of figure?.candidate_ref_nos ?? result.components.map(component => component.ref_no)) {
     if (selectedRefs.has(refNo)) refs.add(refNo);
   }
-  for (const marker of figure?.detail_markers ?? []) {
-    if (selectedRefs.has(marker.marker)) refs.add(marker.marker);
+  const byRef = new Map(result.components.map(component => [component.ref_no, component]));
+  const candidates: Api.PatentAnnotation.Component[] = [];
+  for (const refNo of refs) {
+    const component = byRef.get(refNo);
+    if (component) candidates.push(component);
   }
-  return result.components.filter(component => refs.has(component.ref_no)).map(component => ({ ref_no: component.ref_no, name: component.name }));
+  for (const marker of figure?.detail_markers ?? []) {
+    candidates.push({
+      ref_no: marker.marker,
+      name: `Detail ${marker.marker} of figure ${marker.parent_figure_no}`
+    });
+  }
+  return candidates;
 }
 
 function figureForSource(source: PatentSource, figures: Api.PatentAnnotation.Figure[]) {
@@ -216,7 +225,7 @@ async function unwrapApi<T>(promise: Promise<ApiResponse<T>>) {
   if (response && typeof response === 'object' && 'error' in response) {
     const wrapped = response as { data?: T; error?: unknown };
     if (wrapped.error) throw wrapped.error;
-    if (wrapped.data === undefined || wrapped.data === null) throw new Error('自动标注请求失败');
+    if (wrapped.data === undefined || wrapped.data === null) throw new Error('Auto annotation request failed');
     return wrapped.data;
   }
   return response as T;
@@ -224,5 +233,5 @@ async function unwrapApi<T>(promise: Promise<ApiResponse<T>>) {
 
 function requestMessage(error: unknown) {
   const candidate = error as { response?: { data?: { detail?: { message?: string } } }; message?: string };
-  return candidate.response?.data?.detail?.message ?? candidate.message ?? '自动标注请求失败';
+  return candidate.response?.data?.detail?.message ?? candidate.message ?? 'Auto annotation request failed';
 }

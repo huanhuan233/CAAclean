@@ -179,17 +179,26 @@ test('auto suggestion replacement preserves manual conflicts and unrelated pages
     pageCount: 1
   });
 
-  const manual = store.createAnnotation({ sourceId: source.id, sourceKind: 'pdf', page: 1, anchor: { x: 0.1, y: 0.1 } });
+  const manual = store.createAnnotation({
+    sourceId: source.id,
+    sourceKind: 'pdf',
+    page: 1,
+    anchor: { x: 0.1, y: 0.1 }
+  });
   store.updateAnnotation(manual.id, { refNo: '1', partName: 'manual shell' });
   store.applySuggestedAnnotations([
-    suggested('old-auto-1', source.id, 1, '1'),
-    suggested('old-auto-2', source.id, 1, '2'),
-    suggested('other-page-auto', source.id, 2, '2'),
-    suggested('other-source-auto', other.id, 1, '2')
+    suggested({ id: 'old-auto-1', sourceId: source.id, page: 1, refNo: '1' }),
+    suggested({ id: 'old-auto-2', sourceId: source.id, page: 1, refNo: '2' }),
+    suggested({ id: 'other-page-auto', sourceId: source.id, page: 2, refNo: '2' }),
+    suggested({ id: 'other-source-auto', sourceId: other.id, page: 1, refNo: '2' })
   ]);
 
   const result = store.applySuggestedAnnotations(
-    [suggested('new-auto-1', source.id, 1, '1'), suggested('new-auto-2', source.id, 1, '2'), suggested('new-auto-3', source.id, 1, '3')],
+    [
+      suggested({ id: 'new-auto-1', sourceId: source.id, page: 1, refNo: '1' }),
+      suggested({ id: 'new-auto-2', sourceId: source.id, page: 1, refNo: '2' }),
+      suggested({ id: 'new-auto-3', sourceId: source.id, page: 1, refNo: '3' })
+    ],
     { sourceId: source.id, page: 1, replaceAuto: true }
   );
 
@@ -210,9 +219,9 @@ test('acceptPageAutoAnnotations accepts only review automatic annotations on the
   });
 
   store.applySuggestedAnnotations([
-    suggested('review-1', source.id, 1, '1', 'review'),
-    suggested('accepted-2', source.id, 1, '2', 'accepted'),
-    suggested('review-other-page', source.id, 2, '3', 'review')
+    suggested({ id: 'review-1', sourceId: source.id, page: 1, refNo: '1', reviewState: 'review' }),
+    suggested({ id: 'accepted-2', sourceId: source.id, page: 1, refNo: '2', reviewState: 'accepted' }),
+    suggested({ id: 'review-other-page', sourceId: source.id, page: 2, refNo: '3', reviewState: 'review' })
   ]);
 
   assert.equal(store.acceptPageAutoAnnotations(source.id, 1), 1);
@@ -220,14 +229,14 @@ test('acceptPageAutoAnnotations accepts only review automatic annotations on the
   assert.equal(store.document.value.annotations.find(item => item.id === 'review-other-page')?.reviewState, 'review');
 });
 
-function suggested(id: string, sourceId: string, page: number, refNo: string, reviewState = 'review') {
+function suggested(input: { id: string; sourceId: string; page: number; refNo: string; reviewState?: 'review' | 'accepted' }) {
   return {
-    id,
-    sourceId,
+    id: input.id,
+    sourceId: input.sourceId,
     sourceKind: 'pdf' as const,
-    page,
-    refNo,
-    partName: `part-${refNo}`,
+    page: input.page,
+    refNo: input.refNo,
+    partName: `part-${input.refNo}`,
     anchor: { x: 0.2, y: 0.2 },
     elbow: { x: 0.3, y: 0.2 },
     label: { x: 0.4, y: 0.2 },
@@ -235,7 +244,7 @@ function suggested(id: string, sourceId: string, page: number, refNo: string, re
     lineWidth: 1.2,
     fontSize: 16,
     origin: 'automatic' as const,
-    reviewState: reviewState as 'review' | 'accepted' | 'rejected',
+    reviewState: input.reviewState ?? 'review',
     confidence: 0.8
   };
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { clamp01 } from '../geometry';
 import type { AnnotationPointKey, PatentAnnotation, Point2D } from '../types';
 
@@ -20,6 +21,12 @@ const emit = defineEmits<{
   (event: 'delete', annotationId: string): void;
 }>();
 
+const selectedBboxText = computed(() => {
+  const bbox = props.selectedAnnotation?.bbox;
+  if (!bbox) return '';
+  return `${percent(bbox.xMin)}, ${percent(bbox.yMin)} - ${percent(bbox.xMax)}, ${percent(bbox.yMax)}`;
+});
+
 function coordinate(point: Point2D, axis: keyof Point2D) {
   return Math.round(point[axis] * 10000) / 100;
 }
@@ -40,17 +47,41 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
   if (!annotation) return;
   emit('update', annotation.id, { [key]: value });
 }
+
+function statusType(annotation: PatentAnnotation) {
+  if (annotation.origin === 'manual') return 'info';
+  if (annotation.reviewState === 'accepted') return 'success';
+  if (annotation.reviewState === 'review') return 'warning';
+  return 'info';
+}
+
+function statusLabel(annotation: PatentAnnotation) {
+  if (annotation.origin === 'manual') return 'Manual';
+  const confidence = annotation.confidence === undefined ? '' : ` ${Math.round(annotation.confidence * 100)}%`;
+  if (annotation.reviewState === 'review') return `Review${confidence}`;
+  return `Auto${confidence}`;
+}
+
+function acceptSelected() {
+  const annotation = props.selectedAnnotation;
+  if (!annotation) return;
+  emit('update', annotation.id, { reviewState: 'accepted', reviewed: true });
+}
+
+function percent(value: number) {
+  return `${Math.round(value * 1000) / 10}%`;
+}
 </script>
 
 <template>
   <aside class="annotation-inspector">
     <section class="annotation-list-section">
       <div class="section-title">
-        <span>当前页标注</span>
+        <span>Current page annotations</span>
         <ElTag size="small" type="info">{{ annotations.length }}</ElTag>
       </div>
       <ElScrollbar class="annotation-list">
-        <ElEmpty v-if="!annotations.length" description="当前页暂无标注" :image-size="52" />
+        <ElEmpty v-if="!annotations.length" description="No annotations on this page" :image-size="52" />
         <template v-else>
           <button
             v-for="annotation in annotations"
@@ -60,24 +91,25 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
             :class="{ selected: annotation.id === selectedAnnotation?.id }"
             @click="emit('select', annotation.id)"
           >
-            <span class="annotation-ref">{{ annotation.refNo || '未编号' }}</span>
-            <span class="annotation-name">{{ annotation.partName || '未填写部件名称' }}</span>
-            <ElTag v-if="!annotation.visible" size="small" type="info">隐藏</ElTag>
+            <span class="annotation-ref">{{ annotation.refNo || 'No ref' }}</span>
+            <span class="annotation-name">{{ annotation.partName || 'Unnamed part' }}</span>
+            <ElTag size="small" :type="statusType(annotation)">{{ statusLabel(annotation) }}</ElTag>
+            <ElTag v-if="!annotation.visible" size="small" type="info">Hidden</ElTag>
           </button>
         </template>
       </ElScrollbar>
     </section>
 
     <section class="annotation-property-section">
-      <div class="section-title">标注属性</div>
-      <ElEmpty v-if="!selectedAnnotation" description="选择一条标注后编辑" :image-size="52" />
+      <div class="section-title">Annotation properties</div>
+      <ElEmpty v-if="!selectedAnnotation" description="Select an annotation to edit it" :image-size="52" />
       <ElScrollbar v-else class="property-scroll">
         <ElForm label-position="top" size="small">
           <div class="two-columns">
-            <ElFormItem label="编号">
+            <ElFormItem label="Reference">
               <ElInput :model-value="selectedAnnotation.refNo" @update:model-value="updateField('refNo', $event)" />
             </ElFormItem>
-            <ElFormItem label="部件名称">
+            <ElFormItem label="Part name">
               <ElInput
                 :model-value="selectedAnnotation.partName"
                 @update:model-value="updateField('partName', $event)"
@@ -112,7 +144,7 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
           </div>
 
           <div class="two-columns">
-            <ElFormItem label="线宽">
+            <ElFormItem label="Line width">
               <ElInputNumber
                 :model-value="selectedAnnotation.lineWidth"
                 :min="0.5"
@@ -122,7 +154,7 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
                 @update:model-value="updateField('lineWidth', $event)"
               />
             </ElFormItem>
-            <ElFormItem label="字号">
+            <ElFormItem label="Font size">
               <ElInputNumber
                 :model-value="selectedAnnotation.fontSize"
                 :min="8"
@@ -133,12 +165,32 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
             </ElFormItem>
           </div>
 
-          <ElFormItem label="显示">
+          <ElFormItem label="Visible">
             <ElSwitch :model-value="selectedAnnotation.visible" @update:model-value="updateField('visible', $event)" />
           </ElFormItem>
 
+          <div v-if="selectedAnnotation.origin === 'automatic'" class="auto-detail">
+            <div class="detail-row">
+              <span>Confidence</span>
+              <strong>{{ selectedAnnotation.confidence === undefined ? '-' : `${Math.round(selectedAnnotation.confidence * 100)}%` }}</strong>
+            </div>
+            <div class="detail-row">
+              <span>Status</span>
+              <ElTag size="small" :type="statusType(selectedAnnotation)">{{ statusLabel(selectedAnnotation) }}</ElTag>
+            </div>
+            <div v-if="selectedAnnotation.modelName" class="detail-row">
+              <span>Model</span>
+              <strong>{{ selectedAnnotation.modelName }}</strong>
+            </div>
+            <div v-if="selectedAnnotation.modelReason" class="detail-reason">{{ selectedAnnotation.modelReason }}</div>
+            <div v-if="selectedBboxText" class="detail-reason">bbox {{ selectedBboxText }}</div>
+            <ElButton v-if="selectedAnnotation.reviewState === 'review'" type="success" plain class="delete-button" @click="acceptSelected">
+              Accept
+            </ElButton>
+          </div>
+
           <ElButton type="danger" plain class="delete-button" @click="emit('delete', selectedAnnotation.id)">
-            删除标注
+            Delete annotation
           </ElButton>
         </ElForm>
       </ElScrollbar>
@@ -191,7 +243,7 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
   display: grid;
   width: calc(100% - 16px);
   min-height: 42px;
-  grid-template-columns: minmax(46px, auto) 1fr auto;
+  grid-template-columns: minmax(46px, auto) 1fr auto auto;
   align-items: center;
   gap: 8px;
   margin: 6px 8px;
@@ -248,5 +300,31 @@ function updateField(key: 'refNo' | 'partName' | 'visible' | 'lineWidth' | 'font
 
 .delete-button {
   width: 100%;
+}
+
+.auto-detail {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--el-fill-color-light);
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.detail-reason {
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 </style>

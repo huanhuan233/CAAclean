@@ -218,7 +218,9 @@ function onStagePointerDown(event: PointerEvent) {
 
 async function getCurrentPageImageBlob(options: { scale?: number } = {}) {
   const canvas = captureCanvas(options);
-  const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+  const blob = await new Promise<Blob | null>(resolve => {
+    canvas.toBlob(resolve, 'image/png');
+  });
   if (!blob) throw new Error(PDF_CAPTURE_UNAVAILABLE);
   return blob;
 }

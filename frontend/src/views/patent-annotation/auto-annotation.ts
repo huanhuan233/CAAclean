@@ -32,12 +32,14 @@ export function snapPointToInk(point: Point2D, imageData: ImageData, options: Sn
   for (let y = Math.max(0, originY - radius); y <= Math.min(height - 1, originY + radius); y += 1) {
     for (let x = Math.max(0, originX - radius); x <= Math.min(width - 1, originX + radius); x += 1) {
       const distance = (x - originX) ** 2 + (y - originY) ** 2;
-      if (distance > radius ** 2) continue;
-      const offset = (y * width + x) * 4;
-      const alpha = imageData.data[offset + 3] ?? 0;
-      const darkness = ((imageData.data[offset] ?? 255) + (imageData.data[offset + 1] ?? 255) + (imageData.data[offset + 2] ?? 255)) / 3;
-      if (alpha <= 0 || darkness >= threshold) continue;
-      if (!best || distance < best.distance) best = { x, y, distance };
+      if (distance <= radius ** 2) {
+        const offset = (y * width + x) * 4;
+        const alpha = imageData.data[offset + 3] ?? 0;
+        const darkness =
+          ((imageData.data[offset] ?? 255) + (imageData.data[offset + 1] ?? 255) + (imageData.data[offset + 2] ?? 255)) /
+          3;
+        if (alpha > 0 && darkness < threshold && (!best || distance < best.distance)) best = { x, y, distance };
+      }
     }
   }
 

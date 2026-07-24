@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { ElMessageBox } from 'element-plus';
+import { usePatentAutoAnnotation } from './composables/usePatentAutoAnnotation';
 import { usePatentAnnotations } from './composables/usePatentAnnotations';
 import AnnotationInspector from './modules/AnnotationInspector.vue';
+import AutoAnnotationPanel from './modules/AutoAnnotationPanel.vue';
 import PdfAnnotationWorkspace from './modules/PdfAnnotationWorkspace.vue';
 import StepAnnotationWorkspace from './modules/StepAnnotationWorkspace.vue';
 import type { PatentAnnotation, SourceKind } from './types';
@@ -10,14 +12,17 @@ import type { PatentAnnotation, SourceKind } from './types';
 defineOptions({ name: 'PatentAnnotationPage' });
 
 const annotationStore = usePatentAnnotations();
+const autoAnnotation = usePatentAutoAnnotation(annotationStore);
 const mode = ref<SourceKind>('pdf');
 const activeSourceId = ref('');
 const activePage = ref(1);
 const jsonInputRef = ref<HTMLInputElement | null>(null);
+const pdfWorkspaceRef = ref<InstanceType<typeof PdfAnnotationWorkspace> | null>(null);
 
 const currentAnnotations = computed(() =>
   activeSourceId.value ? annotationStore.annotationsFor(activeSourceId.value, activePage.value) : []
 );
+const activeSource = computed(() => annotationStore.document.value.sources.find(item => item.id === activeSourceId.value) ?? null);
 
 function handleActiveChange(payload: { sourceId: string; page: number }) {
   activeSourceId.value = payload.sourceId;
@@ -40,16 +45,70 @@ function deleteAnnotation(annotationId: string) {
   annotationStore.removeAnnotation(annotationId);
 }
 
+function toggleRef(refNo: string, selected: boolean) {
+  const next = new Set(autoAnnotation.selectedRefs.value);
+  if (selected) next.add(refNo);
+  else next.delete(refNo);
+  autoAnnotation.selectedRefs.value = next;
+}
+
+async function parseAutoPdf(file: File) {
+  try {
+    await autoAnnotation.parseDocument(file);
+    window.$message?.success('PDF parsed');
+  } catch (error) {
+    window.$message?.error(error instanceof Error ? error.message : 'PDF parse failed');
+  }
+}
+
+async function localizeCurrentPage() {
+  if (!pdfWorkspaceRef.value || !activeSourceId.value) return;
+  try {
+    const result = await autoAnnotation.localizeCurrentPage({
+      workspace: pdfWorkspaceRef.value,
+      sourceId: activeSourceId.value,
+      page: activePage.value,
+      confirmReplace: confirmReplaceAutoAnnotations
+    });
+    if (result.added) {
+      window.$message?.success(`Created ${result.added} auto annotations, ${result.reviewCount} need review`);
+    } else {
+      window.$message?.info('No new auto annotations were created');
+    }
+  } catch (error) {
+    window.$message?.error(error instanceof Error ? error.message : 'Auto annotation failed');
+  }
+}
+
+async function confirmReplaceAutoAnnotations() {
+  try {
+    await ElMessageBox.confirm('Replace existing automatic annotations on this page?', 'Auto annotation', {
+      type: 'warning',
+      confirmButtonText: 'Replace',
+      cancelButtonText: 'Cancel'
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acceptPageAutoAnnotations() {
+  if (!activeSourceId.value) return;
+  const count = annotationStore.acceptPageAutoAnnotations(activeSourceId.value, activePage.value);
+  window.$message?.success(count ? `Accepted ${count} automatic annotations` : 'No pending automatic annotations on this page');
+}
+
 async function clearCurrentPage() {
   if (!activeSourceId.value) return;
   try {
-    await ElMessageBox.confirm('只会删除当前来源和当前页的标注，是否继续？', '清空当前页', {
+    await ElMessageBox.confirm('Only annotations for the current source and page will be deleted. Continue?', 'Clear current page', {
       type: 'warning',
-      confirmButtonText: '清空',
-      cancelButtonText: '取消'
+      confirmButtonText: 'Clear',
+      cancelButtonText: 'Cancel'
     });
     annotationStore.clearPage(activeSourceId.value, activePage.value);
-    window.$message?.success('当前页标注已清空');
+    window.$message?.success('Current page annotations cleared');
   } catch {
     // The user cancelled the destructive action.
   }
@@ -82,9 +141,9 @@ async function importJson(event: Event) {
     annotationStore.replaceDocument(JSON.parse(raw));
     activeSourceId.value = '';
     activePage.value = 1;
-    window.$message?.success('标注 JSON 已导入，请重新选择或上传对应源文件以恢复预览');
+    window.$message?.success('Annotation JSON imported. Reopen the source file to restore preview.');
   } catch (error) {
-    const message = error instanceof Error ? error.message : '无法读取标注 JSON';
+    const message = error instanceof Error ? error.message : 'Unable to read annotation JSON';
     window.$message?.error(message);
   }
 }
@@ -102,22 +161,39 @@ function changeMode(nextMode: string | number | boolean | undefined) {
   <div class="patent-annotation-page">
     <header class="page-toolbar">
       <div class="page-heading">
-        <div class="page-title">专利附图标注</div>
-        <div class="page-subtitle">手工建立稳定的引线标注数据</div>
+        <div class="page-title">Patent figure annotation</div>
+        <div class="page-subtitle">Build stable leader-line annotations for patent figures</div>
       </div>
       <ElRadioGroup :model-value="mode" size="small" @update:model-value="changeMode">
-        <ElRadioButton value="pdf">PDF 附图</ElRadioButton>
-        <ElRadioButton value="step">STEP 模型</ElRadioButton>
+        <ElRadioButton value="pdf">PDF figures</ElRadioButton>
+        <ElRadioButton value="step">STEP model</ElRadioButton>
       </ElRadioGroup>
       <div class="toolbar-spacer" />
       <input ref="jsonInputRef" class="hidden-input" type="file" accept="application/json,.json" @change="importJson" />
-      <ElButton @click="openJsonImport">导入 JSON</ElButton>
-      <ElButton @click="exportJson">导出 JSON</ElButton>
-      <ElButton type="danger" plain :disabled="!activeSourceId" @click="clearCurrentPage">清空当前页</ElButton>
+      <ElButton @click="openJsonImport">Import JSON</ElButton>
+      <ElButton @click="exportJson">Export JSON</ElButton>
+      <ElButton type="danger" plain :disabled="!activeSourceId" @click="clearCurrentPage">Clear current page</ElButton>
     </header>
 
     <main class="annotation-shell">
-      <PdfAnnotationWorkspace v-if="mode === 'pdf'" :store="annotationStore" @active-change="handleActiveChange" />
+      <section v-if="mode === 'pdf'" class="pdf-column">
+        <AutoAnnotationPanel
+          :parse-result="autoAnnotation.parseResult.value"
+          :selected-refs="autoAnnotation.selectedRefs.value"
+          :parsing="autoAnnotation.parsing.value"
+          :localizing="autoAnnotation.localizing.value"
+          :progress-text="autoAnnotation.progressText.value"
+          :active-source="activeSource"
+          :active-page="activePage"
+          @parse="parseAutoPdf"
+          @toggle-ref="toggleRef"
+          @update-component-name="autoAnnotation.updateComponentName"
+          @update-figure="activeSourceId && annotationStore.updateSource(activeSourceId, { figureNo: $event })"
+          @localize="localizeCurrentPage"
+          @accept-page="acceptPageAutoAnnotations"
+        />
+        <PdfAnnotationWorkspace ref="pdfWorkspaceRef" :store="annotationStore" @active-change="handleActiveChange" />
+      </section>
       <StepAnnotationWorkspace v-else :store="annotationStore" @active-change="handleActiveChange" />
       <AnnotationInspector
         :annotations="currentAnnotations"
@@ -184,6 +260,14 @@ function changeMode(nextMode: string | number | boolean | undefined) {
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(620px, 1fr) 360px;
+  gap: 10px;
+}
+
+.pdf-column {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
 }
 

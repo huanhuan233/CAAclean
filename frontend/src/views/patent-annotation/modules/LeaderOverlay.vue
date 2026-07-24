@@ -120,6 +120,7 @@ function stopHandleDrag(event: PointerEvent) {
         :x="toPixels(annotation.label).x"
         :y="toPixels(annotation.label).y"
         :font-size="annotation.fontSize"
+        :text-anchor="annotation.label.x < annotation.anchor.x ? 'start' : 'end'"
         dominant-baseline="central"
         @pointerdown.stop="selectAnnotation(annotation.id)"
       >

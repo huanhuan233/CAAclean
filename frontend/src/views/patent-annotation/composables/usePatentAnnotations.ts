@@ -193,17 +193,17 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
 
   function applySuggestedAnnotations(
     items: PatentAnnotation[],
-    options: { sourceId?: string; page?: number; replaceAuto?: boolean } = {}
+    applyOptions: { sourceId?: string; page?: number; replaceAuto?: boolean } = {}
   ) {
     const existingIds = new Set(document.value.annotations.map(item => item.id));
-    const scopedReplacement = Boolean(options.replaceAuto && options.sourceId && options.page);
+    const scopedReplacement = Boolean(applyOptions.replaceAuto && applyOptions.sourceId && applyOptions.page);
     let skippedManualRefs: string[] = [];
     let baseAnnotations = document.value.annotations;
     let nextItems = items.filter(item => !existingIds.has(item.id));
 
     if (scopedReplacement) {
-      const sourceId = String(options.sourceId);
-      const page = Number(options.page);
+      const sourceId = String(applyOptions.sourceId);
+      const page = Number(applyOptions.page);
       const manualRefs = new Set(
         document.value.annotations
           .filter(item => item.sourceId === sourceId && item.page === page && item.origin === 'manual')
