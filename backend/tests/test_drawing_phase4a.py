@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.core.config import Settings
+from app.core.mineru import MineruClient, MineruError
 from app.core.vision import build_vision_client
 from app.drawing.cropper import crop_regions
 from app.drawing.layout import LayoutDetectionResult, LayoutRegion, merge_regions
@@ -159,6 +160,54 @@ async def test_mineru_timeout_raises_drawing_error(tmp_path):
         await MineruLayoutProvider(mode="http", url="http://mock", transport=transport).detect(path)
 
     assert exc.value.code == "mineru_timeout"
+
+
+@pytest.mark.asyncio
+async def test_mineru_command_timeout_terminates_and_awaits_child(tmp_path, monkeypatch):
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.terminated = False
+            self.waited = False
+
+        async def communicate(self):
+            await asyncio.Event().wait()
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            self.waited = True
+            self.returncode = -15
+            return self.returncode
+
+    process = FakeProcess()
+
+    async def create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr("app.core.mineru.asyncio.create_subprocess_exec", create_subprocess_exec)
+    client = MineruClient(mode="command", command="mineru", timeout=0.01)
+
+    with pytest.raises(MineruError) as exc:
+        await client.fetch_payload(tmp_path / "drawing.png")
+
+    assert exc.value.code == "mineru_timeout"
+    assert process.terminated is True
+    assert process.waited is True
+
+
+@pytest.mark.asyncio
+async def test_mineru_transport_value_error_is_connection_failure(tmp_path):
+    path = make_image(tmp_path / "sample.png")
+
+    async def transport(_path):
+        raise ValueError("transport failed")
+
+    with pytest.raises(DrawingError) as exc:
+        await MineruLayoutProvider(mode="http", transport=transport).detect(path)
+
+    assert exc.value.code == "mineru_connection_failed"
 
 
 @pytest.mark.asyncio

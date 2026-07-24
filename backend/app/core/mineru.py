@@ -47,7 +47,7 @@ class MineruClient:
             raise MineruError("mineru_timeout", "MinerU layout detection timed out") from exc
         except MineruError:
             raise
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise MineruError("mineru_invalid_result", "MinerU returned an invalid JSON result") from exc
         except Exception as exc:
             raise MineruError("mineru_connection_failed", "MinerU layout detection failed") from exc
@@ -72,7 +72,23 @@ class MineruClient:
             raise MineruError("mineru_not_configured", "MINERU_LAYOUT_COMMAND is not configured")
         args = [*shlex.split(self.command), str(input_path)]
         process = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _stderr = await process.communicate()
+        try:
+            stdout, _stderr = await process.communicate()
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1)
+            except TimeoutError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            raise
         if process.returncode != 0:
             raise MineruError("mineru_connection_failed", "MinerU command failed")
         return json.loads(stdout.decode("utf-8"))
