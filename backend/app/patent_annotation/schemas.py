@@ -48,15 +48,15 @@ class PatentDocumentParseResult(BaseModel):
 
 
 class ModelLocalizationPoint(BaseModel):
-    x: float = Field(ge=0, le=1000)
-    y: float = Field(ge=0, le=1000)
+    x: float
+    y: float
 
 
 class ModelLocalizationBox(BaseModel):
-    x_min: float = Field(ge=0, le=1000)
-    y_min: float = Field(ge=0, le=1000)
-    x_max: float = Field(ge=0, le=1000)
-    y_max: float = Field(ge=0, le=1000)
+    x_min: float
+    y_min: float
+    x_max: float
+    y_max: float
 
 
 class ModelLocalizationItem(BaseModel):
