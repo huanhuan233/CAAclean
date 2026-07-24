@@ -112,7 +112,7 @@ test('replaceDocument does not mutate the current draft when validation fails', 
     pageCount: 1
   });
 
-  assert.throws(() => store.replaceDocument({ schemaVersion: '0.2', sources: [], annotations: [] }));
+  assert.throws(() => store.replaceDocument({ schemaVersion: '9.9', sources: [], annotations: [] }));
   assert.equal(store.document.value.sources[0].id, source.id);
 });
 
@@ -162,3 +162,79 @@ test('step runtime classifies files and revision states', async () => {
   assert.equal(runtime.shouldLockStepView?.(0), false);
   assert.equal(runtime.shouldLockStepView?.(2), true);
 });
+
+test('auto suggestion replacement preserves manual conflicts and unrelated pages', () => {
+  const store = usePatentAnnotations({ storage: null });
+  const source = store.getOrCreateSource({
+    kind: 'pdf',
+    fileKey: 'a.pdf:1:2',
+    fileName: 'a.pdf',
+    pageCount: 2
+  });
+  const other = store.getOrCreateSource({
+    kind: 'pdf',
+    fileKey: 'b.pdf:1:2',
+    fileName: 'b.pdf',
+    pageCount: 1
+  });
+
+  const manual = store.createAnnotation({ sourceId: source.id, sourceKind: 'pdf', page: 1, anchor: { x: 0.1, y: 0.1 } });
+  store.updateAnnotation(manual.id, { refNo: '1', partName: 'manual shell' });
+  store.applySuggestedAnnotations([
+    suggested('old-auto-1', source.id, 1, '1'),
+    suggested('old-auto-2', source.id, 1, '2'),
+    suggested('other-page-auto', source.id, 2, '2'),
+    suggested('other-source-auto', other.id, 1, '2')
+  ]);
+
+  const result = store.applySuggestedAnnotations(
+    [suggested('new-auto-1', source.id, 1, '1'), suggested('new-auto-2', source.id, 1, '2'), suggested('new-auto-3', source.id, 1, '3')],
+    { sourceId: source.id, page: 1, replaceAuto: true }
+  );
+
+  const pageRefs = store.annotationsFor(source.id, 1).map(item => `${item.origin}:${item.refNo}:${item.id}`).sort();
+  assert.deepEqual(pageRefs, [`automatic:2:new-auto-2`, `automatic:3:new-auto-3`, `manual:1:${manual.id}`].sort());
+  assert.equal(store.annotationsFor(source.id, 2).length, 1);
+  assert.equal(store.annotationsFor(other.id, 1).length, 1);
+  assert.deepEqual(result, { added: 2, skippedManualRefs: ['1'] });
+});
+
+test('acceptPageAutoAnnotations accepts only review automatic annotations on the page', () => {
+  const store = usePatentAnnotations({ storage: null });
+  const source = store.getOrCreateSource({
+    kind: 'pdf',
+    fileKey: 'a.pdf:1:2',
+    fileName: 'a.pdf',
+    pageCount: 2
+  });
+
+  store.applySuggestedAnnotations([
+    suggested('review-1', source.id, 1, '1', 'review'),
+    suggested('accepted-2', source.id, 1, '2', 'accepted'),
+    suggested('review-other-page', source.id, 2, '3', 'review')
+  ]);
+
+  assert.equal(store.acceptPageAutoAnnotations(source.id, 1), 1);
+  assert.equal(store.document.value.annotations.find(item => item.id === 'review-1')?.reviewState, 'accepted');
+  assert.equal(store.document.value.annotations.find(item => item.id === 'review-other-page')?.reviewState, 'review');
+});
+
+function suggested(id: string, sourceId: string, page: number, refNo: string, reviewState = 'review') {
+  return {
+    id,
+    sourceId,
+    sourceKind: 'pdf' as const,
+    page,
+    refNo,
+    partName: `part-${refNo}`,
+    anchor: { x: 0.2, y: 0.2 },
+    elbow: { x: 0.3, y: 0.2 },
+    label: { x: 0.4, y: 0.2 },
+    visible: true,
+    lineWidth: 1.2,
+    fontSize: 16,
+    origin: 'automatic' as const,
+    reviewState: reviewState as 'review' | 'accepted' | 'rejected',
+    confidence: 0.8
+  };
+}

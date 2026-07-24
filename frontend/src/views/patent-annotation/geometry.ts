@@ -1,10 +1,22 @@
 import { clamp01, clientPointToNormalized } from '../../utils/normalized-coordinates';
-import type { PatentAnnotation, PatentAnnotationDocument, PatentSource, Point2D, SourceKind } from './types';
+import type {
+  AnnotationOrigin,
+  NormalizedBox,
+  PatentAnnotation,
+  PatentAnnotationDocument,
+  PatentSource,
+  Point2D,
+  ReviewState,
+  SourceKind
+} from './types';
 
 type UnknownRecord = Record<string, unknown>;
 type NumberRange = { min: number; max: number; fallback: number };
 
 const SOURCE_KINDS = new Set<SourceKind>(['pdf', 'step']);
+const SCHEMA_VERSIONS = new Set(['0.1', '0.2']);
+const ANNOTATION_ORIGINS = new Set<AnnotationOrigin>(['manual', 'automatic']);
+const REVIEW_STATES = new Set<ReviewState>(['accepted', 'review', 'rejected']);
 
 export { clamp01, clientPointToNormalized };
 
@@ -41,7 +53,7 @@ export function createDefaultLeaderPoints(anchorInput: Point2D) {
 
 export function normalizePatentAnnotationDocument(input: unknown): PatentAnnotationDocument {
   const root = requireRecord(input, '标注文档必须是对象');
-  if (root.schemaVersion !== '0.1') {
+  if (typeof root.schemaVersion !== 'string' || !SCHEMA_VERSIONS.has(root.schemaVersion)) {
     throw new Error('不支持的标注文档版本');
   }
   if (!Array.isArray(root.sources) || !Array.isArray(root.annotations)) {
@@ -57,7 +69,7 @@ export function normalizePatentAnnotationDocument(input: unknown): PatentAnnotat
   );
 
   return {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     sources,
     annotations
   };
@@ -73,8 +85,9 @@ function normalizeSource(input: unknown, index: number, ids: Set<string>): Paten
   const fileKey = requireString(source.fileKey, `来源 ${id} 缺少 fileKey`);
   const fileName = requireString(source.fileName, `来源 ${id} 缺少 fileName`);
   const pageCount = clampInteger(source.pageCount, { min: 1, max: 100000, fallback: 1 });
+  const figureNo = typeof source.figureNo === 'string' && source.figureNo.trim() ? source.figureNo.trim() : undefined;
 
-  return { id, kind, fileKey, fileName, pageCount };
+  return { id, kind, fileKey, fileName, pageCount, ...(figureNo ? { figureNo } : {}) };
 }
 
 function normalizeAnnotation(
@@ -106,8 +119,20 @@ function normalizeAnnotation(
     label: normalizeUnknownPoint(annotation.label, `标注 ${id} 缺少 label`),
     visible: typeof annotation.visible === 'boolean' ? annotation.visible : true,
     lineWidth: clampNumber(annotation.lineWidth, { min: 0.5, max: 8, fallback: 1.2 }),
-    fontSize: clampNumber(annotation.fontSize, { min: 8, max: 72, fallback: 16 })
+    fontSize: clampNumber(annotation.fontSize, { min: 8, max: 72, fallback: 16 }),
+    origin: normalizeOrigin(annotation.origin),
+    reviewed: typeof annotation.reviewed === 'boolean' ? annotation.reviewed : undefined
   };
+  const reviewState = normalizeReviewState(annotation.reviewState);
+  if (reviewState) normalized.reviewState = reviewState;
+  const confidence = normalizeOptionalConfidence(annotation.confidence);
+  if (confidence !== undefined) normalized.confidence = confidence;
+  const bbox = normalizeOptionalBox(annotation.bbox);
+  if (bbox) normalized.bbox = bbox;
+  if (typeof annotation.modelName === 'string' && annotation.modelName.trim()) normalized.modelName = annotation.modelName.trim();
+  if (typeof annotation.modelReason === 'string' && annotation.modelReason.trim()) {
+    normalized.modelReason = annotation.modelReason.trim();
+  }
 
   if (typeof annotation.entityId === 'string' && annotation.entityId.trim()) {
     normalized.entityId = annotation.entityId;
@@ -116,6 +141,36 @@ function normalizeAnnotation(
   if (worldPoint) normalized.worldPoint = worldPoint;
 
   return normalized;
+}
+
+function normalizeOrigin(input: unknown): AnnotationOrigin {
+  if (typeof input === 'string' && ANNOTATION_ORIGINS.has(input as AnnotationOrigin)) return input as AnnotationOrigin;
+  return 'manual';
+}
+
+function normalizeReviewState(input: unknown): ReviewState | undefined {
+  if (typeof input === 'string' && REVIEW_STATES.has(input as ReviewState)) return input as ReviewState;
+  return undefined;
+}
+
+function normalizeOptionalConfidence(input: unknown): number | undefined {
+  if (input === undefined || input === null) return undefined;
+  return clampNumber(input, { min: 0, max: 1, fallback: 0 });
+}
+
+function normalizeOptionalBox(input: unknown): NormalizedBox | undefined {
+  if (input === undefined || input === null) return undefined;
+  const box = requireRecord(input, 'bbox 必须是对象');
+  const x1 = clampNumber(box.xMin, { min: 0, max: 1, fallback: 0 });
+  const x2 = clampNumber(box.xMax, { min: 0, max: 1, fallback: 0 });
+  const y1 = clampNumber(box.yMin, { min: 0, max: 1, fallback: 0 });
+  const y2 = clampNumber(box.yMax, { min: 0, max: 1, fallback: 0 });
+  return {
+    xMin: Math.min(x1, x2),
+    yMin: Math.min(y1, y2),
+    xMax: Math.max(x1, x2),
+    yMax: Math.max(y1, y2)
+  };
 }
 
 function normalizeUnknownPoint(input: unknown, message: string): Point2D {

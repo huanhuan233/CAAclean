@@ -5,12 +5,23 @@ export interface Point2D {
   y: number;
 }
 
+export interface NormalizedBox {
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
+}
+
+export type AnnotationOrigin = 'manual' | 'automatic';
+export type ReviewState = 'accepted' | 'review' | 'rejected';
+
 export interface PatentSource {
   id: string;
   kind: SourceKind;
   fileKey: string;
   fileName: string;
   pageCount: number;
+  figureNo?: string;
 }
 
 export interface PatentAnnotation {
@@ -26,12 +37,19 @@ export interface PatentAnnotation {
   visible: boolean;
   lineWidth: number;
   fontSize: number;
+  origin: AnnotationOrigin;
+  reviewState?: ReviewState;
+  reviewed?: boolean;
+  confidence?: number;
+  bbox?: NormalizedBox;
+  modelName?: string;
+  modelReason?: string;
   entityId?: string;
   worldPoint?: [number, number, number];
 }
 
 export interface PatentAnnotationDocument {
-  schemaVersion: '0.1';
+  schemaVersion: '0.2';
   sources: PatentSource[];
   annotations: PatentAnnotation[];
 }

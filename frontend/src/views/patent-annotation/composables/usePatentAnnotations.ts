@@ -29,7 +29,7 @@ export interface PatentAnnotationStore {
   selectedAnnotationId: Ref<string>;
   selectedAnnotation: ComputedRef<PatentAnnotation | null>;
   getOrCreateSource(input: Omit<PatentSource, 'id'>): PatentSource;
-  updateSource(sourceId: string, patch: Partial<Pick<PatentSource, 'fileName' | 'pageCount'>>): void;
+  updateSource(sourceId: string, patch: Partial<Pick<PatentSource, 'fileName' | 'pageCount' | 'figureNo'>>): void;
   annotationsFor(sourceId: string, page: number): PatentAnnotation[];
   createAnnotation(input: CreateAnnotationInput): PatentAnnotation;
   updateAnnotation(annotationId: string, patch: Partial<PatentAnnotation>): void;
@@ -38,7 +38,11 @@ export interface PatentAnnotationStore {
   clearSource(sourceId: string): void;
   replaceDocument(input: unknown): void;
   exportDocument(): PatentAnnotationDocument;
-  applySuggestedAnnotations(items: PatentAnnotation[]): void;
+  applySuggestedAnnotations(
+    items: PatentAnnotation[],
+    options?: { sourceId?: string; page?: number; replaceAuto?: boolean }
+  ): { added: number; skippedManualRefs: string[] };
+  acceptPageAutoAnnotations(sourceId: string, page: number): number;
 }
 
 export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}): PatentAnnotationStore {
@@ -57,6 +61,7 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
     if (existing) {
       existing.fileName = input.fileName;
       existing.pageCount = Math.max(existing.pageCount, normalizePageCount(input.pageCount));
+      if (input.figureNo) existing.figureNo = input.figureNo;
       return existing;
     }
 
@@ -65,16 +70,18 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
       kind: input.kind,
       fileKey: input.fileKey,
       fileName: input.fileName,
-      pageCount: normalizePageCount(input.pageCount)
+      pageCount: normalizePageCount(input.pageCount),
+      ...(input.figureNo ? { figureNo: input.figureNo } : {})
     };
     document.value.sources.push(source);
     return source;
   }
 
-  function updateSource(sourceId: string, patch: Partial<Pick<PatentSource, 'fileName' | 'pageCount'>>) {
+  function updateSource(sourceId: string, patch: Partial<Pick<PatentSource, 'fileName' | 'pageCount' | 'figureNo'>>) {
     const source = document.value.sources.find(item => item.id === sourceId);
     if (!source) return;
     if (patch.fileName !== undefined) source.fileName = String(patch.fileName);
+    if (patch.figureNo !== undefined) source.figureNo = patch.figureNo ? String(patch.figureNo) : undefined;
     if (patch.pageCount !== undefined) {
       source.pageCount = normalizePageCount(patch.pageCount);
       document.value.annotations
@@ -108,7 +115,10 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
       label: defaults.label,
       visible: true,
       lineWidth: 1.2,
-      fontSize: 16
+      fontSize: 16,
+      origin: 'manual',
+      reviewState: 'accepted',
+      reviewed: true
     };
     if (input.entityId) annotation.entityId = input.entityId;
     if (input.worldPoint?.length === 3 && input.worldPoint.every(Number.isFinite)) {
@@ -141,6 +151,10 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
     if (patch.entityId !== undefined) annotation.entityId = patch.entityId || undefined;
     if (patch.worldPoint?.length === 3 && patch.worldPoint.every(Number.isFinite)) {
       annotation.worldPoint = [...patch.worldPoint] as [number, number, number];
+    }
+    if (annotation.origin === 'automatic') {
+      annotation.reviewed = true;
+      annotation.reviewState = 'accepted';
     }
   }
 
@@ -177,15 +191,52 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
     return normalizePatentAnnotationDocument(JSON.parse(JSON.stringify(document.value)));
   }
 
-  function applySuggestedAnnotations(items: PatentAnnotation[]) {
+  function applySuggestedAnnotations(
+    items: PatentAnnotation[],
+    options: { sourceId?: string; page?: number; replaceAuto?: boolean } = {}
+  ) {
     const existingIds = new Set(document.value.annotations.map(item => item.id));
-    const nextItems = items.filter(item => !existingIds.has(item.id));
+    const scopedReplacement = Boolean(options.replaceAuto && options.sourceId && options.page);
+    let skippedManualRefs: string[] = [];
+    let baseAnnotations = document.value.annotations;
+    let nextItems = items.filter(item => !existingIds.has(item.id));
+
+    if (scopedReplacement) {
+      const sourceId = String(options.sourceId);
+      const page = Number(options.page);
+      const manualRefs = new Set(
+        document.value.annotations
+          .filter(item => item.sourceId === sourceId && item.page === page && item.origin === 'manual')
+          .map(item => item.refNo)
+      );
+      skippedManualRefs = [...new Set(nextItems.filter(item => manualRefs.has(String(item.refNo))).map(item => String(item.refNo)))];
+      baseAnnotations = document.value.annotations.filter(
+        item => item.sourceId !== sourceId || item.page !== page || item.origin !== 'automatic'
+      );
+      nextItems = nextItems.filter(item => item.sourceId === sourceId && item.page === page && !manualRefs.has(String(item.refNo)));
+    }
+
     const normalized = normalizePatentAnnotationDocument({
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       sources: document.value.sources,
-      annotations: [...document.value.annotations, ...nextItems]
+      annotations: [...baseAnnotations, ...nextItems.map(item => ({ ...item, origin: item.origin ?? 'automatic' }))]
     });
     document.value = normalized;
+    return { added: nextItems.length, skippedManualRefs };
+  }
+
+  function acceptPageAutoAnnotations(sourceId: string, page: number) {
+    let count = 0;
+    document.value.annotations
+      .filter(
+        item => item.sourceId === sourceId && item.page === page && item.origin === 'automatic' && item.reviewState === 'review'
+      )
+      .forEach(item => {
+        item.reviewState = 'accepted';
+        item.reviewed = true;
+        count += 1;
+      });
+    return count;
   }
 
   function nextRefNo(sourceId: string) {
@@ -225,13 +276,14 @@ export function usePatentAnnotations(options: UsePatentAnnotationsOptions = {}):
     clearSource,
     replaceDocument,
     exportDocument,
-    applySuggestedAnnotations
+    applySuggestedAnnotations,
+    acceptPageAutoAnnotations
   };
 }
 
 function emptyDocument(): PatentAnnotationDocument {
   return {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     sources: [],
     annotations: []
   };

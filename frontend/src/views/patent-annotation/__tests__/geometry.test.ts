@@ -75,6 +75,67 @@ test('import clamps coordinates and preserves string references', () => {
   assert.deepEqual(result.annotations[0].anchor, { x: 0, y: 1 });
 });
 
+test('import migrates 0.1 documents to 0.2 and marks old annotations manual', () => {
+  const result = normalizePatentAnnotationDocument({
+    schemaVersion: '0.1',
+    sources: [{ id: 's1', kind: 'pdf', fileKey: 'a.pdf:1:2', fileName: 'a.pdf', pageCount: 1 }],
+    annotations: [
+      {
+        id: 'a1',
+        sourceId: 's1',
+        sourceKind: 'pdf',
+        page: 1,
+        refNo: 1,
+        partName: 'shell',
+        anchor: { x: 0.1, y: 0.2 },
+        elbow: { x: 0.2, y: 0.2 },
+        label: { x: 0.3, y: 0.2 },
+        visible: true,
+        lineWidth: 1.2,
+        fontSize: 16
+      }
+    ]
+  });
+
+  assert.equal(result.schemaVersion, '0.2');
+  assert.equal(result.annotations[0].origin, 'manual');
+});
+
+test('import preserves 0.2 automation metadata and normalizes confidence and bbox', () => {
+  const result = normalizePatentAnnotationDocument({
+    schemaVersion: '0.2',
+    sources: [{ id: 's1', kind: 'pdf', fileKey: 'a.pdf:1:2', fileName: 'a.pdf', pageCount: 1, figureNo: '4' }],
+    annotations: [
+      {
+        id: 'a1',
+        sourceId: 's1',
+        sourceKind: 'pdf',
+        page: 1,
+        refNo: '68',
+        partName: 'spring',
+        anchor: { x: 0.1, y: 0.2 },
+        elbow: { x: 0.2, y: 0.2 },
+        label: { x: 0.3, y: 0.2 },
+        visible: true,
+        lineWidth: 1.2,
+        fontSize: 16,
+        origin: 'automatic',
+        reviewState: 'review',
+        confidence: 2,
+        bbox: { xMin: 0.8, yMin: -1, xMax: 0.2, yMax: 2 },
+        modelName: 'vision-x',
+        modelReason: 'visible leader'
+      }
+    ]
+  });
+
+  assert.equal(result.sources[0].figureNo, '4');
+  assert.equal(result.annotations[0].confidence, 1);
+  assert.deepEqual(result.annotations[0].bbox, { xMin: 0.2, yMin: 0, xMax: 0.8, yMax: 1 });
+  assert.equal(result.annotations[0].modelName, 'vision-x');
+  assert.equal(result.annotations[0].modelReason, 'visible leader');
+});
+
 test('import rejects annotations whose source does not exist', () => {
   assert.throws(
     () =>
@@ -106,7 +167,7 @@ test('import rejects duplicate ids and an unsupported schema', () => {
   assert.throws(
     () =>
       normalizePatentAnnotationDocument({
-        schemaVersion: '0.2',
+        schemaVersion: '9.9',
         sources: [],
         annotations: []
       }),
