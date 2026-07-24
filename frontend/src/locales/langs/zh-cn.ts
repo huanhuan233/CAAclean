@@ -174,6 +174,7 @@ const local: App.I18n.Schema = {
     document_alova: 'Alova文档',
     'cad-model': 'CAD 模型解析',
     'cad-spec': '二维图纸解析',
+    'patent-annotation': '专利附图标注',
     'user-center': '个人中心',
     about: '关于',
     function: '系统功能',

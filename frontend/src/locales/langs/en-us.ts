@@ -174,6 +174,7 @@ const local: App.I18n.Schema = {
     document_alova: 'Alova Document',
     'cad-model': 'CAD Model Parser',
     'cad-spec': '2D Drawing Parser',
+    'patent-annotation': 'Patent Figure Annotation',
     'user-center': 'User Center',
     about: 'About',
     function: 'System Function',

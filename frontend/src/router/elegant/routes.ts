@@ -403,6 +403,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     ]
   },
   {
+    name: 'patent-annotation',
+    path: '/patent-annotation',
+    component: 'layout.base$view.patent-annotation',
+    meta: {
+      title: 'patent-annotation',
+      i18nKey: 'route.patent-annotation'
+    }
+  },
+  {
     name: 'plugin',
     path: '/plugin',
     component: 'layout.base',

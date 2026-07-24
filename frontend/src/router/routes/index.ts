@@ -35,7 +35,18 @@ const cadSpecRoute = {
   }
 } as unknown as CustomRoute;
 
-const customRoutes: CustomRoute[] = [componentBuildRoute, cadModelRoute, cadSpecRoute];
+const patentAnnotationRoute = {
+  name: 'patent-annotation',
+  path: '/patent-annotation',
+  component: 'layout.base$view.patent-annotation',
+  meta: {
+    title: '专利附图标注',
+    icon: 'carbon:draw',
+    order: 4
+  }
+} as unknown as CustomRoute;
+
+const customRoutes: CustomRoute[] = [componentBuildRoute, cadModelRoute, cadSpecRoute, patentAnnotationRoute];
 
 /** create routes when the auth route mode is static */
 export function createStaticRoutes() {

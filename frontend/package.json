@@ -44,6 +44,7 @@
     "prepare": "simple-git-hooks",
     "preview": "vite preview",
     "release": "sa release",
+    "test:patent-annotation": "tsx --test src/views/patent-annotation/__tests__/geometry.test.ts src/views/patent-annotation/__tests__/annotations.test.ts",
     "typecheck": "vue-tsc --noEmit --skipLibCheck",
     "update-pkg": "sa update-pkg"
   },
