@@ -1,7 +1,12 @@
 import pytest
 
 from app.core.mineru import MineruError
-from app.patent_annotation.document_parser import PatentDocumentParser, mineru_payload_to_content, parse_patent_structure
+from app.patent_annotation.document_parser import (
+    PatentDocumentParser,
+    build_patent_document_context,
+    mineru_payload_to_content,
+    parse_patent_structure,
+)
 from app.patent_annotation.errors import PatentAnnotationError
 from app.patent_annotation.schemas import PatentDocumentContent, PatentDocumentPage
 
@@ -154,6 +159,30 @@ def test_cross_page_legend_and_figure_sections_are_combined():
 
     assert [item.figure_no for item in result.figures] == ["1"]
     assert [item.ref_no for item in result.components] == ["1", "2"]
+
+
+def test_document_context_preserves_page_boundaries_for_vision_model():
+    content = make_content("标题\n附图说明\n图1为结构示意图。", "具体实施方式\n如图1所示，壳体1连接盖板2。")
+
+    context, warnings = build_patent_document_context(content)
+
+    assert "[PAGE 1]" in context
+    assert "[PAGE 2]" in context
+    assert "如图1所示，壳体1连接盖板2。" in context
+    assert warnings == []
+
+
+def test_long_document_context_prioritizes_patent_figure_evidence_and_warns():
+    content = make_content(
+        "标题\n" + ("普通背景内容\n" * 100) + "附图说明\n图1为整体结构示意图。",
+        ("无关描述\n" * 100) + "具体实施方式\n请参阅图1，壳体1连接盖板2。",
+    )
+
+    context, warnings = build_patent_document_context(content, max_chars=180)
+
+    assert len(context) <= 180
+    assert "图1" in context
+    assert warnings == ["patent_document_context_truncated"]
 
 
 def test_figure_candidates_put_explicit_references_before_component_order():

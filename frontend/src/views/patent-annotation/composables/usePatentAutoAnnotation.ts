@@ -43,7 +43,7 @@ export function buildAutoAnnotationSuggestions(input: SuggestionBuildInput): Pat
         sourceKind: input.sourceKind,
         page: input.page,
         refNo: item.ref_no,
-        partName: componentByRef.get(item.ref_no) ?? '',
+        partName: item.name ?? componentByRef.get(item.ref_no) ?? '',
         anchor,
         elbow: layout?.elbow ?? defaults.elbow,
         label: layout?.label ?? defaults.label,
@@ -180,6 +180,7 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
           figureNo: figure.figure_no,
           figureDescription: figure.description,
           figureContext: figure.context,
+          documentContext: parseResult.value.document_context ?? '',
           components: candidates
         }) as Promise<ApiResponse<Api.PatentAnnotation.NormalizedLocalizationResult>>
       );
@@ -224,28 +225,12 @@ export function usePatentAutoAnnotation(store: PatentAnnotationStore) {
   };
 }
 
-function candidatesForFigure(
-  figure: Api.PatentAnnotation.Figure | undefined,
+export function candidatesForFigure(
+  _figure: Api.PatentAnnotation.Figure | undefined,
   result: Api.PatentAnnotation.DocumentParseResult,
   selectedRefs: Set<string>
 ) {
-  const refs = new Set<string>();
-  for (const refNo of figure?.candidate_ref_nos ?? result.components.map(component => component.ref_no)) {
-    if (selectedRefs.has(refNo)) refs.add(refNo);
-  }
-  const byRef = new Map(result.components.map(component => [component.ref_no, component]));
-  const candidates: Api.PatentAnnotation.Component[] = [];
-  for (const refNo of refs) {
-    const component = byRef.get(refNo);
-    if (component) candidates.push(component);
-  }
-  for (const marker of figure?.detail_markers ?? []) {
-    candidates.push({
-      ref_no: marker.marker,
-      name: `图 ${marker.parent_figure_no} 的局部放大 ${marker.marker}`
-    });
-  }
-  return candidates;
+  return result.components.filter(component => selectedRefs.has(component.ref_no));
 }
 
 function figureForSource(source: PatentSource, figures: Api.PatentAnnotation.Figure[]) {

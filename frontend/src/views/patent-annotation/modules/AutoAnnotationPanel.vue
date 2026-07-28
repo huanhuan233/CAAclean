@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import type { PatentSource } from '../types';
 
 defineOptions({ name: 'PatentAutoAnnotationPanel' });
 
 const props = defineProps<{
   parseResult: Api.PatentAnnotation.DocumentParseResult | null;
-  selectedRefs: Set<string>;
   parsing: boolean;
   localizing: boolean;
   progressText: string;
@@ -17,15 +16,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'parse', file: File): void;
   (event: 'uploadFigures'): void;
-  (event: 'toggleRef', refNo: string, selected: boolean): void;
-  (event: 'updateComponentName', refNo: string, name: string): void;
   (event: 'updateFigure', figureNo: string): void;
   (event: 'localize'): void;
   (event: 'acceptPage'): void;
 }>();
 
 const specificationInputRef = ref<HTMLInputElement | null>(null);
-const componentsOpen = ref(false);
 
 const parserLabel = computed(() => {
   if (!props.parseResult) return '等待解析';
@@ -36,11 +32,9 @@ const activeFigure = computed(
   () => props.parseResult?.figures.find(item => item.figure_no === props.activeSource?.figureNo) ?? null
 );
 const busy = computed(() => props.parsing || props.localizing);
-const selectedCount = computed(
-  () => props.parseResult?.components.filter(item => props.selectedRefs.has(item.ref_no)).length ?? 0
-);
+const hasDocumentContext = computed(() => Boolean(props.parseResult?.document_context?.trim()));
 const canLocalize = computed(
-  () => Boolean(props.parseResult && props.activeSource && activeFigure.value && selectedCount.value) && !busy.value
+  () => Boolean(props.parseResult && props.activeSource && activeFigure.value && hasDocumentContext.value) && !busy.value
 );
 const warnings = computed(() => {
   const items = props.parseResult?.warnings.map(formatWarning) ?? [];
@@ -49,13 +43,6 @@ const warnings = computed(() => {
   }
   return [...new Set(items)];
 });
-
-watch(
-  () => props.parseResult,
-  result => {
-    if (result?.components.length) componentsOpen.value = true;
-  }
-);
 
 function openSpecificationPicker() {
   if (busy.value) return;
@@ -73,7 +60,8 @@ function formatWarning(warning: string) {
   const warningLabels: Record<string, string> = {
     mineru_not_configured: 'MinerU 未配置，已自动使用 pypdf 备用解析',
     mineru_failed: 'MinerU 解析失败，已自动使用 pypdf 备用解析',
-    mineru_timeout: 'MinerU 解析超时，已自动使用 pypdf 备用解析'
+    mineru_timeout: 'MinerU 解析超时，已自动使用 pypdf 备用解析',
+    patent_document_context_truncated: '说明书较长，已优先保留附图说明、权利要求和图号相关上下文'
   };
   return warningLabels[warning] ?? warning;
 }
@@ -92,7 +80,7 @@ function formatWarning(warning: string) {
     <div class="flow-heading">
       <div>
         <div class="flow-title">自动标注流程</div>
-        <div class="flow-subtitle">说明书负责提供“编号—部件名称”，附图负责让模型定位部件位置</div>
+        <div class="flow-subtitle">MinerU 解析一次说明书；每张附图分别携带说明书上下文交给视觉模型定位</div>
       </div>
       <div v-if="progressText" class="progress-pill">
         <span class="progress-dot" />
@@ -169,13 +157,13 @@ function formatWarning(warning: string) {
         <div class="step-content">
           <div class="step-title-row">
             <strong>自动标注当前图</strong>
-            <span class="step-state">{{ selectedCount }} 个候选</span>
+            <span class="step-state">{{ hasDocumentContext ? '说明书上下文已就绪' : '等待说明书上下文' }}</span>
           </div>
           <div class="step-description">
             {{
               canLocalize
                 ? `模型将识别图 ${activeSource?.figureNo} 中可见部件并生成引线`
-                : '完成前两步并选择图号后即可开始'
+                : '完成说明书解析、上传附图并选择图号后即可开始'
             }}
           </div>
           <div class="action-row">
@@ -193,31 +181,9 @@ function formatWarning(warning: string) {
     </div>
 
     <div v-if="parseResult" class="result-strip">
-      <button type="button" class="component-toggle" @click="componentsOpen = !componentsOpen">
-        <span>候选部件</span>
-        <ElTag size="small" type="info">{{ selectedCount }}/{{ parseResult.components.length }} 已选择</ElTag>
-        <span class="toggle-icon" :class="{ open: componentsOpen }">⌄</span>
-      </button>
       <div v-if="activeFigure" class="figure-description">
         <b>图 {{ activeFigure.figure_no }}</b>
         <span>{{ activeFigure.description || '暂无附图说明' }}</span>
-      </div>
-    </div>
-
-    <div v-if="parseResult && componentsOpen" class="component-table">
-      <div v-for="component in parseResult.components" :key="component.ref_no" class="component-row">
-        <ElCheckbox
-          :model-value="selectedRefs.has(component.ref_no)"
-          :disabled="busy"
-          @change="emit('toggleRef', component.ref_no, Boolean($event))"
-        />
-        <span class="component-ref">{{ component.ref_no }}</span>
-        <ElInput
-          size="small"
-          :model-value="component.name"
-          :disabled="busy"
-          @update:model-value="emit('updateComponentName', component.ref_no, String($event))"
-        />
       </div>
     </div>
   </section>
@@ -405,29 +371,6 @@ function formatWarning(warning: string) {
   padding-top: 8px;
 }
 
-.component-toggle {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 7px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--el-text-color-primary);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.toggle-icon {
-  display: inline-block;
-  color: var(--el-text-color-secondary);
-  transition: transform 0.2s ease;
-}
-
-.toggle-icon.open {
-  transform: rotate(180deg);
-}
-
 .figure-description {
   min-width: 0;
   flex: 1;
@@ -438,30 +381,6 @@ function formatWarning(warning: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.component-table {
-  display: grid;
-  max-height: 156px;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
-  gap: 6px 10px;
-  overflow: auto;
-  border-radius: 7px;
-  padding: 8px;
-  background: var(--el-fill-color-lighter);
-}
-
-.component-row {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 22px 38px minmax(0, 1fr);
-  align-items: center;
-  gap: 5px;
-}
-
-.component-ref {
-  color: var(--el-text-color-primary);
-  font-weight: 700;
 }
 
 @keyframes pulse {
@@ -479,10 +398,6 @@ function formatWarning(warning: string) {
   .step-grid {
     grid-template-columns: 1fr;
   }
-
-  .component-table {
-    grid-template-columns: repeat(2, minmax(220px, 1fr));
-  }
 }
 
 @media (max-width: 760px) {
@@ -492,8 +407,5 @@ function formatWarning(warning: string) {
     flex-direction: column;
   }
 
-  .component-table {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

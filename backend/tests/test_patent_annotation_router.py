@@ -41,13 +41,24 @@ class FakeLocalizationService:
         self.error = error
         self.calls = []
 
-    async def localize(self, image_path, *, figure_no, figure_description, figure_context, candidates, work_dir):
+    async def localize(
+        self,
+        image_path,
+        *,
+        figure_no,
+        figure_description,
+        figure_context,
+        document_context,
+        candidates,
+        work_dir,
+    ):
         self.calls.append(
             {
                 "image_path": image_path,
                 "figure_no": figure_no,
                 "figure_description": figure_description,
                 "figure_context": figure_context,
+                "document_context": document_context,
                 "candidates": candidates,
                 "work_dir": work_dir,
             }
@@ -166,7 +177,7 @@ def test_localize_page_rejects_bad_components_json():
     try:
         response = client.post(
             "/api/patent-annotations/localize-page",
-            data={"figure_no": "1", "components_json": "[]"},
+            data={"figure_no": "1", "components_json": "not-json"},
             files={"image_file": ("page.png", png_bytes(), "image/png")},
         )
     finally:
@@ -174,6 +185,21 @@ def test_localize_page_rejects_bad_components_json():
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "patent_components_invalid"
+
+
+def test_localize_page_requires_document_context_or_component_hints():
+    client = client_with({get_localization_service: lambda: FakeLocalizationService()})
+    try:
+        response = client.post(
+            "/api/patent-annotations/localize-page",
+            data={"figure_no": "1", "components_json": "[]"},
+            files={"image_file": ("page.png", png_bytes(), "image/png")},
+        )
+    finally:
+        clear_overrides()
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "patent_document_context_missing"
 
 
 def test_localize_page_rejects_non_image():
@@ -234,6 +260,7 @@ def test_localize_page_returns_fake_localization_response():
                 "figure_no": "4",
                 "figure_description": "detail",
                 "figure_context": "shell 1",
+                "document_context": "[PAGE 1]\nfigure 4 shell 1",
                 "components_json": '[{"ref_no":"1","name":"shell"}]',
             },
             files={"image_file": ("page.png", png_bytes(), "image/png")},
@@ -244,3 +271,4 @@ def test_localize_page_returns_fake_localization_response():
     assert response.status_code == 200
     assert response.json()["items"][0]["anchor"]["x"] == 0.25
     assert service.calls[0]["figure_no"] == "4"
+    assert "[PAGE 1]" in service.calls[0]["document_context"]

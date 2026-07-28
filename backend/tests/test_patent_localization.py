@@ -78,8 +78,16 @@ class FakeVisionClient:
         self.error = error
         self.calls = []
 
-    async def complete_json(self, *, task_name, schema, messages, image_paths):
-        self.calls.append({"task_name": task_name, "schema": schema, "messages": messages, "image_paths": image_paths})
+    async def complete_json(self, *, task_name, schema, messages, image_paths, system_prompt=None):
+        self.calls.append(
+            {
+                "task_name": task_name,
+                "schema": schema,
+                "messages": messages,
+                "image_paths": image_paths,
+                "system_prompt": system_prompt,
+            }
+        )
         if self.error:
             raise self.error
         return self.outputs.pop(0)
@@ -112,6 +120,44 @@ async def test_localize_normalizes_anchor_and_accepts_high_confidence(tmp_path):
     assert result.items[0].review_state == "accepted"
     assert client.calls[0]["task_name"] == "patent_page_localization"
     assert len(client.calls[0]["image_paths"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_localize_accepts_common_model_coordinate_aliases(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {
+                "items": [
+                    {
+                        "ref_no": "68",
+                        "name": "spring",
+                        "visible": True,
+                        "confidence": 0.91,
+                        "anchor": [0.25, 0.75],
+                        "bbox": [0.2, 0.7, 0.3, 0.8],
+                    }
+                ]
+            }
+        ]
+    )
+    service = PatentLocalizationService(client, model_name="vision-test")
+
+    result = await service.localize(
+        image_path,
+        figure_no="4",
+        figure_description="partial figure",
+        figure_context="spring 68",
+        candidates=[candidate("68", "spring")],
+        work_dir=tmp_path / "work",
+    )
+
+    assert result.warnings == []
+    assert result.items[0].anchor.x == 0.25
+    assert result.items[0].anchor.y == 0.75
+    assert result.items[0].bbox.x_min == 0.2
+    assert result.items[0].bbox.y_max == 0.8
 
 
 @pytest.mark.asyncio
@@ -181,13 +227,12 @@ async def test_localize_filters_unknown_refs_and_keeps_highest_duplicate(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_localize_treats_other_batch_refs_as_unknown(tmp_path):
+async def test_localize_does_not_split_one_figure_by_component_count(tmp_path):
     image_path = tmp_path / "figure.png"
     Image.new("RGB", (100, 100), "white").save(image_path)
     client = FakeVisionClient(
         [
             {"items": [{"ref_no": "16", "visible": True, "confidence": 0.99, "anchor": {"x": 100, "y": 100}}]},
-            {"items": [{"ref_no": "16", "visible": True, "confidence": 0.6, "anchor": {"x": 300, "y": 300}}]},
         ]
     )
     candidates = [candidate(str(index)) for index in range(17)]
@@ -202,8 +247,8 @@ async def test_localize_treats_other_batch_refs_as_unknown(tmp_path):
     )
 
     assert result.items[0].ref_no == "16"
-    assert result.items[0].confidence == 0.6
-    assert "unknown_ref_16" in result.warnings
+    assert result.items[0].confidence == 0.99
+    assert len(client.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -343,10 +388,10 @@ async def test_localize_warns_and_clamps_non_finite_coordinates(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_localize_batches_candidates_in_groups_of_16(tmp_path):
+async def test_localize_calls_vision_once_per_figure_even_with_many_component_hints(tmp_path):
     image_path = tmp_path / "figure.png"
     Image.new("RGB", (100, 100), "white").save(image_path)
-    client = FakeVisionClient([{"items": []}, {"items": []}])
+    client = FakeVisionClient([{"items": []}])
     candidates = [candidate(str(index)) for index in range(17)]
 
     await PatentLocalizationService(client).localize(
@@ -354,13 +399,85 @@ async def test_localize_batches_candidates_in_groups_of_16(tmp_path):
         figure_no="1",
         figure_description="",
         figure_context="",
+        document_context="[PAGE 1]\n图中：1、壳体；16、弹簧。",
         candidates=candidates,
         work_dir=tmp_path / "work",
     )
 
-    assert len(client.calls) == 2
-    assert '"15"' in client.calls[0]["messages"][0]["text"]
-    assert '"16"' in client.calls[1]["messages"][0]["text"]
+    assert len(client.calls) == 1
+    assert '"16"' in client.calls[0]["messages"][0]["text"]
+    assert "MinerU patent document context" in client.calls[0]["messages"][0]["text"]
+    assert "Candidate objects JSON" in client.calls[0]["messages"][0]["text"]
+    assert "视觉证据优先" in client.calls[0]["system_prompt"]
+    assert "anchor 是最终专利引线的终点" in client.calls[0]["system_prompt"]
+    assert "reference leader or label" not in client.calls[0]["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_localize_accepts_model_ref_from_document_context_without_candidate_hint(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {
+                "items": [
+                    {
+                        "ref_no": "68",
+                        "name": "弹簧",
+                        "visible": True,
+                        "confidence": 0.9,
+                        "anchor": {"x": 400, "y": 600},
+                    }
+                ]
+            }
+        ]
+    )
+
+    result = await PatentLocalizationService(client).localize(
+        image_path,
+        figure_no="4",
+        figure_description="局部剖视图",
+        figure_context="",
+        document_context="[PAGE 6]\n图中：68、弹簧。",
+        candidates=[],
+        work_dir=tmp_path / "work",
+    )
+
+    assert [(item.ref_no, item.name, item.anchor.x) for item in result.items] == [("68", "弹簧", 0.4)]
+
+
+@pytest.mark.asyncio
+async def test_localize_marks_candidate_name_mismatch_for_review(tmp_path):
+    image_path = tmp_path / "figure.png"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    client = FakeVisionClient(
+        [
+            {
+                "items": [
+                    {
+                        "ref_no": "68",
+                        "name": "压板",
+                        "visible": True,
+                        "confidence": 0.95,
+                        "anchor": {"x": 400, "y": 600},
+                    }
+                ]
+            }
+        ]
+    )
+
+    result = await PatentLocalizationService(client).localize(
+        image_path,
+        figure_no="4",
+        figure_description="",
+        figure_context="",
+        document_context="[PAGE 6]\n图中：68、弹簧。",
+        candidates=[candidate("68", "弹簧")],
+        work_dir=tmp_path / "work",
+    )
+
+    assert result.items[0].review_state == "review"
+    assert "name_mismatch_68" in result.warnings
 
 
 @pytest.mark.asyncio

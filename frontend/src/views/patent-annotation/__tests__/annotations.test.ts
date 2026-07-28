@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { nextTick } from 'vue';
 import { usePatentAnnotations } from '../composables/usePatentAnnotations';
-import { buildAutoAnnotationSuggestions, usePatentAutoAnnotation } from '../composables/usePatentAutoAnnotation';
+import {
+  buildAutoAnnotationSuggestions,
+  candidatesForFigure,
+  usePatentAutoAnnotation
+} from '../composables/usePatentAutoAnnotation';
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -123,6 +128,47 @@ test('batch figure PDFs uploaded after parsing all receive a figure mapping', ()
 
   assert.equal(second.figureNo, '2');
   assert.equal(third.figureNo, '1');
+});
+
+test('each figure sends all selected component hints because vision uses the MinerU context directly', () => {
+  const result: Api.PatentAnnotation.DocumentParseResult = {
+    file_name: 'specification.pdf',
+    parser: 'mineru',
+    document_context: '[PAGE 6]\n图中：1、壳体；68、弹簧。',
+    components: [
+      { ref_no: '1', name: '壳体' },
+      { ref_no: '68', name: '弹簧' }
+    ],
+    figures: [
+      {
+        figure_no: '1',
+        description: '',
+        context: '',
+        explicit_ref_nos: ['1'],
+        candidate_ref_nos: ['1'],
+        detail_markers: []
+      }
+    ],
+    warnings: []
+  };
+
+  const candidates = candidatesForFigure(result.figures[0], result, new Set(['1', '68']));
+
+  assert.deepEqual(
+    candidates.map(item => item.ref_no),
+    ['1', '68']
+  );
+});
+
+test('auto annotation panel does not expose component hints as parsed model output', () => {
+  const source = readFileSync(
+    new URL('../modules/AutoAnnotationPanel.vue', import.meta.url),
+    'utf8'
+  );
+
+  assert.equal(source.includes('部件名称提示'), false);
+  assert.equal(source.includes('component-table'), false);
+  assert.equal(source.includes('componentsOpen'), false);
 });
 
 test('clearPage removes only the selected source and page', () => {

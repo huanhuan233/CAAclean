@@ -27,6 +27,7 @@ declare namespace Api {
       parser: Parser;
       components: Component[];
       figures: Figure[];
+      document_context?: string;
       warnings: string[];
     }
 
@@ -49,6 +50,7 @@ declare namespace Api {
 
     interface NormalizedLocalizationItem {
       ref_no: string;
+      name?: string | null;
       visible: boolean;
       confidence: number;
       reason: string;

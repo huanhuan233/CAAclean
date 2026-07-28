@@ -57,14 +57,23 @@ class VisionJsonClient:
         except Exception as exc:
             raise VisionModelError("vision_health_check_failed", "vision health check failed") from exc
 
-    async def complete_json(self, *, task_name: str, schema: type[BaseModel], messages: list[dict], image_paths: list[Path]) -> dict:
+    async def complete_json(
+        self,
+        *,
+        task_name: str,
+        schema: type[BaseModel],
+        messages: list[dict],
+        image_paths: list[Path] | None = None,
+        system_prompt: str | None = None,
+    ) -> dict:
         content = [*messages]
-        for image_path in image_paths:
+        for image_path in image_paths or []:
             content.append({"type": "image_url", "image_url": {"url": _image_data_url(image_path)}})
         user_message = {"role": "user", "content": content}
         system = {
             "role": "system",
-            "content": (
+            "content": system_prompt
+            or (
                 "Only output JSON. Do not output Markdown. Do not infer invisible values. "
                 "Return null or needs_review for ambiguous content. Do not generate YAML. Do not judge STEP compliance."
             ),

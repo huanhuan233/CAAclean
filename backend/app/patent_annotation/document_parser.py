@@ -39,6 +39,12 @@ FIGURE_RE = re.compile(
     re.DOTALL,
 )
 DETAIL_MARKER_RE = re.compile(r"图\s*(?P<parent>\d+)\s*中\s*(?P<marker>[A-Za-z])\s*处\s*放大")
+DOCUMENT_CONTEXT_LIMIT = 24_000
+DOCUMENT_CONTEXT_PRIORITY_RE = re.compile(
+    r"(?:摘要|权利要求|附图说明|附图标记说明|标号说明|具体实施方式)"
+    r"|图中\s*[：:]|请参阅图|参阅图|如图\s*\d+|图\s*\d+"
+    r"|[\u4e00-\u9fffA-Za-z]{1,30}\s*[（(]?\s*\d+[A-Za-z]?\s*[）)]?"
+)
 
 
 def normalize_match_text(text: str) -> str:
@@ -305,13 +311,45 @@ def parse_patent_structure(content: PatentDocumentContent, file_name: str) -> Pa
     """Build the parser-independent patent structure used by later API layers."""
     text = content.full_text or "\n".join(page.text for page in content.pages)
     components = extract_components(text)
+    document_context, context_warnings = build_patent_document_context(content)
     return PatentDocumentParseResult(
         file_name=file_name,
         parser=content.parser,
         components=components,
         figures=extract_figures(text, components),
-        warnings=content.warnings,
+        document_context=document_context,
+        warnings=_dedupe_strings([*content.warnings, *context_warnings]),
     )
+
+
+def build_patent_document_context(
+    content: PatentDocumentContent,
+    *,
+    max_chars: int = DOCUMENT_CONTEXT_LIMIT,
+) -> tuple[str, list[str]]:
+    rendered = "\n\n".join(
+        f"[PAGE {page.page_no}]\n{(page.markdown or page.text).strip()}"
+        for page in content.pages
+        if (page.markdown or page.text).strip()
+    )
+    if not rendered:
+        rendered = content.full_text.strip()
+    if len(rendered) <= max_chars:
+        return rendered, []
+
+    selected: list[str] = []
+    for page in content.pages:
+        source = page.markdown or page.text
+        paragraphs = [item.strip() for item in re.split(r"\n{2,}|\n", source) if item.strip()]
+        page_items = [
+            paragraph
+            for index, paragraph in enumerate(paragraphs)
+            if (page.page_no == 1 and index == 0) or DOCUMENT_CONTEXT_PRIORITY_RE.search(paragraph)
+        ]
+        if page_items:
+            selected.append(f"[PAGE {page.page_no}]\n" + "\n".join(page_items))
+    compact = "\n\n".join(selected).strip() or rendered
+    return compact[:max_chars], ["patent_document_context_truncated"]
 
 
 def _pypdf_to_content(pdf_path: Path) -> PatentDocumentContent:
@@ -343,18 +381,18 @@ def _pypdf_to_content(pdf_path: Path) -> PatentDocumentContent:
 
 
 class PatentDocumentParser:
-    """Parse a patent PDF into deterministic figure/component structure."""
+    """Parse a patent PDF into text context plus regex UI metadata."""
 
     def __init__(self, mineru_client: MineruClient | None = None):
         self.mineru_client = mineru_client or MineruClient()
 
     async def parse(self, pdf_path: Path, *, file_name: str, fast: bool = False) -> PatentDocumentParseResult:
         warnings: list[str] = []
+        content: PatentDocumentContent | None = None
         if not fast:
             try:
                 payload = await self.mineru_client.fetch_payload(Path(pdf_path))
                 content = mineru_payload_to_content(payload)
-                return parse_patent_structure(content, file_name=file_name)
             except MineruError as exc:
                 warnings.append(exc.code)
             except PatentAnnotationError as exc:
@@ -362,8 +400,9 @@ class PatentDocumentParser:
                     raise
                 warnings.append(exc.code)
 
-        content = await asyncio.to_thread(_pypdf_to_content, Path(pdf_path))
-        content.warnings[:] = [*warnings, *content.warnings]
+        if content is None:
+            content = await asyncio.to_thread(_pypdf_to_content, Path(pdf_path))
+            content.warnings[:] = [*warnings, *content.warnings]
         if not content.full_text.strip():
             raise PatentAnnotationError(
                 "patent_document_no_text",

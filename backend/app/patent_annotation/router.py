@@ -80,13 +80,19 @@ async def localize_page(
     figure_no: str = Form(...),
     figure_description: str = Form(default=""),
     figure_context: str = Form(default=""),
-    components_json: str = Form(...),
+    document_context: str = Form(default=""),
+    components_json: str = Form(default="[]"),
     image_file: UploadFile = File(...),
     service: PatentLocalizationService = Depends(get_localization_service),
 ):
     try:
         _validate_image_upload(image_file)
         candidates = _parse_candidates(components_json)
+        if not document_context.strip() and not candidates:
+            raise PatentAnnotationError(
+                "patent_document_context_missing",
+                "请先解析专利说明书，再自动标注当前附图",
+            )
         data = await _read_limited(image_file, IMAGE_MAX_BYTES, too_large_code="patent_image_too_large")
         if not data:
             raise PatentAnnotationError("patent_image_empty", "image file is empty")
@@ -99,6 +105,7 @@ async def localize_page(
                 figure_no=figure_no,
                 figure_description=figure_description,
                 figure_context=figure_context,
+                document_context=document_context[:24_000],
                 candidates=candidates,
                 work_dir=work_dir / "localization",
             )
@@ -130,7 +137,7 @@ def _parse_candidates(value: str) -> list[LocalizationCandidate]:
     except ValidationError as exc:
         raise PatentAnnotationError("patent_components_invalid", "components_json is invalid") from exc
     if not candidates:
-        raise PatentAnnotationError("patent_components_invalid", "components_json must contain at least one component")
+        return []
     return candidates
 
 
@@ -146,6 +153,7 @@ def _http_error(exc: Exception) -> HTTPException:
         "patent_image_empty",
         "patent_image_too_large",
         "patent_components_invalid",
+        "patent_document_context_missing",
         "patent_document_no_text",
     }:
         status_code = 422

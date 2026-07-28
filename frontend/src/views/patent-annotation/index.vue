@@ -59,13 +59,6 @@ function deleteAnnotation(annotationId: string) {
   annotationStore.removeAnnotation(annotationId);
 }
 
-function toggleRef(refNo: string, selected: boolean) {
-  const next = new Set(autoAnnotation.selectedRefs.value);
-  if (selected) next.add(refNo);
-  else next.delete(refNo);
-  autoAnnotation.selectedRefs.value = next;
-}
-
 async function parseAutoPdf(file: File) {
   try {
     const result = await autoAnnotation.parseDocument(file, { sources: activePdfSources.value });
@@ -204,7 +197,6 @@ function changeMode(nextMode: string | number | boolean | undefined) {
       <section v-if="mode === 'pdf'" class="pdf-column">
         <AutoAnnotationPanel
           :parse-result="autoAnnotation.parseResult.value"
-          :selected-refs="autoAnnotation.selectedRefs.value"
           :parsing="autoAnnotation.parsing.value"
           :localizing="autoAnnotation.localizing.value"
           :progress-text="autoAnnotation.progressText.value"
@@ -212,8 +204,6 @@ function changeMode(nextMode: string | number | boolean | undefined) {
           :active-page="activePage"
           @parse="parseAutoPdf"
           @upload-figures="openFigurePdfPicker"
-          @toggle-ref="toggleRef"
-          @update-component-name="autoAnnotation.updateComponentName"
           @update-figure="activeSourceId && annotationStore.updateSource(activeSourceId, { figureNo: $event })"
           @localize="localizeCurrentPage"
           @accept-page="acceptPageAutoAnnotations"

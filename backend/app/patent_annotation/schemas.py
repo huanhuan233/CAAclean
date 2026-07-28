@@ -44,6 +44,7 @@ class PatentDocumentParseResult(BaseModel):
     parser: Literal["mineru", "pypdf"]
     components: list[PatentComponent] = Field(default_factory=list)
     figures: list[PatentFigure] = Field(default_factory=list)
+    document_context: str = ""
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -61,6 +62,7 @@ class ModelLocalizationBox(BaseModel):
 
 class ModelLocalizationItem(BaseModel):
     ref_no: str
+    name: str | None = None
     visible: bool
     confidence: float = Field(ge=0, le=1)
     reason: str = ""
@@ -86,6 +88,7 @@ class NormalizedBox(BaseModel):
 
 class NormalizedLocalizationItem(BaseModel):
     ref_no: str
+    name: str | None = None
     visible: bool
     confidence: float = Field(ge=0, le=1)
     reason: str = ""

@@ -26,6 +26,7 @@ export function localizePatentPage(params: {
   figureNo: string;
   figureDescription?: string;
   figureContext?: string;
+  documentContext?: string;
   components: Api.PatentAnnotation.LocalizationCandidate[];
 }) {
   const data = new FormData();
@@ -33,6 +34,7 @@ export function localizePatentPage(params: {
   data.append('figure_no', params.figureNo);
   if (params.figureDescription) data.append('figure_description', params.figureDescription);
   if (params.figureContext) data.append('figure_context', params.figureContext);
+  if (params.documentContext) data.append('document_context', params.documentContext);
   data.append('components_json', JSON.stringify(params.components));
 
   return request<Api.PatentAnnotation.NormalizedLocalizationResult>({
