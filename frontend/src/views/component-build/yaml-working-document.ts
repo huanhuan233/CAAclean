@@ -116,6 +116,34 @@ function scalarValueType(value: unknown): 'text' | 'number' | 'boolean' {
   return 'text'
 }
 
+function templateKind(kind: string): YamlFieldKind {
+  const supported: YamlFieldKind[] = [
+    'object',
+    'object_array',
+    'scalar_array',
+    'text',
+    'number',
+    'boolean',
+    'null',
+    'generic'
+  ]
+  return supported.includes(kind as YamlFieldKind) ? kind as YamlFieldKind : 'generic'
+}
+
+function materializeTemplateField(field: TemplateFieldDefinition): YamlFieldDefinition {
+  return {
+    ...field,
+    kind: templateKind(field.kind),
+    children: field.children?.map(materializeTemplateField),
+    item: field.item
+      ? {
+          kind: 'object',
+          children: field.item.children.map(materializeTemplateField)
+        }
+      : undefined
+  }
+}
+
 function orderedObjectArrayKeys(items: Record<string, unknown>[]): string[] {
   const keys = new Set<string>()
   items.forEach(item => Object.keys(item).forEach(key => keys.add(key)))
@@ -183,10 +211,7 @@ function inferField(
         repeatable: true,
         item: {
           kind: 'object',
-          children: (metadata.item?.children || []).map(field => ({
-            ...field,
-            kind: field.kind as YamlFieldKind
-          }))
+          children: (metadata.item?.children || []).map(materializeTemplateField)
         }
       }
     }
@@ -258,7 +283,7 @@ export function updateYamlWorkingDocument(
     if (!isRecord(value)) {
       throw new YamlWorkingDocumentError('ComponentSpec YAML root must be a mapping')
     }
-    working.ast.contents = working.ast.createNode(value)
+    working.ast.contents = working.ast.createNode(value) as unknown as ParsedNode
   } else {
     working.ast.setIn(path, value)
   }

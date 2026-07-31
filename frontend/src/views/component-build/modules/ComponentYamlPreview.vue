@@ -1,91 +1,71 @@
 <script setup lang="ts">
-/**
- * ComponentYamlPreview.vue
- * ========================
- * YAML preview panel with local upload support.
- *
- * Displays system-generated YAML alongside optional locally-uploaded YAML.
- * User can toggle between "系统生成" and "本地上传" views.
- */
-
 import { computed, ref, watch } from 'vue'
-import { getLocalYaml, clearLocalYaml, saveLocalYaml, type LocalYamlRecord } from '../mock/library-ui'
+
+defineOptions({ name: 'ComponentYamlPreview' })
 
 const props = defineProps<{
   buildId: string
   systemYaml: string
+  currentYaml: string
+  currentFilename: string | null
   loading: boolean
   loadingLabel: string
+  parseError?: string | null
 }>()
 
 const emit = defineEmits<{
-  close: []
+  uploadYaml: [filename: string, content: string]
+  restoreSystem: []
 }>()
 
-const activeTab = ref<'system' | 'local'>('system')
-const localYaml = ref<LocalYamlRecord | null>(null)
-const previewText = computed(() => {
-  if (activeTab.value === 'local' && localYaml.value) {
-    return localYaml.value.content
-  }
-  return props.systemYaml
-})
-
+const activeTab = ref<'system' | 'current'>('current')
 const fileInput = ref<HTMLInputElement>()
 
-watch(() => props.buildId, (id) => {
-  if (id) {
-    localYaml.value = getLocalYaml(id)
-    activeTab.value = localYaml.value ? 'local' : 'system'
-  } else {
-    localYaml.value = null
-    activeTab.value = 'system'
+const previewText = computed(() =>
+  activeTab.value === 'system' ? props.systemYaml : props.currentYaml
+)
+const previewFilename = computed(() => {
+  if (activeTab.value === 'system') return `system-spec-${props.buildId}.yaml`
+  return props.currentFilename || `component-spec-${props.buildId}.yaml`
+})
+
+watch(
+  () => props.buildId,
+  () => {
+    activeTab.value = 'current'
   }
-}, { immediate: true })
+)
+
+watch(
+  () => props.currentFilename,
+  filename => {
+    if (filename) activeTab.value = 'current'
+  }
+)
+
+function showCurrent() {
+  activeTab.value = 'current'
+}
 
 function handleUploadClick() {
   fileInput.value?.click()
 }
 
-function handleFileChange(event: Event) {
+async function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
+  input.value = ''
   if (!file) return
-
   if (!/\.ya?ml$/i.test(file.name)) {
     window.$message?.warning('请选择 .yaml 或 .yml 文件')
-    input.value = ''
     return
   }
-
-  const reader = new FileReader()
-  reader.onload = () => {
-    const content = reader.result as string
-    const record: LocalYamlRecord = {
-      filename: file.name,
-      size: file.size,
-      modifiedAt: new Date(file.lastModified).toISOString(),
-      content,
-      uploadedAt: new Date().toISOString()
-    }
-    saveLocalYaml(props.buildId, record)
-    localYaml.value = record
-    activeTab.value = 'local'
-    window.$message?.success('本地 YAML 已保存到浏览器缓存')
+  try {
+    emit('uploadYaml', file.name, await file.text())
+    activeTab.value = 'current'
+  } catch {
+    window.$message?.error('YAML 文件读取失败')
   }
-  reader.onerror = () => {
-    window.$message?.error('文件读取失败')
-  }
-  reader.readAsText(file)
-  input.value = ''
-}
-
-function handleClearLocal() {
-  if (!props.buildId) return
-  clearLocalYaml(props.buildId)
-  localYaml.value = null
-  activeTab.value = 'system'
-  window.$message?.info('本地 YAML 已清除')
 }
 
 async function handleCopy() {
@@ -97,90 +77,65 @@ async function handleCopy() {
   }
 }
 
-function handleRecoverSystem() {
-  activeTab.value = 'system'
-}
+defineExpose({ showCurrent })
 </script>
 
 <template>
   <div class="yaml-preview-panel">
-    <!-- Header controls -->
     <div class="yaml-controls">
       <div class="yaml-tabs">
         <button
           :class="{ active: activeTab === 'system' }"
           class="yaml-tab"
+          type="button"
           @click="activeTab = 'system'"
         >
           系统生成
         </button>
         <button
-          v-if="localYaml"
-          :class="{ active: activeTab === 'local' }"
+          :class="{ active: activeTab === 'current' }"
           class="yaml-tab"
-          @click="activeTab = 'local'"
+          type="button"
+          @click="activeTab = 'current'"
         >
-          本地上传
+          当前编辑
         </button>
       </div>
       <div class="yaml-actions">
-        <ElButton size="small" @click="handleUploadClick">
-          <template #icon>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          </template>
-          上传 YAML
-        </ElButton>
-        <ElButton v-if="localYaml && activeTab === 'local'" size="small" @click="handleClearLocal">
-          清除本地
-        </ElButton>
-        <ElButton v-if="localYaml && activeTab === 'local'" size="small" @click="handleRecoverSystem">
+        <ElButton size="small" @click="handleUploadClick">上传 YAML</ElButton>
+        <ElButton size="small" :disabled="currentYaml === systemYaml" @click="emit('restoreSystem')">
           恢复系统生成
         </ElButton>
-        <ElButton size="small" @click="handleCopy">
-          <template #icon>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          </template>
-          复制
-        </ElButton>
+        <ElButton size="small" :disabled="!previewText" @click="handleCopy">复制</ElButton>
       </div>
     </div>
 
-    <!-- Info alert for local upload -->
     <ElAlert
-      v-if="activeTab === 'local' && localYaml"
-      title="当前 YAML 上传仅用于前端预览，不会覆盖服务器中的 ComponentSpec 数据。"
-      type="info"
+      v-if="parseError"
+      :title="parseError"
+      type="error"
       :closable="false"
       show-icon
-      style="margin-bottom: 8px;"
     />
 
-    <!-- YAML content -->
     <div v-loading="loading" :element-loading-text="loadingLabel" class="yaml-viewer">
       <div v-if="!loading && previewText" class="yaml-header">
-        <span class="yaml-filename">
-          {{ activeTab === 'local' && localYaml ? localYaml.filename : `system-spec-${buildId}.yaml` }}
-        </span>
-        <span class="yaml-schema-version" v-if="activeTab === 'system'">Schema v1.2</span>
+        <span class="yaml-filename">{{ previewFilename }}</span>
+        <span v-if="activeTab === 'current'" class="yaml-state">字段修改会实时同步到这里</span>
       </div>
       <pre v-if="previewText" class="yaml-content">{{ previewText }}</pre>
       <ElEmpty v-else-if="!loading" description="暂无 YAML 内容" :image-size="42" />
     </div>
 
-    <!-- Hidden file input -->
     <input
       ref="fileInput"
       type="file"
       accept=".yaml,.yml"
-      style="display: none"
+      class="hidden-file-input"
       @change="handleFileChange"
     />
   </div>
 </template>
-
-<script lang="ts">
-export default { name: 'ComponentYamlPreview' }
-</script>
 
 <style scoped>
 .yaml-preview-panel {
@@ -200,19 +155,18 @@ export default { name: 'ComponentYamlPreview' }
 
 .yaml-tabs {
   display: flex;
-  gap: 0;
+  overflow: hidden;
   border: 1px solid #e5eaf2;
   border-radius: 8px;
-  overflow: hidden;
 }
 
 .yaml-tab {
-  padding: 4px 12px;
-  font-size: 12px;
   border: none;
+  padding: 4px 12px;
   background: #fff;
   color: #5a6a7e;
   cursor: pointer;
+  font-size: 12px;
   transition: all 0.15s;
 }
 
@@ -227,13 +181,13 @@ export default { name: 'ComponentYamlPreview' }
 
 .yaml-actions {
   display: flex;
-  gap: 4px;
   flex-wrap: wrap;
+  gap: 4px;
 }
 
 .yaml-viewer {
-  flex: 1;
   min-height: 200px;
+  flex: 1;
   overflow: auto;
 }
 
@@ -245,14 +199,14 @@ export default { name: 'ComponentYamlPreview' }
 }
 
 .yaml-filename {
+  color: #1a2332;
   font-size: 12px;
   font-weight: 500;
-  color: #1a2332;
 }
 
-.yaml-schema-version {
-  font-size: 11px;
+.yaml-state {
   color: #8e99aa;
+  font-size: 11px;
 }
 
 .yaml-content {
@@ -260,12 +214,16 @@ export default { name: 'ComponentYamlPreview' }
   overflow: auto;
   border: 1px solid #e5eaf2;
   border-radius: 8px;
-  background: #f7f9fc;
   padding: 14px;
+  background: #f7f9fc;
   color: #1a2332;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.65;
   white-space: pre;
+}
+
+.hidden-file-input {
+  display: none;
 }
 </style>

@@ -330,20 +330,20 @@ export function fetchComponentSpec(buildId: string) {
   });
 }
 
-export function saveComponentSpec(buildId: string, data: Record<string, any>) {
+export function saveComponentSpec(buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload) {
   return request<Api.ComponentBuild.ComponentSpecDocument>({
     url: `/api/component-builds/${buildId}/component-spec`,
     method: 'put',
-    data: { data },
+    data: payload,
     headers: { 'X-Client-Silent-Error': '1' }
   });
 }
 
-export function previewComponentSpec(buildId: string, data: Record<string, any>) {
+export function previewComponentSpec(buildId: string, payload: Api.ComponentBuild.ComponentSpecPreviewPayload) {
   return request<{ yaml: string }>({
     url: `/api/component-builds/${buildId}/component-spec/preview`,
     method: 'post',
-    data: { data },
+    data: payload,
     headers: { 'X-Client-Silent-Error': '1' }
   });
 }

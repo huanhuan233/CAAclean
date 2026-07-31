@@ -13,6 +13,18 @@ import { computed, nextTick, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import {
+  applyComponentSpecFieldEdit,
+  createComponentSpecEditorState,
+  createComponentSpecSavePayload,
+  importComponentSpecYaml,
+  type ComponentSpecEditorState
+} from '../component-spec-editor-state'
+import type { ComponentSpecFieldPath } from '../component-spec-field-events'
+import {
+  YamlWorkingDocumentError,
+  createYamlWorkingDocument
+} from '../yaml-working-document'
 import ComponentSpecFieldEditor from './ComponentSpecFieldEditor.vue'
 import ComponentYamlPreview from './ComponentYamlPreview.vue'
 
@@ -50,8 +62,7 @@ const emit = defineEmits<{
   }]
   refresh: []
   fusion: [buildId: string]
-  saveSpec: [buildId: string, data: Record<string, any>]
-  previewSpec: [buildId: string, data: Record<string, any>]
+  saveSpec: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload]
   startParsing: [buildId: string, role: Api.ComponentBuild.RetryRole]
 }>()
 
@@ -70,12 +81,21 @@ const drawingFile = ref<File | null>(null)
 
 // ComponentSpec state
 const componentSpec = ref<Api.ComponentBuild.ComponentSpecDocument | null>(null)
+const editorState = ref<ComponentSpecEditorState | null>(null)
 const specLoading = ref(false)
 const specSaving = ref(false)
 const specDirty = ref(false)
 const specOffline = ref(false)
 const specPreviewing = ref(false)
 const systemYaml = ref('')
+const specParseError = ref<string | null>(null)
+const yamlPreviewRef = ref<InstanceType<typeof ComponentYamlPreview> | null>(null)
+
+const currentYaml = computed(() => editorState.value?.working.yaml || '')
+const currentYamlFilename = computed(() => editorState.value?.working.sourceFilename || null)
+const currentSpecFields = computed(() => editorState.value?.working.fields || [])
+const currentSpecData = computed(() => editorState.value?.working.data || {})
+const baselineYaml = computed(() => editorState.value?.systemYaml || systemYaml.value)
 
 // Build status
 const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({})
@@ -168,13 +188,15 @@ function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file'
 async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Record<string, Api.ComponentBuild.BuildStatus>, spec: Api.ComponentBuild.ComponentSpecDocument | null, yaml: string) {
   editingBuild.value = build
   buildStatuses.value = statuses
-  componentSpec.value = spec
+  componentSpec.value = null
+  editorState.value = null
   systemYaml.value = yaml
   specLoading.value = Boolean(build && !spec)
   specSaving.value = false
   specDirty.value = false
   specOffline.value = false
   specPreviewing.value = false
+  specParseError.value = null
   form.value = {
     category_code: build?.family || '',
     part_type_code: build?.component_type || '',
@@ -186,6 +208,7 @@ async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Reco
   drawingFile.value = null
   activeTab.value = 'basic'
   visible.value = true
+  if (build && spec) setComponentSpec(build.id, spec)
   await nextTick()
   formRef.value?.clearValidate()
 }
@@ -209,14 +232,38 @@ function setComponentSpec(
   offline = false
 ) {
   if (currentBuildId.value !== buildId) return
-  componentSpec.value = spec
-  specOffline.value = offline
-  specDirty.value = false
+  try {
+    const nextState = createComponentSpecEditorState(spec, {
+      generatedYaml: systemYaml.value || undefined
+    })
+    componentSpec.value = spec
+    editorState.value = nextState
+    systemYaml.value = nextState.systemYaml
+    specOffline.value = offline
+    specDirty.value = false
+    specParseError.value = null
+  } catch (error) {
+    specParseError.value = formatYamlError(error)
+    editorState.value = null
+  }
 }
 
 function setSystemYaml(buildId: string, yaml: string) {
   if (currentBuildId.value !== buildId) return
+  try {
+    createYamlWorkingDocument(yaml, {
+      templateSections: editorState.value?.working.templateSections || []
+    })
+  } catch {
+    return
+  }
   systemYaml.value = yaml
+  if (editorState.value) {
+    editorState.value = {
+      ...editorState.value,
+      systemYaml: yaml
+    }
+  }
 }
 
 function setSpecLoading(buildId: string, value: boolean) {
@@ -234,27 +281,69 @@ function setSpecPreviewing(buildId: string, value: boolean) {
   specPreviewing.value = value
 }
 
-function updateSpecSection(sectionKey: string, value: any) {
-  if (!componentSpec.value) return
-  componentSpec.value = {
-    ...componentSpec.value,
-    saved: false,
-    data: {
-      ...componentSpec.value.data,
-      [sectionKey]: value
-    }
-  }
+function handleSpecFieldChange(path: ComponentSpecFieldPath, value: unknown) {
+  if (!editorState.value) return
+  editorState.value = applyComponentSpecFieldEdit(editorState.value, path, value)
   specDirty.value = true
+  specParseError.value = null
+  yamlPreviewRef.value?.showCurrent()
 }
 
 function handleSaveSpec() {
-  if (!currentBuildId.value || !componentSpec.value) return
-  emit('saveSpec', currentBuildId.value, structuredClone(componentSpec.value.data))
+  if (!currentBuildId.value || !editorState.value) return
+  emit('saveSpec', currentBuildId.value, createComponentSpecSavePayload(editorState.value))
 }
 
 function handlePreviewSpec() {
-  if (!currentBuildId.value || !componentSpec.value) return
-  emit('previewSpec', currentBuildId.value, structuredClone(componentSpec.value.data))
+  activeTab.value = 'yaml'
+  nextTick(() => yamlPreviewRef.value?.showCurrent())
+}
+
+function handleUploadYaml(filename: string, content: string) {
+  if (!editorState.value) return
+  try {
+    editorState.value = importComponentSpecYaml(editorState.value, content, filename)
+    specDirty.value = true
+    specParseError.value = null
+    window.$message?.success(`已加载 ${filename}，字段与预览已同步更新`)
+  } catch (error) {
+    specParseError.value = formatYamlError(error)
+    window.$message?.error(specParseError.value)
+  }
+}
+
+async function handleRestoreSystem() {
+  if (!componentSpec.value || !editorState.value) return
+  if (editorState.value.working.yaml === editorState.value.systemYaml) return
+  try {
+    await ElMessageBox.confirm(
+      '这会替换当前未保存的字段和 YAML，是否继续？',
+      '恢复系统生成',
+      {
+        type: 'warning',
+        confirmButtonText: '恢复',
+        cancelButtonText: '取消'
+      }
+    )
+    editorState.value = createComponentSpecEditorState({
+      ...componentSpec.value,
+      yaml: editorState.value.systemYaml,
+      source_filename: null
+    })
+    specDirty.value = true
+    specParseError.value = null
+    yamlPreviewRef.value?.showCurrent()
+  } catch {
+    // The user cancelled the destructive replacement.
+  }
+}
+
+function formatYamlError(error: unknown) {
+  if (error instanceof YamlWorkingDocumentError) {
+    const location = error.line && error.column ? `第 ${error.line} 行，第 ${error.column} 列：` : ''
+    return `${location}${error.message}`
+  }
+  return error instanceof Error ? error.message : 'YAML 解析失败'
 }
 
 function handleCategoryChange() {
@@ -317,12 +406,14 @@ watch(visible, (val) => {
   if (!val) {
     editingBuild.value = null
     componentSpec.value = null
+    editorState.value = null
     systemYaml.value = ''
     specLoading.value = false
     specSaving.value = false
     specDirty.value = false
     specOffline.value = false
     specPreviewing.value = false
+    specParseError.value = null
   }
 })
 </script>
@@ -524,7 +615,7 @@ watch(visible, (val) => {
                   <el-tag v-if="componentSpec?.saved" size="small" type="success">已保存</el-tag>
                   <el-tag v-else size="small" type="info">待生成</el-tag>
                 </div>
-                <div class="status-row" v-if="systemYaml">
+                <div class="status-row" v-if="baselineYaml">
                   <span>YAML</span>
                   <el-tag size="small" type="success">已生成</el-tag>
                 </div>
@@ -536,7 +627,7 @@ watch(visible, (val) => {
                 <ElButton
                   size="small"
                   :loading="specSaving"
-                  :disabled="specLoading || !componentSpec"
+                  :disabled="specLoading || !editorState"
                   @click="handleSaveSpec"
                 >
                   保存 ComponentSpec
@@ -544,7 +635,7 @@ watch(visible, (val) => {
                 <ElButton
                   size="small"
                   :loading="specPreviewing"
-                  :disabled="specLoading || !componentSpec"
+                  :disabled="specLoading || !editorState"
                   @click="handlePreviewSpec"
                 >
                   预览 YAML
@@ -567,7 +658,7 @@ watch(visible, (val) => {
                   <ElButton
                     size="small"
                     :loading="specSaving"
-                    :disabled="specLoading || !componentSpec || (!specDirty && componentSpec.saved)"
+                    :disabled="specLoading || !editorState || (!specDirty && componentSpec?.saved)"
                     @click="handleSaveSpec"
                   >
                     <template #icon>
@@ -587,14 +678,15 @@ watch(visible, (val) => {
                   style="margin-bottom: 10px;"
                 />
                 <ComponentSpecFieldEditor
-                  v-for="section in componentSpec?.schema.sections || []"
-                  :key="section.key"
-                  :field="{ key: section.key, path: section.key, label: section.label, required: false, read_only: false, source: '', comment: section.description, kind: 'object', children: section.fields }"
-                  :model-value="componentSpec?.data?.[section.key]"
-                  @update:model-value="updateSpecSection(section.key, $event)"
+                  v-for="field in currentSpecFields"
+                  :key="field.path"
+                  :field="field"
+                  :model-value="currentSpecData[field.key]"
+                  :path="[field.key]"
+                  @field-change="handleSpecFieldChange"
                 />
                 <ElEmpty
-                  v-if="!componentSpec && !specLoading"
+                  v-if="!editorState && !specLoading"
                   description="ComponentSpec 加载失败"
                   :image-size="42"
                 />
@@ -605,10 +697,16 @@ watch(visible, (val) => {
                 <span>YAML 预览</span>
               </div>
               <ComponentYamlPreview
+                ref="yamlPreviewRef"
                 :build-id="currentBuildId"
-                :system-yaml="systemYaml"
+                :system-yaml="baselineYaml"
+                :current-yaml="currentYaml"
+                :current-filename="currentYamlFilename"
                 :loading="specPreviewing"
+                :parse-error="specParseError"
                 loading-label="生成 YAML 预览…"
+                @restore-system="handleRestoreSystem"
+                @upload-yaml="handleUploadYaml"
               />
             </div>
           </div>

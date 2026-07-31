@@ -26,6 +26,7 @@ const objectValue = computed<Record<string, any>>(() =>
 );
 const arrayValue = computed<any[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : []));
 const scalarArrayText = computed(() => arrayValue.value.join(', '));
+const genericText = computed(() => JSON.stringify(props.modelValue, null, 2));
 
 function blankValue(field: Api.ComponentBuild.ComponentSpecField): any {
   if (field.read_only) return field.fixed_value ?? null;
@@ -78,6 +79,14 @@ function emitValue(value: any) {
 
 function bubbleFieldChange(path: ComponentSpecFieldPath, value: any) {
   emit('field-change', path, value);
+}
+
+function updateGeneric(value: string) {
+  try {
+    emitValue(JSON.parse(value));
+  } catch {
+    window.$message?.warning('请输入有效的 JSON；当前字段尚未修改');
+  }
 }
 </script>
 
@@ -169,6 +178,14 @@ function bubbleFieldChange(path: ComponentSpecFieldPath, value: any) {
       :disabled="field.read_only"
       placeholder="多个值请用逗号分隔"
       @update:model-value="updateScalarArray"
+    />
+    <ElInput
+      v-else-if="field.kind === 'generic'"
+      :model-value="genericText"
+      :readonly="field.read_only"
+      :rows="6"
+      type="textarea"
+      @change="updateGeneric"
     />
     <ElInput
       v-else

@@ -411,7 +411,15 @@ declare namespace Api {
       build_id: string;
     }
 
-    type ComponentSpecFieldKind = 'object' | 'object_array' | 'scalar_array' | 'text' | 'number' | 'boolean';
+    type ComponentSpecFieldKind =
+      | 'object'
+      | 'object_array'
+      | 'scalar_array'
+      | 'text'
+      | 'number'
+      | 'boolean'
+      | 'null'
+      | 'generic';
 
     interface ComponentSpecField {
       key: string;
@@ -446,8 +454,22 @@ declare namespace Api {
         sections: ComponentSpecSection[];
       };
       data: Record<string, any>;
+      yaml: string | null;
+      source_filename: string | null;
       saved: boolean;
       updated_at: string | null;
+    }
+
+    interface ComponentSpecSavePayload {
+      data: Record<string, any>;
+      yaml: string;
+      source_filename: string | null;
+    }
+
+    interface ComponentSpecPreviewPayload {
+      data: Record<string, any>;
+      yaml?: string;
+      source_filename?: string | null;
     }
 
     interface FusionField {

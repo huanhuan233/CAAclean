@@ -72,7 +72,7 @@ let componentSpecRequestSequence = 0;
 const fusionReport = ref<Api.ComponentBuild.FusionResponse | null>(null);
 const fusionLoading = ref(false);
 
-const componentSpecFallback = componentSpecFallbackSource as Api.ComponentBuild.ComponentSpecDocument;
+const componentSpecFallback = componentSpecFallbackSource as unknown as Api.ComponentBuild.ComponentSpecDocument;
 
 // ── Computed ──
 const catalogItems = computed(() => {
@@ -397,11 +397,20 @@ function componentSpecStorageKey(buildId: string) {
 function localComponentSpec(buildId: string): Api.ComponentBuild.ComponentSpecDocument {
   const document = structuredClone(componentSpecFallback)
   document.build_id = buildId
+  document.yaml = document.yaml || null
+  document.source_filename = document.source_filename || null
   const saved = localStorage.getItem(componentSpecStorageKey(buildId))
   if (!saved) return document
   try {
-    const cached = JSON.parse(saved) as { data: Record<string, any>; updated_at: string }
+    const cached = JSON.parse(saved) as {
+      data: Record<string, any>
+      yaml?: string | null
+      source_filename?: string | null
+      updated_at: string
+    }
     document.data = cached.data
+    document.yaml = cached.yaml || null
+    document.source_filename = cached.source_filename || null
     document.saved = true
     document.updated_at = cached.updated_at
   } catch {
@@ -418,8 +427,9 @@ async function refreshSystemYaml(
   componentSpecPreviewing.value = true
   libraryDialogRef.value?.setSpecPreviewing(buildId, true)
   try {
-    const result = await previewComponentSpec(buildId, data)
+    const result = await previewComponentSpec(buildId, { data })
     if (expectedSequence !== undefined && expectedSequence !== componentSpecRequestSequence) return
+    if (result.error || !result.data) return
     const yaml = !result.error && result.data ? result.data.yaml : '（预览不可用）'
     systemYaml.value = yaml
     libraryDialogRef.value?.setSystemYaml(buildId, yaml)
@@ -439,7 +449,6 @@ async function loadComponentSpecForDialog(buildId: string) {
   const sequence = ++componentSpecRequestSequence
   componentSpecLoading.value = true
   libraryDialogRef.value?.setSpecLoading(buildId, true)
-  let loaded: Api.ComponentBuild.ComponentSpecDocument | null = null
   try {
     const result = await loadComponentSpecWithFallback(
       buildId,
@@ -447,8 +456,8 @@ async function loadComponentSpecForDialog(buildId: string) {
       localComponentSpec
     )
     if (sequence !== componentSpecRequestSequence) return
-    loaded = result.document
     componentSpec.value = result.document
+    systemYaml.value = result.document.yaml || ''
     libraryDialogRef.value?.setComponentSpec(buildId, result.document, result.offline)
   } finally {
     if (sequence === componentSpecRequestSequence) {
@@ -456,8 +465,8 @@ async function loadComponentSpecForDialog(buildId: string) {
       libraryDialogRef.value?.setSpecLoading(buildId, false)
     }
   }
-  if (loaded && sequence === componentSpecRequestSequence) {
-    await refreshSystemYaml(buildId, loaded.data, sequence)
+  if (sequence === componentSpecRequestSequence && componentSpec.value?.build_id === buildId) {
+    await refreshSystemYaml(buildId, componentSpec.value.data, sequence)
   }
 }
 
@@ -705,7 +714,10 @@ function handleFusion(buildId: string) {
   run()
 }
 
-function handleSaveSpec(buildId: string, data: Record<string, any>) {
+function handleSaveSpec(
+  buildId: string,
+  payload: Api.ComponentBuild.ComponentSpecSavePayload
+) {
   const run = async () => {
     componentSpecSaving.value = true
     libraryDialogRef.value?.setSpecSaving(buildId, true)
@@ -713,16 +725,18 @@ function handleSaveSpec(buildId: string, data: Record<string, any>) {
       ? componentSpec.value
       : localComponentSpec(buildId)
     try {
-      const result = await saveComponentSpec(buildId, data)
+      const result = await saveComponentSpec(buildId, payload)
       if (result.error || !result.data) {
         const updatedAt = new Date().toISOString()
         localStorage.setItem(
           componentSpecStorageKey(buildId),
-          JSON.stringify({ data, updated_at: updatedAt })
+          JSON.stringify({ ...payload, updated_at: updatedAt })
         )
         const localSaved = {
           ...baseSpec,
-          data,
+          data: payload.data,
+          yaml: payload.yaml,
+          source_filename: payload.source_filename,
           saved: true,
           updated_at: updatedAt
         }
@@ -732,9 +746,9 @@ function handleSaveSpec(buildId: string, data: Record<string, any>) {
       } else {
         componentSpec.value = result.data
         libraryDialogRef.value?.setComponentSpec(buildId, result.data, false)
+        await refreshSystemYaml(buildId, payload.data)
         window.$message?.success('ComponentSpec 草稿已保存')
       }
-      await refreshSystemYaml(buildId, data)
     } catch (error) {
       window.$message?.error(formatError(error, 'ComponentSpec 保存失败'))
     } finally {
@@ -745,9 +759,12 @@ function handleSaveSpec(buildId: string, data: Record<string, any>) {
   run()
 }
 
-function handlePreviewSpec(buildId: string, data: Record<string, any>) {
+function handlePreviewSpec(
+  buildId: string,
+  payload: Api.ComponentBuild.ComponentSpecSavePayload
+) {
   const run = async () => {
-    await refreshSystemYaml(buildId, data)
+    await refreshSystemYaml(buildId, payload.data)
   }
   run()
 }
@@ -864,7 +881,6 @@ onBeforeUnmount(() => {
       @refresh="refresh"
       @fusion="handleFusion"
       @save-spec="handleSaveSpec"
-      @preview-spec="handlePreviewSpec"
       @start-parsing="handleStartParsing"
     />
   </div>
