@@ -146,16 +146,24 @@ def _normalize_value(field: dict, value: Any) -> Any:
         return deepcopy(field.get("fixed_value"))
     if field["kind"] == "object":
         source = value if isinstance(value, dict) else {}
-        return {child["key"]: _normalize_value(child, source.get(child["key"])) for child in field["children"]}
+        normalized = {
+            child["key"]: _normalize_value(child, source.get(child["key"]))
+            for child in field["children"]
+        }
+        normalized.update({key: deepcopy(item) for key, item in source.items() if key not in normalized})
+        return normalized
     if field["kind"] == "object_array":
         source = value if isinstance(value, list) else []
-        return [
-            {
+        normalized_items = []
+        for item in source:
+            item_source = item if isinstance(item, dict) else {}
+            normalized = {
                 child["key"]: _normalize_value(child, item.get(child["key"]) if isinstance(item, dict) else None)
                 for child in field["item"]["children"]
             }
-            for item in source
-        ]
+            normalized.update({key: deepcopy(entry) for key, entry in item_source.items() if key not in normalized})
+            normalized_items.append(normalized)
+        return normalized_items
     if field["kind"] == "scalar_array":
         return value if isinstance(value, list) else []
     return value
@@ -189,6 +197,9 @@ def _render_mapping(fields: list[dict], data: dict) -> CommentedMap:
         mapping[key] = _render_field(field, data.get(key))
         if field["comment"]:
             mapping.yaml_add_eol_comment(field["comment"], key=key)
+    for key, value in data.items():
+        if key not in mapping:
+            mapping[key] = deepcopy(value)
     return mapping
 
 
@@ -237,11 +248,13 @@ class ComponentSpecTemplate:
 
     def normalize(self, data: dict) -> dict:
         source = data if isinstance(data, dict) else {}
-        return {
+        normalized = {
             field["key"]: _normalize_value(field, source.get(field["key"]))
             for section in self.schema["sections"]
             for field in section["fields"]
         }
+        normalized.update({key: deepcopy(value) for key, value in source.items() if key not in normalized})
+        return normalized
 
     def render_yaml(self, data: dict) -> str:
         normalized = self.normalize(data)
@@ -256,6 +269,9 @@ class ComponentSpecTemplate:
                     number = SECTION_NUMBERS.get(section["key"])
                     heading = f"{number}. {section['label']}" if number else section["label"]
                     root.yaml_set_comment_before_after_key(key, before=f"\n── {heading} ──")
+        for key, value in normalized.items():
+            if key not in root:
+                root[key] = deepcopy(value)
 
         yaml = YAML()
         yaml.preserve_quotes = True

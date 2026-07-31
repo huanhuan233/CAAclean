@@ -15,6 +15,7 @@ from app.component_builds.fusion import FusionSourceUnavailable
 from app.component_builds.fusion_sources import SqlAlchemyFusionSourceReader
 from app.component_builds.repository import SqlAlchemyComponentBuildRepository
 from app.component_builds.schemas import ComponentBuildFusionIn, ComponentBuildRetryIn, ComponentSpecDraftIn
+from app.component_builds.component_spec_document import ComponentSpecDocumentError
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal, get_session
@@ -178,7 +179,17 @@ async def save_component_spec(
     service: ComponentBuildService = Depends(get_component_build_service),
 ) -> dict:
     try:
-        return await service.save_component_spec(build_id, payload.data)
+        return await service.save_component_spec(
+            build_id,
+            payload.data,
+            yaml_text=payload.yaml,
+            source_filename=payload.source_filename,
+        )
+    except ComponentSpecDocumentError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_component_spec_document", "message": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
@@ -190,7 +201,18 @@ async def preview_component_spec(
     service: ComponentBuildService = Depends(get_component_build_service),
 ) -> dict:
     try:
-        return {"yaml": await service.preview_component_spec(build_id, payload.data)}
+        return {
+            "yaml": await service.preview_component_spec(
+                build_id,
+                payload.data,
+                yaml_text=payload.yaml,
+            )
+        }
+    except ComponentSpecDocumentError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_component_spec_document", "message": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 

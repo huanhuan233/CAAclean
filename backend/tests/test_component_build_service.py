@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.component_builds.component_spec import component_spec_template
+from app.component_builds.component_spec_document import pack_component_spec_document, unpack_component_spec_document
 from app.component_builds.repository import MemoryComponentBuildRepository, SqlAlchemyComponentBuildRepository
 from app.component_builds.fusion import FusionSourceUnavailable, FusionSources
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
@@ -85,7 +86,9 @@ async def test_fuse_component_spec_saves_normalized_draft_and_returns_report():
     assert reader.build_ids == [build.id]
     assert response["status"] == "completed"
     assert response["component_spec"]["identity"]["id"] == "flange-001"
-    assert (await repository.get_component_spec(build.id)).data["identity"]["id"] == "flange-001"
+    stored = unpack_component_spec_document((await repository.get_component_spec(build.id)).data)
+    assert stored.data["identity"]["id"] == "flange-001"
+    assert stored.yaml is not None
 
 
 @pytest.mark.asyncio
@@ -122,6 +125,54 @@ async def test_fuse_component_spec_preserves_existing_manual_value():
     response = await service.fuse_component_spec(build.id)
 
     assert response["component_spec"]["identity"]["name"] == "人工名称"
+
+
+@pytest.mark.asyncio
+async def test_fuse_component_spec_reads_envelope_and_preserves_unknown_values():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="flange-001",
+        component_name="XMS06-DN80",
+        component_type="flange",
+    )
+    existing = component_spec_template.blank_data()
+    existing["identity"]["name"] = "Manual name"
+    yaml_text = (
+        f"{component_spec_template.render_yaml(existing)}\n"
+        "# custom extension\ncustom_extension:\n  curve_policy: all\n"
+    )
+    existing["custom_extension"] = {"curve_policy": "all"}
+    await repository.save_component_spec(
+        build.id,
+        pack_component_spec_document(existing, yaml_text, "manual.yaml"),
+    )
+    service = ComponentBuildService(
+        repository,
+        source_status_reader=FakeSourceStatusReader(),
+        fusion_source_reader=FakeFusionSourceReader(
+            FusionSources(
+                drawing_facts=[
+                    {
+                        "fact_key": "product.component_type_raw",
+                        "fact_type": "product_info",
+                        "normalized_value": "weld neck",
+                        "confidence": 0.9,
+                        "metadata": {},
+                    }
+                ],
+                measurements=[],
+                features=[],
+            )
+        ),
+    )
+
+    response = await service.fuse_component_spec(build.id)
+    stored = unpack_component_spec_document((await repository.get_component_spec(build.id)).data)
+
+    assert response["component_spec"]["identity"]["name"] == "Manual name"
+    assert response["component_spec"]["custom_extension"] == {"curve_policy": "all"}
+    assert stored.data["custom_extension"] == {"curve_policy": "all"}
+    assert "custom_extension:" in stored.yaml
 
 
 @pytest.mark.asyncio

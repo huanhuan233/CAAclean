@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.component_builds.catalog import CATEGORIES, CatalogCategory, CatalogPart, find_part_by_legacy_type, find_part_by_node_id, resolve_part
 from app.component_builds.component_spec import component_spec_template
+from app.component_builds.component_spec_document import (
+    pack_component_spec_document,
+    unpack_component_spec_document,
+    validate_component_spec_yaml,
+)
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
 from app.core.config import Settings
 from app.db.models import CadModel, CadModelRevision, CadSpecTask, CadSpecSource, CadDrawingRegion, CadDrawingFact, ComponentBuild
@@ -74,27 +79,56 @@ class ComponentBuildService:
 
     async def get_component_spec(self, build_id: UUID) -> dict:
         draft = await self.repository.get_component_spec(build_id)
+        document = (
+            unpack_component_spec_document(draft.data)
+            if draft
+            else None
+        )
+        data = document.data if document else component_spec_template.blank_data()
+        yaml_text = document.yaml if document and document.yaml is not None else component_spec_template.render_yaml(data)
         return {
             "build_id": str(build_id),
             "schema": component_spec_template.schema,
-            "data": draft.data if draft else component_spec_template.blank_data(),
+            "data": data,
+            "yaml": yaml_text,
+            "source_filename": document.source_filename if document else None,
             "saved": draft is not None,
             "updated_at": draft.updated_at.isoformat() if draft else None,
         }
 
-    async def save_component_spec(self, build_id: UUID, data: dict) -> dict:
-        normalized = component_spec_template.normalize(data)
-        draft = await self.repository.save_component_spec(build_id, normalized)
+    async def save_component_spec(
+        self,
+        build_id: UUID,
+        data: dict,
+        *,
+        yaml_text: str | None = None,
+        source_filename: str | None = None,
+    ) -> dict:
+        if yaml_text is None:
+            saved_data = component_spec_template.normalize(data)
+            saved_yaml = component_spec_template.render_yaml(saved_data)
+        else:
+            saved_data = validate_component_spec_yaml(yaml_text, data)
+            saved_yaml = yaml_text
+        draft = await self.repository.save_component_spec(
+            build_id,
+            pack_component_spec_document(saved_data, saved_yaml, source_filename),
+        )
         return {
             "build_id": str(build_id),
             "schema": component_spec_template.schema,
-            "data": draft.data,
+            "data": saved_data,
+            "yaml": saved_yaml,
+            "source_filename": source_filename,
             "saved": True,
             "updated_at": draft.updated_at.isoformat(),
         }
 
-    async def preview_component_spec(self, build_id: UUID, data: dict) -> str:
+    async def preview_component_spec(self, build_id: UUID, data: dict, *, yaml_text: str | None = None) -> str:
         await self.repository.get_build(build_id) or self._raise_missing_build(build_id)
+        if yaml_text is not None:
+            validate_component_spec_yaml(yaml_text, data)
+            return yaml_text
         return component_spec_template.render_yaml(data)
 
     async def fuse_component_spec(self, build_id: UUID, *, overwrite: bool = False) -> dict:
@@ -105,7 +139,11 @@ class ComponentBuildService:
         if not sources.available:
             raise FusionSourceUnavailable("no_sources_available")
         current_draft = await self.repository.get_component_spec(build_id)
-        current = current_draft.data if current_draft else component_spec_template.blank_data()
+        current = (
+            unpack_component_spec_document(current_draft.data).data
+            if current_draft
+            else component_spec_template.blank_data()
+        )
         result = fuse_component_spec(
             build=self._build_payload(build),
             current=current,
@@ -113,14 +151,18 @@ class ComponentBuildService:
             overwrite=overwrite,
         )
         normalized = component_spec_template.normalize(result.data)
-        draft = await self.repository.save_component_spec(build_id, normalized)
+        rendered = component_spec_template.render_yaml(normalized)
+        await self.repository.save_component_spec(
+            build_id,
+            pack_component_spec_document(normalized, rendered),
+        )
         return {
             "build_id": str(build_id),
             "status": "completed",
             "summary": result.summary,
             "fields": result.fields,
             "warnings": result.warnings,
-            "component_spec": draft.data,
+            "component_spec": normalized,
         }
 
     async def create_catalog_build(

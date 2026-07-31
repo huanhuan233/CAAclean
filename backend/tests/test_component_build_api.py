@@ -348,6 +348,8 @@ def test_component_spec_initializes_from_template_with_chinese_labels(component_
     assert payload["data"]["schema_version"] == "1.2"
     assert payload["data"]["spec_type"] == "component"
     assert payload["data"]["identity"]["name"] is None
+    assert payload["yaml"].startswith("schema_version:")
+    assert payload["source_filename"] is None
     assert len(payload["data"]["parameters"]) == 1
     assert payload["data"]["parameters"][0]["name"] is None
     all_fields = [field for section in payload["schema"]["sections"] for field in section["fields"]]
@@ -397,6 +399,51 @@ def test_component_spec_drafts_are_saved_per_build(component_client):
     assert client.get(f"/api/component-builds/{second['id']}/component-spec").json()["data"]["identity"]["name"] is None
 
 
+def test_component_spec_saves_and_restores_uploaded_yaml_document(component_client):
+    client, _, _, _, _ = component_client
+    build = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "Uploaded YAML",
+        },
+    ).json()
+    original = client.get(f"/api/component-builds/{build['id']}/component-spec").json()
+    data = original["data"]
+    data["custom_extension"] = {"curve_policy": "all"}
+    yaml_text = f"{original['yaml']}\n# preserve this upload comment\ncustom_extension:\n  curve_policy: all\n"
+
+    saved = client.put(
+        f"/api/component-builds/{build['id']}/component-spec",
+        json={
+            "data": data,
+            "yaml": yaml_text,
+            "source_filename": "flange-v1.3.yaml",
+        },
+    )
+    restored = client.get(f"/api/component-builds/{build['id']}/component-spec")
+
+    assert saved.status_code == 200
+    assert saved.json()["yaml"] == yaml_text
+    assert restored.status_code == 200
+    assert restored.json()["data"]["custom_extension"] == {"curve_policy": "all"}
+    assert restored.json()["yaml"] == yaml_text
+    assert restored.json()["source_filename"] == "flange-v1.3.yaml"
+
+    mismatch = client.put(
+        f"/api/component-builds/{build['id']}/component-spec",
+        json={
+            "data": {**data, "custom_extension": {"curve_policy": "circles-only"}},
+            "yaml": yaml_text,
+            "source_filename": "bad.yaml",
+        },
+    )
+
+    assert mismatch.status_code == 422
+    assert client.get(f"/api/component-builds/{build['id']}/component-spec").json()["yaml"] == yaml_text
+
+
 def test_component_spec_preview_uses_template_structure_and_comments(component_client):
     client, _, _, _, _ = component_client
     build = client.post(
@@ -422,6 +469,28 @@ def test_component_spec_preview_uses_template_structure_and_comments(component_c
     assert "【必填】（人工） 当前对象的名称" in yaml_text
     assert "parameters:" in yaml_text
     assert "provenance:" in yaml_text
+
+
+def test_component_spec_preview_returns_valid_submitted_yaml_unchanged(component_client):
+    client, _, _, _, _ = component_client
+    build = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "Uploaded preview",
+        },
+    ).json()
+    spec = client.get(f"/api/component-builds/{build['id']}/component-spec").json()
+    yaml_text = f"# preview comment\n{spec['yaml']}"
+
+    response = client.post(
+        f"/api/component-builds/{build['id']}/component-spec/preview",
+        json={"data": spec["data"], "yaml": yaml_text},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["yaml"] == yaml_text
 
 
 def test_component_fusion_endpoint_saves_xms06_draft(component_client):
