@@ -17,6 +17,37 @@ except ImportError as exc:
 
 SCHEMA_VERSION = "cad_parse_v2"
 NAMESPACE = uuid.UUID("8c5fe5cc-91cb-4f13-8d1c-2a6e3ef93349")
+CURVE_TYPE_IDS = {
+    "Part::GeomLine": "line",
+    "Part::GeomCircle": "circle",
+    "Part::GeomEllipse": "ellipse",
+    "Part::GeomHyperbola": "hyperbola",
+    "Part::GeomParabola": "parabola",
+    "Part::GeomBezierCurve": "bezier_curve",
+    "Part::GeomBSplineCurve": "bspline_curve",
+    "Part::GeomOffsetCurve": "offset_curve",
+}
+CURVE_2D_TYPE_IDS = {
+    "Part::Geom2dLine": "line_2d",
+    "Part::Geom2dCircle": "circle_2d",
+    "Part::Geom2dEllipse": "ellipse_2d",
+    "Part::Geom2dHyperbola": "hyperbola_2d",
+    "Part::Geom2dParabola": "parabola_2d",
+    "Part::Geom2dBezierCurve": "bezier_curve_2d",
+    "Part::Geom2dBSplineCurve": "bspline_curve_2d",
+    "Part::Geom2dOffsetCurve": "offset_curve_2d",
+}
+CURVE_2D_CLASS_TYPE_IDS = {
+    "Line2d": "Part::Geom2dLine",
+    "Circle2d": "Part::Geom2dCircle",
+    "Ellipse2d": "Part::Geom2dEllipse",
+    "Hyperbola2d": "Part::Geom2dHyperbola",
+    "Parabola2d": "Part::Geom2dParabola",
+    "BezierCurve2d": "Part::Geom2dBezierCurve",
+    "BSplineCurve2d": "Part::Geom2dBSplineCurve",
+    "OffsetCurve2d": "Part::Geom2dOffsetCurve",
+}
+DEGENERATE_LENGTH_TOLERANCE = 1e-12
 
 
 def stable_uuid(revision_id: str, *parts: object) -> str:
@@ -26,6 +57,40 @@ def stable_uuid(revision_id: str, *parts: object) -> str:
 
 def vec(value) -> list[float]:
     return [float(value.x), float(value.y), float(value.z)]
+
+
+def coordinates(value) -> list[float]:
+    result = [float(value.x), float(value.y)]
+    try:
+        result.append(float(value.z))
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return result
+
+
+def safe_attr(value, *names):
+    for name in names:
+        try:
+            candidate = getattr(value, name)
+        except Exception:
+            continue
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def safe_call(value, name, *args, **kwargs):
+    candidate = safe_attr(value, name)
+    if not callable(candidate):
+        return None
+    try:
+        return candidate(*args, **kwargs)
+    except Exception:
+        return None
+
+
+def compact(data: dict) -> dict:
+    return {key: value for key, value in data.items() if value is not None}
 
 
 def bbox(shape) -> dict:
@@ -53,22 +118,371 @@ def center(shape):
 
 
 def attr_vec(value, *names):
-    for name in names:
-        candidate = getattr(value, name, None)
-        if candidate is not None:
+    candidate = safe_attr(value, *names)
+    if candidate is not None:
+        try:
             return vec(candidate)
+        except Exception:
+            return None
     return None
 
 
 def attr_float(value, *names):
-    for name in names:
-        candidate = getattr(value, name, None)
-        if candidate is not None:
-            try:
-                return float(candidate)
-            except Exception:
-                return None
+    candidate = safe_attr(value, *names)
+    if candidate is not None:
+        try:
+            return float(candidate)
+        except Exception:
+            return None
     return None
+
+
+def attr_bool(value, *names):
+    candidate = safe_attr(value, *names)
+    if candidate is None:
+        return None
+    try:
+        return bool(candidate() if callable(candidate) else candidate)
+    except Exception:
+        return None
+
+
+def attr_int(value, *names):
+    candidate = safe_attr(value, *names)
+    if candidate is None:
+        return None
+    try:
+        return int(candidate)
+    except Exception:
+        return None
+
+
+def method_values(value, name, converter=None):
+    values = safe_call(value, name)
+    if values is None:
+        return None
+    try:
+        return [converter(item) if converter else item for item in values]
+    except Exception:
+        return None
+
+
+def parameter_range(value) -> list[float] | None:
+    first = attr_float(value, "FirstParameter")
+    last = attr_float(value, "LastParameter")
+    if first is None or last is None:
+        candidate = safe_attr(value, "ParameterRange")
+        try:
+            first, last = float(candidate[0]), float(candidate[1])
+        except Exception:
+            return None
+    return [first, last]
+
+
+def ranges_match(left: list[float] | None, right: list[float] | None) -> bool | None:
+    if left is None or right is None:
+        return None
+    return all(
+        math.isclose(left[index], right[index], rel_tol=1e-9, abs_tol=1e-12)
+        for index in range(2)
+    )
+
+
+def point_at(edge, parameter):
+    if parameter is None:
+        return None
+    point = safe_call(edge, "valueAt", parameter)
+    if point is None:
+        return None
+    try:
+        return coordinates(point)
+    except Exception:
+        return None
+
+
+def normalized_direction(start, end):
+    if start is None or end is None:
+        return None
+    try:
+        delta = [float(end[index]) - float(start[index]) for index in range(len(start))]
+        length = math.sqrt(sum(component * component for component in delta))
+        if length <= DEGENERATE_LENGTH_TOLERANCE:
+            return None
+        return [component / length for component in delta]
+    except Exception:
+        return None
+
+
+def curve_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
+    curve_type_id = safe_attr(curve, "TypeId")
+    geometry: dict = {"curve_type_id": curve_type_id}
+
+    if geometry_type == "line":
+        geometry.update(
+            compact(
+                {
+                    "location": attr_vec(curve, "Location", "Position"),
+                    "direction": attr_vec(curve, "Direction", "Axis"),
+                }
+            )
+        )
+    elif geometry_type == "circle":
+        geometry.update(
+            compact(
+                {
+                    "center": attr_vec(curve, "Center", "Location", "Position"),
+                    "axis": attr_vec(curve, "Axis"),
+                    "radius": attr_float(curve, "Radius"),
+                }
+            )
+        )
+    elif geometry_type in {"ellipse", "hyperbola"}:
+        center_point = attr_vec(curve, "Center", "Location", "Position")
+        focus1 = attr_vec(curve, "Focus1")
+        geometry.update(
+            compact(
+                {
+                    "center": center_point,
+                    "axis": attr_vec(curve, "Axis"),
+                    "major_radius": attr_float(curve, "MajorRadius"),
+                    "minor_radius": attr_float(curve, "MinorRadius"),
+                    "focal": attr_float(curve, "Focal"),
+                    "focus1": focus1,
+                    "focus2": attr_vec(curve, "Focus2"),
+                    "major_axis_direction": normalized_direction(center_point, focus1),
+                }
+            )
+        )
+    elif geometry_type == "parabola":
+        geometry.update(
+            compact(
+                {
+                    "location": attr_vec(curve, "Location", "Position", "Center"),
+                    "axis": attr_vec(curve, "Axis"),
+                    "focal": attr_float(curve, "Focal"),
+                    "focus": attr_vec(curve, "Focus"),
+                    "parameter": attr_float(curve, "Parameter"),
+                }
+            )
+        )
+    elif geometry_type in {"bezier_curve", "bspline_curve"}:
+        geometry.update(
+            compact(
+                {
+                    "degree": attr_int(curve, "Degree"),
+                    "poles": method_values(curve, "getPoles", coordinates),
+                    "weights": method_values(curve, "getWeights", float),
+                    "rational": attr_bool(curve, "isRational"),
+                }
+            )
+        )
+        if geometry_type == "bspline_curve":
+            geometry.update(
+                compact(
+                    {
+                        "knots": method_values(curve, "getKnots", float),
+                        "multiplicities": method_values(curve, "getMultiplicities", int),
+                        "continuity": safe_attr(curve, "Continuity"),
+                    }
+                )
+            )
+    elif geometry_type == "offset_curve":
+        geometry.update(
+            compact(
+                {
+                    "offset_value": attr_float(curve, "OffsetValue"),
+                    "offset_direction": attr_vec(curve, "OffsetDirection"),
+                }
+            )
+        )
+        basis_curve = safe_attr(curve, "BasisCurve")
+        if basis_curve is not None and depth < 8:
+            basis_type_id = safe_attr(basis_curve, "TypeId")
+            basis_geometry_type = CURVE_TYPE_IDS.get(basis_type_id, "other_curve")
+            geometry["basis_curve"] = {
+                "geometry_type": basis_geometry_type,
+                **curve_geometry(basis_curve, basis_geometry_type, depth + 1),
+            }
+
+    return compact(geometry)
+
+
+def common_edge_geometry(edge, curve) -> dict:
+    edge_range = parameter_range(edge)
+    curve_range = parameter_range(curve)
+    geometry = curve_geometry(curve, CURVE_TYPE_IDS.get(safe_attr(curve, "TypeId"), "other_curve"))
+    geometry.update(
+        compact(
+            {
+                "parameter_range": edge_range,
+                "start_point": point_at(edge, edge_range[0]) if edge_range else None,
+                "end_point": point_at(edge, edge_range[1]) if edge_range else None,
+                "closed": attr_bool(curve, "isClosed"),
+                "periodic": attr_bool(curve, "isPeriodic"),
+                "trimmed": None if ranges_match(edge_range, curve_range) is None else not ranges_match(edge_range, curve_range),
+            }
+        )
+    )
+    return geometry
+
+
+def sample_edge(edge, number: int = 9) -> list[list[float]] | None:
+    points = safe_call(edge, "discretize", Number=number)
+    if not points:
+        return None
+    try:
+        return [coordinates(point) for point in points]
+    except Exception:
+        return None
+
+
+def curve_2d_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
+    curve_type_id = curve_2d_type_id(curve)
+    geometry: dict = {"curve_type_id": curve_type_id}
+    if geometry_type == "line_2d":
+        location = safe_attr(curve, "Location")
+        direction = safe_attr(curve, "Direction")
+        geometry.update(
+            compact(
+                {
+                    "location": coordinates(location) if location is not None else None,
+                    "direction": coordinates(direction) if direction is not None else None,
+                }
+            )
+        )
+    elif geometry_type == "circle_2d":
+        center_value = safe_call(curve, "getCircleCenter") or safe_attr(curve, "Center", "Location")
+        geometry.update(
+            compact(
+                {
+                    "center": coordinates(center_value) if center_value is not None else None,
+                    "radius": attr_float(curve, "Radius"),
+                }
+            )
+        )
+    elif geometry_type in {"ellipse_2d", "hyperbola_2d"}:
+        center_value = safe_attr(curve, "Center", "Location")
+        focus1_value = safe_attr(curve, "Focus1")
+        center_point = coordinates(center_value) if center_value is not None else None
+        focus1 = coordinates(focus1_value) if focus1_value is not None else None
+        geometry.update(
+            compact(
+                {
+                    "center": center_point,
+                    "major_radius": attr_float(curve, "MajorRadius"),
+                    "minor_radius": attr_float(curve, "MinorRadius"),
+                    "focal": attr_float(curve, "Focal"),
+                    "focus1": focus1,
+                    "major_axis_direction": normalized_direction(center_point, focus1),
+                }
+            )
+        )
+    elif geometry_type == "parabola_2d":
+        location = safe_attr(curve, "Location")
+        focus = safe_attr(curve, "Focus")
+        geometry.update(
+            compact(
+                {
+                    "location": coordinates(location) if location is not None else None,
+                    "focal": attr_float(curve, "Focal"),
+                    "focus": coordinates(focus) if focus is not None else None,
+                    "parameter": attr_float(curve, "Parameter"),
+                }
+            )
+        )
+    elif geometry_type in {"bezier_curve_2d", "bspline_curve_2d"}:
+        geometry.update(
+            compact(
+                {
+                    "degree": attr_int(curve, "Degree"),
+                    "poles": method_values(curve, "getPoles", coordinates),
+                    "weights": method_values(curve, "getWeights", float),
+                    "rational": attr_bool(curve, "isRational"),
+                    "periodic": attr_bool(curve, "isPeriodic"),
+                }
+            )
+        )
+        if geometry_type == "bspline_curve_2d":
+            geometry.update(
+                compact(
+                    {
+                        "knots": method_values(curve, "getKnots", float),
+                        "multiplicities": method_values(curve, "getMultiplicities", int),
+                    }
+                )
+            )
+    elif geometry_type == "offset_curve_2d":
+        geometry["offset_value"] = attr_float(curve, "OffsetValue")
+        basis_curve = safe_attr(curve, "BasisCurve")
+        if basis_curve is not None and depth < 8:
+            basis_type_id = curve_2d_type_id(basis_curve)
+            basis_geometry_type = CURVE_2D_TYPE_IDS.get(basis_type_id, "other_curve_2d")
+            geometry["basis_curve"] = {
+                "geometry_type": basis_geometry_type,
+                **curve_2d_geometry(basis_curve, basis_geometry_type, depth + 1),
+            }
+    return compact(geometry)
+
+
+def curve_2d_type_id(curve):
+    curve_type_id = safe_attr(curve, "TypeId")
+    if curve_type_id is not None:
+        return curve_type_id
+    geom_2d = safe_attr(Part, "Geom2d")
+    if geom_2d is None:
+        return None
+    for class_name, canonical_type_id in CURVE_2D_CLASS_TYPE_IDS.items():
+        curve_class = safe_attr(geom_2d, class_name)
+        if curve_class is not None and curve.__class__ is curve_class:
+            return canonical_type_id
+    return None
+
+
+def placement_geometry(placement) -> dict | None:
+    if placement is None:
+        return None
+    base = safe_attr(placement, "Base")
+    rotation = safe_attr(placement, "Rotation")
+    quaternion = safe_attr(rotation, "Q") if rotation is not None else None
+    result = compact(
+        {
+            "base": coordinates(base) if base is not None else None,
+            "quaternion": [float(value) for value in quaternion] if quaternion is not None else None,
+        }
+    )
+    return result or None
+
+
+def edge_pcurves(edge) -> list[dict]:
+    result = []
+    method = safe_attr(edge, "curveOnSurface")
+    if not callable(method):
+        return result
+    for index in range(64):
+        try:
+            item = method(index)
+        except Exception as exc:
+            result.append({"geometry_type": "invalid_curve_2d", "index": index, "error": str(exc)})
+            break
+        if item is None:
+            break
+        try:
+            curve, surface, placement, first, last = item
+            curve_type_id = curve_2d_type_id(curve)
+            geometry_type = CURVE_2D_TYPE_IDS.get(curve_type_id, "other_curve_2d")
+            result.append(
+                {
+                    "index": index,
+                    "geometry_type": geometry_type,
+                    "surface_type_id": safe_attr(surface, "TypeId"),
+                    "parameter_range": [float(first), float(last)],
+                    "placement": placement_geometry(placement),
+                    **curve_2d_geometry(curve, geometry_type),
+                }
+            )
+        except Exception as exc:
+            result.append({"geometry_type": "invalid_curve_2d", "index": index, "error": str(exc)})
+    return result
 
 
 def face_geometry(face) -> tuple[str, dict]:
@@ -107,18 +521,43 @@ def face_geometry(face) -> tuple[str, dict]:
 
 
 def edge_geometry(edge) -> tuple[str, dict]:
-    curve = edge.Curve
-    name = curve.__class__.__name__.lower()
-    if "line" in name:
-        return "line", {}
-    if "circle" in name:
-        geometry = {"radius": float(curve.Radius), "center": vec(curve.Center), "axis": attr_vec(curve, "Axis")}
-        return "circle", {key: value for key, value in geometry.items() if value is not None}
-    if "ellipse" in name:
-        return "ellipse", {}
-    if "bspline" in name:
-        return "bspline_curve", {}
-    return "other", {"curve_class": curve.__class__.__name__}
+    try:
+        curve = edge.Curve
+    except Exception as exc:
+        length = attr_float(edge, "Length")
+        tolerance = attr_float(edge, "Tolerance") or DEGENERATE_LENGTH_TOLERANCE
+        vertices = safe_attr(edge, "Vertexes") or []
+        if length is not None and length <= max(DEGENERATE_LENGTH_TOLERANCE, tolerance) and len(vertices) <= 1:
+            edge_range = parameter_range(edge)
+            point = None
+            if vertices:
+                point_value = safe_attr(vertices[0], "Point")
+                if point_value is not None:
+                    point = coordinates(point_value)
+            if point is None and edge_range:
+                point = point_at(edge, edge_range[0])
+            return "degenerate_edge", compact(
+                {
+                    "point": point,
+                    "parameter_range": edge_range,
+                    "pcurves": edge_pcurves(edge),
+                    "curve_error": str(exc),
+                }
+            )
+        return "invalid_curve", compact(
+            {
+                "error": str(exc),
+                "parameter_range": parameter_range(edge),
+                "sample_points": sample_edge(edge),
+            }
+        )
+
+    curve_type_id = safe_attr(curve, "TypeId")
+    geometry_type = CURVE_TYPE_IDS.get(curve_type_id, "other_curve")
+    geometry = common_edge_geometry(edge, curve)
+    if geometry_type == "other_curve":
+        geometry["sample_points"] = sample_edge(edge)
+    return geometry_type, compact(geometry)
 
 
 def parser_version() -> str:

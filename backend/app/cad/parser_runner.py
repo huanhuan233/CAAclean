@@ -130,7 +130,10 @@ def _run_parser_process(
             f"{process.returncode}; stdout={_truncate(stdout)}; stderr={_truncate(stderr)}"
         )
     if not result_path.exists():
-        raise FreeCadParserError(f"FreeCAD parser did not produce result.json: {result_path}")
+        raise FreeCadParserError(
+            f"FreeCAD parser did not produce result.json: {result_path}; "
+            f"stdout={_truncate(stdout)}; stderr={_truncate(stderr)}"
+        )
 
     try:
         data = json.loads(result_path.read_text(encoding="utf-8"))

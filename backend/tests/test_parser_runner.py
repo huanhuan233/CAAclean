@@ -146,3 +146,33 @@ async def test_runner_times_out_and_terminates_freecad(tmp_path, monkeypatch):
         await run_freecad_parser(source, uuid4(), tmp_path, settings)
 
     assert terminated["called"] is True
+
+
+@pytest.mark.asyncio
+async def test_runner_reports_console_output_when_result_is_missing(tmp_path, monkeypatch):
+    source = tmp_path / "part.stp"
+    source.write_text("ISO-10303-21;", encoding="utf-8")
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+    (script_dir / "parse_step.py").write_text("# parser", encoding="utf-8")
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return b">>> Traceback: undefined curve type", b""
+
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kwargs: FakeProcess())
+    settings = Settings(
+        freecad_cmd="freecadcmd-test",
+        cad_script_dir=script_dir,
+        cad_work_dir=tmp_path,
+        freecad_timeout=1,
+    )
+
+    with pytest.raises(FreeCadParserError) as exc_info:
+        await run_freecad_parser(source, uuid4(), tmp_path, settings)
+
+    message = str(exc_info.value)
+    assert "did not produce result.json" in message
+    assert "undefined curve type" in message
