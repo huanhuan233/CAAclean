@@ -4,6 +4,7 @@ cad-work/
 frontend/node_modules/
 frontend/dist/
 frontend/.tmp-three-pack/
+.worktrees/
 __pycache__/
 .pytest_cache/
 *.pyc
