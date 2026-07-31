@@ -5,7 +5,9 @@ import {
   applyComponentSpecFieldEdit,
   componentSpecPayloadForFusion,
   createComponentSpecEditorState,
+  createComponentSpecEditorStateFromUpload,
   createComponentSpecSavePayload,
+  createPersistedComponentSpecEditorState,
   importComponentSpecYaml
 } from '../component-spec-editor-state'
 import { requiresComponentSpecDiscardConfirmation } from '../component-spec-editor-state'
@@ -84,13 +86,31 @@ test('creates editor state from a persisted YAML document', () => {
   assert.equal(state.dirty, false)
 })
 
-test('uses generated YAML when loading a legacy data-only document', () => {
-  const state = createComponentSpecEditorState(localDocument, {
-    generatedYaml: 'identity:\n  name: local\n'
-  })
+test('keeps an unsaved ComponentSpec empty instead of creating template fields', () => {
+  assert.equal(createPersistedComponentSpecEditorState(localDocument), null)
+})
 
-  assert.equal(state.systemYaml, 'identity:\n  name: local\n')
-  assert.equal((state.working.data.identity as { name: string }).name, 'local')
+test('reopens a saved YAML document with dynamically inferred fields', () => {
+  const state = createPersistedComponentSpecEditorState(serverDocument)
+
+  assert.ok(state)
+  assert.equal((state.working.data.identity as { name: string }).name, 'server')
+  assert.deepEqual(state.working.fields.map(field => field.key), ['identity'])
+  assert.equal(state.working.fields[0]?.label, 'identity')
+  assert.equal(state.dirty, false)
+})
+
+test('creates the first dynamic editor state directly from an uploaded YAML file', () => {
+  const state = createComponentSpecEditorStateFromUpload(
+    '# uploaded\nidentity:\n  name: clean\ncustom_curve:\n  type: helix\n',
+    'clean.yaml'
+  )
+
+  assert.equal((state.working.data.identity as { name: string }).name, 'clean')
+  assert.equal(state.working.sourceFilename, 'clean.yaml')
+  assert.deepEqual(state.working.fields.map(field => field.key), ['identity', 'custom_curve'])
+  assert.equal(state.dirty, true)
+  assert.equal(state.source, 'upload')
 })
 
 test('imports YAML only after successful parsing', () => {

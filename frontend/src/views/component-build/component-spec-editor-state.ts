@@ -14,6 +14,7 @@ export interface ComponentSpecDocumentLike {
   data: Record<string, unknown>
   yaml?: string | null
   source_filename?: string | null
+  saved?: boolean
 }
 
 export interface ComponentSpecEditorState {
@@ -55,6 +56,38 @@ export function createComponentSpecEditorState(
     working,
     dirty: false,
     source: 'system'
+  }
+}
+
+export function createPersistedComponentSpecEditorState(
+  document: ComponentSpecDocumentLike
+): ComponentSpecEditorState | null {
+  if (!document.saved || !document.yaml) return null
+  const working = createYamlWorkingDocument(document.yaml, {
+    sourceFilename: document.source_filename ?? null,
+    templateSections: []
+  })
+  return {
+    systemYaml: document.yaml,
+    working,
+    dirty: false,
+    source: 'system'
+  }
+}
+
+export function createComponentSpecEditorStateFromUpload(
+  yamlText: string,
+  sourceFilename: string
+): ComponentSpecEditorState {
+  const working = createYamlWorkingDocument(yamlText, {
+    sourceFilename,
+    templateSections: []
+  })
+  return {
+    systemYaml: '',
+    working,
+    dirty: true,
+    source: 'upload'
   }
 }
 

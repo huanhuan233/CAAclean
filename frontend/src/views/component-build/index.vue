@@ -21,12 +21,10 @@ import {
   fetchComponentBuildTree,
   fetchComponentSpec,
   fuseComponentBuild,
-  previewComponentSpec,
   retryComponentBuild,
   saveComponentSpec,
   updateComponentBuild
 } from '@/service/api';
-import componentSpecFallbackSource from './component-spec-v1.2.json';
 import { isOfflineRequestError, loadComponentSpecWithFallback } from './component-spec-loader';
 import ComponentLibraryCatalog from './modules/ComponentLibraryCatalog.vue';
 import ComponentLibraryTable from './modules/ComponentLibraryTable.vue';
@@ -62,17 +60,13 @@ const pollTimer = ref<number | null>(null);
 const polling = ref(false);
 const statusUnavailable = ref(false);
 const componentSpec = ref<Api.ComponentBuild.ComponentSpecDocument | null>(null);
-const systemYaml = ref('');
 const componentSpecLoading = ref(false);
 const componentSpecSaving = ref(false);
-const componentSpecPreviewing = ref(false);
 let componentSpecRequestSequence = 0;
 
 // Fusion state (still used in dialog)
 const fusionReport = ref<Api.ComponentBuild.FusionResponse | null>(null);
 const fusionLoading = ref(false);
-
-const componentSpecFallback = componentSpecFallbackSource as unknown as Api.ComponentBuild.ComponentSpecDocument;
 
 // ── Computed ──
 const catalogItems = computed(() => {
@@ -395,10 +389,15 @@ function componentSpecStorageKey(buildId: string) {
 }
 
 function localComponentSpec(buildId: string): Api.ComponentBuild.ComponentSpecDocument {
-  const document = structuredClone(componentSpecFallback)
-  document.build_id = buildId
-  document.yaml = document.yaml || null
-  document.source_filename = document.source_filename || null
+  const document: Api.ComponentBuild.ComponentSpecDocument = {
+    build_id: buildId,
+    schema: { schema_version: 'dynamic', sections: [] },
+    data: {},
+    yaml: null,
+    source_filename: null,
+    saved: false,
+    updated_at: null
+  }
   const saved = localStorage.getItem(componentSpecStorageKey(buildId))
   if (!saved) return document
   try {
@@ -419,32 +418,6 @@ function localComponentSpec(buildId: string): Api.ComponentBuild.ComponentSpecDo
   return document
 }
 
-async function refreshSystemYaml(
-  buildId: string,
-  data: Record<string, any>,
-  expectedSequence?: number
-) {
-  componentSpecPreviewing.value = true
-  libraryDialogRef.value?.setSpecPreviewing(buildId, true)
-  try {
-    const result = await previewComponentSpec(buildId, { data })
-    if (expectedSequence !== undefined && expectedSequence !== componentSpecRequestSequence) return
-    if (result.error || !result.data) return
-    const yaml = !result.error && result.data ? result.data.yaml : '（预览不可用）'
-    systemYaml.value = yaml
-    libraryDialogRef.value?.setSystemYaml(buildId, yaml)
-  } catch {
-    if (expectedSequence !== undefined && expectedSequence !== componentSpecRequestSequence) return
-    systemYaml.value = '（预览不可用）'
-    libraryDialogRef.value?.setSystemYaml(buildId, systemYaml.value)
-  } finally {
-    if (expectedSequence === undefined || expectedSequence === componentSpecRequestSequence) {
-      componentSpecPreviewing.value = false
-      libraryDialogRef.value?.setSpecPreviewing(buildId, false)
-    }
-  }
-}
-
 async function loadComponentSpecForDialog(buildId: string) {
   const sequence = ++componentSpecRequestSequence
   componentSpecLoading.value = true
@@ -457,16 +430,12 @@ async function loadComponentSpecForDialog(buildId: string) {
     )
     if (sequence !== componentSpecRequestSequence) return
     componentSpec.value = result.document
-    systemYaml.value = result.document.yaml || ''
     libraryDialogRef.value?.setComponentSpec(buildId, result.document, result.offline)
   } finally {
     if (sequence === componentSpecRequestSequence) {
       componentSpecLoading.value = false
       libraryDialogRef.value?.setSpecLoading(buildId, false)
     }
-  }
-  if (sequence === componentSpecRequestSequence && componentSpec.value?.build_id === buildId) {
-    await refreshSystemYaml(buildId, componentSpec.value.data, sequence)
   }
 }
 
@@ -596,10 +565,9 @@ function handleRowClick(buildId: string) {
 async function openDialogForBuild(buildId: string) {
   const build = selectedBuild.value?.id === buildId ? selectedBuild.value : await fetchComponentBuild(buildId, { silent: true }).then(r => r.data || null)
   if (!build) return
-  const opened = await libraryDialogRef.value?.open(build, buildStatuses.value, null, '')
+  const opened = await libraryDialogRef.value?.open(build, buildStatuses.value, null)
   if (!opened) return
   componentSpec.value = null
-  systemYaml.value = ''
   await loadComponentSpecForDialog(buildId)
 }
 
@@ -767,7 +735,6 @@ function handleSaveSpec(
         localStorage.removeItem(componentSpecStorageKey(buildId))
         componentSpec.value = result.data
         libraryDialogRef.value?.setComponentSpec(buildId, result.data, false)
-        await refreshSystemYaml(buildId, result.data.data)
         window.$message?.success('ComponentSpec 草稿已保存')
       }
     } catch (error) {
@@ -780,18 +747,8 @@ function handleSaveSpec(
   run()
 }
 
-function handlePreviewSpec(
-  buildId: string,
-  payload: Api.ComponentBuild.ComponentSpecSavePayload
-) {
-  const run = async () => {
-    await refreshSystemYaml(buildId, payload.data)
-  }
-  run()
-}
-
 function handleOpenCreateDialog() {
-  libraryDialogRef.value?.open(null, buildStatuses.value, null, '')
+  libraryDialogRef.value?.open(null, buildStatuses.value, null)
 }
 
 // ── Watch ──

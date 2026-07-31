@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 defineOptions({ name: 'ComponentYamlPreview' })
 
 const props = defineProps<{
   buildId: string
-  systemYaml: string
   currentYaml: string
   currentFilename: string | null
   loading: boolean
@@ -15,37 +14,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   uploadYaml: [filename: string, content: string]
-  restoreSystem: []
 }>()
 
-const activeTab = ref<'system' | 'current'>('current')
 const fileInput = ref<HTMLInputElement>()
 
-const previewText = computed(() =>
-  activeTab.value === 'system' ? props.systemYaml : props.currentYaml
-)
-const previewFilename = computed(() => {
-  if (activeTab.value === 'system') return `system-spec-${props.buildId}.yaml`
-  return props.currentFilename || `component-spec-${props.buildId}.yaml`
-})
-
-watch(
-  () => props.buildId,
-  () => {
-    activeTab.value = 'current'
-  }
+const previewText = computed(() => props.currentYaml)
+const previewFilename = computed(() =>
+  props.currentFilename || `component-spec-${props.buildId}.yaml`
 )
 
-watch(
-  () => props.currentFilename,
-  filename => {
-    if (filename) activeTab.value = 'current'
-  }
-)
-
-function showCurrent() {
-  activeTab.value = 'current'
-}
+function showCurrent() {}
 
 function handleUploadClick() {
   fileInput.value?.click()
@@ -62,7 +40,6 @@ async function handleFileChange(event: Event) {
   }
   try {
     emit('uploadYaml', file.name, await file.text())
-    activeTab.value = 'current'
   } catch {
     window.$message?.error('YAML 文件读取失败')
   }
@@ -83,29 +60,9 @@ defineExpose({ showCurrent })
 <template>
   <div class="yaml-preview-panel">
     <div class="yaml-controls">
-      <div class="yaml-tabs">
-        <button
-          :class="{ active: activeTab === 'system' }"
-          class="yaml-tab"
-          type="button"
-          @click="activeTab = 'system'"
-        >
-          系统生成
-        </button>
-        <button
-          :class="{ active: activeTab === 'current' }"
-          class="yaml-tab"
-          type="button"
-          @click="activeTab = 'current'"
-        >
-          当前编辑
-        </button>
-      </div>
+      <span class="yaml-title">YAML</span>
       <div class="yaml-actions">
-        <ElButton size="small" @click="handleUploadClick">上传 YAML</ElButton>
-        <ElButton size="small" :disabled="currentYaml === systemYaml" @click="emit('restoreSystem')">
-          恢复系统生成
-        </ElButton>
+        <ElButton size="small" type="primary" @click="handleUploadClick">上传 YAML</ElButton>
         <ElButton size="small" :disabled="!previewText" @click="handleCopy">复制</ElButton>
       </div>
     </div>
@@ -121,10 +78,12 @@ defineExpose({ showCurrent })
     <div v-loading="loading" :element-loading-text="loadingLabel" class="yaml-viewer">
       <div v-if="!loading && previewText" class="yaml-header">
         <span class="yaml-filename">{{ previewFilename }}</span>
-        <span v-if="activeTab === 'current'" class="yaml-state">字段修改会实时同步到这里</span>
+        <span class="yaml-state">字段修改会实时同步到这里</span>
       </div>
       <pre v-if="previewText" class="yaml-content">{{ previewText }}</pre>
-      <ElEmpty v-else-if="!loading" description="暂无 YAML 内容" :image-size="42" />
+      <ElEmpty v-else-if="!loading" description="请上传 YAML 文件" :image-size="42">
+        <ElButton type="primary" @click="handleUploadClick">上传 YAML</ElButton>
+      </ElEmpty>
     </div>
 
     <input
@@ -153,30 +112,10 @@ defineExpose({ showCurrent })
   gap: 8px;
 }
 
-.yaml-tabs {
-  display: flex;
-  overflow: hidden;
-  border: 1px solid #e5eaf2;
-  border-radius: 8px;
-}
-
-.yaml-tab {
-  border: none;
-  padding: 4px 12px;
-  background: #fff;
-  color: #5a6a7e;
-  cursor: pointer;
+.yaml-title {
+  color: #344054;
   font-size: 12px;
-  transition: all 0.15s;
-}
-
-.yaml-tab.active {
-  background: #6c5ce7;
-  color: #fff;
-}
-
-.yaml-tab:not(.active):hover {
-  background: #f0f2f6;
+  font-weight: 600;
 }
 
 .yaml-actions {

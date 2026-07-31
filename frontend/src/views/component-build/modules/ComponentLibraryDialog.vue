@@ -16,17 +16,15 @@ import { useRouter } from 'vue-router'
 import {
   applyComponentSpecFieldEdit,
   componentSpecPayloadForFusion,
-  createComponentSpecEditorState,
+  createComponentSpecEditorStateFromUpload,
   createComponentSpecSavePayload,
+  createPersistedComponentSpecEditorState,
   importComponentSpecYaml,
   requiresComponentSpecDiscardConfirmation,
   type ComponentSpecEditorState
 } from '../component-spec-editor-state'
 import type { ComponentSpecFieldPath } from '../component-spec-field-events'
-import {
-  YamlWorkingDocumentError,
-  createYamlWorkingDocument
-} from '../yaml-working-document'
+import { YamlWorkingDocumentError } from '../yaml-working-document'
 import ComponentSpecFieldEditor from './ComponentSpecFieldEditor.vue'
 import ComponentYamlPreview from './ComponentYamlPreview.vue'
 
@@ -39,10 +37,8 @@ defineExpose({
   setSourceParsing,
   updateBuildStatuses,
   setComponentSpec,
-  setSystemYaml,
   setSpecLoading,
-  setSpecSaving,
-  setSpecPreviewing
+  setSpecSaving
 })
 
 const router = useRouter()
@@ -88,8 +84,6 @@ const specLoading = ref(false)
 const specSaving = ref(false)
 const specDirty = ref(false)
 const specOffline = ref(false)
-const specPreviewing = ref(false)
-const systemYaml = ref('')
 const specParseError = ref<string | null>(null)
 const yamlPreviewRef = ref<InstanceType<typeof ComponentYamlPreview> | null>(null)
 
@@ -97,7 +91,6 @@ const currentYaml = computed(() => editorState.value?.working.yaml || '')
 const currentYamlFilename = computed(() => editorState.value?.working.sourceFilename || null)
 const currentSpecFields = computed(() => editorState.value?.working.fields || [])
 const currentSpecData = computed(() => editorState.value?.working.data || {})
-const baselineYaml = computed(() => editorState.value?.systemYaml || systemYaml.value)
 
 // Build status
 const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({})
@@ -187,7 +180,7 @@ function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file'
   }
 }
 
-async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Record<string, Api.ComponentBuild.BuildStatus>, spec: Api.ComponentBuild.ComponentSpecDocument | null, yaml: string) {
+async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Record<string, Api.ComponentBuild.BuildStatus>, spec: Api.ComponentBuild.ComponentSpecDocument | null) {
   const nextBuildId = build?.id || null
   if (visible.value && currentBuildId.value === nextBuildId) return false
   if (!(await confirmDiscardChanges(nextBuildId))) return false
@@ -195,12 +188,10 @@ async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Reco
   buildStatuses.value = statuses
   componentSpec.value = null
   editorState.value = null
-  systemYaml.value = yaml
   specLoading.value = Boolean(build && !spec)
   specSaving.value = false
   specDirty.value = false
   specOffline.value = false
-  specPreviewing.value = false
   specParseError.value = null
   form.value = {
     category_code: build?.family || '',
@@ -269,36 +260,15 @@ function setComponentSpec(
 ) {
   if (currentBuildId.value !== buildId) return
   try {
-    const nextState = createComponentSpecEditorState(spec, {
-      generatedYaml: systemYaml.value || undefined
-    })
+    const nextState = createPersistedComponentSpecEditorState(spec)
     componentSpec.value = spec
     editorState.value = nextState
-    systemYaml.value = nextState.systemYaml
     specOffline.value = offline
     specDirty.value = false
     specParseError.value = null
   } catch (error) {
     specParseError.value = formatYamlError(error)
     editorState.value = null
-  }
-}
-
-function setSystemYaml(buildId: string, yaml: string) {
-  if (currentBuildId.value !== buildId) return
-  try {
-    createYamlWorkingDocument(yaml, {
-      templateSections: editorState.value?.working.templateSections || []
-    })
-  } catch {
-    return
-  }
-  systemYaml.value = yaml
-  if (editorState.value) {
-    editorState.value = {
-      ...editorState.value,
-      systemYaml: yaml
-    }
   }
 }
 
@@ -310,11 +280,6 @@ function setSpecLoading(buildId: string, value: boolean) {
 function setSpecSaving(buildId: string, value: boolean) {
   if (currentBuildId.value !== buildId) return
   specSaving.value = value
-}
-
-function setSpecPreviewing(buildId: string, value: boolean) {
-  if (currentBuildId.value !== buildId) return
-  specPreviewing.value = value
 }
 
 function handleSpecFieldChange(path: ComponentSpecFieldPath, value: unknown) {
@@ -339,47 +304,17 @@ function handleFusion() {
   )
 }
 
-function handlePreviewSpec() {
-  activeTab.value = 'yaml'
-  nextTick(() => yamlPreviewRef.value?.showCurrent())
-}
-
 function handleUploadYaml(filename: string, content: string) {
-  if (!editorState.value) return
   try {
-    editorState.value = importComponentSpecYaml(editorState.value, content, filename)
+    editorState.value = editorState.value
+      ? importComponentSpecYaml(editorState.value, content, filename)
+      : createComponentSpecEditorStateFromUpload(content, filename)
     specDirty.value = true
     specParseError.value = null
     window.$message?.success(`已加载 ${filename}，字段与预览已同步更新`)
   } catch (error) {
     specParseError.value = formatYamlError(error)
     window.$message?.error(specParseError.value)
-  }
-}
-
-async function handleRestoreSystem() {
-  if (!componentSpec.value || !editorState.value) return
-  if (editorState.value.working.yaml === editorState.value.systemYaml) return
-  try {
-    await ElMessageBox.confirm(
-      '这会替换当前未保存的字段和 YAML，是否继续？',
-      '恢复系统生成',
-      {
-        type: 'warning',
-        confirmButtonText: '恢复',
-        cancelButtonText: '取消'
-      }
-    )
-    editorState.value = createComponentSpecEditorState({
-      ...componentSpec.value,
-      yaml: editorState.value.systemYaml,
-      source_filename: null
-    })
-    specDirty.value = true
-    specParseError.value = null
-    yamlPreviewRef.value?.showCurrent()
-  } catch {
-    // The user cancelled the destructive replacement.
   }
 }
 
@@ -452,12 +387,10 @@ watch(visible, (val) => {
     editingBuild.value = null
     componentSpec.value = null
     editorState.value = null
-    systemYaml.value = ''
     specLoading.value = false
     specSaving.value = false
     specDirty.value = false
     specOffline.value = false
-    specPreviewing.value = false
     specParseError.value = null
   }
 })
@@ -657,17 +590,17 @@ watch(visible, (val) => {
               </div>
               <div class="status-card-body">
                 <div class="status-row">
-                  <span>生成状态</span>
+                  <span>YAML 状态</span>
                   <el-tag v-if="componentSpec?.saved" size="small" type="success">已保存</el-tag>
-                  <el-tag v-else size="small" type="info">待生成</el-tag>
+                  <el-tag v-else size="small" type="info">待上传</el-tag>
                 </div>
-                <div class="status-row" v-if="baselineYaml">
+                <div class="status-row" v-if="currentYaml">
                   <span>YAML</span>
-                  <el-tag size="small" type="success">已生成</el-tag>
+                  <el-tag size="small" type="success">已加载</el-tag>
                 </div>
               </div>
               <div class="status-card-actions">
-                <ElButton size="small" @click="handleFusion">
+                <ElButton size="small" :disabled="!editorState" @click="handleFusion">
                   数据融合
                 </ElButton>
                 <ElButton
@@ -677,14 +610,6 @@ watch(visible, (val) => {
                   @click="handleSaveSpec"
                 >
                   保存 ComponentSpec
-                </ElButton>
-                <ElButton
-                  size="small"
-                  :loading="specPreviewing"
-                  :disabled="specLoading || !editorState"
-                  @click="handlePreviewSpec"
-                >
-                  预览 YAML
                 </ElButton>
               </div>
             </div>
@@ -717,7 +642,7 @@ watch(visible, (val) => {
               <div v-loading="specLoading" class="spec-fields-scroll">
                 <ElAlert
                   v-if="componentSpec && specOffline"
-                  title="后端 ComponentSpec 暂不可用，当前已加载浏览器中的本地草稿或内置模板。"
+                  title="后端 ComponentSpec 暂不可用，当前已加载浏览器中的本地 YAML 草稿。"
                   type="warning"
                   :closable="false"
                   show-icon
@@ -733,7 +658,7 @@ watch(visible, (val) => {
                 />
                 <ElEmpty
                   v-if="!editorState && !specLoading"
-                  description="ComponentSpec 加载失败"
+                  description="上传 YAML 后自动生成可编辑字段"
                   :image-size="42"
                 />
               </div>
@@ -745,13 +670,11 @@ watch(visible, (val) => {
               <ComponentYamlPreview
                 ref="yamlPreviewRef"
                 :build-id="currentBuildId"
-                :system-yaml="baselineYaml"
                 :current-yaml="currentYaml"
                 :current-filename="currentYamlFilename"
-                :loading="specPreviewing"
+                :loading="specLoading"
                 :parse-error="specParseError"
-                loading-label="生成 YAML 预览…"
-                @restore-system="handleRestoreSystem"
+                loading-label="加载 YAML…"
                 @upload-yaml="handleUploadYaml"
               />
             </div>
