@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import {
   appendFieldPath,
+  parseScalarArrayInput,
   type ComponentSpecFieldPath
 } from '../component-spec-field-events';
 
@@ -61,15 +62,11 @@ function removeArrayItem(index: number) {
 }
 
 function updateScalarArray(value: string) {
-  const items = value
-    .split(/[,，]/)
-    .map(item => item.trim())
-    .filter(Boolean);
-  emitValue(
-    props.field.value_type === 'number'
-      ? items.map(item => Number(item)).filter(item => Number.isFinite(item))
-      : items
-  );
+  try {
+    emitValue(parseScalarArrayInput(value, props.field.value_type));
+  } catch (error) {
+    window.$message?.warning(error instanceof Error ? error.message : '数组格式无效');
+  }
 }
 
 function emitValue(value: any) {

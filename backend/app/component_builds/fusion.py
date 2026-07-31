@@ -265,8 +265,14 @@ def _fuse_flange(
     preset_name = f"DN{target_dn}-PN{int(pn)}" if pn is not None else f"DN{target_dn}"
     _assign_simple(data, fields, "identity.default_preset", preset_name, "derived", 1.0, False, overwrite)
     _upsert_preset(data, fields, preset_name, build.get("standard_number"), overwrite=overwrite)
-    preset = next(item for item in data["presets"] if item.get("name") == preset_name)
+    preset = next(
+        item
+        for item in data["presets"]
+        if isinstance(item, dict) and item.get("name") == preset_name
+    )
     for parameter in data.get("parameters", []):
+        if not isinstance(parameter, dict):
+            continue
         name = parameter.get("name")
         if name and not _is_empty(parameter.get("default")):
             _assign_simple(
@@ -298,8 +304,14 @@ def _upsert_parameter(
     overwrite: bool,
 ) -> None:
     parameters = data.setdefault("parameters", [])
-    parameters[:] = [item for item in parameters if item.get("name")]
-    parameter = next((item for item in parameters if item.get("name") == name), None)
+    parameter = next(
+        (
+            item
+            for item in parameters
+            if isinstance(item, dict) and item.get("name") == name
+        ),
+        None,
+    )
     if parameter is None:
         parameter = {
             "name": name,
@@ -343,8 +355,14 @@ def _upsert_parameter(
 
 def _upsert_preset(data: dict, fields: list[dict], name: str, source_ref: str | None, *, overwrite: bool) -> None:
     presets = data.setdefault("presets", [])
-    presets[:] = [item for item in presets if item.get("name")]
-    preset = next((item for item in presets if item.get("name") == name), None)
+    preset = next(
+        (
+            item
+            for item in presets
+            if isinstance(item, dict) and item.get("name") == name
+        ),
+        None,
+    )
     if preset is None:
         preset = {"name": name, "source_ref": None, "verification_status": "needs_review", "params": {}}
         presets.append(preset)
@@ -362,7 +380,14 @@ def _upsert_preset(data: dict, fields: list[dict], name: str, source_ref: str | 
 
 
 def _get_parameter(data: dict, name: str) -> dict | None:
-    return next((item for item in data.get("parameters", []) if item.get("name") == name), None)
+    return next(
+        (
+            item
+            for item in data.get("parameters", [])
+            if isinstance(item, dict) and item.get("name") == name
+        ),
+        None,
+    )
 
 
 def _assign_simple(
@@ -390,7 +415,14 @@ def _assign_simple(
 
 
 def _resolve_target_dn(data: dict, build: dict) -> int | None:
-    existing = next((item.get("default") for item in data.get("parameters", []) if item.get("name") == "DN"), None)
+    existing = next(
+        (
+            item.get("default")
+            for item in data.get("parameters", [])
+            if isinstance(item, dict) and item.get("name") == "DN"
+        ),
+        None,
+    )
     if isinstance(existing, (int, float)):
         return int(existing)
     match = re.search(r"(?:^|[-_\s])DN\s*(\d+)(?:$|[-_\s])", str(build.get("component_name") or ""), re.IGNORECASE)

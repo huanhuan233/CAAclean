@@ -33,6 +33,14 @@ export interface ComponentSpecSavePayload {
   source_filename: string | null
 }
 
+export function requiresComponentSpecDiscardConfirmation(
+  dirty: boolean,
+  currentBuildId: string | null,
+  nextBuildId: string | null
+): boolean {
+  return dirty && currentBuildId !== nextBuildId
+}
+
 export function createComponentSpecEditorState(
   document: ComponentSpecDocumentLike,
   options: CreateComponentSpecEditorStateOptions = {}
@@ -88,4 +96,11 @@ export function createComponentSpecSavePayload(
     yaml: state.working.yaml,
     source_filename: state.working.sourceFilename
   }
+}
+
+export function componentSpecPayloadForFusion(
+  state: ComponentSpecEditorState,
+  dirty: boolean
+): ComponentSpecSavePayload | null {
+  return dirty ? createComponentSpecSavePayload(state) : null
 }

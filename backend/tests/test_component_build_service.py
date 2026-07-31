@@ -40,6 +40,25 @@ class FakeFusionSourceReader:
         return self.sources
 
 
+@pytest.mark.asyncio
+async def test_get_component_spec_normalizes_legacy_data_and_matching_yaml():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="legacy-001",
+        component_name="Legacy",
+        component_type="shaft",
+    )
+    await repository.save_component_spec(build.id, {"identity": {"name": "Legacy"}})
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    response = await service.get_component_spec(build.id)
+
+    assert response["data"]["identity"]["name"] == "Legacy"
+    assert response["data"]["schema_version"] == "1.2"
+    from app.component_builds.component_spec_document import validate_component_spec_yaml
+    assert validate_component_spec_yaml(response["yaml"], response["data"]) == response["data"]
+
+
 def test_component_build_has_source_links():
     columns = ComponentBuild.__table__.columns
 
@@ -173,6 +192,43 @@ async def test_fuse_component_spec_reads_envelope_and_preserves_unknown_values()
     assert response["component_spec"]["custom_extension"] == {"curve_policy": "all"}
     assert stored.data["custom_extension"] == {"curve_policy": "all"}
     assert "custom_extension:" in stored.yaml
+
+
+@pytest.mark.asyncio
+async def test_fuse_component_spec_preserves_uploaded_schema_version():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="future-001",
+        component_name="Future",
+        component_type="shaft",
+    )
+    existing = component_spec_template.blank_data()
+    existing["schema_version"] = "1.3"
+    await repository.save_component_spec(
+        build.id,
+        pack_component_spec_document(existing, "schema_version: '1.3'\n", "future.yaml"),
+    )
+    service = ComponentBuildService(
+        repository,
+        source_status_reader=FakeSourceStatusReader(),
+        fusion_source_reader=FakeFusionSourceReader(
+            FusionSources(
+                drawing_facts=[{
+                    "fact_key": "product.component_type_raw",
+                    "fact_type": "product_info",
+                    "normalized_value": "shaft",
+                    "confidence": 0.9,
+                    "metadata": {},
+                }],
+                measurements=[],
+                features=[],
+            )
+        ),
+    )
+
+    response = await service.fuse_component_spec(build.id)
+
+    assert response["component_spec"]["schema_version"] == "1.3"
 
 
 @pytest.mark.asyncio

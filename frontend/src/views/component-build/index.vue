@@ -27,7 +27,7 @@ import {
   updateComponentBuild
 } from '@/service/api';
 import componentSpecFallbackSource from './component-spec-v1.2.json';
-import { loadComponentSpecWithFallback } from './component-spec-loader';
+import { isOfflineRequestError, loadComponentSpecWithFallback } from './component-spec-loader';
 import ComponentLibraryCatalog from './modules/ComponentLibraryCatalog.vue';
 import ComponentLibraryTable from './modules/ComponentLibraryTable.vue';
 import ComponentLibraryDialog from './modules/ComponentLibraryDialog.vue';
@@ -596,9 +596,10 @@ function handleRowClick(buildId: string) {
 async function openDialogForBuild(buildId: string) {
   const build = selectedBuild.value?.id === buildId ? selectedBuild.value : await fetchComponentBuild(buildId, { silent: true }).then(r => r.data || null)
   if (!build) return
+  const opened = await libraryDialogRef.value?.open(build, buildStatuses.value, null, '')
+  if (!opened) return
   componentSpec.value = null
   systemYaml.value = ''
-  await libraryDialogRef.value?.open(build, buildStatuses.value, null, '')
   await loadComponentSpecForDialog(buildId)
 }
 
@@ -696,10 +697,24 @@ function handleStartParsing(buildId: string, role: Api.ComponentBuild.RetryRole)
   run()
 }
 
-function handleFusion(buildId: string) {
+function handleFusion(
+  buildId: string,
+  workingPayload: Api.ComponentBuild.ComponentSpecSavePayload | null = null
+) {
   const run = async () => {
     fusionLoading.value = true
     try {
+      if (workingPayload) {
+        componentSpecSaving.value = true
+        libraryDialogRef.value?.setSpecSaving(buildId, true)
+        const saved = await saveComponentSpec(buildId, workingPayload)
+        if (saved.error || !saved.data) {
+          throw saved.error || new Error('ComponentSpec save returned no document')
+        }
+        localStorage.removeItem(componentSpecStorageKey(buildId))
+        componentSpec.value = saved.data
+        libraryDialogRef.value?.setComponentSpec(buildId, saved.data, false)
+      }
       const result = await fuseComponentBuild(buildId, false)
       if (result.error || !result.data) throw result.error
       fusionReport.value = result.data
@@ -708,6 +723,8 @@ function handleFusion(buildId: string) {
     } catch (error) {
       window.$message?.error(formatError(error, '数据融合失败'))
     } finally {
+      componentSpecSaving.value = false
+      libraryDialogRef.value?.setSpecSaving(buildId, false)
       fusionLoading.value = false
     }
   }
@@ -727,6 +744,9 @@ function handleSaveSpec(
     try {
       const result = await saveComponentSpec(buildId, payload)
       if (result.error || !result.data) {
+        if (!isOfflineRequestError(result.error)) {
+          throw result.error || new Error('ComponentSpec save returned no document')
+        }
         const updatedAt = new Date().toISOString()
         localStorage.setItem(
           componentSpecStorageKey(buildId),
@@ -744,9 +764,10 @@ function handleSaveSpec(
         libraryDialogRef.value?.setComponentSpec(buildId, localSaved, true)
         window.$message?.warning('后端模板接口尚未启用，草稿已暂存在当前浏览器')
       } else {
+        localStorage.removeItem(componentSpecStorageKey(buildId))
         componentSpec.value = result.data
         libraryDialogRef.value?.setComponentSpec(buildId, result.data, false)
-        await refreshSystemYaml(buildId, payload.data)
+        await refreshSystemYaml(buildId, result.data.data)
         window.$message?.success('ComponentSpec 草稿已保存')
       }
     } catch (error) {

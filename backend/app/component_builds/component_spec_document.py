@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from numbers import Real
 from typing import Any
 
 from ruamel.yaml import YAML
@@ -56,6 +58,42 @@ def pack_component_spec_document(
     }
 
 
+def _json_compatible(value: Any) -> Any:
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_compatible(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_compatible(item) for item in value]
+    return value
+
+
+def _strictly_equivalent(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, Real) and isinstance(right, Real):
+        return float(left) == float(right)
+    if isinstance(left, dict) and isinstance(right, dict):
+        return (
+            left.keys() == right.keys()
+            and all(_strictly_equivalent(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return (
+            len(left) == len(right)
+            and all(_strictly_equivalent(a, b) for a, b in zip(left, right))
+        )
+    return type(left) is type(right) and left == right
+
+
 def validate_component_spec_yaml(yaml_text: str, expected_data: dict[str, Any]) -> dict[str, Any]:
     parser = YAML(typ="safe")
     try:
@@ -68,6 +106,7 @@ def validate_component_spec_yaml(yaml_text: str, expected_data: dict[str, Any]) 
 
     if not isinstance(parsed, dict):
         raise ComponentSpecDocumentError("ComponentSpec YAML root must be a mapping")
-    if parsed != expected_data:
+    parsed = _json_compatible(parsed)
+    if not _strictly_equivalent(parsed, _json_compatible(expected_data)):
         raise ComponentSpecDocumentError("ComponentSpec YAML does not match submitted data")
     return parsed

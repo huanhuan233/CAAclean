@@ -63,6 +63,21 @@ mixed: [one, { value: 2 }]
   assert.equal(byKey.mixed.kind, 'generic')
 })
 
+test('recursively merges object-array shapes from every item', () => {
+  const working = createYamlWorkingDocument(`
+items:
+  - name: first
+    details:
+      a: 1
+  - name: second
+    details:
+      b: 2
+`)
+  const details = working.fields[0]?.item?.children.find(field => field.key === 'details')
+
+  assert.deepEqual(details?.children?.map(field => field.key), ['a', 'b'])
+})
+
 test('merges known template metadata by exact field path', () => {
   const working = createYamlWorkingDocument(
     'identity:\n  name: Uploaded flange\n  vendor_field: kept\n',
@@ -118,7 +133,7 @@ test('updates a scalar by path while preserving comments, order, and unrelated q
 
   const updated = updateYamlWorkingDocument(working, ['identity', 'name'], 'New flange')
 
-  assert.equal(updated.data.identity.name, 'New flange')
+  assert.equal((updated.data.identity as { name: string }).name, 'New flange')
   assert.match(updated.yaml, /# keep top/)
   assert.match(updated.yaml, /untouched: 'keep quotes' # keep eol/)
   assert.ok(updated.yaml.indexOf('identity:') < updated.yaml.indexOf('untouched:'))

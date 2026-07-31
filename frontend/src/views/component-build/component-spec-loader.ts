@@ -8,6 +8,13 @@ export type LoadedComponentSpec<T> = {
   offline: boolean
 }
 
+export function isOfflineRequestError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { code?: string; response?: unknown }
+  if (candidate.code === 'ERR_CANCELED') return false
+  return candidate.response == null
+}
+
 export async function loadComponentSpecWithFallback<T>(
   buildId: string,
   fetchDocument: (buildId: string) => Promise<ComponentSpecRequestResult<T>>,

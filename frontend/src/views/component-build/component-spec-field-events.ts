@@ -1,5 +1,31 @@
 export type ComponentSpecFieldPath = Array<string | number>
 
+export function parseScalarArrayInput(
+  value: string,
+  valueType: string | undefined
+): Array<string | number | boolean> {
+  const items = value
+    .split(/[,，]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+
+  if (valueType === 'number') {
+    return items.map(item => {
+      const parsed = Number(item)
+      if (!Number.isFinite(parsed)) throw new Error(`Invalid number: ${item}`)
+      return parsed
+    })
+  }
+  if (valueType === 'boolean') {
+    return items.map(item => {
+      if (item === 'true') return true
+      if (item === 'false') return false
+      throw new Error(`Invalid boolean: ${item}`)
+    })
+  }
+  return items
+}
+
 export function appendFieldPath(
   path: ComponentSpecFieldPath,
   ...segments: Array<string | number>

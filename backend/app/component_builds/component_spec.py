@@ -143,7 +143,7 @@ def _blank_value(field: dict) -> Any:
 
 def _normalize_value(field: dict, value: Any) -> Any:
     if field["read_only"]:
-        return deepcopy(field.get("fixed_value"))
+        return deepcopy(value if value is not None else field.get("fixed_value"))
     if field["kind"] == "object":
         source = value if isinstance(value, dict) else {}
         normalized = {

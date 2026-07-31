@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appendFieldPath, updateValueAtPath } from '../component-spec-field-events'
+import {
+  appendFieldPath,
+  parseScalarArrayInput,
+  updateValueAtPath
+} from '../component-spec-field-events'
 
 test('appends object keys and array indices to an editor path', () => {
   const path = appendFieldPath(['parameters'], 1, 'default')
@@ -40,4 +44,12 @@ test('replaces scalar arrays and the root document', () => {
     tags: ['steel', 'forged']
   })
   assert.deepEqual(updateValueAtPath(source, [], { replaced: true }), { replaced: true })
+})
+
+test('parses scalar arrays without changing boolean and number types', () => {
+  assert.deepEqual(parseScalarArrayInput('true, false', 'boolean'), [true, false])
+  assert.deepEqual(parseScalarArrayInput('1, 2.5', 'number'), [1, 2.5])
+  assert.deepEqual(parseScalarArrayInput('steel, forged', 'text'), ['steel', 'forged'])
+  assert.throws(() => parseScalarArrayInput('true, maybe', 'boolean'), /boolean/)
+  assert.throws(() => parseScalarArrayInput('1, nope', 'number'), /number/)
 })

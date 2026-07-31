@@ -150,6 +150,24 @@ function orderedObjectArrayKeys(items: Record<string, unknown>[]): string[] {
   return [...keys]
 }
 
+function mergeRepresentativeValues(values: unknown[]): unknown {
+  const present = values.filter(value => value !== undefined)
+  if (present.length === 0) return undefined
+  if (present.every(isRecord)) {
+    const records = present as Record<string, unknown>[]
+    return Object.fromEntries(
+      orderedObjectArrayKeys(records).map(key => [
+        key,
+        mergeRepresentativeValues(records.map(record => record[key]))
+      ])
+    )
+  }
+  if (present.every(Array.isArray)) {
+    return present.flatMap(value => value as unknown[])
+  }
+  return present.find(value => value !== null) ?? null
+}
+
 function inferField(
   key: string,
   value: unknown,
@@ -183,7 +201,9 @@ function inferField(
     const objectItems = value.filter(isRecord)
     if (value.length > 0 && objectItems.length === value.length) {
       const children = orderedObjectArrayKeys(objectItems).map(childKey => {
-        const representative = objectItems.find(item => childKey in item)?.[childKey]
+        const representative = mergeRepresentativeValues(
+          objectItems.map(item => item[childKey])
+        )
         return inferField(childKey, representative, [...pathSegments, '[]', childKey], metadataByPath)
       })
       return {
@@ -194,8 +214,13 @@ function inferField(
       }
     }
 
+    const scalarTypes = new Set(
+      value
+        .filter(item => item !== null)
+        .map(item => typeof item)
+    )
     const allScalars = value.every(item => item === null || ['string', 'number', 'boolean'].includes(typeof item))
-    if (allScalars && (value.length > 0 || metadata?.kind === 'scalar_array')) {
+    if (allScalars && scalarTypes.size <= 1 && (value.length > 0 || metadata?.kind === 'scalar_array')) {
       const representative = value.find(item => item !== null)
       return {
         ...common,

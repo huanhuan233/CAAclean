@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { loadComponentSpecWithFallback } from '../component-spec-loader'
+import { isOfflineRequestError, loadComponentSpecWithFallback } from '../component-spec-loader'
 import {
   applyComponentSpecFieldEdit,
+  componentSpecPayloadForFusion,
   createComponentSpecEditorState,
   createComponentSpecSavePayload,
   importComponentSpecYaml
 } from '../component-spec-editor-state'
+import { requiresComponentSpecDiscardConfirmation } from '../component-spec-editor-state'
 
 type TestComponentSpecDocument = {
   build_id: string
@@ -88,7 +90,7 @@ test('uses generated YAML when loading a legacy data-only document', () => {
   })
 
   assert.equal(state.systemYaml, 'identity:\n  name: local\n')
-  assert.equal(state.working.data.identity.name, 'local')
+  assert.equal((state.working.data.identity as { name: string }).name, 'local')
 })
 
 test('imports YAML only after successful parsing', () => {
@@ -99,17 +101,17 @@ test('imports YAML only after successful parsing', () => {
     'upload-v1.3.yml'
   )
 
-  assert.equal(imported.working.data.identity.name, 'uploaded')
+  assert.equal((imported.working.data.identity as { name: string }).name, 'uploaded')
   assert.equal(imported.working.data.extra, true)
   assert.equal(imported.working.sourceFilename, 'upload-v1.3.yml')
   assert.equal(imported.dirty, true)
-  assert.equal(initial.working.data.identity.name, 'server')
+  assert.equal((initial.working.data.identity as { name: string }).name, 'server')
 
   assert.throws(
     () => importComponentSpecYaml(imported, 'identity: [\n', 'broken.yaml'),
     /Flow sequence/
   )
-  assert.equal(imported.working.data.identity.name, 'uploaded')
+  assert.equal((imported.working.data.identity as { name: string }).name, 'uploaded')
 })
 
 test('field edits update current YAML and produce the complete save payload', () => {
@@ -133,6 +135,33 @@ test('a fused document becomes a fresh system baseline', () => {
   })
 
   assert.equal(fused.systemYaml, '# fused\nidentity:\n  name: fused\n')
-  assert.equal(fused.working.data.identity.name, 'fused')
+  assert.equal((fused.working.data.identity as { name: string }).name, 'fused')
   assert.equal(fused.dirty, false)
+})
+
+test('only treats requests without an HTTP response as offline failures', () => {
+  assert.equal(isOfflineRequestError({ code: 'ERR_NETWORK' }), true)
+  assert.equal(isOfflineRequestError(new Error('connection refused')), true)
+  assert.equal(isOfflineRequestError({ code: 'ERR_CANCELED' }), false)
+  assert.equal(isOfflineRequestError({ response: { status: 422 } }), false)
+  assert.equal(isOfflineRequestError({ response: { status: 401 } }), false)
+})
+
+test('requires confirmation before discarding a dirty document', () => {
+  assert.equal(requiresComponentSpecDiscardConfirmation(true, 'build-1', null), true)
+  assert.equal(requiresComponentSpecDiscardConfirmation(true, 'build-1', 'build-2'), true)
+  assert.equal(requiresComponentSpecDiscardConfirmation(true, 'build-1', 'build-1'), false)
+  assert.equal(requiresComponentSpecDiscardConfirmation(false, 'build-1', 'build-2'), false)
+})
+
+test('sends the complete working document to fusion only when dirty', () => {
+  const initial = createComponentSpecEditorState(serverDocument)
+  const edited = applyComponentSpecFieldEdit(initial, ['identity', 'name'], 'before-fusion')
+
+  assert.equal(componentSpecPayloadForFusion(initial, false), null)
+  assert.deepEqual(componentSpecPayloadForFusion(edited, true), {
+    data: { identity: { name: 'before-fusion' } },
+    yaml: edited.working.yaml,
+    source_filename: 'server.yaml'
+  })
 })

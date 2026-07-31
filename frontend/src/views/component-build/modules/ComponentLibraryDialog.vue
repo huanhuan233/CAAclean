@@ -15,9 +15,11 @@ import { ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   applyComponentSpecFieldEdit,
+  componentSpecPayloadForFusion,
   createComponentSpecEditorState,
   createComponentSpecSavePayload,
   importComponentSpecYaml,
+  requiresComponentSpecDiscardConfirmation,
   type ComponentSpecEditorState
 } from '../component-spec-editor-state'
 import type { ComponentSpecFieldPath } from '../component-spec-field-events'
@@ -61,7 +63,7 @@ const emit = defineEmits<{
     drawingFile: File | null
   }]
   refresh: []
-  fusion: [buildId: string]
+  fusion: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload | null]
   saveSpec: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload]
   startParsing: [buildId: string, role: Api.ComponentBuild.RetryRole]
 }>()
@@ -186,6 +188,9 @@ function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file'
 }
 
 async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Record<string, Api.ComponentBuild.BuildStatus>, spec: Api.ComponentBuild.ComponentSpecDocument | null, yaml: string) {
+  const nextBuildId = build?.id || null
+  if (visible.value && currentBuildId.value === nextBuildId) return false
+  if (!(await confirmDiscardChanges(nextBuildId))) return false
   editingBuild.value = build
   buildStatuses.value = statuses
   componentSpec.value = null
@@ -211,11 +216,42 @@ async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Reco
   if (build && spec) setComponentSpec(build.id, spec)
   await nextTick()
   formRef.value?.clearValidate()
+  return true
 }
 
-function close() {
+async function close() {
+  if (!(await confirmDiscardChanges(null))) return false
   visible.value = false
   editingBuild.value = null
+  return true
+}
+
+async function confirmDiscardChanges(nextBuildId: string | null) {
+  if (!requiresComponentSpecDiscardConfirmation(
+    specDirty.value,
+    currentBuildId.value || null,
+    nextBuildId
+  )) {
+    return true
+  }
+  try {
+    await ElMessageBox.confirm(
+      nextBuildId ? '当前 YAML 有未保存修改，切换图元会丢失这些修改。是否继续？' : '当前 YAML 有未保存修改，关闭后会丢失。是否继续？',
+      '未保存的 ComponentSpec',
+      {
+        type: 'warning',
+        confirmButtonText: '放弃修改',
+        cancelButtonText: '继续编辑'
+      }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function handleBeforeClose(done: () => void) {
+  if (await confirmDiscardChanges(null)) done()
 }
 
 function setSourceParsing(value: boolean) {
@@ -292,6 +328,15 @@ function handleSpecFieldChange(path: ComponentSpecFieldPath, value: unknown) {
 function handleSaveSpec() {
   if (!currentBuildId.value || !editorState.value) return
   emit('saveSpec', currentBuildId.value, createComponentSpecSavePayload(editorState.value))
+}
+
+function handleFusion() {
+  if (!currentBuildId.value || !editorState.value) return
+  emit(
+    'fusion',
+    currentBuildId.value,
+    componentSpecPayloadForFusion(editorState.value, specDirty.value)
+  )
 }
 
 function handlePreviewSpec() {
@@ -421,6 +466,7 @@ watch(visible, (val) => {
 <template>
   <ElDialog
     v-model="visible"
+    :before-close="handleBeforeClose"
     :title="`编辑图元 · ${editingBuild?.component_id || '新建'}`"
     :width="720"
     :close-on-click-modal="false"
@@ -621,7 +667,7 @@ watch(visible, (val) => {
                 </div>
               </div>
               <div class="status-card-actions">
-                <ElButton size="small" @click="emit('fusion', currentBuildId)">
+                <ElButton size="small" @click="handleFusion">
                   数据融合
                 </ElButton>
                 <ElButton

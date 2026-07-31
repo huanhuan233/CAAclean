@@ -84,7 +84,13 @@ class ComponentBuildService:
             if draft
             else None
         )
-        data = document.data if document else component_spec_template.blank_data()
+        data = (
+            document.data
+            if document and document.is_envelope
+            else component_spec_template.normalize(document.data)
+            if document
+            else component_spec_template.blank_data()
+        )
         yaml_text = document.yaml if document and document.yaml is not None else component_spec_template.render_yaml(data)
         return {
             "build_id": str(build_id),

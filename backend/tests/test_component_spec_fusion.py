@@ -196,6 +196,25 @@ def test_fusion_populates_identity_without_overwriting_manual_values():
     assert any(item["path"] == "identity.name" and item["decision"] == "preserved" for item in result.fields)
 
 
+def test_fusion_preserves_unnamed_and_non_mapping_extension_entries():
+    current = blank_spec()
+    unnamed_parameter = {"vendor_extension": {"curve_type": "helix"}}
+    unnamed_preset = {"vendor_preset": True}
+    current["parameters"] = [unnamed_parameter, "vendor-parameter"]
+    current["presets"] = [unnamed_preset, "vendor-preset"]
+
+    result = fuse_component_spec(
+        build=build_fields(),
+        current=current,
+        sources=FusionSources(drawing_facts=product_facts(), measurements=[], features=[]),
+    )
+
+    assert unnamed_parameter in result.data["parameters"]
+    assert "vendor-parameter" in result.data["parameters"]
+    assert unnamed_preset in result.data["presets"]
+    assert "vendor-preset" in result.data["presets"]
+
+
 def test_fusion_does_not_choose_a_dimension_row_when_target_dn_is_unknown():
     result = fuse_component_spec(
         build=build_fields(component_name="未命名法兰"),

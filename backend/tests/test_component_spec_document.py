@@ -72,3 +72,14 @@ def test_validate_accepts_equivalent_nested_mapping_and_scalar_values():
     yaml_text = "identity:\n  id: flange-001\n  aliases: [A, B]\nnullable: null\nratio: 1.5\n"
 
     assert validate_component_spec_yaml(yaml_text, data) == data
+
+
+def test_validate_does_not_treat_boolean_as_number():
+    with pytest.raises(ComponentSpecDocumentError, match="does not match"):
+        validate_component_spec_yaml("enabled: true\n", {"enabled": 1})
+
+
+def test_validate_normalizes_yaml_dates_to_browser_string_semantics():
+    data = {"released_on": "2026-07-31"}
+
+    assert validate_component_spec_yaml("released_on: 2026-07-31\n", data) == data
