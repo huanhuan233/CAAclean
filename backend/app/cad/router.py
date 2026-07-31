@@ -41,9 +41,10 @@ async def upload_model(
 async def list_models(
     page: int = 1,
     page_size: int = 20,
+    has_build: bool = False,
     service: CadService = Depends(get_cad_service),
 ) -> dict:
-    return await service.list_models(page, page_size)
+    return await service.list_models(page, page_size, has_build=has_build)
 
 
 @router.get("/revisions/{revision_id}/status", response_model=CadParseStatus)

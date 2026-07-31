@@ -140,6 +140,21 @@ async def component_build(build_id: UUID, service: ComponentBuildService = Depen
     return await _get_build_or_404(service, build_id)
 
 
+@router.delete("/{build_id}", status_code=status.HTTP_200_OK)
+async def delete_component_build(
+    build_id: UUID,
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Delete a component build and all associated resources (CAD model, drawings, specs, files)."""
+    try:
+        return await service.delete_build(build_id, settings=settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"code": "component_build_delete_failed", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/status")
 async def component_build_status(build_id: UUID, service: ComponentBuildService = Depends(get_component_build_service)) -> dict:
     try:

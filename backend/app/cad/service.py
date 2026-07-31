@@ -142,8 +142,8 @@ class CadService:
             "error_message": revision.error_message,
         }
 
-    async def list_models(self, page: int, page_size: int) -> dict:
-        rows, total = await self.repository.list_models(page, page_size)
+    async def list_models(self, page: int, page_size: int, has_build: bool = False) -> dict:
+        rows, total = await self.repository.list_models(page, page_size, has_build=has_build)
         items = []
         for model, revision in rows:
             items.append(

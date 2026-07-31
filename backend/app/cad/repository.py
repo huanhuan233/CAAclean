@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadRelation
+from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadRelation, ComponentBuild
 
 
 def now_utc() -> datetime:
@@ -210,11 +210,16 @@ class CadRepository:
         await self.session.commit()
         return int(result.rowcount or 0)
 
-    async def list_models(self, page: int, page_size: int) -> tuple[list[CadModel], int]:
-        total = await self.session.scalar(select(func.count()).select_from(CadModel))
+    async def list_models(self, page: int, page_size: int, has_build: bool = False) -> tuple[list[CadModel], int]:
+        filters = []
+        if has_build:
+            subq = select(ComponentBuild.cad_model_id).distinct().where(ComponentBuild.cad_model_id.isnot(None)).scalar_subquery()
+            filters.append(CadModel.id.in_(subq))
+        total = await self.session.scalar(select(func.count()).select_from(CadModel).where(*filters))
         result = await self.session.execute(
             select(CadModel, CadModelRevision)
             .outerjoin(CadModelRevision, CadModel.current_revision_id == CadModelRevision.id)
+            .where(*filters)
             .order_by(CadModel.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)

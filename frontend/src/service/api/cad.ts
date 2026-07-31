@@ -1,11 +1,12 @@
 import { request } from '../request';
 
-export function fetchCadModels(params: { page?: number; page_size?: number } = {}) {
+export function fetchCadModels(params: { page?: number; page_size?: number; has_build?: boolean } = {}) {
   return request<Api.Cad.PagedResult<Api.Cad.ModelSummary>>({
     url: '/api/cad/models',
     params: {
       page: params.page ?? 1,
-      page_size: params.page_size ?? 20
+      page_size: params.page_size ?? 20,
+      has_build: params.has_build ?? undefined
     }
   });
 }
@@ -353,6 +354,13 @@ export function fuseComponentBuild(buildId: string, overwrite = false) {
     method: 'post',
     data: { overwrite },
     headers: { 'X-Client-Silent-Error': '1' }
+  });
+}
+
+export function deleteComponentBuild(buildId: string) {
+  return request<{ id: string; deleted: boolean }>({
+    url: `/api/component-builds/${buildId}`,
+    method: 'delete',
   });
 }
 

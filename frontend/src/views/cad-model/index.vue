@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { UploadRequestOptions } from 'element-plus';
 import {
@@ -130,7 +130,7 @@ function findRequestedModel(items: Api.Cad.ModelSummary[]) {
 async function loadModels() {
   loadingModels.value = true;
   try {
-    const result = await fetchCadModels({ page: 1, page_size: 50 });
+    const result = await fetchCadModels({ page: 1, page_size: 50, has_build: true });
     if (result.error || !result.data) return;
     models.value = result.data.items;
     if (!selectedModelId.value && result.data.items.length > 0) {
@@ -643,16 +643,36 @@ function runAsync(task: Promise<unknown>) {
   task.catch(() => undefined);
 }
 
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible' && route.name === 'cad-model') {
+    runAsync(loadModels());
+  }
+}
+
 watch([activeGeometryTab, geometryPage, geometryPageSize], () => {
   runAsync(loadGeometryObjects());
 });
 
+// 每次路由参数变化时重新加载模型列表
+watch(() => route.name, () => {
+  if (route.name === 'cad-model') {
+    runAsync(loadModels());
+  }
+});
+
 onMounted(() => {
+  runAsync(loadModels());
+  // 页面切换回前台时自动刷新
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+});
+
+onActivated(() => {
   runAsync(loadModels());
 });
 
 onBeforeUnmount(() => {
   stopPolling();
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
 });
 </script>
 

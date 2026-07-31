@@ -6,7 +6,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
+from app.db.models import CadDrawingRegion, CadDrawingFact, CadModel, CadModelRevision, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
 
 
 class MemoryComponentBuildRepository:
@@ -102,6 +102,11 @@ class MemoryComponentBuildRepository:
         build.error_message = error_message
         build.updated_at = utc_now()
 
+    async def delete_build(self, build_id: uuid.UUID) -> ComponentBuild:
+        build = await self._require_build(build_id)
+        del self.builds[build.id]
+        return build
+
     async def _require_build(self, build_id: uuid.UUID) -> ComponentBuild:
         build = await self.get_build(build_id)
         if build is None:
@@ -195,6 +200,39 @@ class SqlAlchemyComponentBuildRepository:
         build.error_code = error_code
         build.error_message = error_message
         await self.session.commit()
+
+    async def delete_build(self, build_id: uuid.UUID) -> ComponentBuild:
+        """Delete a component build record. Returns the build before deletion."""
+        build = await self._require_build(build_id)
+        await self.session.delete(build)
+        await self.session.commit()
+        return build
+
+    # ── Helper queries for resource cleanup (used by service.delete_build) ──
+
+    async def list_drawing_sources(self, task_id: uuid.UUID) -> list[dict]:
+        result = await self.session.execute(
+            select(CadSpecSource).where(CadSpecSource.task_id == task_id)
+        )
+        rows = result.scalars().all()
+        return [{"id": str(r.id), "file_path": r.file_path, "file_name": r.file_name} for r in rows]
+
+    async def list_drawing_regions(self, task_id: uuid.UUID) -> list[dict]:
+        result = await self.session.execute(
+            select(CadDrawingRegion).where(CadDrawingRegion.task_id == task_id)
+        )
+        rows = result.scalars().all()
+        return [{"id": str(r.id), "crop_file_path": r.crop_file_path} for r in rows]
+
+    async def get_raw_revision(self, revision_id: uuid.UUID) -> CadModelRevision | None:
+        return await self.session.get(CadModelRevision, revision_id)
+
+    async def list_builds_by_model(self, model_id: uuid.UUID, *, exclude_build_id: uuid.UUID | None = None) -> list[ComponentBuild]:
+        stmt = select(ComponentBuild).where(ComponentBuild.cad_model_id == model_id)
+        if exclude_build_id:
+            stmt = stmt.where(ComponentBuild.id != exclude_build_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def _require_build(self, build_id: uuid.UUID) -> ComponentBuild:
         build = await self.get_build(build_id)

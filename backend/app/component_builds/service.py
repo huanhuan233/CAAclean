@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil as _shutil
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.component_builds.catalog import CATEGORIES, CatalogCategory, CatalogPart, find_part_by_legacy_type, find_part_by_node_id, resolve_part
 from app.component_builds.component_spec import component_spec_template
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
-from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
+from app.core.config import Settings
+from app.db.models import CadModel, CadModelRevision, CadSpecTask, CadSpecSource, CadDrawingRegion, CadDrawingFact, ComponentBuild
 
 
 INPUTS_LABEL = "\u8f93\u5165\u8d44\u6599"
@@ -194,6 +197,75 @@ class ComponentBuildService:
             error_message=error_message,
         )
         return await self.get_build(build_id)
+
+    async def delete_build(self, build_id: UUID, *, settings: Settings) -> dict:
+        """Delete a component build and all associated resources.
+
+        Cascading cleanup:
+        1. ComponentSpecDraft — DB cascade (FK ondelete=CASCADE)
+        2. CadSpecTask / drawing regions / sources / facts — manual cleanup + disk files
+        3. CadModel + CadModelRevision + disk files
+        4. ComponentBuild record
+        """
+        build = await self._require_build(build_id)
+
+        # Clean up drawing task if attached
+        if build.drawing_task_id:
+            task_id = build.drawing_task_id
+            # Remove drawing region crop files from disk
+            region_rows = await self.repository.list_drawing_regions(task_id)
+            for region in region_rows:
+                crop_path = region.get("crop_file_path")
+                if crop_path:
+                    p = Path(crop_path)
+                    if p.exists():
+                        p.unlink()
+            # Remove drawing source files from disk
+            source_rows = await self.repository.list_drawing_sources(task_id)
+            for src in source_rows:
+                fp = src.get("file_path")
+                if fp:
+                    p = Path(fp)
+                    if p.exists():
+                        p.unlink()
+            # Remove task work directory
+            task_dir = Path(settings.cad_spec_work_dir) / str(task_id)
+            if task_dir.exists():
+                _shutil.rmtree(task_dir)
+            # Delete drawing task DB record (cascade deletes sources, regions, facts)
+            drawing_task = await self.repository.session.get(CadSpecTask, task_id)
+            if drawing_task:
+                await self.repository.session.delete(drawing_task)
+
+        # Clean up CAD model files and DB records
+        if build.cad_revision_id:
+            revision_id = build.cad_revision_id
+            # Remove revision source file from disk
+            revision = await self.repository.get_raw_revision(revision_id)
+            if revision and revision.source_file_path and revision.source_file_path != "pending":
+                src_path = Path(revision.source_file_path)
+                if src_path.exists():
+                    src_path.unlink()
+            # Remove revision work directory
+            rev_dir = Path(settings.cad_work_dir) / str(revision_id)
+            if rev_dir.exists():
+                _shutil.rmtree(rev_dir)
+
+        # Delete CAD model if this build's model isn't shared
+        if build.cad_model_id:
+            other = await self.repository.list_builds_by_model(build.cad_model_id, exclude_build_id=build_id)
+            if not other:
+                model_dir = Path(settings.cad_work_dir) / str(build.cad_model_id)
+                if model_dir.exists():
+                    _shutil.rmtree(model_dir)
+                # Delete the CadModel record (cascade deletes revisions, entities, etc.)
+                cad_model = await self.repository.session.get(CadModel, build.cad_model_id)
+                if cad_model:
+                    await self.repository.session.delete(cad_model)
+
+        # Delete the build record (DB cascade handles ComponentSpecDraft)
+        deleted = await self.repository.delete_build(build_id)
+        return {"id": str(deleted.id), "deleted": True}
 
     async def get_build(self, build_id: UUID) -> dict:
         build = await self._require_build(build_id)
