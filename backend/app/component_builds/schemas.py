@@ -17,6 +17,8 @@ class ComponentBuildRetryIn(BaseModel):
 
 class ComponentSpecDraftIn(BaseModel):
     data: dict
+    yaml: str | None = None
+    source_filename: str | None = None
 
 
 class ComponentBuildFusionIn(BaseModel):
