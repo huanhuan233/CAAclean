@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import {
+  appendFieldPath,
+  type ComponentSpecFieldPath
+} from '../component-spec-field-events';
 
 defineOptions({ name: 'ComponentSpecFieldEditor' });
 
 const props = defineProps<{
   field: Api.ComponentBuild.ComponentSpecField;
   modelValue: any;
+  path?: ComponentSpecFieldPath;
 }>();
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: any): void;
+  (event: 'field-change', path: ComponentSpecFieldPath, value: any): void;
 }>();
 
+const currentPath = computed<ComponentSpecFieldPath>(() => props.path || [props.field.key]);
 const objectValue = computed<Record<string, any>>(() =>
   props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue)
     ? props.modelValue
@@ -45,11 +52,11 @@ function updateArrayItem(index: number, value: any) {
 function addArrayItem() {
   const children = props.field.item?.children || [];
   const item = Object.fromEntries(children.map(child => [child.key, blankValue(child)]));
-  emit('update:modelValue', [...arrayValue.value, item]);
+  emitValue([...arrayValue.value, item]);
 }
 
 function removeArrayItem(index: number) {
-  emit('update:modelValue', arrayValue.value.filter((_, itemIndex) => itemIndex !== index));
+  emitValue(arrayValue.value.filter((_, itemIndex) => itemIndex !== index));
 }
 
 function updateScalarArray(value: string) {
@@ -57,12 +64,20 @@ function updateScalarArray(value: string) {
     .split(/[,，]/)
     .map(item => item.trim())
     .filter(Boolean);
-  emit(
-    'update:modelValue',
+  emitValue(
     props.field.value_type === 'number'
       ? items.map(item => Number(item)).filter(item => Number.isFinite(item))
       : items
   );
+}
+
+function emitValue(value: any) {
+  emit('update:modelValue', value);
+  emit('field-change', currentPath.value, value);
+}
+
+function bubbleFieldChange(path: ComponentSpecFieldPath, value: any) {
+  emit('field-change', path, value);
 }
 </script>
 
@@ -80,6 +95,8 @@ function updateScalarArray(value: string) {
         :key="child.path"
         :field="child"
         :model-value="objectValue[child.key]"
+        :path="appendFieldPath(currentPath, child.key)"
+        @field-change="bubbleFieldChange"
         @update:model-value="updateObjectField(child.key, $event)"
       />
     </div>
@@ -112,6 +129,8 @@ function updateScalarArray(value: string) {
           :key="`${index}:${child.path}`"
           :field="child"
           :model-value="item?.[child.key]"
+          :path="appendFieldPath(currentPath, index, child.key)"
+          @field-change="bubbleFieldChange"
           @update:model-value="updateArrayItem(index, { ...item, [child.key]: $event })"
         />
       </div>
@@ -132,7 +151,7 @@ function updateScalarArray(value: string) {
       clearable
       :disabled="field.read_only"
       placeholder="请选择"
-      @update:model-value="emit('update:modelValue', $event)"
+      @update:model-value="emitValue"
     >
       <ElOption label="是" :value="true" />
       <ElOption label="否" :value="false" />
@@ -142,7 +161,7 @@ function updateScalarArray(value: string) {
       :model-value="modelValue"
       :disabled="field.read_only"
       controls-position="right"
-      @update:model-value="emit('update:modelValue', $event)"
+      @update:model-value="emitValue"
     />
     <ElInput
       v-else-if="field.kind === 'scalar_array'"
@@ -157,7 +176,7 @@ function updateScalarArray(value: string) {
       :readonly="field.read_only"
       clearable
       placeholder="请输入"
-      @update:model-value="emit('update:modelValue', $event || null)"
+      @update:model-value="emitValue($event || null)"
     />
     <small v-if="field.source && !field.read_only" class="field-source">来源：{{ field.source }}</small>
   </label>
