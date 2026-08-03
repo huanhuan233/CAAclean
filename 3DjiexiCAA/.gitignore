@@ -1,0 +1,12 @@
+/build_core/
+/intel_a/
+/ToolsData/
+/smoke_output*/
+/selftest_output*/
+/build_r21.log
+/CATIAV5Level.lvl
+/Install_config_intel_a
+**/Objects/
+**/LocalGenerated/
+**/ImportedInterfaces/
+**/various/
