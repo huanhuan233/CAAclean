@@ -1,3 +1,5 @@
+// 本文件是解析器与 CATIA V5R21 PublicInterfaces 的边界。
+// 它负责引用计数、Session/Document 生命周期、类型指纹采集和确定性规格树遍历。
 #include "CadParseCAA.h"
 
 #include "CATBaseUnknown.h"
@@ -20,37 +22,53 @@
 
 namespace cadparse
 {
+// 通用 CAA 接口指针 RAII 守卫。
+// 模板参数 T 保留具体接口类型；守卫接管一个已持有引用，并在析构时调用一次 Release。
 template <class T>
 class CaaInterfaceGuard
 {
 public:
+  // 用途：接管 pointer 当前代表的 CAA 引用；允许传入空指针。
   explicit CaaInterfaceGuard(T* pointer = 0) : _pointer(pointer) {}
+  // 用途：释放构造时接管的引用；不释放空指针。
   ~CaaInterfaceGuard() { if (_pointer) _pointer->Release(); }
+  // 用途：返回借用指针供当前作用域调用；调用者不能额外 Release。
   T* Get() const { return _pointer; }
 
 private:
+  // 用途：禁止复制守卫，避免两个析构函数对同一引用重复 Release。
   CaaInterfaceGuard(const CaaInterfaceGuard&);
+  // 用途：禁止赋值，保持引用清理责任唯一。
   CaaInterfaceGuard& operator=(const CaaInterfaceGuard&);
   T* _pointer;
 };
 
+// ListComponents 返回的堆分配列表专用守卫；该列表按 R21 API 契约使用 delete 销毁。
 class SpecListGuard
 {
 public:
+  // 用途：接管 CATISpecObject 列表对象的所有权。
   explicit SpecListGuard(CATListValCATISpecObject_var* list) : _list(list) {}
+  // 用途：释放整个列表包装对象；列表内的 _var 元素自行管理各自引用。
   ~SpecListGuard() { delete _list; }
 
 private:
+  // 用途：禁止复制列表所有者，避免重复 delete。
   SpecListGuard(const SpecListGuard&);
+  // 用途：禁止列表守卫赋值，保持唯一所有权。
   SpecListGuard& operator=(const SpecListGuard&);
   CATListValCATISpecObject_var* _list;
 };
 
+// CATIContainer::ListMembersHere 输出序列的引用清理守卫。
+// 序列本身由调用栈保存，但其中每个 CATBaseUnknown_ptr 都需要显式 Release。
 class BaseUnknownSequenceGuard
 {
 public:
+  // 用途：借用序列对象，并承担其所有非空成员引用的清理责任。
   explicit BaseUnknownSequenceGuard(SEQUENCE(CATBaseUnknown_ptr)& sequence)
     : _sequence(sequence) {}
+  // 用途：遍历序列、逐个 Release，并置零以避免悬空指针被再次使用。
   ~BaseUnknownSequenceGuard()
   {
     CATLONG32 index = 0;
@@ -65,11 +83,15 @@ public:
   }
 
 private:
+  // 用途：禁止复制清理守卫，避免同一序列成员被释放两次。
   BaseUnknownSequenceGuard(const BaseUnknownSequenceGuard&);
+  // 用途：禁止赋值；引用成员本身也不适合重新绑定。
   BaseUnknownSequenceGuard& operator=(const BaseUnknownSequenceGuard&);
   SEQUENCE(CATBaseUnknown_ptr)& _sequence;
 };
 
+// 用途：通过 R21 ConvertToUTF8 API 把 CATUnicodeString 复制为独立 std::string。
+// 每个 Unicode 字符最多预留四个 UTF-8 字节，并额外保留终止零字节空间。
 std::string UnicodeToUtf8(const CATUnicodeString& value)
 {
   const size_t capacity = static_cast<size_t>(value.GetLengthInChar() + 1) * 4 + 1;
@@ -82,14 +104,18 @@ std::string UnicodeToUtf8(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
+// 用途：创建未打开的 SessionGuard，并选定本 Batch 使用的稳定 Session 名称。
 SessionGuard::SessionGuard() : _open(false), _name("CadParseMvpSession") {}
 
+// 用途：在作用域结束时删除已成功创建的 CATIA Session。
 SessionGuard::~SessionGuard()
 {
   if (_open)
     Delete_Session(const_cast<char*>(_name.c_str()));
 }
 
+// 用途：调用本机 R21 Create_Session 初始化 CAA 运行环境。
+// 成功后 _open 变为 true；失败时不取得清理责任，并在 error 中返回文档级原因。
 bool SessionGuard::Open(std::string& error)
 {
   CATSession* session = 0;
@@ -103,8 +129,10 @@ bool SessionGuard::Open(std::string& error)
   return true;
 }
 
+// 用途：创建空 DocumentGuard；0 表示当前不持有 CATDocument。
 DocumentGuard::DocumentGuard() : _document(0) {}
 
+// 用途：若文档已打开，则通过 CATDocumentServices::Remove 关闭并释放它。
 DocumentGuard::~DocumentGuard()
 {
   if (_document)
@@ -114,6 +142,7 @@ DocumentGuard::~DocumentGuard()
   }
 }
 
+// 用途：以不区分大小写方式检查路径是否以 .CATPart 结尾。
 static bool EndsWithCatPart(const std::string& path)
 {
   if (path.size() < 8) return false;
@@ -122,6 +151,8 @@ static bool EndsWithCatPart(const std::string& path)
   return suffix == ".catpart";
 }
 
+// 用途：先校验文件存在性和扩展名，再通过 R21 文档服务以只读标志打开 CATPart。
+// 成功时本守卫取得 _document 的关闭责任；失败返回 false 且不会留下半打开文档。
 bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
 {
   struct _stat file_status;
@@ -145,11 +176,14 @@ bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
   return true;
 }
 
+// 用途：返回当前文档的借用指针；所有权仍属于 DocumentGuard。
 CATDocument* DocumentGuard::Get() const { return _document; }
 
+// 适配没有 CATISpecObject 的静态节点，例如文档和容器入口。
 class StaticObjectView : public INativeObjectView
 {
 public:
+  // 用途：从已知常量和名称构造一个纯数据类型指纹。
   StaticObjectView(const char* native_type, const char* kind, const std::string& name)
   {
     _fingerprint.native_type = native_type;
@@ -158,8 +192,10 @@ public:
     _fingerprint.display_name = name;
   }
 
+  // 用途：返回本视图持有的类型指纹只读引用。
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
+  // 用途：为静态节点补充通用 object_kind 属性；该操作不会访问 CAA 对象，因此总是成功。
   bool ReadBasicAttributes(FeatureRecord& output, std::string&) const
   {
     output.attributes["object_kind"] = _fingerprint.container_kind;
@@ -170,16 +206,22 @@ private:
   TypeFingerprint _fingerprint;
 };
 
+// CATISpecObject 的只读适配器；借用原生指针，只把可验证字段复制到 TypeFingerprint/IR。
 class SpecObjectView : public INativeObjectView
 {
 public:
+  // 用途：绑定一个借用 CATISpecObject，并立即构建稳定类型指纹。
+  // context 用于记录指纹读取和接口探测产生的诊断/统计。
   SpecObjectView(CATISpecObject* spec, ParseContext& context) : _spec(spec)
   {
     BuildFingerprint(context);
   }
 
+  // 用途：返回构造阶段已经复制完成的类型指纹。
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
+  // 用途：读取经过 R21 PublicInterfaces 验证的基础状态和容器可访问性。
+  // 任意 CAA 异常都转成 false+error，由 Registry 的 Generic/Opaque 链隔离。
   bool ReadBasicAttributes(FeatureRecord& output, std::string& error) const
   {
     if (!_spec)
@@ -203,11 +245,15 @@ public:
   }
 
 private:
+  // R21 的受控接口探测器，只接受代码中显式列出的已验证接口键。
   class R21InterfaceProbeService : public InterfaceProbeService
   {
   public:
+    // 用途：绑定待探测的借用 CATISpecObject，不增加也不释放其引用计数。
     explicit R21InterfaceProbeService(CATISpecObject* spec) : _spec(spec) {}
 
+    // 用途：探测一个白名单接口；成功时追加键并立刻释放 QueryInterface 返回的临时引用。
+    // 未知 key 不会被猜测，直接计入探测失败。
     bool Probe(const char* key, TypeFingerprint& fingerprint, ParseStatistics& statistics)
     {
       if (std::strcmp(key, "CATISpecObject") == 0)
@@ -229,6 +275,7 @@ private:
       if (SUCCEEDED(_spec->QueryInterface(*iid, &result)) && result)
       {
         fingerprint.supported_interface_keys.push_back(key);
+        // QueryInterface 成功会增加引用计数；这里仅验证存在性，所以必须立即配对 Release。
         static_cast<CATBaseUnknown*>(result)->Release();
         ++statistics.interface_probe_success_count;
         return true;
@@ -241,6 +288,8 @@ private:
     CATISpecObject* _spec;
   };
 
+  // 用途：从 CATISpecObject 读取 StartUp/SuperType/名称，并执行固定接口白名单探测。
+  // 任何不可用字段只产生 warning；未验证的 native runtime type 保持为空，不进行猜测。
   void BuildFingerprint(ParseContext& context)
   {
     if (!_spec) return;
@@ -274,12 +323,17 @@ private:
   TypeFingerprint _fingerprint;
 };
 
+// 基础 Typed Decoder：封装所有核心节点共有的“读取基础属性并标记 typed success”行为。
 class CoreDecoder : public IFeatureDecoder
 {
 public:
+  // 用途：保存由静态字符串提供的稳定 ID 和显式优先级。
   CoreDecoder(const char* id, int priority) : _id(id), _priority(priority) {}
+  // 用途：返回构造时绑定的 Decoder ID；Core Decoder 使用字符串常量，生命周期覆盖整个进程。
   const char* GetDecoderId() const { return _id; }
+  // 用途：返回用于 Registry 决胜的显式优先级。
   int GetPriority() const { return _priority; }
+  // 用途：执行 Typed Decoder 的公共读取逻辑；失败时交回 Registry 继续 Generic/Opaque 兜底。
   DecodeResult Decode(const INativeObjectView& view, ParseContext& context, FeatureRecord& output)
   {
     std::string error;
@@ -296,49 +350,66 @@ protected:
   int _priority;
 };
 
+// 文档根节点 Decoder，依据 crawler 明确赋予的 container_kind 匹配。
 class DocumentDecoder : public CoreDecoder
 {
 public:
+  // 用途：创建优先级 400、稳定 ID 为 document 的 Decoder。
   DocumentDecoder() : CoreDecoder("document", 400) {}
+  // 用途：只匹配 container_kind 为 document 的静态文档视图。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.container_kind == "document"; }
 };
 
+// Part Decoder，优先使用已验证 CATIPrtPart 接口键而不是显示名称。
 class PartDecoder : public CoreDecoder
 {
 public:
+  // 用途：创建高优先级 Part Decoder，使接口证据优先于通用容器匹配。
   PartDecoder() : CoreDecoder("part", 700) {}
+  // 用途：检查 supported_interface_keys 中是否存在 CATIPrtPart。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return std::find(fp.supported_interface_keys.begin(), fp.supported_interface_keys.end(),
                      "CATIPrtPart") != fp.supported_interface_keys.end(); }
 };
 
+// 已验证容器入口的 Typed Decoder。
 class ContainerDecoder : public CoreDecoder
 {
 public:
+  // 用途：创建 ID 为 container、优先级 350 的 Decoder。
   ContainerDecoder() : CoreDecoder("container", 350) {}
+  // 用途：匹配 crawler 明确标记为 container 的静态入口节点。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.container_kind == "container"; }
 };
 
+// Body 基础 Decoder；R21 PublicInterfaces 未提供已确认 marker，因此只使用保守 StartUp 类型匹配。
 class BodyDecoder : public CoreDecoder
 {
 public:
+  // 用途：创建 ID 为 body、优先级 500 的 Decoder。
   BodyDecoder() : CoreDecoder("body", 500) {}
   // TODO(R21_API_VERIFY): installed PublicInterfaces contain no CATIBody marker interface.
+  // 用途：匹配本机资料中已知的 Body/MechanicalTool StartUp 类型文本。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.startup_type == "Body" || fp.startup_type == "MechanicalTool"; }
 };
 
+// HybridBody 基础 Decoder；同样不假设不存在证据的专用 marker 接口。
 class HybridBodyDecoder : public CoreDecoder
 {
 public:
+  // 用途：创建 ID 为 hybrid_body、优先级 500 的 Decoder。
   HybridBodyDecoder() : CoreDecoder("hybrid_body", 500) {}
   // TODO(R21_API_VERIFY): installed PublicInterfaces contain no CATIHybridBody marker interface.
+  // 用途：匹配已确认的 HybridBody/GeometricalSet StartUp 类型文本。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.startup_type == "HybridBody" || fp.startup_type == "GeometricalSet"; }
 };
 
+// 用途：创建 MVP 的五个基础 Typed Decoder，同时登记到 Registry 和所有权 vector。
+// Registry 仅借用指针；owned_decoders 是唯一负责最终 delete 的容器。
 void RegisterCoreDecoders(FeatureTypeRegistry& registry,
                           std::vector<IFeatureDecoder*>& owned_decoders)
 {
@@ -347,10 +418,12 @@ void RegisterCoreDecoders(FeatureTypeRegistry& registry,
   owned_decoders.push_back(new ContainerDecoder());
   owned_decoders.push_back(new BodyDecoder());
   owned_decoders.push_back(new HybridBodyDecoder());
+  // C++03 没有范围 for，使用 iterator 按固定顺序注册；匹配结果仍不依赖注册顺序。
   std::vector<IFeatureDecoder*>::iterator it = owned_decoders.begin();
   for (; it != owned_decoders.end(); ++it) registry.Register(*it);
 }
 
+// 用途：释放 RegisterCoreDecoders 创建的全部 Decoder，并清空所有权容器。
 void DeleteCoreDecoders(std::vector<IFeatureDecoder*>& owned_decoders)
 {
   std::vector<IFeatureDecoder*>::iterator it = owned_decoders.begin();
@@ -358,6 +431,8 @@ void DeleteCoreDecoders(std::vector<IFeatureDecoder*>& owned_decoders)
   owned_decoders.clear();
 }
 
+// 用途：创建一次遍历所需的 Crawler，并以引用保存 Registry、上下文和两个输出集合。
+// 这些引用不转移所有权，调用者必须保证它们覆盖整个 Crawl 生命周期。
 UniversalFeatureCrawler::UniversalFeatureCrawler(FeatureTypeRegistry& registry, ParseContext& context,
                                                  std::vector<FeatureRecord>& features,
                                                  std::vector<RelationRecord>& relations)
@@ -365,6 +440,8 @@ UniversalFeatureCrawler::UniversalFeatureCrawler(FeatureTypeRegistry& registry, 
 {
 }
 
+// 用途：先为对象建立基础 FeatureRecord，再执行 Decoder，并按 parent_id 建立正式关系。
+// 返回新分配的稳定 feature_id，供递归子节点作为 parent_id 使用。
 std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
                                                const std::string& parent_id,
                                                const std::string& tree_path)
@@ -376,6 +453,7 @@ std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
   record.tree_path = tree_path;
   record.update_status = "unknown";
   record.visibility = "unknown";
+  // 即使 Decode 随后失败，类型观察和基础记录也已经建立，满足“不丢对象”的约束。
   _catalog.Observe(view.GetFingerprint());
   _registry.DecodeObject(view, _context, record);
   _features.push_back(record);
@@ -392,17 +470,21 @@ std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
   return record.feature_id;
 }
 
+// 一个待排序子节点；CATISpecObject_var 自动维持对象引用，避免排序期间悬空。
 struct ChildEntry
 {
   std::string key;
   CATISpecObject_var object;
 };
 
+// 用途：按预先计算的稳定字符串键比较两个子节点，供 stable_sort 使用。
 static bool ChildLess(const ChildEntry& left, const ChildEntry& right)
 {
   return left.key < right.key;
 }
 
+// 用途：由 StartUp 类型、显示名和内部名构造公开接口范围内可取得的遍历排序键。
+// 任一读取异常会返回稳定占位键，不让排序辅助逻辑终止文档解析。
 static std::string BuildSpecSortKey(CATISpecObject* object)
 {
   if (!object) return "unknown";
@@ -415,6 +497,8 @@ static std::string BuildSpecSortKey(CATISpecObject* object)
   catch (...) { return "unknown"; }
 }
 
+// 用途：检测相邻的相同排序键；公开字段不能唯一决胜时记录可复现性 warning。
+// 只记录一次即可说明该父节点下存在顺序证据缺口。
 static void DiagnoseEqualKeys(const std::vector<ChildEntry>& ordered, ParseContext& context,
                               const std::string& feature_id)
 {
@@ -431,9 +515,12 @@ static void DiagnoseEqualKeys(const std::vector<ChildEntry>& ordered, ParseConte
   }
 }
 
+// 用途：递归访问一个规格对象，建立 IR 后按稳定顺序继续访问 ListComponents 子节点。
+// visited 以运行期指针识别循环，但指针仅用于本次遍历控制，绝不写入输出。
 bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string& parent_id,
                                         const std::string& parent_path)
 {
+  // 重复到达同一个原生对象时直接返回，防止循环引用或多入口造成无限递归。
   if (!spec || _visited.find(spec) != _visited.end()) return true;
   _visited.insert(spec);
 
@@ -450,6 +537,7 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
 
     CATListValCATISpecObject_var* children = spec->ListComponents();
     if (!children) return true;
+    // ListComponents 返回堆对象，立即建立守卫，保证后续任何异常路径都能 delete。
     SpecListGuard children_guard(children);
     std::vector<ChildEntry> ordered;
     int index = 0;
@@ -465,6 +553,7 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
       }
     }
     std::stable_sort(ordered.begin(), ordered.end(), ChildLess);
+    // stable_sort 在键不同时给出确定顺序；键相同时保留 API 原顺序并明确记录证据不足。
     DiagnoseEqualKeys(ordered, _context, id);
     std::vector<ChildEntry>::iterator child = ordered.begin();
     for (; child != ordered.end(); ++child)
@@ -476,12 +565,15 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
   }
   catch (...)
   {
+    // 对象级异常转成诊断并返回 false；上层可决定入口失败是否为文档级致命错误。
     _context.AddDiagnostic("warning", "discovery", "OBJECT_TRAVERSAL_FAILED",
                            "CATISpecObject traversal failed; scan continued", parent_id);
     return false;
   }
 }
 
+// 用途：从 CATDocument 根开始执行 MVP 完整发现链路，并枚举已验证 Part 容器与规格对象入口。
+// document 是 DocumentGuard 拥有的借用指针；函数不关闭文档。入口级失败通过 error 返回 false。
 bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
 {
   if (!document)
@@ -491,16 +583,19 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
   try
   {
+  // 文档和容器不是 CATISpecObject，先用 StaticObjectView 为它们建立同样完整的基础 IR。
   StaticObjectView document_view("CATDocument", "document", UnicodeToUtf8(document->DisplayName()));
   const std::string document_id = AddObject(document_view, "", "/document");
 
   CATInit* init = 0;
+  // QueryInterface 成功会返回持有引用；守卫必须在紧邻成功检查后接管它。
   if (FAILED(document->QueryInterface(IID_CATInit, reinterpret_cast<void**>(&init))) || !init)
   {
     error = "CATInit is unavailable on CATPart document";
     return false;
   }
   CaaInterfaceGuard<CATInit> init_guard(init);
+  // GetRootContainer 返回的 CATBaseUnknown 引用由 root_guard 负责释放。
   CATBaseUnknown* root = init->GetRootContainer("CATIPrtContainer");
   if (!root)
   {
@@ -519,11 +614,13 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
   CaaInterfaceGuard<CATIPrtContainer> part_container_guard(part_container);
 
+  // 把已验证的 Part Spec Container 作为独立 IR 节点，后续 Feature 都挂在它下面。
   StaticObjectView container_view("CATIPrtContainer", "container", "PartSpecContainer");
   const std::string container_id = AddObject(container_view, document_id, "/document/PartSpecContainer");
   ++_context.statistics.container_count;
 
   CATISpecObject_var part = NULL_var;
+  // _var 是 CAA 智能引用包装，离开作用域时自动管理 GetPart 返回对象的引用计数。
   try
   {
     part = part_container->GetPart();
@@ -553,6 +650,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
 
   CATIContainer* generic_container = 0;
+  // CATIContainer 是补充入口：存在时枚举当前容器成员，不存在时仅记录 info 而不猜测替代 API。
   if (SUCCEEDED(root->QueryInterface(IID_CATIContainer,
                                      reinterpret_cast<void**>(&generic_container))) && generic_container)
   {
@@ -560,6 +658,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
     try
     {
       SEQUENCE(CATBaseUnknown_ptr) members;
+      // 先建立序列守卫，再调用枚举；异常时已经返回的成员引用也能被释放。
       BaseUnknownSequenceGuard members_guard(members);
       const CATLONG32 count = generic_container->ListMembersHere("CATISpecObject", members);
       std::vector<ChildEntry> ordered_members;
@@ -572,6 +671,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
         if (SUCCEEDED(member->QueryInterface(IID_CATISpecObject,
                                              reinterpret_cast<void**>(&member_spec))) && member_spec)
         {
+          // 临时 QueryInterface 引用由局部守卫释放；ChildEntry 内的 _var 另行维持排序所需引用。
           CaaInterfaceGuard<CATISpecObject> member_spec_guard(member_spec);
           ChildEntry entry;
           entry.object = member_spec;
@@ -605,6 +705,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
   catch (...)
   {
+    // 最外层 catch 是文档级安全网；所有已创建的 RAII 守卫仍会按栈展开顺序执行清理。
     error = "CAA traversal raised an unhandled exception";
     return false;
   }
