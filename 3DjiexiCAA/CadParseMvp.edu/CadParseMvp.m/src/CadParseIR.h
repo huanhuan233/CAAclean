@@ -6,7 +6,7 @@
 
 namespace cadparse
 {
-// IArtifactWriter 的轻量 JSON 实现，负责生成 manifest、features、relations、diagnostics 和 coverage。
+// IArtifactWriter 的轻量 JSON 实现，负责事务式生成全部 JSON/JSONL 产物。
 class JsonArtifactWriter : public IArtifactWriter
 {
 public:
@@ -18,7 +18,16 @@ public:
   // 返回 false 时 error 给出文件创建、写入或统计校验失败原因。
   bool Write(const std::vector<FeatureRecord>& features,
              const std::vector<RelationRecord>& relations,
-             const ParseContext& context,
+             const std::vector<ParameterRecord>& parameters,
+             const std::vector<BusinessFeatureRecord>& business_features,
+             ParseContext& context,
+             const std::string& output_dir,
+             std::string& error);
+
+  // 用途：兼容核心自测和简单调用方，自动从 Feature/关系构建派生索引后事务写出。
+  bool Write(const std::vector<FeatureRecord>& features,
+             const std::vector<RelationRecord>& relations,
+             ParseContext& context,
              const std::string& output_dir,
              std::string& error);
 

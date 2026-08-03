@@ -70,11 +70,13 @@ public:
 private:
   // 用途：为一个已适配对象分配稳定 ID、执行 Decoder、更新统计并建立 contains 关系。
   std::string AddObject(INativeObjectView& view, const std::string& parent_id,
-                        const std::string& tree_path);
+                        const std::string& tree_path, long native_enumeration_index,
+                        long container_enumeration_index);
   // 用途：递归访问一个 CATISpecObject；visited 集合阻止循环引用导致无限递归。
   // spec 是借用指针，函数不接管其引用计数。
   bool VisitSpec(CATISpecObject* spec, const std::string& parent_id,
-                 const std::string& parent_path);
+                 const std::string& parent_path, long native_enumeration_index,
+                 long container_enumeration_index);
 
   FeatureTypeRegistry& _registry;
   ParseContext& _context;

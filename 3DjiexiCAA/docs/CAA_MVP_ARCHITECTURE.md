@@ -1,30 +1,35 @@
-# CATIA V5R21 CAA Parser MVP Architecture
+# CATIA V5R21 CAA Parser MVP v1 架构
 
-Schema version: `cad_parse_mvp_v0`.
+Schema 为 `cad_parse_mvp_v1`。工程仍保持一个 CAA Framework 和一个 LOAD MODULE；逻辑层通过纯 C++ 契约隔离，避免为名称创建空 Framework。
 
-The MVP is one CAA Framework and one load module because the repository started empty. Logical layers remain separated by C++ contracts and focused source files, without creating empty Frameworks that would complicate R21 IdentityCard maintenance.
+## 运行链路
 
-## Runtime flow
+```text
+CadParseBatch
+→ SessionGuard / DocumentGuard
+→ UniversalFeatureCrawler（保留 CAA 枚举器原始顺序）
+→ FeatureTypeRegistry
+→ KnowledgewareStringParameterDecoder 或基础 Typed Decoder
+→ Generic / Opaque
+→ ParameterRecordBuilder
+→ DeclaredBusinessFeatureAggregator
+→ JsonArtifactWriter staging
+→ Coverage/引用守恒校验
+→ 目录原子改名提交
+```
 
-`CadParseBatch` parses arguments, creates `SessionGuard`, opens a CATPart read-only through `DocumentGuard`, registers compile-time core decoders, and invokes `UniversalFeatureCrawler`. The crawler records the document and Part specification container, obtains the Part through `CATIPrtContainer`, recursively visits `CATISpecObject::ListComponents`, and supplements that entrance with verified `CATIContainer::ListMembersHere("CATISpecObject")` enumeration. A process-local pointer set prevents cycles; pointer values never enter IR.
+`features.jsonl` 一行对应一个实际枚举到的 CAA 对象。String 参数也仍是原始 Feature；`parameters.jsonl` 只是用相同 `feature_id` 建立的消费索引。`business_features.jsonl` 是从 GSMTool 声明节点和真实父子关系聚合出的派生记录，不混入 `enumerated_total`。
 
-Children are sorted by Late Type, display name, and internal name before traversal. IDs are assigned only after sorting and are revision-local (`F000001`, ...). If all three keys are equal, R21 exposes no verified persistent object key in the current PublicInterfaces; this limitation is diagnosed/documented rather than replaced by a pointer address.
+## 确定性和输出事务
 
-Every enumerated object gets a base `FeatureRecord` before decoder selection. `FeatureTypeRegistry` chooses by explicit priority and stable decoder ID. A typed decoder failure or exception is isolated and falls back to `GenericFeatureDecoder`; a failed generic read becomes an `OpaqueObjectRecorder` record. The conservation invariant is checked before output.
+Crawler 不再按显示名称排序，也不使用地址决胜，而是保留 `ListComponents`/`ListMembersHere` 的返回顺序，并记录 `native_enumeration_index`、`container_enumeration_index` 和 `traversal_index`。R21 文档把 `ListComponents` 结果描述为 unordered，所以跨机器/实现版本的绝对顺序不能作虚假保证；当前同一文件、同一 R21 环境连续两次运行的四个核心 JSONL 已做字节比较。
 
-## Logical module mapping
+Writer 先在 `<output>.cadparse_stage` 完整写一次 features、relations、parameters、business_features，再写 diagnostics/log/coverage，计算文件大小与 SHA-256，最后写不包含自身哈希的 manifest，并通过目录改名提交。`output_ms` 覆盖核心/派生/诊断/log 的 staging 写入，不包含 Manifest 自身和最终目录改名。
 
-- CadParseInterfaces: `CadParseContracts.h` pure-data records and contracts.
-- CadParseCommon / Diagnostics / Registry / DecodersCore: `CadParseCore.cpp`.
-- CadParseIR / Relations: `CadParseIR.h/.cpp`; relationships are created by discovery only when both endpoints exist.
-- CadParseRuntime / Discovery / native adapters: `CadParseCAA.h/.cpp`.
-- CadParseBatch: `CadParseBatch.cpp`.
-- License-free tests: `CadParseSelfTests.cpp` and `tests/CadParseCoreTestMain.cpp`.
+## 边界
 
-No IR type owns or serializes a CAA pointer, address, session handle, or document handle. CAA objects are confined to the runtime/discovery translation unit.
-
-## Current verified scope
-
-The crawler covers the Part root, aggregation tree exposed by `ListComponents`, and CATISpecObject members exposed by the root `CATIContainer`. This is not a claim of universal CATPart coverage. ProtectedInterfaces are not used. `references` and `input_of` are not emitted because the current MVP does not yet have a verified, stable endpoint-resolution pass. `contains` and `parent_of` are emitted for verified aggregation edges.
-
-`native_type` is empty for CATISpecObject records because no documented Public R21 native runtime-class-name getter has been verified. The documented Late Type is written to `startup_type`; this avoids mislabelling Late Type as native type. `TODO(R21_API_VERIFY)` applies to native runtime type, persistent stable feature keys, Body/HybridBody marker interfaces, and reference/input endpoint semantics.
+- CAA 指针只存在于 `CadParseCAA.cpp` 的 Session、Document、Crawler 和 Native View 内。
+- 参数真实值通过 Public `CATICkeParm::Value()->AsString()` 读取；`Show()` 仅保存为 `raw_display_text`。
+- 当前“孔、槽、凸台”是 `declared_tree_parameter_aggregation`，不是 B-Rep 识别，也不是原生 Pad/Hole/Pocket Decoder。
+- 已验证关系只有 `parent_of` 和 `contains`；悬空关系或派生来源会在写盘前被拒绝。
+- 当前入口是 CATDocument、`CATIPrtContainer::GetPart`、`CATISpecObject::ListComponents` 和根 `CATIContainer::ListMembersHere`，不声称覆盖所有 CATPart 私有对象。

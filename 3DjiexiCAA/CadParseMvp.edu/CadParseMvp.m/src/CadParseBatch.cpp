@@ -4,7 +4,15 @@
 #include "CadParseIR.h"
 
 #include <iostream>
+#include <sys/stat.h>
 #include <windows.h>
+
+#ifndef CAD_PARSE_GIT_COMMIT
+#define CAD_PARSE_GIT_COMMIT "unknown"
+#endif
+#ifndef CAD_PARSE_BUILD_TIMESTAMP_UTC
+#define CAD_PARSE_BUILD_TIMESTAMP_UTC "unknown"
+#endif
 
 namespace cadparse
 {
@@ -12,11 +20,12 @@ namespace cadparse
 struct BatchOptions
 {
   // 用途：创建默认选项；默认输出紧凑 JSON，并执行正常 CATPart 解析而不是自测。
-  BatchOptions() : pretty(false), self_test(false) {}
+  BatchOptions() : pretty(false), self_test(false), include_source_path(false) {}
   std::string input;
   std::string output;
   bool pretty;
   bool self_test;
+  bool include_source_path;
 };
 
 // 用途：把 argc/argv 转换为 BatchOptions，并验证必须成对出现的参数。
@@ -30,6 +39,7 @@ static bool ParseArguments(int argc, char** argv, BatchOptions& options, std::st
     if (argument == "--input" && i + 1 < argc) options.input = argv[++i];
     else if (argument == "--output" && i + 1 < argc) options.output = argv[++i];
     else if (argument == "--pretty") options.pretty = true;
+    else if (argument == "--include-source-path") options.include_source_path = true;
     // 解析器始终只读打开；接受该显式开关是为了让命令含义清楚且与外部调用契约一致。
     else if (argument == "--read-only") {}
     else if (argument == "--self-test") options.self_test = true;
@@ -58,7 +68,7 @@ static int RunBatch(int argc, char** argv)
   if (!ParseArguments(argc, argv, options, error))
   {
     std::cerr << error << std::endl;
-    std::cerr << "usage: CadParseMvp --input <file.CATPart> --output <directory> [--read-only] [--pretty]"
+    std::cerr << "usage: CadParseMvp --input <file.CATPart> --output <directory> [--read-only] [--pretty] [--include-source-path]"
               << std::endl;
     return 2;
   }
@@ -78,11 +88,39 @@ static int RunBatch(int argc, char** argv)
 
   const DWORD total_start = GetTickCount();
   ParseContext context;
-  context.runtime_info["catia_release"] = "V5R21";
-  // TODO(R21_API_VERIFY): no verified Public API for installed SP/HF was found locally.
-  context.runtime_info["service_pack"] = "unknown";
-  context.runtime_info["hot_fix"] = "unknown";
-  context.runtime_info["platform"] = "Win32/x86";
+  context.metadata.schema_version = CAD_PARSE_SCHEMA_VERSION;
+  context.metadata.parser_version = CAD_PARSE_PARSER_VERSION;
+  context.metadata.registry_version = CAD_PARSE_REGISTRY_VERSION;
+  context.metadata.decoder_bundle_version = CAD_PARSE_DECODER_BUNDLE_VERSION;
+  context.metadata.parser_git_commit = CAD_PARSE_GIT_COMMIT;
+  context.metadata.parser_git_commit_source = std::string(CAD_PARSE_GIT_COMMIT) == "unknown" ?
+    "build did not provide CAD_PARSE_GIT_COMMIT" : "embedded by build_r21_x86.bat";
+  context.metadata.build_timestamp_utc = CAD_PARSE_BUILD_TIMESTAMP_UTC;
+  context.metadata.build_timestamp_source = std::string(CAD_PARSE_BUILD_TIMESTAMP_UTC) == "unknown" ?
+    "build did not provide CAD_PARSE_BUILD_TIMESTAMP_UTC" : "embedded by build_r21_x86.bat";
+  context.metadata.execution_started_utc = UtcNowIso8601();
+  context.metadata.input_file_name = SourcePathForOutput(options.input, false);
+  context.metadata.include_source_path = options.include_source_path;
+  context.metadata.input_source_path = SourcePathForOutput(options.input, options.include_source_path);
+  struct _stat input_status;
+  if (_stat(options.input.c_str(), &input_status) == 0)
+    context.metadata.input_size_bytes = static_cast<unsigned long>(input_status.st_size);
+  context.metadata.input_sha256 = Sha256File(options.input, error);
+  if (context.metadata.input_sha256.empty())
+  {
+    std::cerr << error << std::endl;
+    return 9;
+  }
+  context.metadata.runtime_catia_release = "V5R21";
+  context.metadata.runtime_service_pack = "unknown";
+  context.metadata.runtime_hotfix = "unknown";
+  context.metadata.runtime_value_source = "parser build target; no verified R21 Public SP/HF runtime API";
+  ReadSourceFileHint(options.input, context.metadata);
+  context.metadata.discovery_entrypoints.push_back("CATDocument");
+  context.metadata.discovery_entrypoints.push_back("CATIPrtContainer::GetPart");
+  context.metadata.discovery_entrypoints.push_back("CATIContainer::ListMembersHere(CATISpecObject)");
+  context.metadata.discovery_coverage_scope =
+    "objects reachable through verified R21 Public CATPart entrypoints; not guaranteed exhaustive";
 
   SessionGuard session;
   if (!session.Open(error))
@@ -119,6 +157,12 @@ static int RunBatch(int argc, char** argv)
   context.statistics.traversal_ms = static_cast<long>(GetTickCount() - traversal_start);
   DeleteCoreDecoders(decoders);
 
+  std::vector<ParameterRecord> parameters;
+  ParameterRecordBuilder::Build(features, relations, context, parameters);
+  std::vector<BusinessFeatureRecord> business_features;
+  DeclaredBusinessFeatureAggregator::Aggregate(features, relations, parameters,
+                                               context, business_features);
+
   if (!CoverageTracker::Validate(context.statistics))
   {
     std::cerr << "coverage conservation failed" << std::endl;
@@ -126,23 +170,18 @@ static int RunBatch(int argc, char** argv)
   }
 
   JsonArtifactWriter writer(options.pretty);
-  const DWORD output_start = GetTickCount();
   context.statistics.total_ms = static_cast<long>(GetTickCount() - total_start);
-  // 第一次写入包含输出前已知的 total_ms，随后测得 output_ms 后重写最终统计。
-  if (!writer.Write(features, relations, context, options.output, error))
-  {
-    std::cerr << error << std::endl;
-    return 14;
-  }
-  context.statistics.output_ms = static_cast<long>(GetTickCount() - output_start);
-  context.statistics.total_ms = static_cast<long>(GetTickCount() - total_start);
-  if (!writer.Write(features, relations, context, options.output, error))
+  // Writer 在 staging 内只完整写一次核心文件，最后用目录改名提交；output_ms 不含 Manifest 自身。
+  if (!writer.Write(features, relations, parameters, business_features,
+                    context, options.output, error))
   {
     std::cerr << error << std::endl;
     return 14;
   }
 
-  std::cout << "parsed " << features.size() << " objects; output=" << options.output << std::endl;
+  std::cout << "parsed " << features.size() << " objects; parameters=" << parameters.size()
+            << "; declared_business_features=" << business_features.size()
+            << "; output=" << options.output << std::endl;
   return 0;
 }
 

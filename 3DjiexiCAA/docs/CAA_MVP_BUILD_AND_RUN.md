@@ -1,33 +1,32 @@
-# Build and Run on CATIA/CAA V5R21
+# CATIA/CAA V5R21 构建与运行
 
-Required environment: CATIA V5R21, CAA RADE V5R21, Visual Studio 2008 SP1, Win32/x86, and a valid local RADE license setting.
-
-From a Visual Studio/RADE-capable command prompt:
+要求 CATIA V5R21、CAA RADE V5R21、Visual Studio 2008 SP1、Win32/x86 和有效本机许可证设置。
 
 ```bat
-set CAA_RADE_ROOT=<CAA RADE V5R21 root>
-set CAA_PREREQ_ROOT=<CATIA V5R21 root>
-set RADECATSettingPath=<directory containing the registered RADE CATSettings>
+cd /d D:\3Djiexi\3DjiexiCAA
+set CAA_RADE_ROOT=D:\CATIA\Rade21
+set CAA_PREREQ_ROOT=D:\CATIA
+set RADECATSettingPath=C:\Users\pxy06\AppData\Roaming\DassaultSystemes\CATSettings\RADE
 call tools\build_r21_x86.bat
 ```
 
-The script forces `_MkmkOS_BitMode=32`, runs `mkGetPreq`, targets `CadParseMvp.edu CadParseMvp.m`, scans the build log for the R21 behavior where `mkmk` can return zero despite `make-ERROR`, and verifies the executable exists.
+构建脚本固定 32 位，执行 `mkGetPreq`/`mkmk`，检查日志和最终 exe；Git 可用时还会通过编译器宏嵌入当前 HEAD，否则 Manifest 如实写 `unknown`。
 
-Run license-free tests either directly with VS2008 or inside the CAA runtime:
+API 无关测试：
 
 ```bat
 call tools\test_core_vs2008.bat
 call tools\run_r21_x86.bat --self-test
 ```
 
-Parse a CATPart:
+解析样件（默认脱敏输入路径）：
 
 ```bat
-call tools\run_r21_x86.bat --input "D:\models\sample.CATPart" --output "D:\parse-output\sample" --read-only --pretty
+call tools\run_r21_x86.bat --input "D:\3Djiexiother\kuang.CATPart" --output "D:\3Djiexiother\kuang_parse_v1" --read-only --pretty
 ```
 
-The parser always opens CATPart read-only. It writes `manifest.json`, `features.jsonl`, `relations.jsonl`, `diagnostics.json`, `coverage.json`, and `parser.log`. A missing input, wrong extension, session/open failure, unwritable output, traversal fatal error, or coverage mismatch returns a non-zero code.
+只有调试时才显式加入 `--include-source-path`；默认 `manifest.json` 和 `parser.log` 只保留文件名。
 
-The run script launches the built executable with the workspace and CATIA Win32 runtime directories on `PATH`. This is intentional: the installed R21 `mkrun` wrapper was observed to discard the child process exit code, while direct execution preserves the parser's documented fatal exit codes.
+输出包含：`manifest.json`、`features.jsonl`、`relations.jsonl`、`parameters.jsonl`、`business_features.jsonl`、`diagnostics.json`、`coverage.json`、`parser.log`。输入不存在、Session/Document 打开失败、守恒或来源引用失败、输出事务失败都返回非零码。
 
-Command-line paths are interpreted using the process locale by the R21 `CATUnicodeString(const char*)` constructor. Object names are converted back to UTF-8 with the documented `ConvertToUTF8` API. Full Unicode CLI path handling remains `TODO(R21_API_VERIFY)` for the fixed R21 batch launcher.
+本机 mkmk 会提示缺少 JDK 1.6/Intel Fortran；当前纯 C++ 模块仍可成功构建，是否成功以 mkmk 错误扫描和 `intel_a\code\bin\CadParseMvp.exe` 是否生成共同判断。

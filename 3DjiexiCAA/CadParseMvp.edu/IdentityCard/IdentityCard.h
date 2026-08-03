@@ -5,3 +5,5 @@ AddPrereqComponent("System", Public);
 AddPrereqComponent("ObjectModelerBase", Public);
 AddPrereqComponent("ObjectSpecsModeler", Public);
 AddPrereqComponent("MecModInterfaces", Public);
+// 用途：提供 Public CATICkeParm/CATICkeType/CATICkeInst 的类型化 String 参数读取契约。
+AddPrereqComponent("KnowledgeInterfaces", Public);

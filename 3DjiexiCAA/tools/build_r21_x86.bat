@@ -15,6 +15,13 @@ set "MkmkINSTALL_PATH=%CAA_RADE_ROOT%"
 set "CADPARSE_WORKSPACE=%~dp0.."
 set "CADPARSE_LOG=%CADPARSE_WORKSPACE%\build_r21.log"
 
+rem Embed the exact source revision when Git is available; source code reports unknown otherwise.
+set "CADPARSE_GIT_COMMIT=unknown"
+for /f "usebackq delims=" %%G in (`git -C "%CADPARSE_WORKSPACE%" rev-parse HEAD 2^>nul`) do set "CADPARSE_GIT_COMMIT=%%G"
+set "CADPARSE_BUILD_TIMESTAMP_UTC=unknown"
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')"`) do set "CADPARSE_BUILD_TIMESTAMP_UTC=%%T"
+set "CL=/DCAD_PARSE_GIT_COMMIT=\"%CADPARSE_GIT_COMMIT%\" /DCAD_PARSE_BUILD_TIMESTAMP_UTC=\"%CADPARSE_BUILD_TIMESTAMP_UTC%\" %CL%"
+
 call "%CAA_RADE_ROOT%\intel_a\code\command\MkmkSetenv.bat"
 if errorlevel 1 exit /b 3
 
@@ -22,6 +29,8 @@ call "%CAA_RADE_ROOT%\intel_a\code\command\mkGetPreq.bat" -W "%CADPARSE_WORKSPAC
 if errorlevel 1 exit /b 4
 
 if exist "%CADPARSE_WORKSPACE%\intel_a\code\bin\CadParseMvp.exe" del /q "%CADPARSE_WORKSPACE%\intel_a\code\bin\CadParseMvp.exe"
+rem Batch owns embedded Git/time metadata, so force this one object to rebuild on every invocation.
+if exist "%CADPARSE_WORKSPACE%\CadParseMvp.edu\CadParseMvp.m\Objects\intel_a\CadParseBatch.obj" del /q "%CADPARSE_WORKSPACE%\CadParseMvp.edu\CadParseMvp.m\Objects\intel_a\CadParseBatch.obj"
 call "%CAA_RADE_ROOT%\intel_a\code\command\mkmk.bat" -W "%CADPARSE_WORKSPACE%" CadParseMvp.edu CadParseMvp.m -jobs 1 -w > "%CADPARSE_LOG%" 2>&1
 set "CADPARSE_MKMK_RESULT=%errorlevel%"
 type "%CADPARSE_LOG%"

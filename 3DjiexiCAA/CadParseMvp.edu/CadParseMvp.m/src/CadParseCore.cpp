@@ -1,36 +1,80 @@
-// 本文件实现 API 无关的解析核心：统计、诊断、Decoder 匹配、Generic/Opaque 兜底和 JSON 转义。
-// 它只依赖标准 C++03，因此既能被 CAA Batch 使用，也能在没有 CATIA 许可证时单独测试。
+// ???????? API ????????????????????Decoder ???Generic/Opaque ????? JSON ??塣
+// ?????????? C++03????????? CAA Batch ???????????? CATIA ??????????????
 #include "CadParseContracts.h"
 
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <ctime>
 
 namespace cadparse
 {
-// 用途：把解析统计的全部数值字段初始化为 0，避免未初始化整数造成随机 Coverage 结果。
+// ??????????????????????γ????? 0??????δ??????????????? Coverage ?????
 ParseStatistics::ParseStatistics()
   : enumerated_total(0), typed_count(0), generic_count(0), opaque_count(0), failed_count(0),
     container_count(0), relation_count(0), unknown_native_type_count(0),
-    interface_probe_success_count(0), interface_probe_failure_count(0), document_open_ms(0),
+    probe_supported_count(0), probe_unsupported_count(0), probe_exception_count(0),
+    probe_not_attempted_count(0), not_up_to_date_count(0), parameter_total(0),
+    parameter_value_success(0), parameter_value_partial(0), parameter_value_unavailable(0),
+    parameter_failed(0), declared_business_feature_total(0), declared_boss_count(0),
+    declared_hole_count(0), declared_slot_count(0), declared_unknown_count(0),
+    business_feature_with_parameter_count(0), business_feature_with_all_values_count(0),
+    business_feature_with_partial_values_count(0), business_feature_without_values_count(0),
+    orphan_parameter_count(0), ambiguous_parameter_owner_count(0), document_open_ms(0),
     traversal_ms(0), decoder_ms(0), output_ms(0), total_ms(0)
 {
 }
 
-// 用途：验证每个已枚举对象最终恰好落入 typed、generic、opaque、failed 四类之一。
+// ?????????????????????????????? typed??generic??opaque??failed ????????
 bool ParseStatistics::IsConserved() const
 {
   return enumerated_total == typed_count + generic_count + opaque_count + failed_count;
 }
 
-// 用途：创建一条诊断记录并追加到上下文，返回可写入 FeatureRecord 的稳定诊断 ID。
-// ID 取决于插入顺序而不是内存地址，因此同一遍历顺序下可以重复得到相同输出。
+// ?????????????????????????????????????????????
+bool ParseStatistics::IsParameterConserved() const
+{
+  return parameter_total == parameter_value_success + parameter_value_partial +
+    parameter_value_unavailable + parameter_failed;
+}
+
+// ??????????????????????????????????????????????
+bool ParseStatistics::IsBusinessFeatureConserved() const
+{
+  return declared_business_feature_total == declared_boss_count + declared_hole_count +
+    declared_slot_count + declared_unknown_count;
+}
+
+// ???????????????????????????????????????? Coverage ?????
+void ParseStatistics::RecordProbe(const std::string& interface_key,
+                                  const std::string& native_type,
+                                  const std::string& decoder_id,
+                                  const std::string& result)
+{
+  if (result == "supported") ++probe_supported_count;
+  else if (result == "unsupported") ++probe_unsupported_count;
+  else if (result == "exception") ++probe_exception_count;
+  else ++probe_not_attempted_count;
+
+  const std::string key = interface_key + "\x1f" + native_type + "\x1f" +
+    decoder_id + "\x1f" + result;
+  ++probe_outcome_counts[key];
+}
+
+// ???????????????????????????????????д?? FeatureRecord ???????? ID??
+// ID ??????????????????????????????????????????????????????
 std::string ParseContext::AddDiagnostic(const char* severity, const char* stage, const char* code,
                                         const char* message, const std::string& feature_id)
 {
   DiagnosticRecord diagnostic;
   std::ostringstream id;
-  // setw(6) 与 setfill('0') 把序号格式化成六位；size()+1 让第一条记录从 D000001 开始。
+  // setw(6) ?? setfill('0') ?????????????λ??size()+1 ??????????? D000001 ?????
   id << "D" << std::setw(6) << std::setfill('0') << diagnostics.size() + 1;
   diagnostic.diagnostic_id = id.str();
   diagnostic.severity = severity ? severity : "error";
@@ -42,15 +86,100 @@ std::string ParseContext::AddDiagnostic(const char* severity, const char* stage,
   return diagnostic.diagnostic_id;
 }
 
-// 用途：返回 Generic Decoder 的稳定 ID，供 IR、统计和冲突决胜使用。
+// ????????? Knowledgeware String ???? Decoder ??????????
+const char* KnowledgewareStringParameterDecoder::GetDecoderId() const
+{
+  return "KnowledgewareStringParameterDecoder";
+}
+
+// ???????????????????????????????? Generic ????????????
+int KnowledgewareStringParameterDecoder::GetPriority() const
+{
+  return 800;
+}
+
+// ????????????????? StartUp ?????? String ????????????????? CAA ???????????
+bool KnowledgewareStringParameterDecoder::Match(const TypeFingerprint& fingerprint,
+                                                const INativeObjectView&) const
+{
+  return fingerprint.native_type == "String" || fingerprint.startup_type == "String";
+}
+
+// ??????????????????????? String ?????????????????????????????
+DecodeResult KnowledgewareStringParameterDecoder::Decode(const INativeObjectView& view,
+                                                         ParseContext& context,
+                                                         FeatureRecord& output)
+{
+  std::string basic_error;
+  if (!view.ReadBasicAttributes(output, basic_error))
+  {
+    const std::string id = context.AddDiagnostic("warning", "parameter",
+      "PARAM_BASIC_STATE_READ_FAILED", basic_error.c_str(), output.feature_id);
+    output.diagnostic_ids.push_back(id);
+  }
+  const IStringParameterView* parameter_view = view.GetStringParameterView();
+  if (!parameter_view)
+  {
+    context.statistics.RecordProbe("CATICkeParm", output.fingerprint.native_type,
+                                   GetDecoderId(), "unsupported");
+    const std::string id = context.AddDiagnostic("info", "parameter",
+      "PARAM_INTERFACE_UNSUPPORTED", "object adapter has no String parameter view",
+      output.feature_id);
+    output.diagnostic_ids.push_back(id);
+    return DecodeResult(false, "failed", "String parameter interface unsupported");
+  }
+
+  ParameterValueData parameter;
+  std::string error;
+  const StringParameterReadStatus status = parameter_view->ReadStringParameter(parameter, error);
+  if (status != StringParameterReadSuccess)
+  {
+    const char* code = "PARAM_INTERFACE_UNSUPPORTED";
+    const char* probe_result = "unsupported";
+    if (status == StringParameterQueryException)
+    {
+      code = "PARAM_INTERFACE_QUERY_EXCEPTION";
+      probe_result = "exception";
+    }
+    else if (status == StringParameterValueException)
+    {
+      code = "PARAM_VALUE_READ_EXCEPTION";
+      probe_result = "supported";
+    }
+    context.statistics.RecordProbe("CATICkeParm", output.fingerprint.native_type,
+                                   GetDecoderId(), probe_result);
+    const std::string id = context.AddDiagnostic("warning", "parameter", code,
+      error.empty() ? "String parameter read failed" : error.c_str(), output.feature_id);
+    output.diagnostic_ids.push_back(id);
+    return DecodeResult(false, "failed", error.empty() ? code : error.c_str());
+  }
+
+  context.statistics.RecordProbe("CATICkeParm", output.fingerprint.native_type,
+                                 GetDecoderId(), "supported");
+  if (parameter.parameter_kind.empty()) parameter.parameter_kind = "string";
+  if (parameter.parameter_name.empty())
+    parameter.parameter_name = output.fingerprint.display_name;
+  if (parameter.value_status.empty()) parameter.value_status = "success";
+  if (parameter.value_source.empty()) parameter.value_source = "typed_caa_value";
+  ParameterValueNormalizer::Normalize(parameter);
+  output.has_parameter = true;
+  output.parameter = parameter;
+  output.decoder_id = GetDecoderId();
+  output.decoder_version = "1.0.0";
+  output.decode_level = "typed";
+  output.decode_status = "success";
+  return DecodeResult(true, "typed");
+}
+
+// ????????? Generic Decoder ????? ID???? IR?????????????á?
 const char* GenericFeatureDecoder::GetDecoderId() const { return "generic"; }
-// 用途：返回很低的优先级；Generic 是兜底，不应压过任何已验证专用 Decoder。
+// ???????????????????Generic ?????????????κ????????? Decoder??
 int GenericFeatureDecoder::GetPriority() const { return -1000; }
-// 用途：始终返回 true，使 Generic 理论上能接住任意对象；实际由 FeatureTypeRegistry 显式调用。
+// ??????????? true??? Generic ?????????????????????? FeatureTypeRegistry ??????á?
 bool GenericFeatureDecoder::Match(const TypeFingerprint&, const INativeObjectView&) const { return true; }
 
-// 用途：通过通用对象视图读取基础属性，并把本次结果标记为 generic success。
-// 读取失败时保留 error 文本并返回不成功结果，让调用方继续进入 Opaque Recorder。
+// ???????????????????????????????????ν?????? generic success??
+// ??????????? error ??????????????????????÷????????? Opaque Recorder??
 DecodeResult GenericFeatureDecoder::Decode(const INativeObjectView& view, ParseContext& context,
                                            FeatureRecord& output)
 {
@@ -68,8 +197,8 @@ DecodeResult GenericFeatureDecoder::Decode(const INativeObjectView& view, ParseC
   return DecodeResult(true, "generic");
 }
 
-// 用途：在任何属性读取都失败时，仍保存指纹、失败阶段和诊断，避免对象从 IR 中消失。
-// view 只在调用期间被借用；写入 output 的全部内容都是独立值，不保留原生指针。
+// ????????κ????????????????????????????κ????????????? IR ???????
+// view ??????????????д?? output ??????????????????????????????
 DecodeResult OpaqueObjectRecorder::Record(const INativeObjectView& view, ParseContext& context,
                                           FeatureRecord& output, const std::string& stage,
                                           const std::string& reason)
@@ -87,22 +216,22 @@ DecodeResult OpaqueObjectRecorder::Record(const INativeObjectView& view, ParseCo
   return DecodeResult(true, "opaque", reason.c_str());
 }
 
-// 用途：把非空 Decoder 指针加入候选列表；本容器不拥有指针，也不会负责 delete。
+// ????????? Decoder ?????????б??????????????????????? delete??
 void DecoderRegistry::Register(IFeatureDecoder* decoder)
 {
   if (decoder)
     _decoders.push_back(decoder);
 }
 
-// 用途：把类型指纹的全部可用字段按固定顺序拼成稳定键，供 Catalog 去重。
-// 0x1f 是字段分隔控制字符，可避免普通名称拼接产生边界歧义，但不会输出到用户 JSON。
+// ???????????????????????????????????????????? Catalog ????
+// 0x1f ????η??????????????????????????????????壬?????????????? JSON??
 std::string FeatureTypeFingerprintBuilder::StableKey(const TypeFingerprint& fingerprint)
 {
   std::ostringstream key;
   key << fingerprint.native_type << '\x1f' << fingerprint.startup_type << '\x1f'
       << fingerprint.container_kind << '\x1f' << fingerprint.internal_name << '\x1f'
       << fingerprint.display_name;
-  // C++03 没有范围 for，这里使用 const_iterator 只读遍历 vector。
+  // C++03 ??з?Χ for????????? const_iterator ??????? vector??
   std::vector<std::string>::const_iterator super_type = fingerprint.super_types.begin();
   for (; super_type != fingerprint.super_types.end(); ++super_type) key << '\x1f' << *super_type;
   std::vector<std::string>::const_iterator interface_key =
@@ -112,17 +241,17 @@ std::string FeatureTypeFingerprintBuilder::StableKey(const TypeFingerprint& fing
   return key.str();
 }
 
-// 用途：记录一个已观察类型指纹；std::set 自动去重并提供稳定排序。
+// ???????????????????????std::set ????????????????
 void FeatureTypeCatalog::Observe(const TypeFingerprint& fingerprint)
 {
   _keys.insert(FeatureTypeFingerprintBuilder::StableKey(fingerprint));
 }
 
-// 用途：返回 Catalog 中不同稳定指纹的数量。
+// ????????? Catalog ?в???????????????
 size_t FeatureTypeCatalog::Count() const { return _keys.size(); }
 
-// 用途：判断候选 Decoder 是否优于当前最佳项。
-// 先比较显式 priority；相同时选择字典序更小的稳定 ID，结果与注册顺序无关。
+// ??????ж??? Decoder ?????????????䶮
+// ??????? priority???????????????С????? ID?????????????????
 bool DecoderMatchEngine::IsBetter(const IFeatureDecoder* candidate,
                                   const IFeatureDecoder* current)
 {
@@ -131,7 +260,7 @@ bool DecoderMatchEngine::IsBetter(const IFeatureDecoder* candidate,
      std::string(candidate->GetDecoderId()) < current->GetDecoderId()));
 }
 
-// 用途：记录缺少 native_type 的对象类型，用 startup_type 或占位符进行去重统计。
+// ??????????? native_type ???????????? startup_type ???λ?????????????
 void UnknownTypeCollector::Observe(const TypeFingerprint& fingerprint)
 {
   if (!fingerprint.native_type.empty()) return;
@@ -139,17 +268,18 @@ void UnknownTypeCollector::Observe(const TypeFingerprint& fingerprint)
   _unknown_types.insert(key);
 }
 
-// 用途：返回不同未知类型键的数量。
+// ???????????δ??????????????
 size_t UnknownTypeCollector::Count() const { return _unknown_types.size(); }
 
-// 用途：为调用方提供命名清晰的 Coverage 校验入口，当前规则委托给 IsConserved。
+// ?????????÷????????????? Coverage У???????????????и? IsConserved??
 bool CoverageTracker::Validate(const ParseStatistics& statistics)
 {
-  return statistics.IsConserved();
+  return statistics.IsConserved() && statistics.IsParameterConserved() &&
+    statistics.IsBusinessFeatureConserved();
 }
 
-// 用途：遍历所有已注册 Decoder，隔离 Match 异常，并按确定性规则返回最佳匹配。
-// 返回的是借用指针；Registry 和调用方都不能在这里释放它。
+// ?????????????????? Decoder?????? Match ????????????????????????
+// ?????????????Registry ????÷????????????????????
 IFeatureDecoder* DecoderRegistry::Find(const TypeFingerprint& fingerprint,
                                        const INativeObjectView& view,
                                        ParseContext& context) const
@@ -157,7 +287,7 @@ IFeatureDecoder* DecoderRegistry::Find(const TypeFingerprint& fingerprint,
   IFeatureDecoder* best = 0;
   int equal_best_count = 0;
   std::vector<IFeatureDecoder*>::const_iterator it = _decoders.begin();
-  // 每个候选独立 try/catch：一个第三方 Decoder 的 Match 异常不能中止其他候选匹配。
+  // ?????????? try/catch??????????? Decoder ?? Match ???????????????????
   for (; it != _decoders.end(); ++it)
   {
     IFeatureDecoder* candidate = *it;
@@ -183,7 +313,7 @@ IFeatureDecoder* DecoderRegistry::Find(const TypeFingerprint& fingerprint,
     else if (candidate->GetPriority() == best->GetPriority())
     {
       ++equal_best_count;
-      // 同优先级时用稳定 ID 决胜；equal_best_count 另外用于向用户暴露配置冲突。
+      // ???????????? ID ?????equal_best_count ???????????????????ó????
       if (DecoderMatchEngine::IsBetter(candidate, best))
         best = candidate;
     }
@@ -194,30 +324,30 @@ IFeatureDecoder* DecoderRegistry::Find(const TypeFingerprint& fingerprint,
   return best;
 }
 
-// 用途：创建带内置 Generic/Opaque 兜底对象的 FeatureTypeRegistry。
+// ??????????????? Generic/Opaque ???????? FeatureTypeRegistry??
 FeatureTypeRegistry::FeatureTypeRegistry() {}
 
-// 用途：把一个专用 Decoder 转交内部 DecoderRegistry 登记，不转移所有权。
+// ????????????? Decoder ?????? DecoderRegistry ????????????????
 void FeatureTypeRegistry::Register(IFeatureDecoder* decoder)
 {
   _registry.Register(decoder);
 }
 
-// 用途：完成单对象解析闭环：专用 Decoder → Generic → Opaque，并更新守恒统计和耗时。
-// 无论专用解析是否失败，调用结束时 output 都应代表一个可写入 IR 的对象记录。
+// ???????????????????????? Decoder ?? Generic ?? Opaque???????????????????
+// ??????y?????????????y???? output ????????????д?? IR ?????????
 DecodeResult FeatureTypeRegistry::DecodeObject(const INativeObjectView& view, ParseContext& context,
                                                FeatureRecord& output)
 {
   const clock_t decode_start = clock();
   output.fingerprint = view.GetFingerprint();
-  // 保存遍历层已经建立的 ID、父节点和树路径。专用 Decoder 可能写入一半后失败，兜底前要恢复它们。
+  // ?????????????????? ID??????????·??????? Decoder ????д????????????????????????
   const FeatureRecord fallback_base = output;
   IFeatureDecoder* decoder = _registry.Find(output.fingerprint, view, context);
   DecodeResult result(false, "failed", "no typed decoder");
 
   if (decoder)
   {
-    // Decoder 是扩展边界，必须捕获所有 C++ 异常，防止一个对象拖垮整份 CATPart。
+    // Decoder ???????磬?????????? C++ ????????????????????? CATPart??
     try
     {
       result = decoder->Decode(view, context, output);
@@ -240,18 +370,32 @@ DecodeResult FeatureTypeRegistry::DecodeObject(const INativeObjectView& view, Pa
       output.diagnostic_ids.push_back(id);
     }
     const std::vector<std::string> failure_diagnostic_ids = output.diagnostic_ids;
-    // 恢复干净基础记录，但保留已经产生的诊断 ID，随后由 Generic 重新填充通用字段。
+    // ????????????????????????????????? ID??????? Generic ????????????Ρ?
     output = fallback_base;
     output.diagnostic_ids = failure_diagnostic_ids;
     result = _generic.Decode(view, context, output);
   }
 
   if (!result.success)
-    // Generic 也失败时仍生成 Opaque 记录，这条路径保证“枚举到的对象一定有 IR”。
+    // Generic ??????????? Opaque ?????????·????????????????????? IR????
     result = _opaque.Record(view, context, output, "generic",
                             result.message.empty() ? "generic fallback unavailable" : result.message);
 
-  // 分类计数只在最终结果确定后增加一次，从结构上维护 Coverage 守恒。
+  // String ??????????????????????????????????? parameters.jsonl ???? unavailable??
+  if (!output.has_parameter &&
+      (output.fingerprint.native_type == "String" || output.fingerprint.startup_type == "String"))
+  {
+    output.has_parameter = true;
+    output.parameter.parameter_kind = "string";
+    output.parameter.parameter_name = output.fingerprint.display_name;
+    output.parameter.value_status = "inaccessible";
+    output.parameter.value_source = "unavailable";
+    output.parameter.normalization_status = "not_attempted";
+    output.parameter.is_read_only = "unknown";
+    output.parameter.is_hidden = "unknown";
+  }
+
+  // ???????????????????????????Σ????????? Coverage ???
   ++context.statistics.enumerated_total;
   ++context.statistics.decoder_hits[output.decoder_id];
   if (result.level == "typed")
@@ -267,7 +411,326 @@ DecodeResult FeatureTypeRegistry::DecodeObject(const INativeObjectView& view, Pa
   return result;
 }
 
-// 用途：生成下一个固定宽度 Feature ID；前置自增使首个 ID 为 F000001。
+namespace
+{
+// ?????????????????? ASCII ????????????????????????????????
+std::string TrimAscii(const std::string& value)
+{
+  std::string::size_type begin = 0;
+  while (begin < value.size() &&
+         (value[begin] == ' ' || value[begin] == '\t' || value[begin] == '\r' || value[begin] == '\n'))
+    ++begin;
+  std::string::size_type end = value.size();
+  while (end > begin &&
+         (value[end - 1] == ' ' || value[end - 1] == '\t' ||
+          value[end - 1] == '\r' || value[end - 1] == '\n'))
+    --end;
+  return value.substr(begin, end - begin);
+}
+
+// ??????ж?淶?????????????????λ??δ??????????3?????λ??
+bool IsKnownUnit(const std::string& unit)
+{
+  return unit.empty() || unit == "mm" || unit == "cm" || unit == "m" ||
+    unit == "deg" || unit == "rad";
+}
+
+// ??????? Feature ?????а???? ID ???????????????????????????
+const FeatureRecord* FindFeature(const std::vector<FeatureRecord>& features,
+                                 const std::string& feature_id)
+{
+  std::vector<FeatureRecord>::const_iterator it = features.begin();
+  for (; it != features.end(); ++it)
+    if (it->feature_id == feature_id) return &*it;
+  return 0;
+}
+
+// ??????ж????????????????????????? GSMTool ?????????
+bool IsDeclaredBusinessCandidate(const FeatureRecord& feature)
+{
+  if (feature.fingerprint.native_type != "GSMTool" &&
+      feature.fingerprint.startup_type != "GSMTool")
+    return false;
+  return !BusinessFeatureRuleCatalog::KindFromName(
+    BusinessFeatureRuleCatalog::NormalizeInstanceName(feature.fingerprint.display_name)).empty();
+}
+
+// ??????????????????????????? ID???????? CAA ????????????
+std::string MakeBusinessFeatureId(size_t index)
+{
+  std::ostringstream id;
+  id << "BF" << std::setw(6) << std::setfill('0') << index;
+  return id.str();
+}
+}
+
+// ??????????????????????????? + ???????λ???????淶???????
+void ParameterValueNormalizer::Normalize(ParameterValueData& parameter)
+{
+  parameter.has_normalized_numeric_value = false;
+  parameter.normalized_numeric_value = 0.0;
+  parameter.normalized_unit.clear();
+  parameter.normalization_status = "not_numeric";
+
+  const std::string candidate = TrimAscii(parameter.value_text);
+  if (candidate.empty())
+  {
+    parameter.normalization_status = "empty_value";
+    return;
+  }
+
+  errno = 0;
+  char* number_end = 0;
+  const double number = std::strtod(candidate.c_str(), &number_end);
+  if (number_end == candidate.c_str() || errno == ERANGE)
+    return;
+
+  std::string unit = TrimAscii(std::string(number_end));
+  if (!IsKnownUnit(unit))
+    return;
+
+  parameter.has_normalized_numeric_value = true;
+  parameter.normalized_numeric_value = number;
+  parameter.normalized_unit = unit;
+  parameter.normalization_status = "success";
+}
+
+// ??????? parent_of ????????????????????????????????? Owner??
+std::string ParameterOwnershipResolver::Resolve(const std::string& parameter_id,
+                                                const std::vector<FeatureRecord>& features,
+                                                const std::vector<RelationRecord>& relations,
+                                                std::string& status)
+{
+  std::map<std::string, std::vector<std::string> > parents;
+  std::vector<RelationRecord>::const_iterator relation = relations.begin();
+  for (; relation != relations.end(); ++relation)
+    if (relation->kind == "parent_of") parents[relation->to_id].push_back(relation->from_id);
+
+  std::vector<std::string> frontier;
+  frontier.push_back(parameter_id);
+  std::set<std::string> visited;
+  visited.insert(parameter_id);
+  while (!frontier.empty())
+  {
+    std::vector<std::string> next;
+    std::set<std::string> owners;
+    std::vector<std::string>::const_iterator child = frontier.begin();
+    for (; child != frontier.end(); ++child)
+    {
+      const std::vector<std::string>& direct = parents[*child];
+      std::vector<std::string>::const_iterator parent = direct.begin();
+      for (; parent != direct.end(); ++parent)
+      {
+        if (!visited.insert(*parent).second) continue;
+        const FeatureRecord* feature = FindFeature(features, *parent);
+        if (feature && IsDeclaredBusinessCandidate(*feature)) owners.insert(*parent);
+        else next.push_back(*parent);
+      }
+    }
+    if (owners.size() == 1)
+    {
+      status = "resolved";
+      return *owners.begin();
+    }
+    if (owners.size() > 1)
+    {
+      status = "ambiguous";
+      return "";
+    }
+    frontier = next;
+  }
+  status = "not_found";
+  return "";
+}
+
+// ????????? Feature ??????ν????????????????????????????? Owner ????
+void ParameterRecordBuilder::Build(const std::vector<FeatureRecord>& features,
+                                   const std::vector<RelationRecord>& relations,
+                                   ParseContext& context,
+                                   std::vector<ParameterRecord>& output)
+{
+  output.clear();
+  ParseStatistics& statistics = context.statistics;
+  statistics.parameter_total = 0;
+  statistics.parameter_value_success = 0;
+  statistics.parameter_value_partial = 0;
+  statistics.parameter_value_unavailable = 0;
+  statistics.parameter_failed = 0;
+  statistics.orphan_parameter_count = 0;
+  statistics.ambiguous_parameter_owner_count = 0;
+
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    if (!feature->has_parameter) continue;
+    ParameterRecord record;
+    record.parameter_id = feature->feature_id;
+    record.parent_id = feature->parent_id;
+    record.tree_path = feature->tree_path;
+    record.parameter_name = feature->parameter.parameter_name;
+    record.parameter_kind = feature->parameter.parameter_kind;
+    record.value_status = feature->parameter.value_status;
+    record.value_source = feature->parameter.value_source;
+    record.value_text = feature->parameter.value_text;
+    record.raw_display_text = feature->parameter.raw_display_text;
+    record.has_normalized_numeric_value = feature->parameter.has_normalized_numeric_value;
+    record.normalized_numeric_value = feature->parameter.normalized_numeric_value;
+    record.normalized_unit = feature->parameter.normalized_unit;
+    record.normalization_status = feature->parameter.normalization_status;
+    record.decoder_id = feature->decoder_id;
+    record.diagnostic_ids = feature->diagnostic_ids;
+    record.owner_feature_id = ParameterOwnershipResolver::Resolve(
+      feature->feature_id, features, relations, record.ownership_status);
+
+    if (record.ownership_status == "not_found")
+    {
+      ++statistics.orphan_parameter_count;
+      record.diagnostic_ids.push_back(context.AddDiagnostic("info", "parameter_owner",
+        "PARAM_OWNER_NOT_FOUND", "no declared business ancestor", record.parameter_id));
+    }
+    else if (record.ownership_status == "ambiguous")
+    {
+      ++statistics.ambiguous_parameter_owner_count;
+      record.diagnostic_ids.push_back(context.AddDiagnostic("warning", "parameter_owner",
+        "PARAM_OWNER_AMBIGUOUS", "multiple nearest declared business ancestors",
+        record.parameter_id));
+    }
+
+    ++statistics.parameter_total;
+    if (record.value_status == "success") ++statistics.parameter_value_success;
+    else if (record.value_status == "partial") ++statistics.parameter_value_partial;
+    else if (record.value_status == "failed") ++statistics.parameter_failed;
+    else ++statistics.parameter_value_unavailable;
+    output.push_back(record);
+  }
+}
+
+// ???????????????β???????.????????????????????????????е????
+std::string BusinessFeatureRuleCatalog::NormalizeInstanceName(const std::string& name)
+{
+  const std::string::size_type dot = name.rfind('.');
+  if (dot == std::string::npos || dot + 1 >= name.size()) return name;
+  std::string::size_type index = dot + 1;
+  for (; index < name.size(); ++index)
+    if (name[index] < '0' || name[index] > '9') return name;
+  return name.substr(0, dot);
+}
+
+// ????????????? UTF-8 ????????????????????????δ????????????
+std::string BusinessFeatureRuleCatalog::KindFromName(const std::string& normalized_name)
+{
+  if (normalized_name == "\xE5\x87\xB8\xE5\x8F\xB0") return "declared_boss";
+  if (normalized_name == "\xE5\xAD\x94") return "declared_hole";
+  if (normalized_name == "\xE6\xA7\xBD") return "declared_slot";
+  return "";
+}
+
+// ??????? GSMTool ????????????????????????????????????????????
+void DeclaredBusinessFeatureAggregator::Aggregate(
+  const std::vector<FeatureRecord>& features,
+  const std::vector<RelationRecord>&,
+  const std::vector<ParameterRecord>& parameters,
+  ParseContext& context,
+  std::vector<BusinessFeatureRecord>& output)
+{
+  output.clear();
+  ParseStatistics& statistics = context.statistics;
+  statistics.declared_business_feature_total = 0;
+  statistics.declared_boss_count = 0;
+  statistics.declared_hole_count = 0;
+  statistics.declared_slot_count = 0;
+  statistics.declared_unknown_count = 0;
+  statistics.business_feature_with_parameter_count = 0;
+  statistics.business_feature_with_all_values_count = 0;
+  statistics.business_feature_with_partial_values_count = 0;
+  statistics.business_feature_without_values_count = 0;
+
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    if (!IsDeclaredBusinessCandidate(*feature)) continue;
+    BusinessFeatureRecord record;
+    record.business_feature_id = MakeBusinessFeatureId(output.size() + 1);
+    record.source_feature_id = feature->feature_id;
+    record.display_name = feature->fingerprint.display_name;
+    record.normalized_name = BusinessFeatureRuleCatalog::NormalizeInstanceName(record.display_name);
+    record.tree_path = feature->tree_path;
+    record.recognition_method = "declared_tree_parameter_aggregation";
+    record.feature_kind = BusinessFeatureRuleCatalog::KindFromName(record.normalized_name);
+    record.classification_status = "success";
+    record.confidence = "medium";
+
+    BusinessFeatureEvidence name_evidence;
+    name_evidence.kind = "normalized_parent_name";
+    name_evidence.value = record.normalized_name;
+    record.evidence.push_back(name_evidence);
+
+    std::string parameter_kind;
+    long value_count = 0;
+    std::vector<ParameterRecord>::const_iterator parameter = parameters.begin();
+    for (; parameter != parameters.end(); ++parameter)
+    {
+      if (parameter->owner_feature_id != feature->feature_id) continue;
+      record.parameter_ids.push_back(parameter->parameter_id);
+      BusinessParameterData value;
+      value.parameter_id = parameter->parameter_id;
+      value.raw_value = parameter->value_text;
+      value.has_normalized_numeric_value = parameter->has_normalized_numeric_value;
+      value.normalized_numeric_value = parameter->normalized_numeric_value;
+      value.normalized_unit = parameter->normalized_unit;
+      value.value_status = parameter->value_status;
+      record.parameters[parameter->parameter_name] = value;
+      if (parameter->value_status == "success") ++value_count;
+      if (parameter->parameter_name == "\xE7\x89\xB9\xE5\xBE\x81\xE7\xB1\xBB\xE5\x9E\x8B")
+        parameter_kind = BusinessFeatureRuleCatalog::KindFromName(
+          BusinessFeatureRuleCatalog::NormalizeInstanceName(TrimAscii(parameter->value_text)));
+    }
+
+    if (!record.parameter_ids.empty())
+    {
+      ++statistics.business_feature_with_parameter_count;
+      BusinessFeatureEvidence signature;
+      signature.kind = "parameter_signature";
+      std::ostringstream count;
+      count << record.parameter_ids.size() << " owned parameters";
+      signature.value = count.str();
+      record.evidence.push_back(signature);
+    }
+
+    if (!parameter_kind.empty())
+    {
+      BusinessFeatureEvidence declared;
+      declared.kind = "declared_type_parameter";
+      declared.value = parameter_kind;
+      record.evidence.push_back(declared);
+      if (parameter_kind == record.feature_kind) record.confidence = "high";
+      else
+      {
+        record.feature_kind = "declared_unknown";
+        record.classification_status = "ambiguous";
+        record.confidence = "low";
+        record.diagnostic_ids.push_back(context.AddDiagnostic("warning", "business_feature",
+          "BUSINESS_FEATURE_CLASSIFICATION_AMBIGUOUS",
+          "normalized name conflicts with declared type parameter", feature->feature_id));
+      }
+    }
+
+    if (record.parameter_ids.empty()) ++statistics.business_feature_without_values_count;
+    else if (value_count == static_cast<long>(record.parameter_ids.size()))
+      ++statistics.business_feature_with_all_values_count;
+    else if (value_count == 0) ++statistics.business_feature_without_values_count;
+    else ++statistics.business_feature_with_partial_values_count;
+
+    ++statistics.declared_business_feature_total;
+    if (record.feature_kind == "declared_boss") ++statistics.declared_boss_count;
+    else if (record.feature_kind == "declared_hole") ++statistics.declared_hole_count;
+    else if (record.feature_kind == "declared_slot") ++statistics.declared_slot_count;
+    else ++statistics.declared_unknown_count;
+    output.push_back(record);
+  }
+}
+
+// ???????????????????? Feature ID????????????? ID ? F000001??
 std::string FeatureIdGenerator::Next()
 {
   std::ostringstream id;
@@ -275,15 +738,15 @@ std::string FeatureIdGenerator::Next()
   return id.str();
 }
 
-// 用途：转义 JSON 字符串内容，包括引号、反斜杠、换行和 U+0020 以下控制字符。
-// UTF-8 多字节内容按原字节保留，只有 JSON 语法要求处理的 ASCII 字节会被替换。
+// ???????? JSON ?????????????????????б??????к? U+0020 ????????????
+// UTF-8 ????????????????????? JSON ???????? ASCII ?????滻??
 std::string JsonEscape(const std::string& value)
 {
   std::ostringstream output;
   std::string::const_iterator it = value.begin();
   for (; it != value.end(); ++it)
   {
-    // 转为 unsigned char 后再与 0x20 比较，避免 char 在不同编译器上有符号性不同。
+    // ?? unsigned char ?????? 0x20 ???????? char ?????????????з?????????
     const unsigned char c = static_cast<unsigned char>(*it);
     if (c == '"') output << "\\\"";
     else if (c == '\\') output << "\\\\";
@@ -297,5 +760,169 @@ std::string JsonEscape(const std::string& value)
       output << *it;
   }
   return output.str();
+}
+
+namespace
+{
+typedef unsigned long ShaWord;
+
+// ???????? SHA-256 ????? 32 λ????????VS2008 Win32 ?? unsigned long ? 32 λ??
+ShaWord RotateRight(ShaWord value, int bits)
+{
+  return (value >> bits) | (value << (32 - bits));
+}
+
+// ?????????? 32 λ??????????????λСд????????
+std::string HexWord(ShaWord value)
+{
+  std::ostringstream text;
+  text << std::hex << std::setw(8) << std::setfill('0') << value;
+  return text.str();
+}
+}
+
+// ????????????????????? SHA-256?????????? Manifest ???????
+std::string Sha256String(const std::string& value)
+{
+  static const ShaWord constants[64] = {
+    0x428a2f98UL,0x71374491UL,0xb5c0fbcfUL,0xe9b5dba5UL,0x3956c25bUL,0x59f111f1UL,0x923f82a4UL,0xab1c5ed5UL,
+    0xd807aa98UL,0x12835b01UL,0x243185beUL,0x550c7dc3UL,0x72be5d74UL,0x80deb1feUL,0x9bdc06a7UL,0xc19bf174UL,
+    0xe49b69c1UL,0xefbe4786UL,0x0fc19dc6UL,0x240ca1ccUL,0x2de92c6fUL,0x4a7484aaUL,0x5cb0a9dcUL,0x76f988daUL,
+    0x983e5152UL,0xa831c66dUL,0xb00327c8UL,0xbf597fc7UL,0xc6e00bf3UL,0xd5a79147UL,0x06ca6351UL,0x14292967UL,
+    0x27b70a85UL,0x2e1b2138UL,0x4d2c6dfcUL,0x53380d13UL,0x650a7354UL,0x766a0abbUL,0x81c2c92eUL,0x92722c85UL,
+    0xa2bfe8a1UL,0xa81a664bUL,0xc24b8b70UL,0xc76c51a3UL,0xd192e819UL,0xd6990624UL,0xf40e3585UL,0x106aa070UL,
+    0x19a4c116UL,0x1e376c08UL,0x2748774cUL,0x34b0bcb5UL,0x391c0cb3UL,0x4ed8aa4aUL,0x5b9cca4fUL,0x682e6ff3UL,
+    0x748f82eeUL,0x78a5636fUL,0x84c87814UL,0x8cc70208UL,0x90befffaUL,0xa4506cebUL,0xbef9a3f7UL,0xc67178f2UL
+  };
+  ShaWord hash[8] = { 0x6a09e667UL, 0xbb67ae85UL, 0x3c6ef372UL, 0xa54ff53aUL,
+                      0x510e527fUL, 0x9b05688cUL, 0x1f83d9abUL, 0x5be0cd19UL };
+  std::vector<unsigned char> bytes(value.begin(), value.end());
+  const unsigned __int64 bit_length = static_cast<unsigned __int64>(bytes.size()) * 8;
+  bytes.push_back(0x80);
+  while ((bytes.size() % 64) != 56) bytes.push_back(0);
+  int length_byte = 7;
+  for (; length_byte >= 0; --length_byte)
+    bytes.push_back(static_cast<unsigned char>((bit_length >> (length_byte * 8)) & 0xff));
+
+  size_t offset = 0;
+  for (; offset < bytes.size(); offset += 64)
+  {
+    ShaWord words[64];
+    int index = 0;
+    for (; index < 16; ++index)
+    {
+      const size_t pos = offset + index * 4;
+      words[index] = (static_cast<ShaWord>(bytes[pos]) << 24) |
+                     (static_cast<ShaWord>(bytes[pos + 1]) << 16) |
+                     (static_cast<ShaWord>(bytes[pos + 2]) << 8) |
+                      static_cast<ShaWord>(bytes[pos + 3]);
+    }
+    for (; index < 64; ++index)
+    {
+      const ShaWord s0 = RotateRight(words[index - 15], 7) ^
+        RotateRight(words[index - 15], 18) ^ (words[index - 15] >> 3);
+      const ShaWord s1 = RotateRight(words[index - 2], 17) ^
+        RotateRight(words[index - 2], 19) ^ (words[index - 2] >> 10);
+      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
+    }
+
+    ShaWord a = hash[0], b = hash[1], c = hash[2], d = hash[3];
+    ShaWord e = hash[4], f = hash[5], g = hash[6], h = hash[7];
+    for (index = 0; index < 64; ++index)
+    {
+      const ShaWord big1 = RotateRight(e, 6) ^ RotateRight(e, 11) ^ RotateRight(e, 25);
+      const ShaWord choice = (e & f) ^ ((~e) & g);
+      const ShaWord first = h + big1 + choice + constants[index] + words[index];
+      const ShaWord big0 = RotateRight(a, 2) ^ RotateRight(a, 13) ^ RotateRight(a, 22);
+      const ShaWord majority = (a & b) ^ (a & c) ^ (b & c);
+      const ShaWord second = big0 + majority;
+      h = g; g = f; f = e; e = d + first;
+      d = c; c = b; b = a; a = first + second;
+    }
+    hash[0] += a; hash[1] += b; hash[2] += c; hash[3] += d;
+    hash[4] += e; hash[5] += f; hash[6] += g; hash[7] += h;
+  }
+
+  std::string result;
+  int hash_index = 0;
+  for (; hash_index < 8; ++hash_index) result += HexWord(hash[hash_index]);
+  return result;
+}
+
+// ????????????????????????? SHA-256???????????????α??????
+std::string Sha256File(const std::string& path, std::string& error)
+{
+  std::ifstream input(path.c_str(), std::ios::in | std::ios::binary);
+  if (!input)
+  {
+    error = "cannot open file for SHA-256";
+    return "";
+  }
+  std::ostringstream bytes;
+  bytes << input.rdbuf();
+  if (input.bad())
+  {
+    error = "cannot read file for SHA-256";
+    return "";
+  }
+  error.clear();
+  return Sha256String(bytes.str());
+}
+
+// ??????????????????????????????????????????????·????
+std::string SourcePathForOutput(const std::string& path, bool include_source_path)
+{
+  if (include_source_path) return path;
+  const std::string::size_type slash = path.find_last_of("/\\");
+  return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// ??????????????????????? ISO-8601 UTC ????????
+std::string UtcNowIso8601()
+{
+  const std::time_t now = std::time(0);
+  std::tm utc;
+#if defined(_MSC_VER)
+  gmtime_s(&utc, &now);
+#else
+  utc = *std::gmtime(&now);
+#endif
+  char buffer[32];
+  std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
+  return buffer;
+}
+
+// ??????????? ASCII ?????? V5Rxx/SP/HF???д source_file_hint ????e????????汾??
+void ReadSourceFileHint(const std::string& path, ParseMetadata& metadata)
+{
+  metadata.source_hint_release = "unknown";
+  metadata.source_hint_service_pack = "unknown";
+  metadata.source_hint_hotfix = "unknown";
+  metadata.source_hint_value_source = "CATPart binary header scan";
+  metadata.source_hint_confidence = "hint";
+  std::ifstream input(path.c_str(), std::ios::in | std::ios::binary);
+  if (!input) return;
+  const size_t limit = 1024 * 1024;
+  std::vector<char> buffer(limit);
+  input.read(&buffer[0], static_cast<std::streamsize>(buffer.size()));
+  const std::string text(&buffer[0], static_cast<size_t>(input.gcount()));
+  const std::string marker = "V5R";
+  std::string::size_type position = text.find(marker);
+  for (; position != std::string::npos; position = text.find(marker, position + 1))
+  {
+    std::string::size_type release_end = position + marker.size();
+    while (release_end < text.size() && text[release_end] >= '0' && text[release_end] <= '9')
+      ++release_end;
+    if (release_end == position + marker.size()) continue;
+    const std::string::size_type sp = text.find("SP", release_end);
+    const std::string::size_type hf = sp == std::string::npos ? std::string::npos : text.find("HF", sp + 2);
+    if (sp != release_end || hf == std::string::npos || hf - sp > 8) continue;
+    std::string::size_type hf_end = hf + 2;
+    while (hf_end < text.size() && text[hf_end] >= '0' && text[hf_end] <= '9') ++hf_end;
+    metadata.source_hint_release = text.substr(position, release_end - position);
+    metadata.source_hint_service_pack = text.substr(sp, hf - sp);
+    metadata.source_hint_hotfix = text.substr(hf, hf_end - hf);
+    return;
+  }
 }
 }

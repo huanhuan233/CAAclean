@@ -11,12 +11,16 @@
 #include "CATIPrtPart.h"
 #include "CATISpecObject.h"
 #include "CATLISTV_CATISpecObject.h"
+#include "CATICkeInst.h"
+#include "CATICkeParm.h"
+#include "CATICkeType.h"
 #include "CATSession.h"
 #include "CATSessionServices.h"
 #include "CATUnicodeString.h"
 
 #include <algorithm>
 #include <cstring>
+#include <sstream>
 #include <sys/stat.h>
 #include <vector>
 
@@ -102,6 +106,13 @@ std::string UnicodeToUtf8(const CATUnicodeString& value)
     byte_count = buffer.size() - 1;
   buffer[byte_count] = 0;
   return std::string(&buffer[0], byte_count);
+}
+
+// 用途：从 CATICkeParm::Name 返回的限定路径中取参数叶名称，归属仍由真实 parent_of 图决定。
+static std::string ParameterLeafName(const std::string& qualified_name)
+{
+  const std::string::size_type separator = qualified_name.find_last_of("/\\");
+  return separator == std::string::npos ? qualified_name : qualified_name.substr(separator + 1);
 }
 
 // 用途：创建未打开的 SessionGuard，并选定本 Batch 使用的稳定 Session 名称。
@@ -207,7 +218,7 @@ private:
 };
 
 // CATISpecObject 的只读适配器；借用原生指针，只把可验证字段复制到 TypeFingerprint/IR。
-class SpecObjectView : public INativeObjectView
+class SpecObjectView : public INativeObjectView, public IStringParameterView
 {
 public:
   // 用途：绑定一个借用 CATISpecObject，并立即构建稳定类型指纹。
@@ -219,6 +230,9 @@ public:
 
   // 用途：返回构造阶段已经复制完成的类型指纹。
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
+
+  // 用途：向参数 Decoder 暴露本适配器已有的 IStringParameterView，不依赖 /GR RTTI。
+  const IStringParameterView* GetStringParameterView() const { return this; }
 
   // 用途：读取经过 R21 PublicInterfaces 验证的基础状态和容器可访问性。
   // 任意 CAA 异常都转成 false+error，由 Registry 的 Generic/Opaque 链隔离。
@@ -244,6 +258,69 @@ public:
     }
   }
 
+  // 用途：查询 R21 Public CATICkeParm，验证其类型确为 String，再通过 Value()->AsString() 读取真实值。
+  StringParameterReadStatus ReadStringParameter(ParameterValueData& parameter,
+                                                std::string& error) const
+  {
+    if (!_spec)
+    {
+      error = "null CATISpecObject";
+      return StringParameterInterfaceUnsupported;
+    }
+    CATICkeParm* raw_parameter = 0;
+    try
+    {
+      const HRESULT query = _spec->QueryInterface(IID_CATICkeParm,
+                                                   reinterpret_cast<void**>(&raw_parameter));
+      if (FAILED(query) || !raw_parameter)
+      {
+        error = "CATICkeParm is not supported";
+        return StringParameterInterfaceUnsupported;
+      }
+    }
+    catch (...)
+    {
+      error = "CATICkeParm QueryInterface raised an exception";
+      return StringParameterQueryException;
+    }
+
+    CaaInterfaceGuard<CATICkeParm> parameter_guard(raw_parameter);
+    try
+    {
+      const CATICkeType_var parameter_type = raw_parameter->Type();
+      if (parameter_type == NULL_var || static_cast<int>(parameter_type->IsaString()) == 0)
+      {
+        error = "CATICkeParm type is not String";
+        return StringParameterInterfaceUnsupported;
+      }
+      const CATICkeInst_var value = raw_parameter->Value();
+      if (value == NULL_var)
+      {
+        error = "CATICkeParm Value returned null";
+        return StringParameterValueException;
+      }
+      parameter.parameter_kind = "string";
+      parameter.value_status = "success";
+      parameter.value_source = "typed_caa_value";
+      parameter.value_text = UnicodeToUtf8(value->AsString());
+    }
+    catch (...)
+    {
+      error = "CATICkeParm typed String value read raised an exception";
+      return StringParameterValueException;
+    }
+    // Name/Show/只读和隐藏状态是辅助信息；它们不可访问时不能否定已经成功取得的真实值。
+    try { parameter.parameter_name = ParameterLeafName(UnicodeToUtf8(raw_parameter->Name())); }
+    catch (...) { parameter.parameter_name = ParameterLeafName(_fingerprint.display_name); }
+    try { parameter.raw_display_text = UnicodeToUtf8(raw_parameter->Show()); }
+    catch (...) { parameter.raw_display_text.clear(); }
+    try { parameter.is_read_only = static_cast<int>(raw_parameter->IsReadOnly()) == 0 ? "false" : "true"; }
+    catch (...) { parameter.is_read_only = "unknown"; }
+    try { parameter.is_hidden = static_cast<int>(raw_parameter->IsHidden()) == 0 ? "false" : "true"; }
+    catch (...) { parameter.is_hidden = "unknown"; }
+    return StringParameterReadSuccess;
+  }
+
 private:
   // R21 的受控接口探测器，只接受代码中显式列出的已验证接口键。
   class R21InterfaceProbeService : public InterfaceProbeService
@@ -254,13 +331,13 @@ private:
 
     // 用途：探测一个白名单接口；成功时追加键并立刻释放 QueryInterface 返回的临时引用。
     // 未知 key 不会被猜测，直接计入探测失败。
-    bool Probe(const char* key, TypeFingerprint& fingerprint, ParseStatistics& statistics)
+    std::string Probe(const char* key, TypeFingerprint& fingerprint, ParseStatistics& statistics)
     {
       if (std::strcmp(key, "CATISpecObject") == 0)
       {
         fingerprint.supported_interface_keys.push_back(key);
-        ++statistics.interface_probe_success_count;
-        return true;
+        statistics.RecordProbe(key, fingerprint.native_type, "unselected", "supported");
+        return "supported";
       }
       const IID* iid = 0;
       if (std::strcmp(key, "CATIPrtPart") == 0) iid = &IID_CATIPrtPart;
@@ -268,20 +345,28 @@ private:
       else if (std::strcmp(key, "CATIPrtContainer") == 0) iid = &IID_CATIPrtContainer;
       if (!iid)
       {
-        ++statistics.interface_probe_failure_count;
-        return false;
+        statistics.RecordProbe(key, fingerprint.native_type, "unselected", "not_attempted");
+        return "not_attempted";
       }
       void* result = 0;
-      if (SUCCEEDED(_spec->QueryInterface(*iid, &result)) && result)
+      try
       {
-        fingerprint.supported_interface_keys.push_back(key);
-        // QueryInterface 成功会增加引用计数；这里仅验证存在性，所以必须立即配对 Release。
-        static_cast<CATBaseUnknown*>(result)->Release();
-        ++statistics.interface_probe_success_count;
-        return true;
+        if (SUCCEEDED(_spec->QueryInterface(*iid, &result)) && result)
+        {
+          fingerprint.supported_interface_keys.push_back(key);
+          // QueryInterface 成功会增加引用计数；这里只验证存在性，必须立即配对 Release。
+          static_cast<CATBaseUnknown*>(result)->Release();
+          statistics.RecordProbe(key, fingerprint.native_type, "unselected", "supported");
+          return "supported";
+        }
       }
-      ++statistics.interface_probe_failure_count;
-      return false;
+      catch (...)
+      {
+        statistics.RecordProbe(key, fingerprint.native_type, "unselected", "exception");
+        return "exception";
+      }
+      statistics.RecordProbe(key, fingerprint.native_type, "unselected", "unsupported");
+      return "unsupported";
     }
 
   private:
@@ -413,6 +498,7 @@ public:
 void RegisterCoreDecoders(FeatureTypeRegistry& registry,
                           std::vector<IFeatureDecoder*>& owned_decoders)
 {
+  owned_decoders.push_back(new KnowledgewareStringParameterDecoder());
   owned_decoders.push_back(new DocumentDecoder());
   owned_decoders.push_back(new PartDecoder());
   owned_decoders.push_back(new ContainerDecoder());
@@ -444,11 +530,15 @@ UniversalFeatureCrawler::UniversalFeatureCrawler(FeatureTypeRegistry& registry, 
 // 返回新分配的稳定 feature_id，供递归子节点作为 parent_id 使用。
 std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
                                                const std::string& parent_id,
-                                               const std::string& tree_path)
+                                               const std::string& tree_path,
+                                               long native_enumeration_index,
+                                               long container_enumeration_index)
 {
   FeatureRecord record;
   record.feature_id = _ids.Next();
   record.parent_id = parent_id;
+  record.native_enumeration_index = native_enumeration_index;
+  record.container_enumeration_index = container_enumeration_index;
   record.traversal_index = static_cast<long>(_features.size() + 1);
   record.tree_path = tree_path;
   record.update_status = "unknown";
@@ -456,6 +546,15 @@ std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
   // 即使 Decode 随后失败，类型观察和基础记录也已经建立，满足“不丢对象”的约束。
   _catalog.Observe(view.GetFingerprint());
   _registry.DecodeObject(view, _context, record);
+  if (record.update_status == "not_up_to_date")
+  {
+    ++_context.statistics.not_up_to_date_count;
+    const std::string type = record.fingerprint.native_type.empty() ?
+      record.fingerprint.startup_type : record.fingerprint.native_type;
+    ++_context.statistics.not_up_to_date_by_native_type[type.empty() ? "unknown" : type];
+    ++_context.statistics.not_up_to_date_by_decoder[record.decoder_id];
+    _context.statistics.not_up_to_date_feature_ids.push_back(record.feature_id);
+  }
   _features.push_back(record);
   if (!parent_id.empty())
   {
@@ -470,55 +569,12 @@ std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
   return record.feature_id;
 }
 
-// 一个待排序子节点；CATISpecObject_var 自动维持对象引用，避免排序期间悬空。
-struct ChildEntry
-{
-  std::string key;
-  CATISpecObject_var object;
-};
-
-// 用途：按预先计算的稳定字符串键比较两个子节点，供 stable_sort 使用。
-static bool ChildLess(const ChildEntry& left, const ChildEntry& right)
-{
-  return left.key < right.key;
-}
-
-// 用途：由 StartUp 类型、显示名和内部名构造公开接口范围内可取得的遍历排序键。
-// 任一读取异常会返回稳定占位键，不让排序辅助逻辑终止文档解析。
-static std::string BuildSpecSortKey(CATISpecObject* object)
-{
-  if (!object) return "unknown";
-  try
-  {
-    return UnicodeToUtf8(object->GetType()) + "\x1f" +
-           UnicodeToUtf8(object->GetDisplayName()) + "\x1f" +
-           UnicodeToUtf8(object->GetName());
-  }
-  catch (...) { return "unknown"; }
-}
-
-// 用途：检测相邻的相同排序键；公开字段不能唯一决胜时记录可复现性 warning。
-// 只记录一次即可说明该父节点下存在顺序证据缺口。
-static void DiagnoseEqualKeys(const std::vector<ChildEntry>& ordered, ParseContext& context,
-                              const std::string& feature_id)
-{
-  size_t index = 1;
-  for (; index < ordered.size(); ++index)
-  {
-    if (ordered[index - 1].key == ordered[index].key)
-    {
-      context.AddDiagnostic("warning", "discovery", "NON_UNIQUE_TRAVERSAL_KEY",
-                            "equal R21 public sort keys; order within this group is not guaranteed",
-                            feature_id);
-      return;
-    }
-  }
-}
-
-// 用途：递归访问一个规格对象，建立 IR 后按稳定顺序继续访问 ListComponents 子节点。
+// 用途：递归访问一个规格对象，严格保留 ListComponents 返回的原生顺序。
 // visited 以运行期指针识别循环，但指针仅用于本次遍历控制，绝不写入输出。
 bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string& parent_id,
-                                        const std::string& parent_path)
+                                        const std::string& parent_path,
+                                        long native_enumeration_index,
+                                        long container_enumeration_index)
 {
   // 重复到达同一个原生对象时直接返回，防止循环引用或多入口造成无限递归。
   if (!spec || _visited.find(spec) != _visited.end()) return true;
@@ -533,33 +589,22 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
     std::string segment = fp.display_name.empty() ? fp.internal_name : fp.display_name;
     if (segment.empty()) segment = fp.startup_type.empty() ? "unnamed" : fp.startup_type;
     const std::string path = parent_path + "/" + segment;
-    const std::string id = AddObject(view, parent_id, path);
+    const std::string id = AddObject(view, parent_id, path, native_enumeration_index,
+                                     container_enumeration_index);
 
     CATListValCATISpecObject_var* children = spec->ListComponents();
     if (!children) return true;
     // ListComponents 返回堆对象，立即建立守卫，保证后续任何异常路径都能 delete。
     SpecListGuard children_guard(children);
-    std::vector<ChildEntry> ordered;
     int index = 0;
     for (index = 1; index <= children->Size(); ++index)
     {
-      ChildEntry entry;
-      entry.object = (*children)[index];
-      if (entry.object != NULL_var)
+      CATISpecObject_var child = (*children)[index];
+      if (child != NULL_var)
       {
-        CATISpecObject* entry_pointer = entry.object;
-        entry.key = BuildSpecSortKey(entry_pointer);
-        ordered.push_back(entry);
+        CATISpecObject* child_pointer = child;
+        VisitSpec(child_pointer, id, path, index, container_enumeration_index);
       }
-    }
-    std::stable_sort(ordered.begin(), ordered.end(), ChildLess);
-    // stable_sort 在键不同时给出确定顺序；键相同时保留 API 原顺序并明确记录证据不足。
-    DiagnoseEqualKeys(ordered, _context, id);
-    std::vector<ChildEntry>::iterator child = ordered.begin();
-    for (; child != ordered.end(); ++child)
-    {
-      CATISpecObject* child_pointer = child->object;
-      VisitSpec(child_pointer, id, path);
     }
     return true;
   }
@@ -585,7 +630,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   {
   // 文档和容器不是 CATISpecObject，先用 StaticObjectView 为它们建立同样完整的基础 IR。
   StaticObjectView document_view("CATDocument", "document", UnicodeToUtf8(document->DisplayName()));
-  const std::string document_id = AddObject(document_view, "", "/document");
+  const std::string document_id = AddObject(document_view, "", "/document", 0, 0);
 
   CATInit* init = 0;
   // QueryInterface 成功会返回持有引用；守卫必须在紧邻成功检查后接管它。
@@ -616,7 +661,8 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
 
   // 把已验证的 Part Spec Container 作为独立 IR 节点，后续 Feature 都挂在它下面。
   StaticObjectView container_view("CATIPrtContainer", "container", "PartSpecContainer");
-  const std::string container_id = AddObject(container_view, document_id, "/document/PartSpecContainer");
+  const std::string container_id = AddObject(container_view, document_id,
+                                              "/document/PartSpecContainer", 1, 1);
   ++_context.statistics.container_count;
 
   CATISpecObject_var part = NULL_var;
@@ -635,7 +681,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   if (part != NULL_var)
   {
     CATISpecObject* part_pointer = part;
-    if (!VisitSpec(part_pointer, container_id, "/document/PartSpecContainer"))
+    if (!VisitSpec(part_pointer, container_id, "/document/PartSpecContainer", 1, 1))
     {
       error = "Part root traversal failed";
       return false;
@@ -661,7 +707,6 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
       // 先建立序列守卫，再调用枚举；异常时已经返回的成员引用也能被释放。
       BaseUnknownSequenceGuard members_guard(members);
       const CATLONG32 count = generic_container->ListMembersHere("CATISpecObject", members);
-      std::vector<ChildEntry> ordered_members;
       CATLONG32 index = 0;
       for (index = 0; index < count; ++index)
       {
@@ -671,21 +716,11 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
         if (SUCCEEDED(member->QueryInterface(IID_CATISpecObject,
                                              reinterpret_cast<void**>(&member_spec))) && member_spec)
         {
-          // 临时 QueryInterface 引用由局部守卫释放；ChildEntry 内的 _var 另行维持排序所需引用。
+          // 临时 QueryInterface 引用由局部守卫释放；立即按枚举器原始位置访问。
           CaaInterfaceGuard<CATISpecObject> member_spec_guard(member_spec);
-          ChildEntry entry;
-          entry.object = member_spec;
-          entry.key = BuildSpecSortKey(member_spec);
-          ordered_members.push_back(entry);
+          VisitSpec(member_spec, container_id, "/document/PartSpecContainer",
+                    static_cast<long>(index + 1), 1);
         }
-      }
-      std::stable_sort(ordered_members.begin(), ordered_members.end(), ChildLess);
-      DiagnoseEqualKeys(ordered_members, _context, container_id);
-      std::vector<ChildEntry>::iterator member_entry = ordered_members.begin();
-      for (; member_entry != ordered_members.end(); ++member_entry)
-      {
-        CATISpecObject* member_pointer = member_entry->object;
-        VisitSpec(member_pointer, container_id, "/document/PartSpecContainer");
       }
     }
     catch (...)
@@ -699,6 +734,15 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   else
     _context.AddDiagnostic("info", "discovery", "APPLICATIVE_CONTAINER_UNAVAILABLE",
                            "root container does not expose CATIContainer", container_id);
+
+  if (_context.statistics.not_up_to_date_count > 0)
+  {
+    std::ostringstream message;
+    message << _context.statistics.not_up_to_date_count
+            << " enumerated objects are not up to date; see coverage feature IDs";
+    _context.AddDiagnostic("warning", "document", "MODEL_CONTAINS_STALE_OBJECTS",
+                           message.str().c_str(), document_id);
+  }
 
   _context.statistics.relation_count = static_cast<long>(_relations.size());
   return true;
