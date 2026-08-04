@@ -1,5 +1,11 @@
 # CATIA V5R21 CAA Parser MVP v2 架构
 
+## V1 通用扩展边界
+
+`INativeObjectView` 现在只暴露 `FindCapability(capabilityId)`，不再为 Hole、Pad、Pocket 等逐类增加 Getter。`INativeHoleView` 是一个强类型 Capability；以后增加新原生特征只需提供独立 Capability 与 Decoder，无需修改 Crawler。
+
+`FeatureRecord` 只拥有一个通用 `ITypedPayload`，通过 `Clone` 完成 C++03 所有权复制，Payload 自己负责 JSON 序列化。中央 Writer 不再含 Hole 类型分支。Registry 按优先级和稳定 Decoder ID 执行，明确处理 NotMatched、Unsupported、Success、Partial、Exception、Rejected 和 Conflict；失败后的继续策略由统一协议控制，Generic 回退不会继承失败 Decoder 的半成品。
+
 Schema 为 `cad_parse_mvp_v2`，Parser/Registry/Decoder Bundle 为 `1.2.0`。工程仍保持一个 CAA Framework 和一个 LOAD MODULE；逻辑层通过纯 C++ 契约隔离，避免为名称创建空 Framework。
 
 ## 运行链路

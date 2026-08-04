@@ -520,6 +520,37 @@ def face_geometry(face) -> tuple[str, dict]:
     return "other", {"surface_class": surface.__class__.__name__}
 
 
+# 用途：采样面方向、参数域、法向和主曲率；单项不可用时只省略该项，不中止整面解析。
+def face_analysis_geometry(face) -> dict:
+    result = {}
+    orientation = safe_attr(face, "Orientation")
+    if orientation is not None:
+        result["orientation"] = str(orientation)
+    parameter_bounds = safe_attr(face, "ParameterRange")
+    try:
+        uv_bounds = [float(value) for value in parameter_bounds]
+    except (TypeError, ValueError):
+        uv_bounds = None
+    if uv_bounds and len(uv_bounds) == 4:
+        result["uv_bounds"] = uv_bounds
+        u_mid = (uv_bounds[0] + uv_bounds[1]) * 0.5
+        v_mid = (uv_bounds[2] + uv_bounds[3]) * 0.5
+        normal = safe_call(face, "normalAt", u_mid, v_mid)
+        if normal is not None:
+            try:
+                result["normal_samples"] = [vec(normal)]
+            except Exception:
+                pass
+        curvature = safe_call(face, "curvatureAt", u_mid, v_mid)
+        if curvature is not None:
+            try:
+                result["curvature_samples"] = [[float(value) for value in curvature]]
+            except (TypeError, ValueError):
+                pass
+    result["surface_type_raw"] = face.Surface.__class__.__name__
+    return result
+
+
 def edge_geometry(edge) -> tuple[str, dict]:
     try:
         curve = edge.Curve
@@ -565,6 +596,12 @@ def parser_version() -> str:
     if isinstance(version, (list, tuple)):
         return ".".join(str(part) for part in version[:3])
     return str(version)
+
+
+# 用途：从实际 Part 模块读取 OpenCascade 版本；不可用时如实返回 unknown。
+def kernel_version() -> str:
+    value = safe_attr(Part, "OCC_VERSION")
+    return str(value) if value is not None else "unknown"
 
 
 class TopologyIndex:
@@ -682,6 +719,8 @@ def parse(job: dict) -> dict:
         face_entities: list[tuple[str, object]] = []
         edge_entities: list[tuple[str, object]] = []
         vertex_entities: list[tuple[str, object]] = []
+        wire_entities: list[tuple[str, object]] = []
+        shell_entities: list[tuple[str, object]] = []
         solid_count = 0
         object_boxes = []
 
@@ -806,6 +845,7 @@ def parse(job: dict) -> dict:
                 for face_index, face in enumerate(solid.Faces):
                     face_ref = f"Face{face_index + 1}"
                     geometry_type, geometry = face_geometry(face)
+                    geometry.update(face_analysis_geometry(face))
                     face_id = stable_uuid(revision_id, "face", solid_path, face_ref, face_index)
                     face_path = f"{solid_path}/face-{face_index}"
                     add_entity(
@@ -871,7 +911,69 @@ def parse(job: dict) -> dict:
                             edge_entities.append((edge_id, edge))
                         relation(relations, revision_id, face_id, edge_ids[edge_index], "bounded_by_edge")
 
-        # Conservative adjacency: faces sharing at least one geometric edge object.
+                    # 每个 Wire 作为独立拓扑节点保留，后续开口环和岛屿分析不再依赖边列表猜测。
+                    for wire_index, wire in enumerate(safe_attr(face, "Wires") or []):
+                        wire_id = stable_uuid(revision_id, "wire", face_id, wire_index)
+                        closed = safe_call(wire, "isClosed")
+                        if closed is None:
+                            closed = attr_bool(wire, "Closed")
+                        add_entity(
+                            entities,
+                            id=wire_id,
+                            revision_id=revision_id,
+                            parent_entity_id=face_id,
+                            entity_type="wire",
+                            source_ref=f"Wire{wire_index + 1}",
+                            source_index=wire_index,
+                            tree_path=f"{face_path}/wire-{wire_index}",
+                            sort_order=wire_index,
+                            geometry_type="closed_wire" if closed else "open_wire",
+                            length=float(getattr(wire, "Length", 0.0) or 0.0),
+                            center=center(wire),
+                            bounding_box=bbox(wire),
+                            geometry={"closed": bool(closed)},
+                        )
+                        wire_entities.append((wire_id, wire))
+                        relation(relations, revision_id, face_id, wire_id, "has_wire")
+                        for wire_edge in wire.Edges:
+                            wire_edge_index, _ = solid_edge_index.find(wire_edge)
+                            if wire_edge_index in edge_ids:
+                                relation(relations, revision_id, wire_id,
+                                         edge_ids[wire_edge_index], "contains_edge")
+
+                # Shell 在 Face 之后建立，便于通过同一实体对象反查已分配的面编号。
+                solid_face_index = TopologyIndex(solid.Faces)
+                face_ids_by_index = {
+                    face_index: stable_uuid(revision_id, "face", solid_path,
+                                            f"Face{face_index + 1}", face_index)
+                    for face_index in range(len(solid.Faces))
+                }
+                for shell_index, shell in enumerate(safe_attr(solid, "Shells") or []):
+                    shell_id = stable_uuid(revision_id, "shell", solid_id, shell_index)
+                    add_entity(
+                        entities,
+                        id=shell_id,
+                        revision_id=revision_id,
+                        parent_entity_id=solid_id,
+                        entity_type="shell",
+                        source_ref=f"Shell{shell_index + 1}",
+                        source_index=shell_index,
+                        tree_path=f"{solid_path}/shell-{shell_index}",
+                        sort_order=shell_index,
+                        geometry_type="closed_shell" if safe_call(shell, "isClosed") else "open_shell",
+                        area=float(getattr(shell, "Area", 0.0) or 0.0),
+                        center=center(shell),
+                        bounding_box=bbox(shell),
+                    )
+                    shell_entities.append((shell_id, shell))
+                    relation(relations, revision_id, solid_id, shell_id, "has_shell")
+                    for shell_face in shell.Faces:
+                        shell_face_index, _ = solid_face_index.find(shell_face)
+                        if shell_face_index in face_ids_by_index:
+                            relation(relations, revision_id, shell_id,
+                                     face_ids_by_index[shell_face_index], "contains_face")
+
+        # 用途：只有共享真实几何边的面才建立邻接，避免仅凭空间接近产生伪邻接。
         for left_index, (left_id, left_face) in enumerate(face_entities):
             left_hashes = {edge.hashCode() for edge in left_face.Edges}
             for right_id, right_face in face_entities[left_index + 1 :]:
@@ -883,6 +985,8 @@ def parse(job: dict) -> dict:
             "revision_id": revision_id,
             "parser_name": "FreeCAD",
             "parser_version": parser_version(),
+            "kernel_name": "OpenCascade",
+            "kernel_version": kernel_version(),
             "schema_version": SCHEMA_VERSION,
             "unit": "mm",
             "bounding_box": union_bbox(object_boxes),
@@ -892,6 +996,8 @@ def parse(job: dict) -> dict:
                 "face_count": len(face_entities),
                 "edge_count": len(edge_entities),
                 "vertex_count": len(vertex_entities),
+                "wire_count": len(wire_entities),
+                "shell_count": len(shell_entities),
             },
             "entities": entities,
             "relations": relations,

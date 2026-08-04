@@ -4,8 +4,10 @@
   "face_count": 38,
   "edge_count": 80,
   "vertex_count": 46,
+  "shell_count": 1,
+  "wire_count": 58,
   "face_mesh_count": 38,
-  "entity_count": 167,
-  "relation_count": 372,
+  "entity_count": 226,
+  "relation_count": 595,
   "mesh_count": 38
 }

@@ -208,14 +208,30 @@ class SphereSurface:
 
 class Face(Topo):
     Area = 1.0
+    Orientation = "Forward"
+    ParameterRange = (0.0, 1.0, 0.0, 1.0)
 
     def __init__(self, name, surface, edges):
         super().__init__(name)
         self.Surface = surface
         self.Edges = edges
+        self.Wires = [Wire(f"{name}-outer", edges)]
+
+    def normalAt(self, u, v):
+        return Vec(0, 0, 1)
 
     def tessellate(self, deflection):
         return [Vec(0, 0, 0), Vec(1, 0, 0), Vec(0, 1, 0)], [(0, 1, 2)]
+
+
+class Wire(Topo):
+    def __init__(self, name, edges):
+        super().__init__(name)
+        self.Edges = edges
+        self.Length = sum(getattr(edge, "Length", 0.0) for edge in edges)
+
+    def isClosed(self):
+        return True
 
 
 class Circle:
@@ -266,7 +282,7 @@ def load_parse_step(monkeypatch, objects):
     monkeypatch.setitem(sys.modules, "Import", fake_import)
     monkeypatch.setitem(sys.modules, "MeshPart", fake_mesh_part)
     fake_geom2d = types.SimpleNamespace(Line2d=Line2d)
-    monkeypatch.setitem(sys.modules, "Part", types.SimpleNamespace(Geom2d=fake_geom2d))
+    monkeypatch.setitem(sys.modules, "Part", types.SimpleNamespace(Geom2d=fake_geom2d, OCC_VERSION="7.9.2"))
     module_path = Path(__file__).resolve().parents[1] / "freecad_scripts" / "parse_step.py"
     spec = importlib.util.spec_from_file_location("parse_step_under_test", module_path)
     module = importlib.util.module_from_spec(spec)
@@ -292,8 +308,11 @@ def test_parse_step_v2_uses_solid_unique_edges_vertices_and_enriched_geometry(tm
     edges = [entity for entity in result["entities"] if entity["entity_type"] == "edge"]
     vertices = [entity for entity in result["entities"] if entity["entity_type"] == "vertex"]
     faces = [entity for entity in result["entities"] if entity["entity_type"] == "face"]
+    wires = [entity for entity in result["entities"] if entity["entity_type"] == "wire"]
     assert result["schema_version"] == "cad_parse_v2"
     assert result["parser_version"] == "1.1.0"
+    assert result["kernel_name"] == "OpenCascade"
+    assert result["kernel_version"] == "7.9.2"
     assert len(edges) == 1
     assert len(vertices) == 2
     assert edges[0]["source_ref"] == "Edge1"
@@ -304,9 +323,16 @@ def test_parse_step_v2_uses_solid_unique_edges_vertices_and_enriched_geometry(tm
     assert edges[0]["geometry"]["axis"] == [0.0, 0.0, 1.0]
     assert edges[0]["geometry"]["curve_type_id"] == "Part::GeomCircle"
     assert {face["geometry_type"] for face in faces} == {"cone", "torus"}
+    assert len(wires) == 2
+    assert all(wire["geometry"]["closed"] is True for wire in wires)
+    assert all(face["geometry"]["orientation"] == "Forward" for face in faces)
+    assert all(face["geometry"]["uv_bounds"] == [0.0, 1.0, 0.0, 1.0] for face in faces)
+    assert all(face["geometry"]["normal_samples"][0] == [0.0, 0.0, 1.0] for face in faces)
     assert next(face for face in faces if face["geometry_type"] == "cone")["geometry"]["semi_angle"] == 0.25
     assert next(face for face in faces if face["geometry_type"] == "torus")["geometry"]["major_radius"] == 8.0
     assert len([rel for rel in result["relations"] if rel["relation_type"] == "bounded_by_edge"]) == 2
+    assert len([rel for rel in result["relations"] if rel["relation_type"] == "has_wire"]) == 2
+    assert len([rel for rel in result["relations"] if rel["relation_type"] == "contains_edge"]) == 2
     assert len([rel for rel in result["relations"] if rel["relation_type"] == "has_vertex"]) == 2
     entity_ids = {entity["id"] for entity in result["entities"]}
     for rel in result["relations"]:

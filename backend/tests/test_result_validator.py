@@ -42,6 +42,18 @@ def test_accepts_minimal_valid_parser_result():
     assert result.summary["face_count"] == 0
 
 
+# 用途：验证真实 B-Rep Kernel 名称和版本能够通过严格 Schema 并供 Feature Center 追溯。
+def test_accepts_brep_kernel_traceability_fields():
+    data = minimal_result()
+    data["kernel_name"] = "OpenCascade"
+    data["kernel_version"] = "7.8.1"
+
+    result = validate_parser_result(data)
+
+    assert result.kernel_name == "OpenCascade"
+    assert result.kernel_version == "7.8.1"
+
+
 def test_rejects_result_missing_entities():
     data = minimal_result()
     del data["entities"]

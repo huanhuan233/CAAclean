@@ -1,5 +1,22 @@
 # CATIA/CAA V5R21 构建与运行
 
+## Feature Center Sidecar
+
+先用现有 CAA Batch 生成原生 Bundle，再导出 STEP，最后在 `3dcad` Conda 环境构建：
+
+```bat
+conda run -n 3dcad python backend\scripts\feature_center.py build ^
+  --step "模型.stp" ^
+  --native-bundle "CAA输出目录" ^
+  --output "FeatureCenter输出目录" ^
+  --visual-review-mode disabled
+
+conda run -n 3dcad python backend\scripts\feature_center.py validate ^
+  --bundle "FeatureCenter输出目录"
+```
+
+本机 FreeCAD 路径从 `backend/.env` 的 `FREECAD_CMD_PATH` 读取；仓库根目录不再作为后端环境配置来源。默认不启用远程视觉服务。
+
 要求 CATIA V5R21、CAA RADE V5R21、Visual Studio 2008 SP1、Win32/x86 和有效本机许可证设置。
 
 ```bat

@@ -99,6 +99,9 @@ class ParserResult(BaseModel):
     revision_id: UUID
     parser_name: str
     parser_version: str | None = None
+    # 用途：记录实际几何 Kernel 及版本，避免用 FreeCAD 应用版本冒充 OCC 版本。
+    kernel_name: str | None = None
+    kernel_version: str | None = None
     schema_version: str
     unit: str | None = None
     bounding_box: dict[str, Any] | None = None

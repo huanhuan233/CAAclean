@@ -76,6 +76,8 @@ async def test_xms06_counts_match_revision_entities_meshes_and_golden_fixture():
     faces = entities_by_type(result, "face")
     edges = entities_by_type(result, "edge")
     vertices = entities_by_type(result, "vertex")
+    shells = entities_by_type(result, "shell")
+    wires = entities_by_type(result, "wire")
     face_meshes = [mesh for mesh in result["meshes"] if mesh["mesh_type"] == "face"]
     summary = result["summary"]
 
@@ -83,6 +85,8 @@ async def test_xms06_counts_match_revision_entities_meshes_and_golden_fixture():
     assert summary["face_count"] == len(faces) == len(face_meshes) == golden["face_count"] == 38
     assert summary["edge_count"] == len(edges) == golden["edge_count"]
     assert summary["vertex_count"] == len(vertices) == golden["vertex_count"]
+    assert summary["shell_count"] == len(shells) == golden["shell_count"]
+    assert summary["wire_count"] == len(wires) == golden["wire_count"]
     assert len(result["entities"]) == golden["entity_count"]
     assert len(result["relations"]) == golden["relation_count"]
     assert len(result["meshes"]) == golden["mesh_count"]
