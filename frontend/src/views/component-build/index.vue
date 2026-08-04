@@ -26,6 +26,7 @@ import {
   updateComponentBuild
 } from '@/service/api';
 import { isOfflineRequestError, loadComponentSpecWithFallback } from './component-spec-loader';
+import { buildCatalogNavigation, type CatalogNavigationItem } from './catalog-navigation';
 import ComponentLibraryCatalog from './modules/ComponentLibraryCatalog.vue';
 import ComponentLibraryTable from './modules/ComponentLibraryTable.vue';
 import ComponentLibraryDialog from './modules/ComponentLibraryDialog.vue';
@@ -69,29 +70,7 @@ const fusionReport = ref<Api.ComponentBuild.FusionResponse | null>(null);
 const fusionLoading = ref(false);
 
 // ── Computed ──
-const catalogItems = computed(() => {
-  const result: { id: string; label: string; code: string; count: number; parentCode?: string; depth: number }[] = []
-  for (const cat of catalog.value) {
-    result.push({
-      id: cat.category_code,
-      label: `${cat.label} · ${cat.label_en || ''}`,
-      code: cat.category_code,
-      count: countBuildsInCategory(cat.category_code),
-      depth: 0
-    })
-    for (const part of cat.parts) {
-      result.push({
-        id: `part:${cat.category_code}:${part.part_type_code}`,
-        label: `${part.label} · ${part.label_en || ''}`,
-        code: part.part_type_code,
-        count: countBuildsInCategory(part.part_type_code, cat.category_code),
-        parentCode: cat.category_code,
-        depth: 1
-      })
-    }
-  }
-  return result
-});
+const catalogItems = computed<CatalogNavigationItem[]>(() => buildCatalogNavigation(treeData.value));
 
 const flatBuildRows = computed(() => {
   return flattenBuilds(treeData.value).map(build => {
@@ -115,6 +94,7 @@ const flatBuildRows = computed(() => {
       cadRevisionId: merged?.cad_revision_id || null,
       drawingTaskId: merged?.drawing_task_id || null,
       hasStep: Boolean(merged?.cad_revision_id),
+      sourceFormat: merged?.source_format || build.source_format || null,
       hasDrawing: Boolean(merged?.drawing_task_id),
       paramFields: {
         dn: merged?.default_dn != null ? String(merged.default_dn) : null,
@@ -137,15 +117,13 @@ const filteredRows = computed(() => {
 
 const displayedRows = computed(() => {
   if (selectedCatalogId.value === '__root__') return filteredRows.value
-  // Check if selected is a part type code (depth 1) or category code (depth 0)
   const selectedItem = catalogItems.value.find(c => c.id === selectedCatalogId.value)
-  if (selectedItem?.parentCode) {
-    // Part type level — filter by partTypeCode matching selectedItem.code
-    return filteredRows.value.filter(row => row.partTypeCode === selectedItem.code && row.categoryCode === selectedItem.parentCode)
+  if (selectedItem?.nodeType === 'type') {
+    return filteredRows.value.filter(row => row.partTypeCode === selectedItem.partTypeCode && row.categoryCode === selectedItem.categoryCode)
   }
-  if (selectedItem && selectedItem.code) {
-    // Category level
-    return filteredRows.value.filter(row => row.categoryCode === selectedItem.code)
+  if (selectedItem) {
+    const categories = new Set(selectedItem.descendantCategoryCodes)
+    return filteredRows.value.filter(row => categories.has(row.categoryCode))
   }
   return filteredRows.value.filter(row => row.categoryCode === selectedCatalogId.value)
 });
@@ -263,7 +241,7 @@ function statusLabel(status: string) {
     saved: '已保存',
     released: '已发布',
     completed: '解析完成',
-    ready: '可开始',
+    ready: '处理完成',
     review_ready: '待审核',
     failed: '解析失败',
     waiting_for_step: '等待 STEP',
@@ -290,7 +268,7 @@ function normalizeNodeType(nodeType?: string): Api.ComponentBuild.NodeType {
     publish_validation: 'future'
   }
   const supported = new Set<Api.ComponentBuild.NodeType>([
-    'root', 'family', 'type', 'subtype', 'component', 'build', 'folder',
+    'root', 'library', 'family', 'type', 'subtype', 'component', 'build', 'folder',
     'reference_step', 'drawing', 'component_spec', 'fusion', 'yaml', 'future'
   ])
   if (nodeType && supported.has(nodeType as Api.ComponentBuild.NodeType)) return nodeType as Api.ComponentBuild.NodeType
@@ -312,6 +290,7 @@ function normalizeTree(nodes: RawTreeNode[], parentBuildId: string | null = null
       progress: typeof node.progress === 'number' ? node.progress : null,
       disabled: Boolean(node.disabled) || nodeType === 'future' || nodeType === 'yaml',
       build_id: buildId,
+      library_code: node.library_code || null,
       category_code: node.category_code || null,
       part_type_code: node.part_type_code || null,
       component_id: node.component_id || null,
@@ -321,6 +300,9 @@ function normalizeTree(nodes: RawTreeNode[], parentBuildId: string | null = null
       status_message: node.status_message || null,
       error_code: node.error_code || null,
       error_message: node.error_message || null,
+      source_format: node.source_format || null,
+      processing_route: node.processing_route || null,
+      current_stage: node.current_stage || null,
       children
     }
   })
@@ -469,6 +451,10 @@ async function loadTree(options: { preserveSelection?: boolean; silent?: boolean
       return false
     }
     treeData.value = normalizeTree(result.data)
+    // 用途：首次进入页面时选中第一个系统库，避免把两个库的数据混成一个无归属列表。
+    if (!options.preserveSelection && selectedCatalogId.value === '__root__' && treeData.value.length) {
+      selectedCatalogId.value = treeData.value[0].id
+    }
     // Load details for all builds to populate columns like standard_number
     void loadAllBuildDetails(options.silent)
     return true
@@ -572,16 +558,16 @@ async function openDialogForBuild(buildId: string) {
 }
 
 function handleDialogSubmit(payload: {
-  form: Omit<Api.ComponentBuild.CreatePayload, 'step_file' | 'drawing_file'>
+  form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>
   editingBuild: Api.ComponentBuild.BuildDetail | null
-  stepFile: File | null
+  sourceFile: File | null
   drawingFile: File | null
 }) {
   submitting.value = true
   const doSubmit = async () => {
     const data = {
       ...payload.form,
-      ...(payload.stepFile ? { step_file: payload.stepFile } : {}),
+      ...(payload.sourceFile ? { source_file: payload.sourceFile } : {}),
       ...(payload.drawingFile ? { drawing_file: payload.drawingFile } : {})
     }
     const result = payload.editingBuild
@@ -790,7 +776,7 @@ onBeforeUnmount(() => {
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </template>
-          + 新增图元
+          + 新增零件
         </ElButton>
         <ElTooltip content="刷新目录和列表" placement="bottom">
           <ElButton :loading="refreshing" circle @click="refresh">
@@ -811,7 +797,6 @@ onBeforeUnmount(() => {
         <ComponentLibraryCatalog
           :catalog-items="catalogItems"
           :selected-catalog-id="selectedCatalogId"
-          :total-build-count="allBuildNodes(treeData).length"
           :loading="treeLoading"
           @select="handleCatalogSelect"
         />
@@ -820,14 +805,14 @@ onBeforeUnmount(() => {
       <section class="library-content">
         <ComponentLibraryTable
           :rows="displayedRows"
-          :total-count="flatBuildRows.length"
+          :total-count="displayedRows.length"
           :loading="treeLoading"
           :keyword="searchKeyword"
           :selected-build-id="selectedBuildId"
           @update:keyword="searchKeyword = $event"
           @edit="openDialogForBuild"
           @delete-build="handleDeleteBuild"
-          @view-cad-model="(bid, revId) => router.push({ path: '/cad-model', query: { revision_id: revId, build_id: bid } })"
+          @view-cad-model="(bid) => router.push({ path: '/feature-center', query: { build_id: bid } })"
           @view-drawing="(bid, taskId) => router.push({ path: '/cad-spec', query: { revision_id: '', task_id: taskId, build_id: bid } })"
           @start-step-parsing="(bid) => handleStartParsing(bid, 'reference_step')"
           @start-drawing-parsing="(bid) => handleStartParsing(bid, 'drawing')"

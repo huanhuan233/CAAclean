@@ -6,11 +6,19 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cad.router import get_cad_service
 from app.cad.service import CadService
 from app.component_builds.catalog import catalog_payload
+from app.component_builds.ingest import (
+    IngestSourceError,
+    identify_source,
+    redact_local_paths,
+    safe_asset_path,
+    schedule_ingest,
+)
 from app.component_builds.fusion import FusionSourceUnavailable
 from app.component_builds.fusion_sources import SqlAlchemyFusionSourceReader
 from app.component_builds.repository import SqlAlchemyComponentBuildRepository
@@ -43,6 +51,7 @@ async def create_component_build(
     component_name: str = Form(...),
     standard_number: str | None = Form(default=None),
     version: str = Form(default="1.0.0"),
+    source_file: UploadFile | None = File(default=None),
     step_file: UploadFile | None = File(default=None),
     drawing_file: UploadFile | None = File(default=None),
     build_service: ComponentBuildService = Depends(get_component_build_service),
@@ -50,7 +59,7 @@ async def create_component_build(
     drawing_service: DrawingLayoutService = Depends(get_drawing_service),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    _validate_uploads(step_file, drawing_file)
+    _validate_uploads(source_file, step_file, drawing_file)
     build_id: UUID | None = None
     try:
         build = await build_service.create_catalog_build(
@@ -59,13 +68,14 @@ async def create_component_build(
             component_name=component_name,
             standard_number=standard_number,
             version=version,
-            status="uploading" if step_file else "draft",
+            status="uploading" if source_file or step_file else "draft",
         )
         build_id = UUID(str(build["id"]))
         return await _apply_source_updates(
             build_id,
             build=build,
             component_name=component_name,
+            source_file=source_file,
             step_file=step_file,
             drawing_file=drawing_file,
             build_service=build_service,
@@ -89,6 +99,7 @@ async def update_component_build(
     component_name: str = Form(...),
     standard_number: str | None = Form(default=None),
     version: str = Form(default="1.0.0"),
+    source_file: UploadFile | None = File(default=None),
     step_file: UploadFile | None = File(default=None),
     drawing_file: UploadFile | None = File(default=None),
     build_service: ComponentBuildService = Depends(get_component_build_service),
@@ -96,7 +107,7 @@ async def update_component_build(
     drawing_service: DrawingLayoutService = Depends(get_drawing_service),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    _validate_uploads(step_file, drawing_file)
+    _validate_uploads(source_file, step_file, drawing_file)
     await _get_build_or_404(build_service, build_id)
     try:
         build = await build_service.update_catalog_build(
@@ -111,6 +122,7 @@ async def update_component_build(
             build_id,
             build=build,
             component_name=component_name,
+            source_file=source_file,
             step_file=step_file,
             drawing_file=drawing_file,
             build_service=build_service,
@@ -162,6 +174,39 @@ async def component_build_status(build_id: UUID, service: ComponentBuildService 
         return await service.get_status(build_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer")
+async def component_build_viewer(
+    build_id: UUID,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_viewer_contract(build_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "viewer_not_found", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/assets/{asset_path:path}")
+async def component_build_viewer_asset(
+    build_id: UUID,
+    asset_path: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+):
+    contract = await component_build_viewer(build_id, service)
+    if contract.get("status") != "ready":
+        raise HTTPException(status_code=409, detail={"code": "VIEWER_ASSET_NOT_READY", "message": "模型尚未处理完成"})
+    urls = [value for value in (contract.get("viewer_asset") or {}).values() if value]
+    urls.extend(value for key, value in (contract.get("feature_center") or {}).items() if key.endswith("_url") and value)
+    requested_suffix = f"/viewer/assets/{asset_path}"
+    if not any(str(url).endswith(requested_suffix) for url in urls):
+        raise HTTPException(status_code=404, detail={"code": "VIEWER_ASSET_NOT_LISTED", "message": "资产不在发布清单中"})
+    path = safe_asset_path(Path(settings.cad_work_dir) / contract["task_id"], asset_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"code": "VIEWER_ASSET_MISSING", "message": "资产文件不存在"})
+    media_type = "model/gltf-binary" if path.suffix.lower() == ".glb" else "application/json"
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @router.get("/{build_id}/component-spec")
@@ -252,6 +297,18 @@ async def retry_component_build(
                 status_code=409,
                 detail={"code": "step_source_unavailable", "message": "STEP source is not attached"},
             )
+        if build.get("processing_route") in {"step_cad_parse", "catia_feature_center"}:
+            await cad_service.repository.set_revision_status(
+                UUID(build["cad_revision_id"]),
+                status="queued",
+                progress=0,
+                status_message="queued",
+                error_code=None,
+                error_message=None,
+            )
+            result = await service.set_status(build_id, status="parsing_sources", message="source_retry_queued")
+            schedule_ingest(UUID(build["cad_revision_id"]), settings)
+            return result
         result = await service.set_status(build_id, status="parsing_sources", message="step_retry_queued")
         schedule_step_pipeline(UUID(build["cad_revision_id"]), cad_service)
         return result
@@ -317,7 +374,21 @@ async def run_drawing_pipeline(
             )
 
 
-def _validate_uploads(step_file: UploadFile | None, drawing_file: UploadFile | None) -> None:
+def _validate_uploads(
+    source_file: UploadFile | None,
+    step_file: UploadFile | None,
+    drawing_file: UploadFile | None,
+) -> None:
+    if source_file and step_file:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "MULTIPLE_SOURCE_FILES", "message": "source_file 与旧 step_file 不能同时上传"},
+        )
+    if source_file:
+        try:
+            identify_source(source_file.filename or "")
+        except IngestSourceError as exc:
+            raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
     if step_file and not (step_file.filename or "").lower().endswith((".step", ".stp")):
         raise HTTPException(status_code=400, detail="only STEP/STP files are supported")
     if drawing_file and not (drawing_file.filename or "").lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
@@ -329,6 +400,7 @@ async def _apply_source_updates(
     *,
     build: dict,
     component_name: str,
+    source_file: UploadFile | None,
     step_file: UploadFile | None,
     drawing_file: UploadFile | None,
     build_service: ComponentBuildService,
@@ -341,19 +413,37 @@ async def _apply_source_updates(
 
     if drawing_file:
         drawing_path = await _save_drawing_upload(drawing_file, settings)
-    elif step_file:
+    elif source_file or step_file:
         staged_drawing_path = _find_pending_drawing(build_id, settings)
         if staged_drawing_path and staged_drawing_path.exists():
             staged_drawing_path.unlink()
             staged_drawing_path = None
 
-    if step_file:
-        cad = await cad_service.create_model_from_upload(step_file, component_name)
+    cad: dict | None = None
+    if source_file:
+        source = identify_source(source_file.filename or "")
+        cad = await cad_service.create_source_from_upload(
+            source_file,
+            component_name,
+            source_format=source.source_format,
+            processing_route=source.processing_route,
+        )
+    elif step_file:
+        cad = await cad_service.create_source_from_upload(
+            step_file,
+            component_name,
+            source_format="STEP",
+            processing_route="step_cad_parse",
+        )
+
+    if cad:
         build = await build_service.attach_step(
             build_id,
             model_id=UUID(str(cad["model_id"])),
             revision_id=UUID(str(cad["revision_id"])),
         )
+        if source_file or step_file:
+            schedule_ingest(UUID(str(cad["revision_id"])), settings)
 
     if drawing_path and build.get("cad_revision_id"):
         drawing_task = await drawing_service.create_task(
@@ -379,14 +469,26 @@ async def _apply_source_updates(
             message="drawing_waiting_for_step",
         )
 
-    if step_file or drawing_file:
-        return await build_service.set_status(
+    if source_file or step_file or drawing_file:
+        response = await build_service.set_status(
             build_id,
             status="parsing_sources",
             message="sources_queued",
             error_code=None,
             error_message=None,
         )
+        if (source_file or step_file) and cad:
+            response.update({
+                "part_id": response["id"],
+                "task_id": str(cad["task_id"]),
+                "source_format": cad["source_format"],
+                "processing_route": cad["processing_route"],
+                "source_sha256": cad["source_sha256"],
+                "status": "queued",
+                "current_stage": "queued",
+                "progress": 0,
+            })
+        return response
     return await build_service.get_build(build_id)
 
 
@@ -430,7 +532,10 @@ async def _get_build_or_404(service: ComponentBuildService, build_id: UUID) -> d
 
 
 def _error_detail(exc: Exception) -> dict:
-    return {"code": getattr(exc, "code", "component_build_upload_failed"), "message": str(exc)}
+    return {
+        "code": getattr(exc, "code", "component_build_upload_failed"),
+        "message": redact_local_paths(str(exc)),
+    }
 
 
 async def _mark_build_failed(service: ComponentBuildService, build_id: UUID | None, exc: Exception) -> None:

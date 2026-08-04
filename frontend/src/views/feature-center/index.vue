@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -9,8 +10,12 @@ import {
   parseJsonLines
 } from './modules/feature-center-bundle';
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
+import { fetchComponentBuildViewer, fetchComponentBuildViewerAsset } from '@/service/api';
 
 defineOptions({ name: 'FeatureCenterViewer' });
+
+const route = useRoute();
+const assetRequestController = new AbortController();
 
 interface MeasurementRecord {
   measurement_id: string;
@@ -77,6 +82,74 @@ function findBundleFile(files: File[], bundleRoot: string, relativePath: string)
 async function sha256Hex(file: File) {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
   return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+}
+
+// 用途：校验从受控 Web 资产接口取得的字节，保证远程加载与本地 Bundle 使用同一完整性规则。
+async function sha256Buffer(buffer: ArrayBuffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+}
+
+// 用途：从后端统一 Viewer 契约加载 STEP 或 CATPart 产物，不接触服务器绝对路径。
+async function loadBuildBundle(buildId: string) {
+  loading.value = true;
+  errorText.value = '';
+  try {
+    const requestOptions = { signal: assetRequestController.signal, silent: true };
+    const contractResult = await fetchComponentBuildViewer(buildId, requestOptions);
+    if (contractResult.error || !contractResult.data) throw contractResult.error || new Error('Viewer 契约不可用');
+    const contract = contractResult.data;
+    if (contract.status !== 'ready' || !contract.viewer_asset) {
+      throw new Error(contract.error_message || `模型尚未就绪：${contract.current_stage || contract.status}`);
+    }
+    const canonicalUrl = contract.feature_center.canonical_features_url;
+    const measurementUrl = contract.feature_center.measurements_url;
+    if (!canonicalUrl || !measurementUrl) throw new Error('Feature Center 索引资产缺失');
+    const assetPaths = {
+      manifest: contract.viewer_asset.scene_manifest_url,
+      canonical: canonicalUrl,
+      measurements: measurementUrl,
+      featureMap: contract.viewer_asset.feature_mesh_map_url,
+      model: contract.viewer_asset.glb_url
+    };
+    const assetResults = await Promise.all(
+      Object.values(assetPaths).map(path => fetchComponentBuildViewerAsset(path, requestOptions))
+    );
+    const failed = assetResults.find(result => result.error || !(result.data instanceof ArrayBuffer));
+    if (failed) throw failed.error || new Error('Viewer 资产响应不是二进制数据');
+    const [manifestBuffer, canonicalBuffer, measurementBuffer, featureMapBuffer, modelBuffer] = assetResults.map(
+      result => result.data as ArrayBuffer
+    );
+    const decode = (buffer: ArrayBuffer) => new TextDecoder('utf-8').decode(buffer);
+    const manifest = JSON.parse(decode(manifestBuffer)) as BundleManifest;
+    if (manifest.schema_version !== 'cad_feature_center_v1') throw new Error('Feature Center Schema 不兼容');
+    for (const [relativePath, buffer] of [
+      ['canonical_features.jsonl', canonicalBuffer],
+      ['measurements.jsonl', measurementBuffer],
+      ['lightweight/feature_mesh_map.json', featureMapBuffer],
+      ['lightweight/model.glb', modelBuffer]
+    ] as const) {
+      const expected = manifest.output_files[relativePath]?.sha256;
+      if (!expected || await sha256Buffer(buffer) !== expected) throw new Error(`Bundle 文件哈希不匹配：${relativePath}`);
+    }
+    const nextCanonical = parseJsonLines<CanonicalFeatureRecord>(decode(canonicalBuffer));
+    const nextMeasurements = parseJsonLines<MeasurementRecord>(decode(measurementBuffer));
+    const nextFeatureMap = JSON.parse(decode(featureMapBuffer)) as FeatureMeshMap;
+    if (nextFeatureMap.shape_hash !== manifest.brep.shape_hash) throw new Error('Mesh 映射与 B-Rep Shape Hash 不一致');
+    await loadGlb(modelBuffer);
+    canonicalFeatures.value = nextCanonical;
+    measurements.value = nextMeasurements;
+    featureMeshMap.value = nextFeatureMap;
+    selectedFeatureId.value = nextCanonical[0]?.feature_center_id ?? '';
+    selectedFaceId.value = '';
+    faceFeatureIds.value = [];
+    await nextTick();
+    applyVisualState();
+  } catch (error) {
+    errorText.value = error instanceof Error ? error.message : 'Web Viewer 加载失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
 // 用途：加载一次完整 Bundle，并在所有必需文件验证后才替换当前模型。
@@ -279,8 +352,13 @@ function disposeModel(root: THREE.Object3D | null) {
 }
 
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
-onMounted(initViewer);
+onMounted(() => {
+  initViewer();
+  const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
+  if (buildId) void loadBuildBundle(buildId);
+});
 onBeforeUnmount(() => {
+  assetRequestController.abort();
   if (animationId) cancelAnimationFrame(animationId);
   resizeObserver?.disconnect();
   if (renderer) renderer.domElement.removeEventListener('pointerdown', handlePointer);
@@ -319,7 +397,7 @@ onBeforeUnmount(() => {
           <span>{{ feature.feature_center_id }}</span>
           <span :class="feature.review_state">{{ feature.review_state }}</span>
         </button>
-        <ElEmpty v-if="!canonicalFeatures.length" description="请选择 Bundle 目录" />
+        <ElEmpty v-if="!canonicalFeatures.length" description="模型已加载；暂无可信 Canonical Feature" />
       </aside>
 
       <section ref="containerRef" class="viewer" />

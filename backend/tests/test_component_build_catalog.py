@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.component_builds.catalog import CATEGORIES
+from app.component_builds.catalog import CATEGORIES, LIBRARIES, catalog_payload
 from app.component_builds.repository import MemoryComponentBuildRepository, SqlAlchemyComponentBuildRepository
 from app.component_builds.service import ComponentBuildService
 
@@ -42,6 +42,35 @@ def test_catalog_defines_all_six_categories_and_required_parts():
         "motor", "reducer", "cylinder", "hydraulic-cylinder", "spring",
         "hopper", "agitator", "cutter", "die", "screen", "guide-rail", "slider", "air-ring", "cooling-unit",
     }
+
+
+def test_catalog_defines_two_stable_library_roots_and_aerospace_categories():
+    assert [library.code for library in LIBRARIES] == [
+        "MECHANICAL_COMPONENT_LIBRARY",
+        "AEROSPACE_PART_LIBRARY",
+    ]
+    assert [library.label for library in LIBRARIES] == ["机械工程图元库", "航空航天零件库"]
+    assert [category.label for category in LIBRARIES[1].categories] == [
+        "机体承力结构类",
+        "壁板与蒙皮类",
+        "发动机转子类",
+        "发动机静子与机匣类",
+        "起落架与作动类",
+        "管路与连接附件类",
+        "航天器结构与机构类",
+        "通用航空航天零件",
+    ]
+    assert str(CATEGORIES[0].catalog_node_id) == "5f3b58f8-6b36-5372-ad97-7612b368bbce"
+    assert str(CATEGORIES[0].parts[0].catalog_node_id) == "68652018-674f-548e-aa1c-62e5d56c8501"
+
+
+def test_catalog_payload_exposes_library_roots_without_duplicating_categories():
+    payload = catalog_payload()
+
+    assert len(payload["libraries"]) == 2
+    assert payload["libraries"][1]["library_code"] == "AEROSPACE_PART_LIBRARY"
+    assert len(payload["libraries"][1]["categories"]) == 8
+    assert len({item["category_code"] for item in payload["categories"]}) == len(payload["categories"])
 
 
 @pytest.mark.asyncio
@@ -106,7 +135,11 @@ async def test_tree_keeps_empty_catalog_groups_and_preserves_legacy_builds():
     unknown = await repository.create_build(component_id="legacy-other", component_name="旧未知件", component_type="legacy-thing")
     tree = await ComponentBuildService(repository, source_status_reader=SourceStatusReader()).get_tree()
 
-    assert [node["category_code"] for node in tree[:6]] == [
+    assert [node["library_code"] for node in tree[:2]] == [
+        "MECHANICAL_COMPONENT_LIBRARY", "AEROSPACE_PART_LIBRARY",
+    ]
+    mechanical_categories = tree[0]["children"]
+    assert [node["category_code"] for node in mechanical_categories[:6]] == [
         "support-frame", "shaft-transmission", "roller", "connection-fastening", "drive-actuation", "functional",
     ]
     flange_part = _find(tree, node_type="type", code="flange")
@@ -117,5 +150,10 @@ async def test_tree_keeps_empty_catalog_groups_and_preserves_legacy_builds():
     }
     assert all(node["node_type"] == "component" for node in flange_part["children"])
     assert all(node["children"][0]["node_type"] == "build" for node in flange_part["children"])
-    assert _find(tree, node_type="family", code="uncategorized")["children"][0]["children"][0]["component_id"] == unknown.component_id
+    uncategorized = _find(tree, node_type="family", code="uncategorized")
+    assert uncategorized["children"][0]["children"][0]["component_id"] == unknown.component_id
+    assert tree[0]["count"] == 3
+    assert _find(tree, node_type="family", code="connection-fastening")["count"] == 2
+    assert flange_part["count"] == 2
+    assert uncategorized["count"] == 1
     assert _find(tree, node_type="type", code="motor")["children"] == []

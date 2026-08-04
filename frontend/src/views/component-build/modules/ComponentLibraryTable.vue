@@ -27,6 +27,7 @@ interface BuildRow {
   cadRevisionId: string | null
   drawingTaskId: string | null
   hasStep: boolean
+  sourceFormat: 'STEP' | 'CATPART' | null
   hasDrawing: boolean
   paramFields: { dn: string | null; pn: string | null }
 }
@@ -66,6 +67,7 @@ function statusTagType(status: string): 'success' | 'info' | 'primary' | 'warnin
     review_required: 'warning',
     sources_partial: 'warning',
     source_failed: 'danger',
+    ready: 'success',
     failed: 'danger',
     draft: 'info',
     pending: 'info',
@@ -80,6 +82,7 @@ function simpleStatusLabel(status: string): string {
     uploading: '上传中',
     parsing_sources: '解析中',
     source_failed: '失败',
+    ready: '处理完成',
     sources_ready: '就绪',
     sources_partial: '部分就绪',
     aligning: '对齐中',
@@ -88,7 +91,6 @@ function simpleStatusLabel(status: string): string {
     saved: '已保存',
     released: '已发布',
     completed: '完成',
-    ready: '可开始',
     review_ready: '待审核',
     failed: '失败',
     waiting_for_step: '等待STEP',
@@ -214,7 +216,7 @@ function handleDeleteClick(e: MouseEvent, row: BuildRow) {
               <template v-if="row.paramFields.pn">
                 <el-tag size="small" effect="light" round>PN={{ row.paramFields.pn }}</el-tag>
               </template>
-              <el-tag v-if="row.hasStep" size="small" type="success" effect="light" round>STEP</el-tag>
+              <el-tag v-if="row.hasStep" size="small" type="success" effect="light" round>{{ row.sourceFormat || '模型' }}</el-tag>
               <el-tag v-else size="small" type="info" effect="light" round>STEP</el-tag>
               <el-tag v-if="row.hasDrawing" size="small" type="success" effect="light" round>图纸</el-tag>
               <el-tag v-else size="small" type="info" effect="light" round>图纸</el-tag>
@@ -274,7 +276,7 @@ function handleDeleteClick(e: MouseEvent, row: BuildRow) {
                   <el-dropdown-menu>
                     <el-dropdown-item command="view-cad" :disabled="!row.cadRevisionId">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-                      查看三维模型
+                      查看模型
                     </el-dropdown-item>
                     <el-dropdown-item command="view-drawing" :disabled="!row.drawingTaskId">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>

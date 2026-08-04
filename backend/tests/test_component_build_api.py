@@ -70,6 +70,18 @@ class FakeCadService:
         self.uploads.append((file.filename, name))
         return {"model_id": self.model_id, "revision_id": self.revision_id, "status": "queued"}
 
+    async def create_source_from_upload(self, file, name, *, source_format, processing_route):
+        self.uploads.append((file.filename, name, source_format, processing_route))
+        return {
+            "model_id": self.model_id,
+            "revision_id": self.revision_id,
+            "task_id": self.revision_id,
+            "status": "queued",
+            "source_format": source_format,
+            "processing_route": processing_route,
+            "source_sha256": "a" * 64,
+        }
+
 
 class FakeDrawingService:
     def __init__(self):
@@ -110,6 +122,11 @@ def component_client(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.component_builds.router.schedule_step_pipeline",
         lambda revision_id, _service: cad_service.parses.append(revision_id),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.component_builds.router.schedule_ingest",
+        lambda revision_id, _settings: cad_service.parses.append(revision_id),
         raising=False,
     )
     app.dependency_overrides[get_component_build_service] = lambda: build_service
@@ -198,8 +215,72 @@ def test_create_build_accepts_step_without_drawing(component_client):
     assert response.status_code == 202
     assert response.json()["cad_revision_id"] == str(cad_service.revision_id)
     assert response.json()["drawing_task_id"] is None
+    assert response.json()["source_format"] == "STEP"
+    assert response.json()["processing_route"] == "step_cad_parse"
+    assert response.json()["status"] == "queued"
     assert drawing_service.created == []
     assert scheduled == []
+    assert cad_service.parses == [cad_service.revision_id]
+
+
+@pytest.mark.parametrize("file_name", ["KUANG (2).stp", "框架.STEP"])
+def test_unified_source_upload_routes_step_from_real_extension(component_client, file_name):
+    client, cad_service, _, _, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "connection-fastening",
+            "part_type_code": "flange",
+            "component_name": "统一 STEP 零件",
+            "processing_route": "catia_feature_center",
+        },
+        files={"source_file": (file_name, b"ISO-10303-21;", "application/octet-stream")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["part_id"] == response.json()["id"]
+    assert response.json()["task_id"] == str(cad_service.revision_id)
+    assert response.json()["source_format"] == "STEP"
+    assert response.json()["processing_route"] == "step_cad_parse"
+    assert response.json()["status"] == "queued"
+    assert cad_service.parses == [cad_service.revision_id]
+
+
+def test_unified_source_upload_routes_catpart_case_insensitively(component_client):
+    client, cad_service, _, _, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "aero-general",
+            "part_type_code": "aero-general-part",
+            "component_name": "航空框架",
+        },
+        files={"source_file": ("框架 (终版).CATPart", b"CATIA", "application/octet-stream")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_format"] == "CATPART"
+    assert response.json()["processing_route"] == "catia_feature_center"
+    assert cad_service.uploads[0][0] == "框架 (终版).CATPart"
+
+
+def test_cart_is_explicitly_rejected(component_client):
+    client, _, _, _, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "aero-general",
+            "part_type_code": "aero-general-part",
+            "component_name": "错误文件",
+        },
+        files={"source_file": ("wrong.cart", b"bad", "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "UNSUPPORTED_SOURCE_FORMAT"
 
 
 def test_step_only_update_does_not_attach_a_previously_staged_drawing(component_client):
@@ -293,8 +374,11 @@ def test_catalog_endpoint_returns_categories_and_cascading_parts(component_clien
 
     assert response.status_code == 200
     categories = response.json()["categories"]
-    assert [category["category_code"] for category in categories] == [
+    assert [category["category_code"] for category in categories[:6]] == [
         "support-frame", "shaft-transmission", "roller", "connection-fastening", "drive-actuation", "functional"
+    ]
+    assert [library["library_code"] for library in response.json()["libraries"]] == [
+        "MECHANICAL_COMPONENT_LIBRARY", "AEROSPACE_PART_LIBRARY"
     ]
     assert any(part["part_type_code"] == "flange" for part in categories[3]["parts"])
 
@@ -562,7 +646,7 @@ def test_step_retry_starts_existing_revision_parse(component_client):
 
     assert response.status_code == 202
     assert response.json()["status"] == "parsing_sources"
-    assert cad_service.parses == [cad_service.revision_id]
+    assert cad_service.parses == [cad_service.revision_id, cad_service.revision_id]
 
 
 def test_query_and_drawing_retry_return_projected_build(component_client):
@@ -594,10 +678,10 @@ def test_invalid_extension_is_rejected_before_a_build_is_created(component_clien
 def test_step_upload_failure_marks_build_failed_without_creating_drawing(component_client):
     client, cad_service, drawing_service, _, build_service = component_client
 
-    async def fail_step_upload(_file, _name):
+    async def fail_step_upload(_file, _name, **_kwargs):
         raise ValueError("invalid STEP payload")
 
-    cad_service.create_model_from_upload = fail_step_upload
+    cad_service.create_source_from_upload = fail_step_upload
 
     response = create_build(client)
 
@@ -613,13 +697,13 @@ def test_step_upload_failure_marks_build_failed_without_creating_drawing(compone
 def test_failure_persistence_error_does_not_mask_step_upload_error(component_client):
     client, cad_service, _, _, build_service = component_client
 
-    async def fail_step_upload(_file, _name):
+    async def fail_step_upload(_file, _name, **_kwargs):
         raise ValueError("invalid STEP payload")
 
     async def fail_failure_persistence(*_args, **_kwargs):
         raise RuntimeError("database is unavailable")
 
-    cad_service.create_model_from_upload = fail_step_upload
+    cad_service.create_source_from_upload = fail_step_upload
     build_service.set_status = fail_failure_persistence
 
     response = create_build(client)

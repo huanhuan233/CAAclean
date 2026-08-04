@@ -30,6 +30,39 @@ class FakeSourceStatusReader:
         return {"status": "review_ready"}
 
 
+class ReadyModelFailedDrawingReader:
+    async def get_step_status(self, _revision_id):
+        return {
+            "status": "completed",
+            "status_message": "ready",
+            "progress": 100,
+            "processing_route": "step_cad_parse",
+            "source_format": "STEP",
+        }
+
+    async def get_drawing_status(self, _task_id):
+        return {"status": "failed", "error_code": "DRAWING_FAILED", "error_message": "图纸解析失败"}
+
+
+@pytest.mark.asyncio
+async def test_ready_model_does_not_hide_failed_drawing_status():
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="frame-001",
+        component_name="带图纸框架",
+        component_type="frame",
+        cad_revision_id=uuid4(),
+        drawing_task_id=uuid4(),
+    )
+    service = ComponentBuildService(repository, source_status_reader=ReadyModelFailedDrawingReader())
+
+    response = await service.get_status(build.id)
+
+    assert response["status"] == "source_failed"
+    assert response["error_code"] == "DRAWING_FAILED"
+    assert response["sources"]["drawing"]["error_code"] == "DRAWING_FAILED"
+
+
 class FakeFusionSourceReader:
     def __init__(self, sources: FusionSources):
         self.sources = sources
@@ -189,6 +222,53 @@ async def test_fuse_component_spec_reads_envelope_and_preserves_unknown_values()
     stored = unpack_component_spec_document((await repository.get_component_spec(build.id)).data)
 
     assert response["component_spec"]["identity"]["name"] == "Manual name"
+
+
+@pytest.mark.asyncio
+async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center():
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="aero-general-001",
+        component_name="航空框架",
+        component_type="aero-general-part",
+        cad_revision_id=revision_id,
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        status="completed",
+        status_message="ready",
+        source_file_ext=".catpart",
+        error_code=None,
+        error_message=None,
+        parse_manifest={
+            "ingest": {"source_format": "CATPART", "processing_route": "catia_feature_center"},
+            "viewer_asset": {
+                "glb": "feature-center/lightweight/model.glb",
+                "scene_manifest": "feature-center/manifest.json",
+                "face_mesh_map": "feature-center/lightweight/face_mesh_map.json",
+                "feature_mesh_map": "feature-center/lightweight/feature_mesh_map.json",
+            },
+            "feature_center": {
+                "available": True,
+                "canonical_features": "feature-center/canonical_features.jsonl",
+                "feature_geometry_links": "feature-center/feature_geometry_links.jsonl",
+            },
+        },
+    ))
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    contract = await service.get_viewer_contract(build.id)
+
+    assert contract["status"] == "ready"
+    assert contract["source_format"] == "CATPART"
+    assert contract["viewer_asset"]["glb_url"].startswith(f"/api/component-builds/{build.id}/viewer/assets/")
+    assert "cad-work" not in contract["viewer_asset"]["glb_url"]
+    assert contract["feature_center"]["available"] is True
+
+
+async def _async_value(value):
+    return value
     assert response["component_spec"]["custom_extension"] == {"curve_policy": "all"}
     assert stored.data["custom_extension"] == {"curve_policy": "all"}
     assert "custom_extension:" in stored.yaml

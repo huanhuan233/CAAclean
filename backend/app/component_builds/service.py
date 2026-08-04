@@ -6,7 +6,16 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.component_builds.catalog import CATEGORIES, CatalogCategory, CatalogPart, find_part_by_legacy_type, find_part_by_node_id, resolve_part
+from app.component_builds.catalog import (
+    CATEGORIES,
+    LIBRARIES,
+    CatalogCategory,
+    CatalogLibrary,
+    CatalogPart,
+    find_part_by_legacy_type,
+    find_part_by_node_id,
+    resolve_part,
+)
 from app.component_builds.component_spec import component_spec_template
 from app.component_builds.component_spec_document import (
     pack_component_spec_document,
@@ -38,13 +47,18 @@ class SqlAlchemySourceStatusReader:
 
     @staticmethod
     def _source_status(source) -> dict:
-        return {
+        payload = {
             "status": source.status,
             "progress": source.progress,
             "status_message": getattr(source, "status_message", None),
             "error_code": getattr(source, "error_code", None),
             "error_message": getattr(source, "error_message", None),
         }
+        manifest = getattr(source, "parse_manifest", None) or {}
+        payload.update(manifest.get("ingest", {}))
+        payload["viewer_asset"] = manifest.get("viewer_asset")
+        payload["feature_center"] = manifest.get("feature_center")
+        return payload
 
 
 class ComponentBuildService:
@@ -65,12 +79,10 @@ class ComponentBuildService:
             category, part = catalog
             grouped.setdefault(category.code, {}).setdefault(part.code, []).append(build)
 
-        tree = [
-            await self._category_node(category, grouped.get(category.code, {}))
-            for category in CATEGORIES
-        ]
+        tree = [await self._library_node(library, grouped) for library in LIBRARIES]
         if uncategorized:
-            tree.append(await self._uncategorized_node(uncategorized))
+            tree[0]["children"].append(await self._uncategorized_node(uncategorized))
+            tree[0]["count"] = self._count_build_nodes(tree[0]["children"])
         return tree
 
     async def create_build(self, **fields) -> dict:
@@ -329,11 +341,72 @@ class ComponentBuildService:
         return {
             "build_id": str(build.id),
             "status": projected["status"],
-            "status_message": build.status_message,
-            "error_code": build.error_code,
-            "error_message": build.error_message,
+            "source_format": projected.get("source_format"),
+            "processing_route": projected.get("processing_route"),
+            "current_stage": projected.get("current_stage"),
+            "progress": projected.get("progress"),
+            "status_message": projected.get("status_message"),
+            "error_code": projected.get("error_code"),
+            "error_message": projected.get("error_message"),
             "sources": {"reference_step": step, "drawing": drawing},
         }
+
+    async def get_viewer_contract(self, build_id: UUID) -> dict:
+        """用途：把两条处理路线统一投影为浏览器可消费的 Viewer URL 契约。"""
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("viewer source is not attached")
+        revision = await self.repository.get_raw_revision(build.cad_revision_id)
+        if revision is None:
+            raise ValueError("viewer revision is missing")
+        manifest = revision.parse_manifest or {}
+        ingest = manifest.get("ingest", {})
+        viewer = manifest.get("viewer_asset") or {}
+        required = ("glb", "scene_manifest", "face_mesh_map", "feature_mesh_map")
+        if revision.status != "completed" or revision.status_message != "ready" or any(not viewer.get(key) for key in required):
+            return {
+                "part_id": str(build.id),
+                "task_id": str(revision.id),
+                "status": revision.status,
+                "current_stage": revision.status_message,
+                "source_format": ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext),
+                "processing_route": ingest.get("processing_route") or "step_cad_parse",
+                "viewer_asset": None,
+                "feature_center": {"available": False},
+                "error_code": revision.error_code,
+                "error_message": revision.error_message,
+            }
+        asset_base = f"/api/component-builds/{build.id}/viewer/assets/"
+        feature_center = manifest.get("feature_center") or {}
+        return {
+            "part_id": str(build.id),
+            "task_id": str(revision.id),
+            "status": "ready",
+            "current_stage": "ready",
+            "source_format": ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext),
+            "processing_route": ingest.get("processing_route") or "step_cad_parse",
+            "viewer_asset": {
+                "glb_url": asset_base + viewer["glb"],
+                "scene_manifest_url": asset_base + viewer["scene_manifest"],
+                "face_mesh_map_url": asset_base + viewer["face_mesh_map"],
+                "feature_mesh_map_url": asset_base + viewer["feature_mesh_map"],
+            },
+            "feature_center": {
+                "available": bool(feature_center.get("available")),
+                "canonical_features_url": asset_base + feature_center["canonical_features"]
+                if feature_center.get("canonical_features") else None,
+                "feature_geometry_links_url": asset_base + feature_center["feature_geometry_links"]
+                if feature_center.get("feature_geometry_links") else None,
+                "measurements_url": asset_base + feature_center["measurements"]
+                if feature_center.get("measurements") else None,
+            },
+            "error_code": None,
+            "error_message": None,
+        }
+
+    @staticmethod
+    def _source_format_from_extension(extension: str) -> str:
+        return "CATPART" if (extension or "").lower() == ".catpart" else "STEP"
 
     async def _require_build(self, build_id: UUID) -> ComponentBuild:
         build = await self.repository.get_build(build_id)
@@ -399,10 +472,35 @@ class ComponentBuildService:
 
     def _projected_build_payload(self, build: ComponentBuild, step: dict, drawing: dict) -> dict:
         payload = self._build_payload(build)
-        payload["status"] = self._project_status(build, step["status"], drawing["status"])
+        step_ready = step.get("status") == "completed" and step.get("status_message") == "ready"
+        payload["status"] = (
+            "ready"
+            if step_ready and drawing.get("status") == "missing"
+            else self._project_status(build, step["status"], drawing["status"])
+        )
+        payload["task_id"] = step.get("id")
+        payload["source_format"] = step.get("source_format")
+        payload["processing_route"] = step.get("processing_route")
+        payload["current_stage"] = step.get("status_message")
+        payload["progress"] = step.get("progress")
+        # 用途：图纸失败优先投影为整体错误，避免已就绪三维模型掩盖另一来源的真实失败。
+        if drawing.get("status") == "failed":
+            payload["current_stage"] = drawing.get("status_message") or "drawing_failed"
+            payload["status_message"] = payload["current_stage"]
+            payload["error_code"] = drawing.get("error_code")
+            payload["error_message"] = drawing.get("error_message")
+        # 用途：统一上传任务存在时，以持久化 Revision 的真实阶段和错误覆盖旧的 Build 排队文案。
+        elif step.get("processing_route"):
+            payload["status_message"] = step.get("status_message")
+            payload["error_code"] = step.get("error_code")
+            payload["error_message"] = step.get("error_message")
         return payload
 
     async def _category_node(self, category: CatalogCategory, part_builds: dict[str, list[ComponentBuild]]) -> dict:
+        children = [
+            await self._part_node(category, part, part_builds.get(part.code, []))
+            for part in category.parts
+        ]
         return {
             "id": str(category.catalog_node_id),
             "name": category.label,
@@ -412,13 +510,39 @@ class ComponentBuildService:
             "category_code": category.code,
             "part_type_code": None,
             "sort_order": category.sort_order,
-            "children": [
-                await self._part_node(category, part, part_builds.get(part.code, []))
-                for part in category.parts
-            ],
+            "count": self._count_build_nodes(children),
+            "children": children,
         }
 
+    async def _library_node(self, library: CatalogLibrary, grouped: dict[str, dict[str, list[ComponentBuild]]]) -> dict:
+        """用途：把真实目录数据组织成系统根节点，并汇总所有后代零件数量。"""
+        children = [
+            await self._category_node(category, grouped.get(category.code, {}))
+            for category in library.categories
+        ]
+        return {
+            "id": str(library.catalog_node_id),
+            "catalog_node_id": str(library.catalog_node_id),
+            "name": library.label,
+            "label": library.label,
+            "label_en": library.label_en,
+            "node_type": "library",
+            "library_code": library.code,
+            "sort_order": library.sort_order,
+            "count": self._count_build_nodes(children),
+            "children": children,
+        }
+
+    @classmethod
+    def _count_build_nodes(cls, nodes: list[dict]) -> int:
+        """用途：按现有构建记录口径统计任意目录节点的全部后代数量。"""
+        return sum(
+            1 if node.get("node_type") == "build" else cls._count_build_nodes(node.get("children", []))
+            for node in nodes
+        )
+
     async def _part_node(self, category: CatalogCategory, part: CatalogPart, builds: list[ComponentBuild]) -> dict:
+        children = await self._component_nodes(builds)
         return {
             "id": str(part.catalog_node_id),
             "catalog_node_id": str(part.catalog_node_id),
@@ -429,10 +553,24 @@ class ComponentBuildService:
             "category_code": category.code,
             "part_type_code": part.code,
             "sort_order": part.sort_order,
-            "children": await self._component_nodes(builds),
+            "count": self._count_build_nodes(children),
+            "children": children,
         }
 
     async def _uncategorized_node(self, builds: list[ComponentBuild]) -> dict:
+        component_children = await self._component_nodes(builds)
+        type_node = {
+            "id": "catalog:uncategorized:type",
+            "name": "未分类",
+            "label": "未分类",
+            "label_en": "Uncategorized",
+            "node_type": "type",
+            "category_code": "uncategorized",
+            "part_type_code": "uncategorized",
+            "sort_order": 1,
+            "count": self._count_build_nodes(component_children),
+            "children": component_children,
+        }
         return {
             "id": "catalog:uncategorized",
             "name": "未分类",
@@ -442,17 +580,8 @@ class ComponentBuildService:
             "category_code": "uncategorized",
             "part_type_code": None,
             "sort_order": len(CATEGORIES) + 1,
-            "children": [{
-                "id": "catalog:uncategorized:type",
-                "name": "未分类",
-                "label": "未分类",
-                "label_en": "Uncategorized",
-                "node_type": "type",
-                "category_code": "uncategorized",
-                "part_type_code": "uncategorized",
-                "sort_order": 1,
-                "children": await self._component_nodes(builds),
-            }],
+            "count": type_node["count"],
+            "children": [type_node],
         }
 
     async def _component_nodes(self, builds: list[ComponentBuild]) -> list[dict]:
@@ -491,9 +620,9 @@ class ComponentBuildService:
             "component_id": build.component_id,
             "component_name": build.component_name,
             "status": projected["status"],
-            "status_message": build.status_message,
-            "error_code": build.error_code,
-            "error_message": build.error_message,
+            "status_message": projected.get("status_message"),
+            "error_code": projected.get("error_code"),
+            "error_message": projected.get("error_message"),
             "children": [
                 {
                     "id": f"{build.id}:inputs",

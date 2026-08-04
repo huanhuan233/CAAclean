@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import re
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -21,7 +20,6 @@ from app.measurement.repository import MeasurementRepository
 from app.measurement.service import MeasurementService
 
 
-SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 STRUCTURE_ENTITY_TYPES = {"root", "assembly", "part", "imported_object", "body", "solid"}
 _SEMAPHORES: dict[int, asyncio.Semaphore] = {}
 
@@ -55,21 +53,47 @@ class CadService:
         if ext not in {".step", ".stp"}:
             raise ValueError("only STEP/STP files are supported")
 
+        result = await self.create_source_from_upload(
+            file,
+            name,
+            source_format="STEP",
+            processing_route="step_cad_parse",
+        )
+        asyncio.create_task(self.parse_revision_in_background(result["revision_id"]))
+        return result
+
+    async def create_source_from_upload(
+        self,
+        file: UploadFile,
+        name: str | None,
+        *,
+        source_format: str,
+        processing_route: str,
+    ) -> dict:
+        """用途：安全保存统一源模型并建立持久 Revision；具体解析由上层编排器调度。"""
+        filename = Path(file.filename or "").name
+        ext = Path(filename).suffix.lower()
+        allowed = {
+            "STEP": {".step", ".stp"},
+            "CATPART": {".catpart"},
+        }
+        if source_format not in allowed or ext not in allowed[source_format]:
+            raise ValueError("source format does not match file extension")
+
         content = await file.read()
         if not content:
-            raise ValueError("empty STEP/STP file is not allowed")
+            raise ValueError("empty source model file is not allowed")
         max_bytes = self.settings.cad_max_upload_mb * 1024 * 1024
         if len(content) > max_bytes:
             raise ValueError(f"file exceeds {self.settings.cad_max_upload_mb} MB limit")
 
         sha256 = hashlib.sha256(content).hexdigest()
         model_name = name or Path(filename).stem or "cad-model"
-        safe_filename = SAFE_NAME_RE.sub("_", filename) or f"source{ext}"
 
-        # Create DB records first so the revision UUID becomes the storage directory name.
+        # 用途：先创建记录取得 Revision UUID，再把文件放进该 UUID 的隔离目录。
         model, revision = await self.repository.create_upload_revision(
             name=model_name,
-            source_file_name=safe_filename,
+            source_file_name=filename,
             source_file_ext=ext,
             source_file_path="pending",
             source_file_size=len(content),
@@ -85,9 +109,28 @@ class CadService:
         commit = getattr(self.repository.session, "commit", None)
         if commit:
             await commit()
-
-        asyncio.create_task(self.parse_revision_in_background(revision.id))
-        return {"model_id": model.id, "revision_id": revision.id, "status": revision.status}
+        update_manifest = getattr(self.repository, "update_revision_manifest", None)
+        if update_manifest:
+            await update_manifest(
+                revision.id,
+                {
+                    "ingest": {
+                        "source_format": source_format,
+                        "processing_route": processing_route,
+                        "source_file_name": filename,
+                        "source_sha256": sha256,
+                    }
+                },
+            )
+        return {
+            "model_id": model.id,
+            "revision_id": revision.id,
+            "task_id": revision.id,
+            "status": revision.status,
+            "source_format": source_format,
+            "processing_route": processing_route,
+            "source_sha256": sha256,
+        }
 
     async def parse_revision_in_background(self, revision_id: UUID) -> None:
         async with self.session_factory() as session:

@@ -265,6 +265,7 @@ declare namespace Api {
   namespace ComponentBuild {
     type NodeType =
       | 'root'
+      | 'library'
       | 'family'
       | 'type'
       | 'subtype'
@@ -296,6 +297,7 @@ declare namespace Api {
       progress: number | null;
       disabled: boolean;
       build_id: string | null;
+      library_code?: string | null;
       category_code?: string | null;
       part_type_code?: string | null;
       component_id?: string | null;
@@ -305,6 +307,9 @@ declare namespace Api {
       status_message?: string | null;
       error_code?: string | null;
       error_message?: string | null;
+      source_format?: 'STEP' | 'CATPART' | null;
+      processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
+      current_stage?: string | null;
       children: TreeNode[];
     }
 
@@ -318,6 +323,7 @@ declare namespace Api {
       progress?: number | null;
       disabled?: boolean;
       build_id?: string | null;
+      library_code?: string | null;
       category_code?: string | null;
       part_type_code?: string | null;
       component_id?: string | null;
@@ -327,6 +333,9 @@ declare namespace Api {
       status_message?: string | null;
       error_code?: string | null;
       error_message?: string | null;
+      source_format?: 'STEP' | 'CATPART' | null;
+      processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
+      current_stage?: string | null;
       children?: RawTreeNode[];
     }
 
@@ -359,6 +368,11 @@ declare namespace Api {
       status_message: string | null;
       error_code: string | null;
       error_message: string | null;
+      task_id?: string | null;
+      source_format?: 'STEP' | 'CATPART' | null;
+      processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
+      current_stage?: string | null;
+      progress?: number | null;
       created_at: string;
       updated_at: string;
     }
@@ -381,7 +395,17 @@ declare namespace Api {
       parts: CatalogPart[];
     }
 
+    interface CatalogLibrary {
+      catalog_node_id: string;
+      library_code: string;
+      label: string;
+      label_en: string;
+      sort_order: number;
+      categories: CatalogCategory[];
+    }
+
     interface CatalogResponse {
+      libraries: CatalogLibrary[];
       categories: CatalogCategory[];
     }
 
@@ -397,6 +421,29 @@ declare namespace Api {
       };
     }
 
+    interface ViewerContract {
+      part_id: string;
+      task_id: string;
+      status: string;
+      current_stage: string | null;
+      source_format: 'STEP' | 'CATPART';
+      processing_route: 'step_cad_parse' | 'catia_feature_center';
+      viewer_asset: {
+        glb_url: string;
+        scene_manifest_url: string;
+        face_mesh_map_url: string;
+        feature_mesh_map_url: string;
+      } | null;
+      feature_center: {
+        available: boolean;
+        canonical_features_url?: string | null;
+        feature_geometry_links_url?: string | null;
+        measurements_url?: string | null;
+      };
+      error_code: string | null;
+      error_message: string | null;
+    }
+
     interface CreatePayload {
       category_code: string;
       part_type_code: string;
@@ -404,6 +451,7 @@ declare namespace Api {
       standard_number?: string;
       version?: string;
       step_file?: File;
+      source_file?: File;
       drawing_file?: File;
     }
 

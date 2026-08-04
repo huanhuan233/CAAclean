@@ -81,6 +81,20 @@ class CadRepository:
             revision.finished_at = now_utc()
         await self.session.commit()
 
+    async def update_revision_manifest(self, revision_id: uuid.UUID, values: dict) -> None:
+        """用途：浅合并任务追溯和 Viewer 资产信息，避免阶段更新覆盖既有解析 Manifest。"""
+        revision = await self.get_revision(revision_id)
+        if revision is None:
+            return
+        merged = dict(revision.parse_manifest or {})
+        for key, value in values.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = {**merged[key], **value}
+            else:
+                merged[key] = value
+        revision.parse_manifest = merged
+        await self.session.commit()
+
     async def persist_parser_result(self, revision_id: uuid.UUID, result: Any) -> None:
         try:
             async with self.session.begin():

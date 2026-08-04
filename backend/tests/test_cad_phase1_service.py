@@ -16,6 +16,13 @@ class FakeUpload:
         return b"ISO-10303-21;"
 
 
+class FakeCatPartUpload:
+    filename = "框架 (终版).CATPart"
+
+    async def read(self):
+        return b"CATIA V5 binary fixture"
+
+
 class FakeRepository:
     def __init__(self, session=None):
         self.session = session
@@ -26,9 +33,15 @@ class FakeRepository:
             source_file_path="pending",
         )
         self.statuses = []
+        self.created_fields = None
+        self.manifests = []
 
     async def create_upload_revision(self, **kwargs):
+        self.created_fields = kwargs
         return self.model, self.revision
+
+    async def update_revision_manifest(self, revision_id, values):
+        self.manifests.append(values)
 
     async def get_revision(self, revision_id):
         return self.revision
@@ -100,6 +113,28 @@ async def test_upload_schedules_background_parse_with_independent_session(tmp_pa
     assert background_repos[0].session is background_sessions[0]
     assert background_repos[0].session != "request-session"
     assert background_sessions[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_generic_source_upload_preserves_unicode_name_and_does_not_auto_parse(tmp_path, monkeypatch):
+    repository = FakeRepository(session="request-session")
+    created_tasks = []
+    monkeypatch.setattr(asyncio, "create_task", lambda coroutine: created_tasks.append(coroutine))
+    service = CadService(repository, Settings(cad_work_dir=tmp_path))
+
+    response = await service.create_source_from_upload(
+        FakeCatPartUpload(),
+        "航空框架",
+        source_format="CATPART",
+        processing_route="catia_feature_center",
+    )
+
+    assert response["source_format"] == "CATPART"
+    assert response["processing_route"] == "catia_feature_center"
+    assert repository.created_fields["source_file_name"] == "框架 (终版).CATPart"
+    assert Path(repository.revision.source_file_path).read_bytes() == b"CATIA V5 binary fixture"
+    assert repository.manifests[0]["ingest"]["source_format"] == "CATPART"
+    assert created_tasks == []
 
 
 @pytest.mark.asyncio

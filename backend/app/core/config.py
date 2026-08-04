@@ -15,7 +15,8 @@ BACKEND_ROOT = REPOSITORY_ROOT / "backend"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(BACKEND_ROOT / ".env", REPOSITORY_ROOT / ".env"),
+        # 后端只读取 backend/.env，避免根目录配置在后加载时覆盖本机服务配置。
+        env_file=BACKEND_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,

@@ -84,6 +84,7 @@ async def run_freecad_parser(
         # Console mode executes Python from stdin reliably when paths are ASCII.
         bootstrap = (
             "import sys; "
+            f"sys.path.insert(0, r'{script_path.parent}'); "
             f"sys.argv=[r'{script_path}', r'{job_path}']; "
             f"exec(compile(open(r'{script_path}', encoding='utf-8').read(), r'{script_path}', 'exec'))\n"
         )

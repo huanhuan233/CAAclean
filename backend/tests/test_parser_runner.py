@@ -90,6 +90,7 @@ async def test_runner_invokes_freecad_without_shell_true(tmp_path, monkeypatch):
     assert result["parser_name"] == "FreeCAD"
     assert captured["args"][0] == str(freecad_cmd)
     assert str(script_dir / "parse_step.py") in (captured["stdin"] or b"").decode("utf-8") or captured["args"][1] == str(script_dir / "parse_step.py")
+    assert f"sys.path.insert(0, r'{script_dir}')" in (captured["stdin"] or b"").decode("utf-8")
     assert "shell" not in captured["kwargs"]
     assert captured["kwargs"]["stdout"] == subprocess.PIPE
     assert captured["kwargs"]["stderr"] == subprocess.PIPE

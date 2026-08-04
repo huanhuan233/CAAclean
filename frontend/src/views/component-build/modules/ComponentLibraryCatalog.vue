@@ -2,10 +2,7 @@
 /**
  * ComponentLibraryCatalog.vue
  * ===========================
- * Left-side catalog navigation panel for the component library page.
- *
- * Supports expand/collapse for parent categories. Parent items (depth=0)
- * can be toggled to show/hide their child items (depth=1).
+ * 用途：递归展示后端返回的系统库根、分类和零件类型，支持任意层级展开。
  */
 
 import { computed, ref, watch } from 'vue'
@@ -15,14 +12,14 @@ interface CatalogItem {
   label: string
   code: string
   count: number
-  parentCode?: string
+  parentId?: string
   depth: number
+  nodeType: 'library' | 'family' | 'type'
 }
 
 const props = defineProps<{
   catalogItems: CatalogItem[]
   selectedCatalogId: string
-  totalBuildCount: number
   loading: boolean
 }>()
 
@@ -30,73 +27,66 @@ const emit = defineEmits<{
   select: [catalogId: string]
 }>()
 
-const rootNode = computed<CatalogItem>(() => ({
-  id: '__root__',
-  label: '机械工程图元库',
-  code: '__root__',
-  count: props.totalBuildCount,
-  depth: 0
-}))
+const expandedNodeIds = ref<Set<string>>(new Set())
 
-// ── Expand/collapse state ──
-// Track which parent category ids are expanded. All parents start expanded.
-const expandedParentIds = ref<Set<string>>(new Set())
-
-// Initialize: expand all parent categories by default
+// 用途：首次取得目录时只展开两个系统库根，分类节点由用户按需继续展开。
 watch(() => props.catalogItems, (items) => {
-  if (expandedParentIds.value.size === 0) {
-    const parentIds = items.filter(item => item.depth === 0).map(item => item.id)
-    expandedParentIds.value = new Set(parentIds)
+  if (expandedNodeIds.value.size === 0) {
+    const libraryIds = items
+      .filter(item => item.nodeType === 'library' && isParent(item.id))
+      .map(item => item.id)
+    expandedNodeIds.value = new Set(libraryIds)
   }
 }, { immediate: true })
 
-// Visible items: root + parent items + expanded parents' children
 const visibleItems = computed(() => {
-  const result: CatalogItem[] = []
-  for (const item of props.catalogItems) {
-    if (item.depth === 0) {
-      result.push(item) // always show parents
-    } else if (item.depth === 1 && item.parentCode && expandedParentIds.value.has(item.parentCode)) {
-      result.push(item) // only show if parent is expanded
+  const byId = new Map(props.catalogItems.map(item => [item.id, item]))
+  return props.catalogItems.filter(item => {
+    let parentId = item.parentId
+    while (parentId) {
+      if (!expandedNodeIds.value.has(parentId)) return false
+      parentId = byId.get(parentId)?.parentId
     }
-  }
-  return result
+    return true
+  })
 })
 
 function isParent(id: string): boolean {
-  return props.catalogItems.some(item => item.parentCode === id)
+  return props.catalogItems.some(item => item.parentId === id)
 }
 
 function isExpanded(id: string): boolean {
-  return expandedParentIds.value.has(id)
-}
-
-function handleParentClick(categoryId: string) {
-  // Toggle expand/collapse
-  const next = new Set(expandedParentIds.value)
-  if (next.has(categoryId)) {
-    next.delete(categoryId)
-  } else {
-    next.add(categoryId)
-  }
-  expandedParentIds.value = next
-  // Also fire the select event so the right table filters
-  emit('select', categoryId)
+  return expandedNodeIds.value.has(id)
 }
 
 function handleItemClick(item: CatalogItem) {
-  if (item.depth === 0) {
-    handleParentClick(item.id)
-  } else {
-    emit('select', item.id)
+  if (isParent(item.id)) {
+    const next = new Set(expandedNodeIds.value)
+    if (next.has(item.id)) {
+      next.delete(item.id)
+    } else {
+      next.add(item.id)
+    }
+    expandedNodeIds.value = next
   }
+  emit('select', item.id)
 }
 
-function handleRootClick() {
-  // Expand all parents when root is clicked
-  const allParentIds = props.catalogItems.filter(item => item.depth === 0).map(item => item.id)
-  expandedParentIds.value = new Set(allParentIds)
-  emit('select', '__root__')
+function expandAll() {
+  const next = new Set<string>()
+  for (const item of props.catalogItems) {
+    if (isParent(item.id)) next.add(item.id)
+  }
+  expandedNodeIds.value = next
+}
+
+function toggleAll() {
+  const parentCount = props.catalogItems.filter(item => isParent(item.id)).length
+  if (expandedNodeIds.value.size === parentCount) {
+    expandedNodeIds.value = new Set()
+  } else {
+    expandAll()
+  }
 }
 
 function isSelected(id: string) {
@@ -108,35 +98,17 @@ function isSelected(id: string) {
   <div class="catalog-panel">
     <div class="catalog-header">
       <span class="catalog-title">目录层级</span>
+      <button class="catalog-expand-button" type="button" @click="toggleAll">展开/收起</button>
     </div>
 
     <div v-loading="loading" class="catalog-body" element-loading-text="加载目录中…">
-      <!-- Root node -->
-      <div
-        class="catalog-item root-item"
-        :class="{ active: isSelected(rootNode.id) }"
-        @click="handleRootClick"
-      >
-        <span class="catalog-item-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-          </svg>
-        </span>
-        <span class="catalog-item-label">{{ rootNode.label }}</span>
-        <span class="catalog-item-count">{{ rootNode.count }}</span>
-      </div>
-
-      <!-- Divider -->
-      <div class="catalog-divider" />
-
-      <!-- Category nodes -->
       <template v-for="item in visibleItems" :key="item.id">
-        <!-- Parent items -->
         <div
-          v-if="item.depth === 0"
           class="catalog-item"
-          :class="{ active: isSelected(item.id), expanded: isExpanded(item.id) }"
-          @click="handleParentClick(item.id)"
+          :class="{ active: isSelected(item.id), expanded: isExpanded(item.id), 'root-item': item.nodeType === 'library' }"
+          :style="{ paddingLeft: `${10 + item.depth * 16}px` }"
+          :title="item.label"
+          @click="handleItemClick(item)"
         >
           <span class="catalog-item-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -145,30 +117,13 @@ function isSelected(id: string) {
           </span>
           <span class="catalog-item-label">{{ item.label }}</span>
           <span class="catalog-item-count">{{ item.count }}</span>
-          <span class="expand-icon">
+          <span v-if="isParent(item.id)" class="expand-icon">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" :class="{ rotated: isExpanded(item.id) }">
               <path d="M12 16l-6-6h12z" />
             </svg>
           </span>
         </div>
 
-        <!-- Child items -->
-        <div
-          v-else-if="item.depth === 1"
-          class="catalog-item is-child"
-          :class="{ active: isSelected(item.id) }"
-          @click="handleItemClick(item)"
-        >
-          <span class="catalog-item-icon child-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" />
-              <path d="M2 17l10 5 10-5" />
-              <path d="M2 12l10 5 10-5" />
-            </svg>
-          </span>
-          <span class="catalog-item-label">{{ item.label }}</span>
-          <span class="catalog-item-count">{{ item.count }}</span>
-        </div>
       </template>
 
       <ElEmpty v-if="!loading && !catalogItems.length" description="" :image-size="40" />
@@ -209,6 +164,14 @@ function isSelected(id: string) {
   color: #1a2332;
 }
 
+.catalog-expand-button {
+  border: 0;
+  background: transparent;
+  color: #7d8796;
+  cursor: pointer;
+  font-size: 11px;
+}
+
 .catalog-body {
   flex: 1;
   overflow-y: auto;
@@ -226,12 +189,6 @@ function isSelected(id: string) {
   font-size: 13px;
   color: #5a6a7e;
   transition: background-color 0.15s;
-}
-
-.catalog-item.is-child {
-  padding-left: 22px;
-  height: 30px;
-  font-size: 12px;
 }
 
 .catalog-item:hover {
@@ -257,8 +214,10 @@ function isSelected(id: string) {
 }
 
 .catalog-item.root-item {
+  margin-top: 4px;
   font-weight: 600;
   color: #1a2332;
+  border-top: 1px solid #edf0f5;
 }
 
 .catalog-item-icon {

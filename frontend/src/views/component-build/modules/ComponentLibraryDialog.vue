@@ -25,6 +25,7 @@ import {
 } from '../component-spec-editor-state'
 import type { ComponentSpecFieldPath } from '../component-spec-field-events'
 import { YamlWorkingDocumentError } from '../yaml-working-document'
+import { isSupportedPartSourceFile } from '../source-file'
 import ComponentSpecFieldEditor from './ComponentSpecFieldEditor.vue'
 import ComponentYamlPreview from './ComponentYamlPreview.vue'
 
@@ -53,9 +54,9 @@ const props = defineProps<{
 // ── Emits ──
 const emit = defineEmits<{
   submit: [payload: {
-    form: Omit<Api.ComponentBuild.CreatePayload, 'step_file' | 'drawing_file'>
+    form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>
     editingBuild: Api.ComponentBuild.BuildDetail | null
-    stepFile: File | null
+    sourceFile: File | null
     drawingFile: File | null
   }]
   refresh: []
@@ -74,7 +75,7 @@ const editingBuild = ref<Api.ComponentBuild.BuildDetail | null>(null)
 const isEditing = computed(() => Boolean(editingBuild.value))
 
 const form = ref(createDefaultForm())
-const stepFile = ref<File | null>(null)
+const sourceFile = ref<File | null>(null)
 const drawingFile = ref<File | null>(null)
 
 // ComponentSpec state
@@ -170,7 +171,7 @@ function statusType(status: string): 'success' | 'primary' | 'warning' | 'danger
 
 // ── Methods ──
 
-function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'step_file' | 'drawing_file'> {
+function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'> {
   return {
     category_code: '',
     part_type_code: '',
@@ -200,7 +201,7 @@ async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Reco
     standard_number: build?.standard_number || '',
     version: build?.version || '1.0.0'
   }
-  stepFile.value = null
+  sourceFile.value = null
   drawingFile.value = null
   activeTab.value = 'basic'
   visible.value = true
@@ -331,16 +332,16 @@ function handleCategoryChange() {
   nextTick(() => formRef.value?.clearValidate('part_type_code'))
 }
 
-function pickFile(role: 'step' | 'drawing', event: Event) {
+function pickFile(role: 'source' | 'drawing', event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0] || null
   if (!file) return
-  const valid = role === 'step' ? /\.(step|stp)$/i.test(file.name) : /\.(png|jpe?g|webp)$/i.test(file.name)
+  const valid = role === 'source' ? isSupportedPartSourceFile(file.name) : /\.(png|jpe?g|webp)$/i.test(file.name)
   if (!valid) {
-    window.$message?.error(role === 'step' ? '请选择 STEP 或 STP 文件' : '请选择 PNG、JPG、JPEG 或 WEBP 图纸')
+    window.$message?.error(role === 'source' ? '请选择 STEP、STP 或 CATPart 文件；不支持 .cart' : '请选择 PNG、JPG、JPEG 或 WEBP 图纸')
     ;(event.target as HTMLInputElement).value = ''
     return
   }
-  if (role === 'step') stepFile.value = file
+  if (role === 'source') sourceFile.value = file
   else drawingFile.value = file
 }
 
@@ -348,17 +349,16 @@ function handleSubmit() {
   emit('submit', {
     form: { ...form.value },
     editingBuild: editingBuild.value,
-    stepFile: stepFile.value,
+    sourceFile: sourceFile.value,
     drawingFile: drawingFile.value
   })
 }
 
 function handleViewCad() {
-  if (!editingBuild.value?.cad_revision_id) return
+  if (!editingBuild.value?.id) return
   router.push({
-    path: '/cad-model',
+    path: '/feature-center',
     query: {
-      revision_id: editingBuild.value.cad_revision_id,
       build_id: editingBuild.value.id
     }
   })
@@ -477,16 +477,17 @@ watch(visible, (val) => {
 
           <div class="upload-fields">
             <div class="upload-field">
-              <span class="upload-label">参考 STEP <small>可稍后补充</small></span>
+              <span class="upload-label">源模型文件 <small>可稍后补充</small></span>
               <label class="file-input">
-                <input accept=".step,.stp" type="file" @change="pickFile('step', $event)" />
+                <input accept=".step,.stp,.CATPart" type="file" @change="pickFile('source', $event)" />
                 <span>
                   {{
-                    stepFile?.name ||
-                    (editingBuild?.cad_revision_id ? '已有关联 STEP；选择新文件可替换' : '选择 STEP / STP 文件')
+                    sourceFile?.name ||
+                    (editingBuild?.cad_revision_id ? '已有关联源模型；选择新文件可替换' : '选择 STEP / STP / CATPart 文件')
                   }}
                 </span>
               </label>
+              <small class="upload-hint">支持 STEP/STP、CATPart。CATPart 将通过 CATIA 特征中心处理，需要 CATIA Worker 可用。</small>
             </div>
             <div class="upload-field">
               <span class="upload-label">二维参数图 <small>可稍后补充</small></span>
@@ -512,7 +513,7 @@ watch(visible, (val) => {
             <div class="status-card">
               <div class="status-card-header">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-                <span>STEP 三维模型</span>
+                <span>三维源模型</span>
               </div>
               <div class="status-card-body">
                 <div class="status-row">
@@ -531,7 +532,7 @@ watch(visible, (val) => {
               </div>
               <div class="status-card-actions">
                 <ElButton v-if="editingBuild?.cad_revision_id" size="small" @click="handleViewCad">
-                  查看三维模型
+                  查看模型
                 </ElButton>
                 <ElButton
                   v-if="editingBuild?.cad_revision_id"

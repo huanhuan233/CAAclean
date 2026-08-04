@@ -283,6 +283,29 @@ export function fetchComponentBuildStatus(buildId: string, options?: ComponentBu
   });
 }
 
+export function fetchComponentBuildViewer(buildId: string, options?: ComponentBuildQueryOptions) {
+  return request<Api.ComponentBuild.ViewerContract>({
+    url: `/api/component-builds/${buildId}/viewer`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+/**
+ * 用途：通过统一认证请求层读取 Viewer 二进制资产，避免原生 fetch 绕过令牌刷新和代理配置。
+ */
+export function fetchComponentBuildViewerAsset(path: string, options?: ComponentBuildQueryOptions) {
+  return request<ArrayBuffer>({
+    url: path,
+    responseType: 'arraybuffer' as never,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function resolveCadApiUrl(path: string) {
+  if (/^https?:\/\//iu.test(path)) return path;
+  return `${getCadSpecApiBase()}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 export function createComponentBuild(params: Api.ComponentBuild.CreatePayload) {
   return submitComponentBuild('/api/component-builds', 'post', params);
 }
@@ -301,6 +324,7 @@ function submitComponentBuild(
   data.append('part_type_code', params.part_type_code);
   data.append('component_name', params.component_name);
   data.append('version', params.version || '1.0.0');
+  if (params.source_file) data.append('source_file', params.source_file);
   if (params.step_file) data.append('step_file', params.step_file);
   if (params.drawing_file) data.append('drawing_file', params.drawing_file);
   if (params.standard_number) data.append('standard_number', params.standard_number);

@@ -25,6 +25,17 @@ class CatalogCategory:
     sort_order: int
     catalog_node_id: UUID
     parts: tuple[CatalogPart, ...]
+    library_code: str = "MECHANICAL_COMPONENT_LIBRARY"
+
+
+@dataclass(frozen=True)
+class CatalogLibrary:
+    code: str
+    label: str
+    label_en: str
+    sort_order: int
+    catalog_node_id: UUID
+    categories: tuple[CatalogCategory, ...]
 
 
 def _node_id(code: str) -> UUID:
@@ -35,8 +46,15 @@ def _part(code: str, label: str, label_en: str, id_prefix: str, sort_order: int)
     return CatalogPart(code, label, label_en, id_prefix, sort_order, _node_id(f"part/{code}"))
 
 
-def _category(code: str, label: str, label_en: str, sort_order: int, parts: tuple[CatalogPart, ...]) -> CatalogCategory:
-    return CatalogCategory(code, label, label_en, sort_order, _node_id(f"category/{code}"), parts)
+def _category(
+    code: str,
+    label: str,
+    label_en: str,
+    sort_order: int,
+    parts: tuple[CatalogPart, ...],
+    library_code: str = "MECHANICAL_COMPONENT_LIBRARY",
+) -> CatalogCategory:
+    return CatalogCategory(code, label, label_en, sort_order, _node_id(f"category/{code}"), parts, library_code)
 
 
 CATEGORIES: tuple[CatalogCategory, ...] = (
@@ -95,12 +113,69 @@ CATEGORIES: tuple[CatalogCategory, ...] = (
 )
 
 
+# 用途：定义航空航天库的八个稳定分类；叶子类型继续使用现有通用目录选择能力。
+AEROSPACE_CATEGORIES: tuple[CatalogCategory, ...] = (
+    _category("aero-airframe-load", "机体承力结构类", "Frame / Rib / Spar", 1, (
+        _part("aero-frame", "框", "Frame", "aero-frame", 1),
+        _part("aero-rib", "肋", "Rib", "aero-rib", 2),
+        _part("aero-spar", "梁", "Spar", "aero-spar", 3),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-panel-skin", "壁板与蒙皮类", "Panel / Skin / Bulkhead", 2, (
+        _part("aero-panel", "壁板", "Panel", "aero-panel", 1),
+        _part("aero-skin", "蒙皮", "Skin", "aero-skin", 2),
+        _part("aero-bulkhead", "隔框", "Bulkhead", "aero-bulkhead", 3),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-engine-rotor", "发动机转子类", "Blade / Disk / Shaft", 3, (
+        _part("aero-blade", "叶片", "Blade", "aero-blade", 1),
+        _part("aero-disk", "轮盘", "Disk", "aero-disk", 2),
+        _part("aero-shaft", "转轴", "Shaft", "aero-shaft", 3),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-engine-stator-casing", "发动机静子与机匣类", "Stator / Casing / Combustor", 4, (
+        _part("aero-stator", "静子", "Stator", "aero-stator", 1),
+        _part("aero-casing", "机匣", "Casing", "aero-casing", 2),
+        _part("aero-combustor", "燃烧室", "Combustor", "aero-combustor", 3),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-landing-actuation", "起落架与作动类", "Landing Gear / Actuator", 5, (
+        _part("aero-landing-gear", "起落架", "Landing Gear", "aero-landing-gear", 1),
+        _part("aero-actuator", "作动器", "Actuator", "aero-actuator", 2),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-pipe-attachment", "管路与连接附件类", "Pipe / Joint / Bracket", 6, (
+        _part("aero-pipe", "管路", "Pipe", "aero-pipe", 1),
+        _part("aero-joint", "接头", "Joint", "aero-joint", 2),
+        _part("aero-bracket", "航空支架", "Bracket", "aero-bracket", 3),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-spacecraft-structure", "航天器结构与机构类", "Spacecraft Structure / Mechanism", 7, (
+        _part("aero-spacecraft-structure", "航天器结构", "Spacecraft Structure", "aero-spacecraft", 1),
+        _part("aero-spacecraft-mechanism", "航天器机构", "Mechanism", "aero-mechanism", 2),
+    ), "AEROSPACE_PART_LIBRARY"),
+    _category("aero-general", "通用航空航天零件", "General Aerospace Part", 8, (
+        _part("aero-general-part", "通用航空航天零件", "General Aerospace Part", "aero-general", 1),
+    ), "AEROSPACE_PART_LIBRARY"),
+)
+
+
+LIBRARIES: tuple[CatalogLibrary, ...] = (
+    CatalogLibrary(
+        "MECHANICAL_COMPONENT_LIBRARY", "机械工程图元库", "Mechanical Component Library", 1,
+        _node_id("library/mechanical-component-library"), CATEGORIES,
+    ),
+    CatalogLibrary(
+        "AEROSPACE_PART_LIBRARY", "航空航天零件库", "Aerospace Part Library", 2,
+        _node_id("library/aerospace-part-library"), AEROSPACE_CATEGORIES,
+    ),
+)
+
+ALL_CATEGORIES: tuple[CatalogCategory, ...] = tuple(
+    category for library in LIBRARIES for category in library.categories
+)
+
+
 class CatalogValidationError(ValueError):
     code = "invalid_catalog_selection"
 
 
 def get_category(category_code: str) -> CatalogCategory | None:
-    return next((category for category in CATEGORIES if category.code == category_code), None)
+    return next((category for category in ALL_CATEGORIES if category.code == category_code), None)
 
 
 def resolve_part(category_code: str, part_type_code: str) -> tuple[CatalogCategory, CatalogPart]:
@@ -116,7 +191,7 @@ def resolve_part(category_code: str, part_type_code: str) -> tuple[CatalogCatego
 def find_part_by_node_id(catalog_node_id: UUID | None) -> tuple[CatalogCategory, CatalogPart] | None:
     if catalog_node_id is None:
         return None
-    for category in CATEGORIES:
+    for category in ALL_CATEGORIES:
         for part in category.parts:
             if part.catalog_node_id == catalog_node_id:
                 return category, part
@@ -125,7 +200,7 @@ def find_part_by_node_id(catalog_node_id: UUID | None) -> tuple[CatalogCategory,
 
 def find_part_by_legacy_type(component_type: str | None) -> tuple[CatalogCategory, CatalogPart] | None:
     normalized = _normalize_catalog_term(component_type)
-    for category in CATEGORIES:
+    for category in ALL_CATEGORIES:
         for part in category.parts:
             aliases = {
                 part.code,
@@ -144,8 +219,7 @@ def _normalize_catalog_term(value: str | None) -> str:
 
 
 def catalog_payload() -> dict:
-    return {
-        "categories": [
+    categories = [
             {
                 "catalog_node_id": str(category.catalog_node_id),
                 "category_code": category.code,
@@ -164,6 +238,23 @@ def catalog_payload() -> dict:
                     for part in category.parts
                 ],
             }
-            for category in CATEGORIES
+            for category in ALL_CATEGORIES
         ]
+    return {
+        "libraries": [
+            {
+                "catalog_node_id": str(library.catalog_node_id),
+                "library_code": library.code,
+                "label": library.label,
+                "label_en": library.label_en,
+                "sort_order": library.sort_order,
+                "categories": [
+                    next(item for item in categories if item["category_code"] == category.code)
+                    for category in library.categories
+                ],
+            }
+            for library in LIBRARIES
+        ],
+        # 用途：保留扁平分类字段，兼容尚未升级的调用方。
+        "categories": categories,
     }

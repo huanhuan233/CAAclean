@@ -14,6 +14,14 @@ try:
 except ImportError as exc:
     raise SystemExit(f"FreeCAD modules are not available: {exc}")
 
+# 用途：让 FreeCAD 标准执行和测试加载器都能从脚本同目录导入共享几何工具。
+SCRIPT_FILE = globals().get("__file__") or sys.argv[0]
+SCRIPT_DIRECTORY = str(Path(SCRIPT_FILE).resolve().parent)
+if SCRIPT_DIRECTORY not in sys.path:
+    sys.path.insert(0, SCRIPT_DIRECTORY)
+
+from bounds import union_bbox
+
 
 SCHEMA_VERSION = "cad_parse_v2"
 NAMESPACE = uuid.UUID("8c5fe5cc-91cb-4f13-8d1c-2a6e3ef93349")
@@ -98,15 +106,6 @@ def bbox(shape) -> dict:
     return {
         "min": [float(box.XMin), float(box.YMin), float(box.ZMin)],
         "max": [float(box.XMax), float(box.YMax), float(box.ZMax)],
-    }
-
-
-def union_bbox(boxes: list[dict]) -> dict | None:
-    if not boxes:
-        return None
-    return {
-        "min": [min(box["min"][axis] for box in boxes) for axis in range(3)],
-        "max": [max(box["max"][axis] for box in boxes) for axis in range(3)],
     }
 
 
