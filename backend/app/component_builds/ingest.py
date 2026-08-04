@@ -9,9 +9,12 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
+from functools import partial
+from types import SimpleNamespace
 from pathlib import Path
 from uuid import UUID
 
@@ -448,21 +451,15 @@ async def _run_command(
     environment: dict[str, str] | None = None,
 ) -> None:
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(REPOSITORY_ROOT),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, **(environment or {})},
+        return_code, stdout, stderr = await asyncio.get_running_loop().run_in_executor(
+            None,
+            partial(_run_command_sync, command, timeout_seconds, environment),
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=max(1, timeout_seconds))
-    except asyncio.TimeoutError as exc:
-        if "process" in locals():
-            await _terminate_process_tree(process)
+        process = SimpleNamespace(returncode=return_code)
+    except (asyncio.TimeoutError, subprocess.TimeoutExpired) as exc:
         raise IngestStageError(error_code, stage, "处理超时") from exc
     except asyncio.CancelledError:
-        if "process" in locals():
-            await asyncio.shield(_terminate_process_tree(process))
+        # 用途：线程池中的子进程由超时清理逻辑负责回收；取消协程不能安全地跨线程终止其句柄。
         raise
     if process.returncode != 0:
         detail = _decode_process_output(stderr or stdout).strip()
@@ -471,6 +468,37 @@ async def _run_command(
 
 
 # 用途：兼容 Windows 子进程通过管道输出 UTF-8 或本机代码页中文，避免错误信息出现乱码。
+# 用途：通过标准 subprocess 在工作线程中执行外部工具，兼容 Windows SelectorEventLoop。
+def _run_command_sync(
+    command: list[str],
+    timeout_seconds: int,
+    environment: dict[str, str] | None,
+) -> tuple[int, bytes, bytes]:
+    process = subprocess.Popen(
+        command,
+        cwd=str(REPOSITORY_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, **(environment or {})},
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=max(1, timeout_seconds))
+    except subprocess.TimeoutExpired:
+        # 用途：超时后清理本任务启动的子进程，避免 CAA 或 FreeCAD 留在后台。
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        if process.returncode is None:
+            process.kill()
+        process.communicate()
+        raise
+    return process.returncode, stdout, stderr
+
+
 def _decode_process_output(content: bytes) -> str:
     if not content:
         return ""

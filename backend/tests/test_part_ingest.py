@@ -9,6 +9,7 @@ from app.component_builds.ingest import (
     IngestStageError,
     _build_feature_center,
     _run_catpart_route,
+    _run_command,
     _run_remote_catpart_worker,
     _decode_process_output,
     IngestSourceError,
@@ -74,6 +75,36 @@ def test_windows_child_process_gbk_error_keeps_chinese_message():
     message = "Feature Center 输出目录已存在：feature-center"
 
     assert _decode_process_output(message.encode("gbk")) == message
+
+
+@pytest.mark.asyncio
+async def test_external_command_does_not_use_asyncio_subprocess_on_windows(monkeypatch):
+    """用途：防止 Windows SelectorEventLoop 再次因不支持异步子进程而抛出 NotImplementedError。"""
+    captured = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout):
+            captured["timeout"] = timeout
+            return b"ok", b""
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    async def unsupported_async_subprocess(*_args, **_kwargs):
+        raise NotImplementedError()
+
+    monkeypatch.setattr(ingest_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(ingest_module.asyncio, "create_subprocess_exec", unsupported_async_subprocess)
+
+    await _run_command(["feature-center.exe", "build"], "FEATURE_CENTER_FAILED", "feature_center_processing", 12)
+
+    assert captured["command"] == ["feature-center.exe", "build"]
+    assert captured["timeout"] == 12
+    assert captured["kwargs"]["cwd"]
 
 
 @pytest.mark.asyncio
