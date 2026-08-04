@@ -94,6 +94,12 @@ def redact_local_paths(message: str) -> str:
     return _LOCAL_PATH_PATTERN.sub("<local_path>", message)
 
 
+# 用途：顶层异常本身可能没有文本，仍需把异常类型写入持久化任务，避免前端只得到无法排查的空错误。
+def unexpected_error_message(exc: Exception) -> str:
+    detail = redact_local_paths(str(exc)).strip()
+    return detail or f"未预期异常：{type(exc).__name__}"
+
+
 # 用途：把上传任务交给独立数据库会话执行，HTTP 请求只负责入队和返回任务编号。
 def schedule_ingest(revision_id: UUID, settings: Settings) -> None:
     existing = _INGEST_TASKS.get(revision_id)
@@ -156,7 +162,7 @@ async def run_ingest_pipeline(revision_id: UUID, settings: Settings) -> None:
                 progress=100,
                 status_message="failed",
                 error_code="PART_INGEST_UNEXPECTED",
-                error_message=redact_local_paths(str(exc))[:1000],
+                error_message=unexpected_error_message(exc)[:1000],
             )
 
 
@@ -334,6 +340,7 @@ async def _build_feature_center(
     if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
         native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
     recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
+    feature_face_mapping_count = _count_jsonl_records(bundle / "feature_geometry_links.jsonl")
     solid_count = _read_feature_center_solid_count(bundle / "parts.jsonl")
     await repository.update_revision_manifest(
         revision_id,
@@ -347,6 +354,9 @@ async def _build_feature_center(
             },
             "feature_center": {
                 "available": (bundle / "canonical_features.jsonl").stat().st_size > 0,
+                # 用途：Feature Center Bundle 可用不等于已经建立特征到面的映射，必须按真实链接记录单独声明。
+                "mapping_available": feature_face_mapping_count > 0,
+                "feature_face_mapping_count": feature_face_mapping_count,
                 "bundle_available": True,
                 "canonical_features": "feature-center/canonical_features.jsonl",
                 "feature_geometry_links": "feature-center/feature_geometry_links.jsonl",

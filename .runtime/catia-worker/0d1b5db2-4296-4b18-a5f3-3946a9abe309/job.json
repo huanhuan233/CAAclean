@@ -1,0 +1,21 @@
+{
+  "worker_job_id": "0d1b5db2-4296-4b18-a5f3-3946a9abe309",
+  "source_sha256": "41f07f1f51b6cc6330f0f7385edc3ba2bdae93a71973e058679fd9db2269bc94",
+  "source_size_bytes": 1959089,
+  "status": "running",
+  "stage": "running_caa",
+  "progress": 20,
+  "error_code": null,
+  "error_message": null,
+  "created_at": "2026-08-04T21:32:56.360148Z",
+  "started_at": "2026-08-04T21:32:56.364947Z",
+  "finished_at": null,
+  "stages": [
+    {
+      "stage": "running_caa",
+      "started_at": "2026-08-04T21:32:56.369449Z",
+      "finished_at": null
+    }
+  ],
+  "artifacts": []
+}

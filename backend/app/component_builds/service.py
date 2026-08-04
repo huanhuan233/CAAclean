@@ -377,7 +377,8 @@ class ComponentBuildService:
             "solid_count": int(viewer_summary.get("solid_count") or 0),
             "native_feature_count": int(viewer_summary.get("native_feature_count") or 0),
             "recognized_feature_count": int(viewer_summary.get("recognized_feature_count") or 0),
-            "feature_face_mapping_available": bool((manifest.get("feature_center") or {}).get("available")),
+            # 用途：只有 Bundle 中实际存在 Feature–Face 链接时才向前端声明映射可用，不能用 Bundle 是否完成替代。
+            "feature_face_mapping_available": bool((manifest.get("feature_center") or {}).get("mapping_available")),
         }
         base_payload = {
             "part_id": str(build.id),
@@ -412,6 +413,8 @@ class ComponentBuildService:
             },
             "feature_center": {
                 "available": bool(feature_center.get("available")),
+                "mapping_available": bool(feature_center.get("mapping_available")),
+                "feature_face_mapping_count": int(feature_center.get("feature_face_mapping_count") or 0),
                 "canonical_features_url": asset_base + feature_center["canonical_features"]
                 if feature_center.get("canonical_features") else None,
                 "feature_geometry_links_url": asset_base + feature_center["feature_geometry_links"]

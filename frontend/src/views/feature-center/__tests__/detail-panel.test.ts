@@ -52,6 +52,24 @@ test('设计特征和几何对象拥有各自属性分组', () => {
     ['geometry', 'operations', 'topology']);
 });
 
+test('Face 只有存在真实反向映射时才同时展示关联特征', () => {
+  const linked = buildDetailPanelLayout({
+    selectionKind: 'geometry',
+    assemblyMode: 'single_part',
+    sourceFormat: 'CATPART',
+    geometryHasLinkedFeature: true
+  });
+  const unlinked = buildDetailPanelLayout({
+    selectionKind: 'geometry',
+    assemblyMode: 'single_part',
+    sourceFormat: 'CATPART',
+    geometryHasLinkedFeature: false
+  });
+
+  assert.deepEqual(linked.groups, ['feature', 'geometry', 'operations', 'topology']);
+  assert.deepEqual(unlinked.groups, ['geometry', 'operations', 'topology']);
+});
+
 test('Feature 关联入口必须由真实数据能力决定', () => {
   const layout = buildDetailPanelLayout({
     assemblyMode: 'single_part',

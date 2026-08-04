@@ -15,6 +15,7 @@ from app.component_builds.ingest import (
     identify_source,
     redact_local_paths,
     safe_asset_path,
+    unexpected_error_message,
 )
 from app.component_builds import ingest as ingest_module
 from app.core.config import Settings
@@ -63,6 +64,10 @@ def test_external_tool_error_does_not_expose_local_absolute_path():
 
     assert "D:\\" not in message
     assert "<local_path>" in message
+
+
+def test_empty_unexpected_error_keeps_exception_type_for_diagnostics():
+    assert unexpected_error_message(RuntimeError()) == "未预期异常：RuntimeError"
 
 
 def test_windows_child_process_gbk_error_keeps_chinese_message():
@@ -126,6 +131,8 @@ async def test_feature_center_success_marks_revision_ready(tmp_path, monkeypatch
         async def update_revision_manifest(self, requested_id, payload):
             assert requested_id == revision_id
             assert payload["viewer_asset"]["glb"] == "feature-center/lightweight/model.glb"
+            assert payload["feature_center"]["mapping_available"] is False
+            assert payload["feature_center"]["feature_face_mapping_count"] == 0
 
         async def set_revision_status(self, requested_id, **fields):
             assert requested_id == revision_id

@@ -253,6 +253,8 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
             },
             "feature_center": {
                 "available": True,
+                "mapping_available": True,
+                "feature_face_mapping_count": 3,
                 "canonical_features": "feature-center/canonical_features.jsonl",
                 "feature_geometry_links": "feature-center/feature_geometry_links.jsonl",
             },
@@ -270,6 +272,8 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
     assert contract["viewer_asset"]["glb_url"].startswith(f"/api/component-builds/{build.id}/viewer/assets/")
     assert "cad-work" not in contract["viewer_asset"]["glb_url"]
     assert contract["feature_center"]["available"] is True
+    assert contract["feature_center"]["mapping_available"] is True
+    assert contract["summary"]["feature_face_mapping_available"] is True
 
 
 async def _async_value(value):

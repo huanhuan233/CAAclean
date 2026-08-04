@@ -18,6 +18,7 @@ export interface DetailPanelContext {
   sourceFormat: 'STEP' | 'CATPART';
   nativeFeatureAvailable?: boolean;
   featureFaceMappingAvailable?: boolean;
+  geometryHasLinkedFeature?: boolean;
 }
 
 export interface DetailPanelLayout {
@@ -40,7 +41,11 @@ export function buildDetailPanelLayout(context: DetailPanelContext): DetailPanel
     return { groups: ['feature', 'operations', 'topology'], featureLinkLabel, featureLinkEnabled };
   }
   if (context.selectionKind === 'geometry') {
-    return { groups: ['geometry', 'operations', 'topology'], featureLinkLabel, featureLinkEnabled };
+    const groups: DetailGroup[] = [];
+    // 用途：只有反向映射真实存在时才在几何详情中展示关联特征，不能凭 Face 名称伪造关系。
+    if (context.geometryHasLinkedFeature) groups.push('feature');
+    groups.push('geometry', 'operations', 'topology');
+    return { groups, featureLinkLabel, featureLinkEnabled };
   }
 
   if (

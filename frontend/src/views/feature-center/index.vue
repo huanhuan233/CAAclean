@@ -77,6 +77,8 @@ const featureMeshMap = ref<FeatureMeshMap | null>(null);
 const faceMeshMap = ref<FaceMeshMap | null>(null);
 const selectedFeatureId = ref('');
 const selectedNativeFeatureId = ref('');
+// 用途：记录左侧规格树当前行，分组节点也能保留视觉选中状态而不被当成真实 Feature。
+const selectedNativeTreeNodeId = ref('');
 const selectedFaceId = ref('');
 const selectedBomNode = ref<Api.ComponentBuild.ViewerBomNode | null>(null);
 const faceFeatureIds = ref<string[]>([]);
@@ -121,6 +123,7 @@ const clippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
 const workspaceStyle = computed(() => ({ '--navigation-width': `${navigationWidth.value}px` }));
 const canIsolate = computed(() => {
   if (selectedFaceId.value) return true;
+  if (selectedNativeFeatureId.value) return selectedNativeFaces.value.length > 0;
   if (selectedBomNode.value)
     return selectedBomPrimitiveIds.value.length > 0 || contract.value?.bom.assembly_mode === 'single_part';
   return Boolean(featureMeshMap.value && facesForFeature(featureMeshMap.value, selectedFeatureId.value).length);
@@ -206,7 +209,8 @@ const detailLayout = computed(() => {
     hasParent: Boolean(detailNode.value?.parent_id),
     sourceFormat: sourceFormat.value,
     nativeFeatureAvailable: Boolean(contract.value.native_semantics?.available),
-    featureFaceMappingAvailable: mappingAvailable.value
+    featureFaceMappingAvailable: mappingAvailable.value,
+    geometryHasLinkedFeature: Boolean(selectedFace.value && (selectedNativeFeature.value || selectedFeature.value))
   });
 });
 
@@ -414,6 +418,7 @@ async function loadGlb(buffer: ArrayBuffer) {
 function clearSelection() {
   selectedFeatureId.value = '';
   selectedNativeFeatureId.value = '';
+  selectedNativeTreeNodeId.value = '';
   selectedFaceId.value = '';
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
@@ -427,6 +432,7 @@ function clearSelection() {
 function selectFeature(featureId: string) {
   selectedFeatureId.value = featureId;
   selectedNativeFeatureId.value = '';
+  selectedNativeTreeNodeId.value = '';
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
   selectedFaceId.value = '';
@@ -444,6 +450,7 @@ function selectFeature(featureId: string) {
 // 用途：把 CAA 原生 Feature 关联到引用它的 Canonical Feature；无映射时如实保留选择。
 function selectNativeFeature(feature: NativeFeatureRecord) {
   selectedNativeFeatureId.value = feature.feature_id;
+  selectedNativeTreeNodeId.value = feature.feature_id;
   const linked = canonicalFeatures.value.find(item => item.native_feature_ids.includes(feature.feature_id));
   selectedFeatureId.value = linked?.feature_center_id ?? '';
   selectedBomNode.value = null;
@@ -464,6 +471,7 @@ function selectNativeFeature(feature: NativeFeatureRecord) {
 
 // 用途：规格树分组节点只参与导航；真实 Feature 节点继续复用原有选择和关联面高亮链路。
 function selectNativeTreeNode(node: FeatureTreeNode) {
+  selectedNativeTreeNodeId.value = node.id;
   if (node.raw) {
     selectNativeFeature(node.raw);
     return;
@@ -481,6 +489,7 @@ function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
   selectedBomPrimitiveIds.value = [...node.mesh_primitive_ids];
   selectedFeatureId.value = '';
   selectedNativeFeatureId.value = '';
+  selectedNativeTreeNodeId.value = '';
   selectedFaceId.value = '';
   selectionTarget.value = {
     source: 'catia',
@@ -505,6 +514,7 @@ function selectFace(faceId: string) {
   selectedFeatureId.value = faceFeatureIds.value[0] ?? '';
   const linkedFeature = canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value);
   selectedNativeFeatureId.value = linkedFeature?.native_feature_ids[0] ?? '';
+  selectedNativeTreeNodeId.value = selectedNativeFeatureId.value;
   if (selectedNativeFeatureId.value) {
     activeTab.value = 'recognized';
     featureSubTab.value = 'native';
@@ -560,9 +570,10 @@ function restoreMaterial(material: THREE.Material) {
 
 // 用途：统一计算选中、高亮、隔离、透明和剖切，不因侧栏响应式变化重置模型状态。
 function applyVisualState() {
-  const featureFaces = new Set(
-    featureMeshMap.value ? facesForFeature(featureMeshMap.value, selectedFeatureId.value) : []
-  );
+  const featureFaces = new Set([
+    ...(featureMeshMap.value ? facesForFeature(featureMeshMap.value, selectedFeatureId.value) : []),
+    ...selectedNativeFaces.value
+  ]);
   const bomPrimitives = new Set(selectedBomPrimitiveIds.value);
   const wholeSinglePart = Boolean(selectedBomNode.value && contract.value?.bom.assembly_mode === 'single_part');
   const hasSelection =
@@ -1009,7 +1020,7 @@ onBeforeUnmount(() => {
                 v-show="featureSubTab === 'native'"
                 :records="nativeFeatures"
                 :source-file-name="contract?.summary.source_file_name || ''"
-                :selected-id="selectedNativeFeatureId"
+                :selected-id="selectedNativeTreeNodeId"
                 :face-refs-by-feature-id="nativeFaceRefs"
                 @select="selectNativeTreeNode"
               />
