@@ -27,6 +27,7 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   "cad-model": () => import("@/views/cad-model/index.vue"),
   "cad-spec": () => import("@/views/cad-spec/index.vue"),
   "component-build": () => import("@/views/component-build/index.vue"),
+  "feature-center": () => import("@/views/feature-center/index.vue"),
   "function_hide-child_one": () => import("@/views/function/hide-child/one/index.vue"),
   "function_hide-child_three": () => import("@/views/function/hide-child/three/index.vue"),
   "function_hide-child_two": () => import("@/views/function/hide-child/two/index.vue"),

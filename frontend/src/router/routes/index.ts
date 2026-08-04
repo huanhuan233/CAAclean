@@ -35,6 +35,17 @@ const cadSpecRoute = {
   }
 } as unknown as CustomRoute;
 
+const featureCenterRoute = {
+  name: 'feature-center',
+  path: '/feature-center',
+  component: 'layout.base$view.feature-center',
+  meta: {
+    title: 'Feature Center',
+    icon: 'carbon:3d-mpr-toggle',
+    order: 3
+  }
+} as unknown as CustomRoute;
+
 const patentAnnotationRoute = {
   name: 'patent-annotation',
   path: '/patent-annotation',
@@ -46,7 +57,13 @@ const patentAnnotationRoute = {
   }
 } as unknown as CustomRoute;
 
-const customRoutes: CustomRoute[] = [componentBuildRoute, cadModelRoute, cadSpecRoute, patentAnnotationRoute];
+const customRoutes: CustomRoute[] = [
+  componentBuildRoute,
+  cadModelRoute,
+  featureCenterRoute,
+  cadSpecRoute,
+  patentAnnotationRoute
+];
 
 /** create routes when the auth route mode is static */
 export function createStaticRoutes() {

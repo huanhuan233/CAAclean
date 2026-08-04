@@ -123,6 +123,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'feature-center',
+    path: '/feature-center',
+    component: 'layout.base$view.feature-center',
+    meta: {
+      title: 'feature-center',
+      i18nKey: 'route.feature-center'
+    }
+  },
+  {
     name: 'function',
     path: '/function',
     component: 'layout.base',

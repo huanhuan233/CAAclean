@@ -188,6 +188,7 @@ const routeMap: RouteMap = {
   "cad-model": "/cad-model",
   "cad-spec": "/cad-spec",
   "component-build": "/component-build",
+  "feature-center": "/feature-center",
   "function": "/function",
   "function_hide-child": "/function/hide-child",
   "function_hide-child_one": "/function/hide-child/one",
