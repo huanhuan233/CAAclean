@@ -12,6 +12,9 @@ import {
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
 import { buildDetailPanelLayout } from './modules/detail-panel';
 import type { DetailGroup } from './modules/detail-panel';
+import NativeFeatureTree from './modules/NativeFeatureTree.vue';
+import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
+import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
 import {
   readRecentFeatureCenterBuildId,
   resolveFeatureCenterBuildId,
@@ -43,20 +46,6 @@ interface BundleManifest {
   schema_version: string;
   brep: { shape_hash: string };
   output_files: Record<string, { sha256: string }>;
-}
-
-interface NativeFeatureRecord {
-  feature_id: string;
-  parent_id?: string;
-  display_name?: string;
-  internal_name?: string;
-  native_type?: string;
-  startup_type?: string;
-  decoder_id?: string;
-  decode_level?: string;
-  decode_status?: string;
-  update_status?: string;
-  attributes?: Record<string, unknown>;
 }
 
 interface TopologyFaceRecord {
@@ -99,6 +88,7 @@ const errorText = ref('');
 const detailsOpen = ref(true);
 const bomVisible = ref(false);
 const activeTab = ref<ViewerTab>('bom');
+const featureSubTab = ref<'native' | 'recognized'>('native');
 const transparent = ref(false);
 const isolated = ref(false);
 const sectionEnabled = ref(false);
@@ -106,6 +96,7 @@ const sectionOffset = ref(0);
 const geometryKeyword = ref('');
 const geometryLimit = ref(160);
 const selectedBomPrimitiveIds = ref<string[]>([]);
+const navigationWidth = ref(310);
 
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
@@ -119,6 +110,7 @@ const pointer = new THREE.Vector2();
 const faceObjects = new Map<string, THREE.Mesh[]>();
 const primitiveObjects = new Map<string, THREE.Mesh[]>();
 const clippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+const workspaceStyle = computed(() => ({ '--navigation-width': `${navigationWidth.value}px` }));
 
 // 用途：只展示真实契约中的格式；没有历史结果时保持空值，绝不伪造 CATPart 或 STEP 标签。
 const sourceFormat = computed(() => contract.value?.source_format);
@@ -133,6 +125,30 @@ const selectedFace = computed(() => topologyFaces.value.find(item => item.face_i
 const selectedMeasurements = computed(() =>
   measurements.value.filter(item => item.feature_center_id === selectedFeatureId.value)
 );
+const nativeFaceRefs = computed(() => {
+  const index: Record<string, string[]> = {};
+  canonicalFeatures.value.forEach(feature => {
+    feature.native_feature_ids.forEach(nativeId => {
+      index[nativeId] = [...new Set([...(index[nativeId] || []), ...feature.geometry_refs.face_ids])];
+    });
+  });
+  return index;
+});
+const nativeTreeNodes = computed(() => buildNativeFeatureTree(
+  nativeFeatures.value,
+  contract.value?.summary.source_file_name || '',
+  nativeFaceRefs.value
+));
+const nativeTreeNodeIndex = computed(() => new Map(
+  flattenFeatureTree(nativeTreeNodes.value).map(node => [node.id, node])
+));
+const selectedNativeTreeNode = computed(() => nativeTreeNodeIndex.value.get(selectedNativeFeatureId.value) ?? null);
+const selectedNativeTreeParent = computed(() => {
+  const parentId = selectedNativeTreeNode.value?.parentId;
+  return parentId ? nativeTreeNodeIndex.value.get(parentId) ?? null : null;
+});
+const selectedNativeParameters = computed(() => Object.entries(selectedNativeFeature.value?.attributes || {}));
+const selectedNativeFaces = computed(() => nativeFaceRefs.value[selectedNativeFeatureId.value] || []);
 const filteredFaces = computed(() => {
   const keyword = geometryKeyword.value.trim().toLowerCase();
   const source = keyword
@@ -185,11 +201,42 @@ function hasDetailGroup(group: DetailGroup) {
   return detailLayout.value.groups.includes(group);
 }
 
+// 用途：详情区只格式化真实解析值；对象和数组保留 JSON 结构，不补默认参数。
+function formatNativeAttribute(value: unknown) {
+  if (value == null) return '未提供';
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+// 用途：从特征关联面跳到几何拓扑并复用现有 Face 反查与 Viewer 高亮。
+function openNativeFace(faceId: string) {
+  activeTab.value = 'geometry';
+  selectFace(faceId);
+}
+
 // 用途：从详情区进入特征列表；只有真实映射能力满足时按钮才会启用。
 function openFeatureLinks() {
   if (!detailLayout.value.featureLinkEnabled) return;
   activeTab.value = 'recognized';
+  featureSubTab.value = sourceFormat.value === 'CATPART' ? 'native' : 'recognized';
   bomVisible.value = true;
+}
+
+// 用途：桌面端拖动调整左侧规格树宽度，限制在可用范围内并保存本机偏好。
+function startNavigationResize(event: PointerEvent) {
+  if (!bomVisible.value || window.innerWidth < 900) return;
+  const startX = event.clientX;
+  const startWidth = navigationWidth.value;
+  const move = (moveEvent: PointerEvent) => {
+    navigationWidth.value = Math.min(420, Math.max(288, startWidth + moveEvent.clientX - startX));
+  };
+  const stop = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.localStorage.setItem('feature-center:navigation-width', String(navigationWidth.value));
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop, { once: true });
 }
 
 // 用途：从受控资产接口取得字节并校验响应类型，浏览器永远不接触服务器绝对路径。
@@ -372,6 +419,18 @@ function selectNativeFeature(feature: NativeFeatureRecord) {
   applyVisualState();
 }
 
+// 用途：规格树分组节点只参与导航；真实 Feature 节点继续复用原有选择和关联面高亮链路。
+function selectNativeTreeNode(node: FeatureTreeNode) {
+  if (node.raw) {
+    selectNativeFeature(node.raw);
+    return;
+  }
+  selectedNativeFeatureId.value = '';
+  selectedFeatureId.value = '';
+  selectedFaceId.value = '';
+  applyVisualState();
+}
+
 // 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
 function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
   selectedBomNode.value = node;
@@ -389,6 +448,9 @@ function selectFace(faceId: string) {
   selectedBomPrimitiveIds.value = [];
   faceFeatureIds.value = featureMeshMap.value ? buildFaceToFeatureIndex(featureMeshMap.value)[faceId] ?? [] : [];
   selectedFeatureId.value = faceFeatureIds.value[0] ?? '';
+  const linkedFeature = canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value);
+  selectedNativeFeatureId.value = linkedFeature?.native_feature_ids[0] ?? '';
+  if (selectedNativeFeatureId.value) featureSubTab.value = 'native';
   applyVisualState();
 }
 
@@ -516,6 +578,8 @@ function faceTypeLabel(type: string | undefined) {
 
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
 onMounted(async () => {
+  const savedWidth = Number(window.localStorage.getItem('feature-center:navigation-width'));
+  if (Number.isFinite(savedWidth)) navigationWidth.value = Math.min(420, Math.max(288, savedWidth));
   initViewer();
   const requestedBuildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
   const recentBuildId = readRecentFeatureCenterBuildId(window.localStorage);
@@ -572,6 +636,7 @@ onBeforeUnmount(() => {
       v-loading="loading"
       class="workspace"
       :class="{ 'bom-collapsed': !bomVisible, 'details-collapsed': !detailsOpen }"
+      :style="workspaceStyle"
     >
       <aside class="navigation" :class="{ collapsed: !bomVisible }">
         <template v-if="bomVisible">
@@ -590,7 +655,7 @@ onBeforeUnmount(() => {
               {{ tabLabel(tab) }}
             </button>
           </div>
-          <div class="panel-scroll">
+          <div class="panel-scroll" :class="{ 'feature-tree-panel': activeTab === 'recognized' }">
             <ElTree
               v-if="activeTab === 'bom' && contract?.bom.nodes.length"
               :data="contract.bom.nodes"
@@ -606,50 +671,36 @@ onBeforeUnmount(() => {
             </ElTree>
             <ElEmpty v-else-if="activeTab === 'bom'" description="当前文件没有装配 BOM" />
 
-            <template v-else-if="activeTab === 'native'">
-              <button
-                v-for="feature in nativeFeatures"
-                :key="feature.feature_id"
-                type="button"
-                class="list-card"
-                :class="{ active: selectedNativeFeatureId === feature.feature_id }"
-                @click="selectNativeFeature(feature)"
-              >
-                <strong>{{ feature.display_name || feature.internal_name || feature.feature_id }}</strong>
-                <span>{{ feature.startup_type || feature.native_type || '未知原生类型' }} · {{ feature.decode_level }}</span>
-              </button>
-              <ElEmpty v-if="!nativeFeatures.length" description="没有可用的 CAA 原生特征索引" />
-            </template>
+            <div v-show="activeTab === 'recognized'" class="feature-tab-content">
+              <div class="feature-source-tabs">
+                <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">原生特征</button>
+                <button type="button" :class="{ active: featureSubTab === 'recognized' }" @click="featureSubTab = 'recognized'">识别特征</button>
+              </div>
+              <NativeFeatureTree
+                v-show="featureSubTab === 'native'"
+                :records="nativeFeatures"
+                :source-file-name="contract?.summary.source_file_name || ''"
+                :selected-id="selectedNativeFeatureId"
+                :face-refs-by-feature-id="nativeFaceRefs"
+                @select="selectNativeTreeNode"
+              />
+              <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
+                <button
+                  v-for="feature in canonicalFeatures"
+                  :key="feature.feature_center_id"
+                  type="button"
+                  class="list-card"
+                  :class="{ active: selectedFeatureId === feature.feature_center_id }"
+                  @click="selectFeature(feature.feature_center_id)"
+                >
+                  <strong>{{ feature.family }} / {{ feature.subtype }}</strong>
+                  <span>{{ feature.feature_center_id }} · {{ feature.review_state }}</span>
+                </button>
+                <ElEmpty v-if="!canonicalFeatures.length" description="暂无可信识别特征" />
+              </div>
+            </div>
 
-            <template v-else-if="activeTab === 'recognized'">
-              <div v-if="sourceFormat === 'CATPART'" class="feature-group-title">CAA 原生特征</div>
-              <button
-                v-for="feature in sourceFormat === 'CATPART' ? nativeFeatures : []"
-                :key="feature.feature_id"
-                type="button"
-                class="list-card"
-                :class="{ active: selectedNativeFeatureId === feature.feature_id }"
-                @click="selectNativeFeature(feature)"
-              >
-                <strong>{{ feature.display_name || feature.internal_name || feature.feature_id }}</strong>
-                <span>{{ feature.startup_type || feature.native_type || '未知原生类型' }} · {{ feature.decode_level }}</span>
-              </button>
-              <div class="feature-group-title">融合识别特征</div>
-              <button
-                v-for="feature in canonicalFeatures"
-                :key="feature.feature_center_id"
-                type="button"
-                class="list-card"
-                :class="{ active: selectedFeatureId === feature.feature_center_id }"
-                @click="selectFeature(feature.feature_center_id)"
-              >
-                <strong>{{ feature.family }} / {{ feature.subtype }}</strong>
-                <span>{{ feature.feature_center_id }} · {{ feature.review_state }}</span>
-              </button>
-              <ElEmpty v-if="!canonicalFeatures.length" description="暂无可信识别特征" />
-            </template>
-
-            <template v-else>
+            <template v-if="activeTab === 'geometry'">
               <ElInput v-model="geometryKeyword" clearable placeholder="搜索面编号或曲面类型" class="geometry-search" />
               <button
                 v-for="(face, index) in filteredFaces"
@@ -667,16 +718,17 @@ onBeforeUnmount(() => {
             </template>
           </div>
           <div v-if="contract?.bom.assembly_mode === 'single_part'" class="panel-hint">单零件模式自动隐藏 BOM</div>
+          <div class="navigation-resizer" title="拖动调整侧栏宽度" @pointerdown="startNavigationResize" />
         </template>
         <template v-else>
-          <button type="button" class="rail-button active-icon" title="BOM 树" aria-label="BOM 树" @click="activeTab = 'bom'; toggleBom()">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 4.5v10L12 21l-8-4.5v-10L12 2Z"/><path d="m4.4 6.7 7.6 4.2 7.6-4.2M12 11v10"/><path d="m8.5 8.8 7.4-4.2"/></svg>
+          <button type="button" class="rail-button" :class="{ 'active-icon': activeTab === 'bom' }" title="BOM 树" aria-label="BOM 树" @click="activeTab = 'bom'; toggleBom()">
+            <SvgIcon icon="lucide:network" />
           </button>
-          <button type="button" class="rail-button" title="特征" aria-label="特征" @click="activeTab = 'recognized'; toggleBom()">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 4v9l-7 4-7-4V7l7-4Z"/><path d="m5 7 7 4 7-4M12 11v9"/><circle cx="12" cy="11" r="2.2"/></svg>
+          <button type="button" class="rail-button" :class="{ 'active-icon': activeTab === 'recognized' }" title="特征" aria-label="特征" @click="activeTab = 'recognized'; toggleBom()">
+            <SvgIcon icon="lucide:tags" />
           </button>
-          <button type="button" class="rail-button" title="几何拓扑" aria-label="几何拓扑" @click="activeTab = 'geometry'; toggleBom()">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 7.2 4.1v8.3L12 19.3l-7.2-4.1V6.9L12 2.8Z"/><path d="m4.8 6.9 7.2 4.2 7.2-4.2M12 11.1v8.2"/><path d="M8 21h8M12 19.3V21"/></svg>
+          <button type="button" class="rail-button" :class="{ 'active-icon': activeTab === 'geometry' }" title="几何拓扑" aria-label="几何拓扑" @click="activeTab = 'geometry'; toggleBom()">
+            <SvgIcon icon="lucide:waypoints" />
           </button>
           <button type="button" class="rail-button primary" title="显示 BOM" aria-label="显示 BOM" @click="toggleBom">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
@@ -779,14 +831,26 @@ onBeforeUnmount(() => {
             <p v-else class="muted">当前实例未提供定位数据</p>
           </section>
           <section v-if="hasDetailGroup('feature') && selectedNativeFeature" class="detail-section">
-            <h4>特征属性</h4>
+            <h4>特征详情</h4>
             <dl>
-              <dt>Feature ID</dt><dd>{{ selectedNativeFeature.feature_id }}</dd>
-              <dt>原生类型</dt><dd>{{ selectedNativeFeature.native_type || '—' }}</dd>
-              <dt>StartUp</dt><dd>{{ selectedNativeFeature.startup_type || '—' }}</dd>
-              <dt>Decoder</dt><dd>{{ selectedNativeFeature.decoder_id || '—' }}</dd>
-              <dt>更新状态</dt><dd>{{ selectedNativeFeature.update_status || '—' }}</dd>
+              <dt>名称</dt><dd>{{ selectedNativeTreeNode?.displayName || selectedNativeFeature.feature_id }}</dd>
+              <dt>原生类型</dt><dd>{{ selectedNativeTreeNode?.nativeType || '未提供' }}</dd>
+              <dt>所属容器</dt><dd>{{ selectedNativeTreeParent?.displayName || '未提供' }}</dd>
+              <dt>建模顺序</dt><dd>{{ selectedNativeFeature.traversal_index ?? '未提供' }}</dd>
+              <dt>更新状态</dt><dd>{{ selectedNativeFeature.update_status || '未提供' }}</dd>
             </dl>
+            <h5>特征参数</h5>
+            <dl v-if="selectedNativeParameters.length" class="parameter-list">
+              <template v-for="entry in selectedNativeParameters" :key="entry[0]">
+                <dt>{{ entry[0] }}</dt><dd>{{ formatNativeAttribute(entry[1]) }}</dd>
+              </template>
+            </dl>
+            <p v-else class="muted">暂无可用参数</p>
+            <h5>关联几何</h5>
+            <div v-if="selectedNativeFaces.length" class="face-links">
+              <button v-for="faceId in selectedNativeFaces" :key="faceId" type="button" @click="openNativeFace(faceId)">{{ faceId }}</button>
+            </div>
+            <p v-else class="muted">未建立关联面</p>
           </section>
           <section v-if="hasDetailGroup('feature') && selectedFeature" class="detail-section">
             <h4>特征属性</h4>
@@ -847,12 +911,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .muted { color: var(--el-text-color-secondary); }
 .error-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--el-color-danger-light-5); border-radius: 8px; background: var(--el-color-danger-light-9); padding: 10px 14px; }
 .error-card p { min-width: 0; flex: 1; margin: 0; overflow-wrap: anywhere; }
-.workspace { position: relative; display: grid; min-height: 0; flex: 1; grid-template-columns: 290px minmax(0, 1fr) 330px; gap: 10px; transition: grid-template-columns .2s ease; }
+.workspace { position: relative; display: grid; min-height: 0; flex: 1; grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 330px; gap: 10px; transition: grid-template-columns .2s ease; }
 .workspace.bom-collapsed { grid-template-columns: 56px minmax(0, 1fr) 330px; }
-.workspace.details-collapsed { grid-template-columns: 290px minmax(0, 1fr) 0; }
+.workspace.details-collapsed { grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 0; }
 .workspace.bom-collapsed.details-collapsed { grid-template-columns: 56px minmax(0, 1fr) 0; }
 .navigation, .viewer-shell, .details { min-width: 0; min-height: 0; border: 1px solid var(--el-border-color-light); border-radius: 9px; background: var(--el-bg-color); overflow: hidden; }
-.navigation { display: flex; flex-direction: column; }
+.navigation { position: relative; display: flex; flex-direction: column; }
 .navigation.collapsed { align-items: center; padding: 10px 5px; gap: 10px; }
 .panel-heading { display: flex; min-height: 48px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--el-border-color-lighter); padding: 0 14px; }
 .panel-heading button { border: 0; font-size: 20px; padding: 4px 8px; }
@@ -860,10 +924,19 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .semantic-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 11px 4px; }
 .semantic-tabs button.active { border-bottom-color: var(--el-color-primary); color: var(--el-color-primary); }
 .panel-scroll, .details-scroll { min-height: 0; flex: 1; overflow: auto; padding: 10px; }
+.panel-scroll.feature-tree-panel { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.feature-tab-content { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.feature-source-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--el-border-color-lighter); padding: 0 10px; }
+.feature-source-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 12px; padding: 8px 4px; }
+.feature-source-tabs button.active { border-bottom-color: var(--el-color-primary); color: var(--el-color-primary); }
+.recognized-feature-list { min-height: 0; flex: 1; overflow: auto; padding: 10px; }
 .panel-hint { border-top: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-secondary); font-size: 12px; padding: 11px; }
+.navigation-resizer { position: absolute; z-index: 3; top: 0; right: -2px; bottom: 0; width: 5px; cursor: col-resize; }
+.navigation-resizer:hover { background: var(--el-color-primary-light-7); }
 .tree-node { display: flex; width: 100%; justify-content: space-between; gap: 8px; }
 .rail-button { display: grid; width: 42px; height: 42px; place-items: center; padding: 0; }
 .rail-button svg { width: 22px; height: 22px; fill: none; stroke: currentcolor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.rail-button :deep(.svg-icon) { font-size: 21px; }
 .rail-button.active-icon { border-color: var(--el-color-primary-light-7); color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
 .rail-button.primary { margin-top: 12px; }
 .list-card { display: flex; width: 100%; flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 7px; text-align: left; }
@@ -885,16 +958,20 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .object-card small { color: var(--el-text-color-secondary); }
 .detail-section { border-bottom: 1px solid var(--el-border-color-lighter); padding: 8px 0 12px; }
 .detail-section h4 { margin: 7px 0 10px; }
+.detail-section h5 { margin: 13px 0 8px; font-size: 13px; }
 .detail-section dl { display: grid; grid-template-columns: 95px 1fr; gap: 8px; margin: 0; font-size: 13px; }
 .detail-section dt { color: var(--el-text-color-secondary); }
 .detail-section dd { margin: 0; overflow-wrap: anywhere; }
+.parameter-list dd { white-space: pre-wrap; }
+.face-links { display: flex; flex-wrap: wrap; gap: 5px; }
+.face-links button { font-size: 12px; padding: 4px 7px; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .actions h4 { width: 100%; }
 .actions .feature-link { width: 100%; margin-top: 2px; text-align: left; }
 .advanced pre { max-height: 230px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
 .details-trigger { display: none; }
 @media (max-width: 1439px) {
-  .workspace { grid-template-columns: 250px minmax(0, 1fr) 290px; }
+  .workspace { grid-template-columns: min(var(--navigation-width, 300px), 300px) minmax(0, 1fr) 290px; }
   .workspace.bom-collapsed { grid-template-columns: 54px minmax(0, 1fr) 290px; }
   .summary-main { gap: 9px; }
 }
