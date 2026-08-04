@@ -19,6 +19,7 @@ import {
 import CadViewer from './modules/CadViewer.vue';
 
 type GeometryTab = 'face' | 'edge' | 'vertex' | 'measurement' | 'feature';
+type LeftNavigationTab = 'bom' | 'feature' | 'geometry';
 
 const EMPTY_TEXT = '—';
 const route = useRoute();
@@ -71,6 +72,7 @@ const featureTotal = ref(0);
 
 const isLeftCollapsed = ref(false);
 const isRightCollapsed = ref(false);
+const activeLeftNavigation = ref<LeftNavigationTab>('bom');
 
 const selectedModel = computed(() => models.value.find(item => item.id === selectedModelId.value) ?? null);
 const isProcessing = computed(() => status.value?.status === 'queued' || status.value?.status === 'processing');
@@ -108,6 +110,14 @@ const geometryTypeOptions = computed(() => {
   });
   return Array.from(values).sort();
 });
+
+// 用途：从折叠栏或页签进入对应导航区，并同步几何列表的数据类型。
+function openLeftNavigation(tab: LeftNavigationTab) {
+  activeLeftNavigation.value = tab;
+  if (tab === 'feature') activeGeometryTab.value = 'feature';
+  if (tab === 'geometry' && activeGeometryTab.value === 'feature') activeGeometryTab.value = 'face';
+  isLeftCollapsed.value = false;
+}
 
 function stopPolling() {
   if (pollTimer.value) {
@@ -722,9 +732,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <ElButton text @click="isLeftCollapsed = !isLeftCollapsed">
-        {{ isLeftCollapsed ? '展开左侧' : '折叠左侧' }}
-      </ElButton>
       <ElButton text @click="isRightCollapsed = !isRightCollapsed">
         {{ isRightCollapsed ? '展开属性' : '折叠属性' }}
       </ElButton>
@@ -732,26 +739,18 @@ onBeforeUnmount(() => {
 
     <div class="cad-shell" :class="{ 'left-collapsed': isLeftCollapsed, 'right-collapsed': isRightCollapsed }">
       <aside v-show="!isLeftCollapsed" class="left-panel">
-        <section class="panel-section models-section">
-          <div class="panel-title">模型</div>
-          <ElScrollbar class="models-scroll">
-            <ElEmpty v-if="!models.length && !loadingModels" description="暂无模型" :image-size="42" />
-            <button
-              v-for="model in models"
-              :key="model.id"
-              class="model-row"
-              :class="{ active: model.id === selectedModelId }"
-              type="button"
-              @click="selectModel(model)"
-            >
-              <span class="model-name">{{ model.name }}</span>
-              <span class="model-meta">{{ model.status ?? 'unknown' }} · Face {{ model.face_count ?? 0 }}</span>
-            </button>
-          </ElScrollbar>
-        </section>
+        <header class="navigation-heading">
+          <strong>装配导航</strong>
+          <button type="button" title="隐藏装配导航" aria-label="隐藏装配导航" @click="isLeftCollapsed = true">‹</button>
+        </header>
+        <nav class="navigation-tabs" aria-label="模型导航类型">
+          <button type="button" :class="{ active: activeLeftNavigation === 'bom' }" @click="openLeftNavigation('bom')">BOM 树</button>
+          <button type="button" :class="{ active: activeLeftNavigation === 'feature' }" @click="openLeftNavigation('feature')">特征</button>
+          <button type="button" :class="{ active: activeLeftNavigation === 'geometry' }" @click="openLeftNavigation('geometry')">几何拓扑</button>
+        </nav>
 
-        <section class="panel-section tree-section">
-          <div class="panel-title">产品结构</div>
+        <section v-show="activeLeftNavigation === 'bom'" class="panel-section tree-section">
+          <div class="panel-title">装配结构</div>
           <ElSkeleton v-if="loadingTree" :rows="5" animated />
           <ElEmpty v-else-if="!treeData.length" description="解析完成后显示结构" :image-size="42" />
           <ElScrollbar v-else class="tree-scroll">
@@ -766,18 +765,17 @@ onBeforeUnmount(() => {
           </ElScrollbar>
         </section>
 
-        <section class="panel-section geometry-section">
+        <section v-show="activeLeftNavigation !== 'bom'" class="panel-section geometry-section">
           <div class="panel-title geometry-title">
-            <span>几何对象</span>
+            <span>{{ activeLeftNavigation === 'feature' ? '识别特征' : '几何拓扑' }}</span>
             <span class="geometry-total">{{ activeListTotal }}</span>
           </div>
 
-          <ElTabs v-model="activeGeometryTab" class="compact-tabs">
+          <ElTabs v-if="activeLeftNavigation === 'geometry'" v-model="activeGeometryTab" class="compact-tabs">
             <ElTabPane label="面 Face" name="face" />
             <ElTabPane label="边 Edge" name="edge" />
             <ElTabPane label="顶点 Vertex" name="vertex" />
             <ElTabPane label="尺寸" name="measurement" />
-            <ElTabPane label="特征" name="feature" />
           </ElTabs>
 
           <div class="geometry-tools">
@@ -896,9 +894,20 @@ onBeforeUnmount(() => {
         </section>
       </aside>
 
-      <button v-if="isLeftCollapsed" class="collapse-rail left-rail" type="button" @click="isLeftCollapsed = false">
-        左侧
-      </button>
+      <aside v-if="isLeftCollapsed" class="collapse-rail left-rail" aria-label="折叠的模型导航">
+        <button type="button" class="rail-action active" title="装配结构 / BOM 树" aria-label="装配结构 / BOM 树" @click="openLeftNavigation('bom')">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 4.5v10L12 21l-8-4.5v-10L12 2Z"/><path d="m4.4 6.7 7.6 4.2 7.6-4.2M12 11v10"/></svg>
+        </button>
+        <button type="button" class="rail-action" title="特征" aria-label="特征" @click="openLeftNavigation('feature')">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 4v9l-7 4-7-4V7l7-4Z"/><path d="m5 7 7 4 7-4M12 11v9"/><circle cx="12" cy="11" r="2.2"/></svg>
+        </button>
+        <button type="button" class="rail-action" title="几何拓扑" aria-label="几何拓扑" @click="openLeftNavigation('geometry')">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 7.2 4.1v8.3L12 19.3l-7.2-4.1V6.9L12 2.8Z"/><path d="m4.8 6.9 7.2 4.2 7.2-4.2M12 11.1v8.2"/><path d="M8 21h8M12 19.3V21"/></svg>
+        </button>
+        <button type="button" class="rail-action expand" title="展开装配导航" aria-label="展开装配导航" @click="openLeftNavigation(activeLeftNavigation)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button>
+      </aside>
 
       <main v-loading="loadingMeshes" class="viewer-panel">
         <CadViewer
@@ -1175,7 +1184,7 @@ onBeforeUnmount(() => {
 }
 
 .cad-shell.left-collapsed {
-  grid-template-columns: 36px minmax(420px, 1fr) 340px;
+  grid-template-columns: 56px minmax(420px, 1fr) 340px;
 }
 
 .cad-shell.right-collapsed {
@@ -1183,7 +1192,7 @@ onBeforeUnmount(() => {
 }
 
 .cad-shell.left-collapsed.right-collapsed {
-  grid-template-columns: 36px minmax(420px, 1fr) 36px;
+  grid-template-columns: 56px minmax(420px, 1fr) 36px;
 }
 
 .left-panel,
@@ -1196,9 +1205,51 @@ onBeforeUnmount(() => {
 }
 
 .left-panel {
-  display: grid;
-  grid-template-rows: 110px 180px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+
+.navigation-heading {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--el-border-color-light);
+  padding: 0 14px;
+}
+
+.navigation-heading button {
+  border: 0;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  font-size: 22px;
+}
+
+.navigation-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--el-border-color-light);
+}
+
+.navigation-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  padding: 11px 4px;
+}
+
+.navigation-tabs button.active {
+  border-bottom-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+
+.tree-section,
+.geometry-section {
+  flex: 1;
 }
 
 .right-panel {
@@ -1361,20 +1412,50 @@ onBeforeUnmount(() => {
 }
 
 .collapse-rail {
+  display: flex;
   min-width: 0;
   min-height: 0;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   background: var(--el-bg-color);
-  color: var(--el-text-color-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  writing-mode: vertical-rl;
+  padding: 10px 6px;
 }
 
-.collapse-rail:hover {
-  color: var(--el-color-primary);
+.rail-action {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 7px;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.rail-action svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.rail-action:hover,
+.rail-action.active {
   border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+
+.rail-action.expand {
+  margin-top: 2px;
 }
 
 .property-group {
@@ -1477,7 +1558,6 @@ onBeforeUnmount(() => {
   }
 
   .collapse-rail {
-    writing-mode: horizontal-tb;
     padding: 8px;
   }
 }

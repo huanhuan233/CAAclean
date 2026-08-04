@@ -361,6 +361,10 @@ class CadService:
                 "label": label,
                 "source_ref": entity.source_ref,
                 "geometry_type": entity.geometry_type,
+                "placement": entity.placement,
+                "volume": entity.volume,
+                "bounding_box": entity.bounding_box,
+                "metadata": entity.metadata_json,
                 "children": [],
             }
         for entity in entities:

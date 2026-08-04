@@ -24,6 +24,7 @@ from app.component_builds.component_spec_document import (
 )
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
 from app.core.config import Settings
+from app.component_builds.viewer_bom import build_bom_contract
 from app.db.models import CadModel, CadModelRevision, CadSpecTask, CadSpecSource, CadDrawingRegion, CadDrawingFact, ComponentBuild
 
 
@@ -269,10 +270,10 @@ class ComponentBuildService:
         """
         build = await self._require_build(build_id)
 
-        # Clean up drawing task if attached
+        # 用途：存在关联图纸任务时清理其受控资源。
         if build.drawing_task_id:
             task_id = build.drawing_task_id
-            # Remove drawing region crop files from disk
+            # 用途：删除图纸区域裁剪文件。
             region_rows = await self.repository.list_drawing_regions(task_id)
             for region in region_rows:
                 crop_path = region.get("crop_file_path")
@@ -280,7 +281,7 @@ class ComponentBuildService:
                     p = Path(crop_path)
                     if p.exists():
                         p.unlink()
-            # Remove drawing source files from disk
+            # 用途：删除图纸源文件。
             source_rows = await self.repository.list_drawing_sources(task_id)
             for src in source_rows:
                 fp = src.get("file_path")
@@ -288,42 +289,42 @@ class ComponentBuildService:
                     p = Path(fp)
                     if p.exists():
                         p.unlink()
-            # Remove task work directory
+            # 用途：删除图纸任务工作目录。
             task_dir = Path(settings.cad_spec_work_dir) / str(task_id)
             if task_dir.exists():
                 _shutil.rmtree(task_dir)
-            # Delete drawing task DB record (cascade deletes sources, regions, facts)
+            # 用途：删除图纸任务记录，并由数据库级联清理来源、区域和事实。
             drawing_task = await self.repository.session.get(CadSpecTask, task_id)
             if drawing_task:
                 await self.repository.session.delete(drawing_task)
 
-        # Clean up CAD model files and DB records
+        # 用途：清理 CAD 模型文件和数据库记录。
         if build.cad_revision_id:
             revision_id = build.cad_revision_id
-            # Remove revision source file from disk
+            # 用途：删除 Revision 的源模型文件。
             revision = await self.repository.get_raw_revision(revision_id)
             if revision and revision.source_file_path and revision.source_file_path != "pending":
                 src_path = Path(revision.source_file_path)
                 if src_path.exists():
                     src_path.unlink()
-            # Remove revision work directory
+            # 用途：删除 Revision 工作目录。
             rev_dir = Path(settings.cad_work_dir) / str(revision_id)
             if rev_dir.exists():
                 _shutil.rmtree(rev_dir)
 
-        # Delete CAD model if this build's model isn't shared
+        # 用途：仅当模型未被其他构建共享时删除 CAD 模型。
         if build.cad_model_id:
             other = await self.repository.list_builds_by_model(build.cad_model_id, exclude_build_id=build_id)
             if not other:
                 model_dir = Path(settings.cad_work_dir) / str(build.cad_model_id)
                 if model_dir.exists():
                     _shutil.rmtree(model_dir)
-                # Delete the CadModel record (cascade deletes revisions, entities, etc.)
+                # 用途：删除 CadModel 记录，并由数据库级联清理 Revision 和实体等数据。
                 cad_model = await self.repository.session.get(CadModel, build.cad_model_id)
                 if cad_model:
                     await self.repository.session.delete(cad_model)
 
-        # Delete the build record (DB cascade handles ComponentSpecDraft)
+        # 用途：删除构建记录，ComponentSpecDraft 交由数据库级联清理。
         deleted = await self.repository.delete_build(build_id)
         return {"id": str(deleted.id), "deleted": True}
 
@@ -363,14 +364,35 @@ class ComponentBuildService:
         ingest = manifest.get("ingest", {})
         viewer = manifest.get("viewer_asset") or {}
         required = ("glb", "scene_manifest", "face_mesh_map", "feature_mesh_map")
+        source_format = ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext)
+        bom = await self._viewer_bom(revision, source_format)
+        viewer_summary = manifest.get("viewer_summary") or {}
+        summary = {
+            "model_name": build.component_name,
+            "source_file_name": getattr(revision, "source_file_name", None),
+            "part_number": build.standard_number or "",
+            "part_name": build.component_name,
+            "version": build.version or "",
+            "material": str(viewer_summary.get("material") or ""),
+            "solid_count": int(viewer_summary.get("solid_count") or 0),
+            "native_feature_count": int(viewer_summary.get("native_feature_count") or 0),
+            "recognized_feature_count": int(viewer_summary.get("recognized_feature_count") or 0),
+            "feature_face_mapping_available": bool((manifest.get("feature_center") or {}).get("available")),
+        }
+        base_payload = {
+            "part_id": str(build.id),
+            "task_id": str(revision.id),
+            "source_format": source_format,
+            "processing_route": ingest.get("processing_route") or "step_cad_parse",
+            "summary": summary,
+            "bom": bom,
+            "worker": manifest.get("worker") or {"mode": "not_applicable"},
+        }
         if revision.status != "completed" or revision.status_message != "ready" or any(not viewer.get(key) for key in required):
             return {
-                "part_id": str(build.id),
-                "task_id": str(revision.id),
+                **base_payload,
                 "status": revision.status,
                 "current_stage": revision.status_message,
-                "source_format": ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext),
-                "processing_route": ingest.get("processing_route") or "step_cad_parse",
                 "viewer_asset": None,
                 "feature_center": {"available": False},
                 "error_code": revision.error_code,
@@ -379,12 +401,9 @@ class ComponentBuildService:
         asset_base = f"/api/component-builds/{build.id}/viewer/assets/"
         feature_center = manifest.get("feature_center") or {}
         return {
-            "part_id": str(build.id),
-            "task_id": str(revision.id),
+            **base_payload,
             "status": "ready",
             "current_stage": "ready",
-            "source_format": ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext),
-            "processing_route": ingest.get("processing_route") or "step_cad_parse",
             "viewer_asset": {
                 "glb_url": asset_base + viewer["glb"],
                 "scene_manifest_url": asset_base + viewer["scene_manifest"],
@@ -399,10 +418,56 @@ class ComponentBuildService:
                 if feature_center.get("feature_geometry_links") else None,
                 "measurements_url": asset_base + feature_center["measurements"]
                 if feature_center.get("measurements") else None,
+                "topology_faces_url": asset_base + feature_center["topology_faces"]
+                if feature_center.get("topology_faces") else None,
+                "topology_edges_url": asset_base + feature_center["topology_edges"]
+                if feature_center.get("topology_edges") else None,
+            },
+            "native_semantics": {
+                "available": bool((manifest.get("native_semantics") or {}).get("available")),
+                "features_url": asset_base + (manifest.get("native_semantics") or {})["features"]
+                if (manifest.get("native_semantics") or {}).get("features") else None,
             },
             "error_code": None,
             "error_message": None,
         }
+
+    async def _viewer_bom(self, revision, source_format: str) -> dict:
+        """用途：把数据库中的真实结构实体投影为统一 BOM；无装配数据时保持单零件/空契约。"""
+        entities = await self.repository.list_structure_entities(revision.id)
+        nodes: dict[str, dict] = {}
+        roots: list[dict] = []
+        for entity in entities:
+            node = {
+                "id": str(entity.id),
+                "parent_entity_id": str(entity.parent_entity_id) if entity.parent_entity_id else "",
+                "entity_type": entity.entity_type,
+                "label": entity.label or entity.name or entity.source_ref or entity.entity_type,
+                "source_ref": entity.source_ref,
+                "placement": entity.placement,
+                "volume": entity.volume,
+                "bounding_box": entity.bounding_box,
+                "metadata": entity.metadata_json,
+                "children": [],
+            }
+            nodes[str(entity.id)] = node
+        for node in nodes.values():
+            parent = nodes.get(node["parent_entity_id"])
+            if parent is None:
+                roots.append(node)
+            else:
+                parent["children"].append(node)
+        if not roots:
+            roots = [{
+                "id": str(revision.id),
+                "parent_entity_id": "",
+                "entity_type": "part",
+                "label": getattr(revision, "source_file_name", None) or "单零件",
+                "source_ref": getattr(revision, "source_file_name", None) or "",
+                "metadata": {"quantity": 1},
+                "children": [],
+            }]
+        return build_bom_contract(roots, source_format)
 
     @staticmethod
     def _source_format_from_extension(extension: str) -> str:

@@ -1,0 +1,63 @@
+export type DetailGroup =
+  | 'part'
+  | 'assembly_instance'
+  | 'assembly'
+  | 'assembly_statistics'
+  | 'source'
+  | 'positioning'
+  | 'feature'
+  | 'geometry'
+  | 'operations'
+  | 'topology';
+
+export interface DetailPanelContext {
+  selectionKind?: 'model' | 'feature' | 'geometry';
+  assemblyMode: 'none' | 'single_part' | 'assembly';
+  nodeType?: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
+  hasParent?: boolean;
+  sourceFormat: 'STEP' | 'CATPART';
+  nativeFeatureAvailable?: boolean;
+  featureFaceMappingAvailable?: boolean;
+}
+
+export interface DetailPanelLayout {
+  groups: DetailGroup[];
+  featureLinkLabel: string;
+  featureLinkEnabled: boolean;
+}
+
+// 用途：根据真实对象类型和装配契约决定右侧分组；界面的 BOM 显隐状态不参与业务判断。
+export function buildDetailPanelLayout(context: DetailPanelContext): DetailPanelLayout {
+  const featureLinkLabel = context.sourceFormat === 'CATPART'
+    ? '查看原生特征与关联面'
+    : '查看识别特征与关联面';
+  const featureLinkEnabled = Boolean(
+    context.featureFaceMappingAvailable
+    && (context.sourceFormat === 'STEP' || context.nativeFeatureAvailable)
+  );
+
+  if (context.selectionKind === 'feature') {
+    return { groups: ['feature', 'operations', 'topology'], featureLinkLabel, featureLinkEnabled };
+  }
+  if (context.selectionKind === 'geometry') {
+    return { groups: ['geometry', 'operations', 'topology'], featureLinkLabel, featureLinkEnabled };
+  }
+
+  if (
+    context.nodeType === 'assembly'
+    || context.nodeType === 'subassembly'
+    || (context.nodeType === 'root' && context.assemblyMode === 'assembly')
+  ) {
+    const groups: DetailGroup[] = ['assembly', 'assembly_statistics'];
+    if (context.nodeType === 'subassembly' && context.hasParent) groups.push('positioning');
+    groups.push('operations', 'topology');
+    return { groups, featureLinkLabel, featureLinkEnabled };
+  }
+
+  const groups: DetailGroup[] = ['part'];
+  if (context.assemblyMode === 'assembly' && context.hasParent) groups.push('assembly_instance');
+  groups.push('source');
+  if (context.assemblyMode === 'assembly' && context.hasParent) groups.push('positioning');
+  groups.push('operations', 'topology');
+  return { groups, featureLinkLabel, featureLinkEnabled };
+}

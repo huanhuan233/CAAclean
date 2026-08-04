@@ -199,6 +199,7 @@ async def component_build_viewer_asset(
         raise HTTPException(status_code=409, detail={"code": "VIEWER_ASSET_NOT_READY", "message": "模型尚未处理完成"})
     urls = [value for value in (contract.get("viewer_asset") or {}).values() if value]
     urls.extend(value for key, value in (contract.get("feature_center") or {}).items() if key.endswith("_url") and value)
+    urls.extend(value for key, value in (contract.get("native_semantics") or {}).items() if key.endswith("_url") and value)
     requested_suffix = f"/viewer/assets/{asset_path}"
     if not any(str(url).endswith(requested_suffix) for url in urls):
         raise HTTPException(status_code=404, detail={"code": "VIEWER_ASSET_NOT_LISTED", "message": "资产不在发布清单中"})

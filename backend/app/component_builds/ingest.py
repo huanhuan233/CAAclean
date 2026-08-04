@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import locale
 import logging
 import os
 import re
 import shutil
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -17,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.cad.repository import CadRepository
 from app.cad.service import CadService
+from app.component_builds.catia_worker import CatiaWorkerClient, CatiaWorkerError
 from app.core.config import REPOSITORY_ROOT, Settings
 from app.db.session import SessionLocal
 
@@ -42,7 +45,7 @@ class IngestStageError(RuntimeError):
 
 
 _CATIA_LIMITER = asyncio.Semaphore(1)
-_INGEST_TASKS: set[asyncio.Task[None]] = set()
+_INGEST_TASKS: dict[UUID, asyncio.Task[None]] = {}
 _LOCAL_PATH_PATTERN = re.compile(r"(?i)(?:[a-z]:[\\/]|\\\\)[^\r\n]*")
 LOGGER = logging.getLogger(__name__)
 
@@ -93,9 +96,19 @@ def redact_local_paths(message: str) -> str:
 
 # 用途：把上传任务交给独立数据库会话执行，HTTP 请求只负责入队和返回任务编号。
 def schedule_ingest(revision_id: UUID, settings: Settings) -> None:
+    existing = _INGEST_TASKS.get(revision_id)
+    if existing is not None and not existing.done():
+        LOGGER.info("同一 Revision 已在处理中，忽略重复入队：revision_id=%s", revision_id)
+        return
     task = asyncio.create_task(run_ingest_pipeline(revision_id, settings))
-    _INGEST_TASKS.add(task)
-    task.add_done_callback(_INGEST_TASKS.discard)
+    _INGEST_TASKS[revision_id] = task
+
+    # 用途：仅移除当前登记的同一任务，避免旧任务回调误删后续重试任务。
+    def forget(completed: asyncio.Task[None]) -> None:
+        if _INGEST_TASKS.get(revision_id) is completed:
+            _INGEST_TASKS.pop(revision_id, None)
+
+    task.add_done_callback(forget)
 
 
 # 用途：按持久化路由串联现有 STEP 或 CATPart 能力，并把每个真实阶段写回 Revision。
@@ -174,20 +187,33 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
     native_bundle = task_root / "native-caa"
     exported_step = task_root / "exported.stp"
     export_report = task_root / "step-export.json"
+    mode = settings.catia_worker_mode.strip().lower()
+    if mode == "disabled":
+        raise IngestStageError("catia_worker_disabled", "dispatching_caa", "CATIA Worker 未启用")
+    if mode == "http":
+        await _run_remote_catpart_worker(repository, revision_id, settings, revision.source_file_path, task_root)
+        await _set_stage(repository, revision_id, "feature_center_processing", 70)
+        await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
+        return
+    if mode != "local_process":
+        raise IngestStageError("catia_worker_mode_invalid", "dispatching_caa", "CATIA Worker 模式无效")
+    if os.name != "nt":
+        raise IngestStageError("catia_worker_unavailable", "dispatching_caa", "local_process 仅允许在 Windows 主机运行")
+
     runtime = _IngestRuntimeSettings()
     rade_root = os.environ.get("CAA_RADE_ROOT") or runtime.caa_rade_root
     prereq_root = os.environ.get("CAA_PREREQ_ROOT") or runtime.caa_prereq_root
     if not rade_root or not prereq_root:
-        raise IngestStageError("CATIA_WORKER_UNAVAILABLE", "parsing", "未配置 CAA_RADE_ROOT 或 CAA_PREREQ_ROOT")
+        raise IngestStageError("catia_worker_unavailable", "dispatching_caa", "未配置 CAA_RADE_ROOT 或 CAA_PREREQ_ROOT")
 
-    await _set_stage(repository, revision_id, "parsing", 15)
+    await _set_stage(repository, revision_id, "running_caa", 15)
     await _run_command(
         [
             "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x86.bat"),
             "--input", str(revision.source_file_path), "--output", str(native_bundle), "--read-only",
         ],
-        "CATIA_WORKER_FAILED",
-        "parsing",
+        "caa_parse_failed",
+        "running_caa",
         settings.freecad_timeout,
         {"CAA_RADE_ROOT": rade_root, "CAA_PREREQ_ROOT": prereq_root},
     )
@@ -200,12 +226,76 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
             "-OutputStep", str(exported_step),
             "-ReportPath", str(export_report),
         ],
-        "CATIA_EXPORT_FAILED",
+        "catia_step_export_failed",
         "exporting_step",
         settings.freecad_timeout,
     )
     await _set_stage(repository, revision_id, "feature_center_processing", 70)
     await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
+
+
+# 用途：通过 HTTP Worker 上传 CATPart 字节并下载经哈希校验的原生 IR 与 STEP 产物。
+async def _run_remote_catpart_worker(
+    repository: CadRepository,
+    revision_id: UUID,
+    settings: Settings,
+    source_path: str,
+    task_root: Path,
+) -> None:
+    download_root = task_root / "worker-download"
+    await _set_stage(repository, revision_id, "dispatching_caa", 8)
+    client = CatiaWorkerClient(
+        base_url=settings.catia_worker_url,
+        token=settings.catia_worker_token,
+        connect_timeout_seconds=settings.catia_worker_connect_timeout,
+        request_timeout_seconds=settings.catia_worker_request_timeout,
+        poll_interval_seconds=settings.catia_worker_poll_interval,
+        job_timeout_seconds=settings.catia_worker_job_timeout,
+    )
+
+    async def report_stage(payload: dict) -> None:
+        stage = str(payload.get("stage") or "queued_caa")
+        progress = max(8, min(65, int(payload.get("progress") or 10)))
+        await _set_stage(repository, revision_id, stage, progress)
+        worker_job_id = str(payload.get("worker_job_id") or "")
+        if worker_job_id:
+            await repository.update_revision_manifest(revision_id, {"worker": {"worker_job_id": worker_job_id}})
+
+    try:
+        result = await client.process(Path(source_path), download_root, report_stage)
+    except CatiaWorkerError as exc:
+        raise IngestStageError(exc.code, exc.stage, str(exc)) from exc
+    await repository.update_revision_manifest(
+        revision_id,
+        {
+            "worker": {
+                "worker_job_id": result.worker_job_id,
+                "mode": "http",
+                "status": result.status,
+                "stage": result.stage,
+            }
+        },
+    )
+    native_archive = download_root / "native_bundle.zip"
+    exported_step = download_root / "exported.stp"
+    if not native_archive.is_file() or not exported_step.is_file() or exported_step.stat().st_size == 0:
+        raise IngestStageError("catia_step_export_failed", "exporting_step", "Worker 未返回完整原生结果和 STEP")
+    _extract_worker_archive(native_archive, task_root / "native-caa")
+    shutil.copy2(exported_step, task_root / "exported.stp")
+
+
+# 用途：只解压相对普通文件，拒绝 Worker ZIP 中的绝对路径、父目录和符号链接式穿越。
+def _extract_worker_archive(archive_path: Path, output_dir: Path) -> None:
+    output_root = output_dir.resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            destination = (output_root / member.filename).resolve()
+            try:
+                destination.relative_to(output_root)
+            except ValueError as exc:
+                raise IngestStageError("catia_worker_artifact_invalid", "publishing_assets", "Worker ZIP 包含越界路径") from exc
+        archive.extractall(output_root)
 
 
 # 用途：调用仓库已有 Sidecar CLI 生成并校验 Bundle，不在 Web 层复制任何几何算法。
@@ -240,6 +330,11 @@ async def _build_feature_center(
     if missing or (bundle / "lightweight" / "model.glb").stat().st_size == 0:
         raise IngestStageError("VIEWER_ASSET_MISSING", "lightweighting", ",".join(missing) or "model.glb 为空")
     json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    native_feature_count = 0
+    if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
+        native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
+    recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
+    solid_count = _read_feature_center_solid_count(bundle / "parts.jsonl")
     await repository.update_revision_manifest(
         revision_id,
         {
@@ -256,9 +351,24 @@ async def _build_feature_center(
                 "canonical_features": "feature-center/canonical_features.jsonl",
                 "feature_geometry_links": "feature-center/feature_geometry_links.jsonl",
                 "measurements": "feature-center/measurements.jsonl",
+                "topology_faces": "feature-center/topology_faces.jsonl"
+                if (bundle / "topology_faces.jsonl").is_file() else None,
+                "topology_edges": "feature-center/topology_edges.jsonl"
+                if (bundle / "topology_edges.jsonl").is_file() else None,
+            },
+            "native_semantics": {
+                "available": native_bundle is not None and (native_bundle / "features.jsonl").is_file(),
+                "features": "native-caa/features.jsonl"
+                if native_bundle is not None and (native_bundle / "features.jsonl").is_file() else None,
+            },
+            "viewer_summary": {
+                "solid_count": solid_count,
+                "native_feature_count": native_feature_count,
+                "recognized_feature_count": recognized_feature_count,
             },
         },
     )
+    # 用途：只有 Sidecar 产物、Viewer 必需资产和清单全部校验完成后，才把任务标记为可展示。
     await repository.set_revision_status(
         revision_id,
         status="completed",
@@ -267,6 +377,28 @@ async def _build_feature_center(
         error_code=None,
         error_message=None,
     )
+
+
+# 用途：确定性统计 JSONL 非空记录，不因文件末尾换行多算一条。
+def _count_jsonl_records(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    with path.open("r", encoding="utf-8") as stream:
+        return sum(1 for line in stream if line.strip())
+
+
+# 用途：从 Feature Center 的真实 Part 摘要累计 Solid 数；Schema 缺字段时返回零而非猜测。
+def _read_feature_center_solid_count(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    total = 0
+    with path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            total += int(record.get("solid_count") or record.get("geometry_summary", {}).get("solid_count") or 0)
+    return total
 
 
 # 用途：重试时只清理本任务生成物，保留上传源文件和持久化任务记录。
@@ -323,9 +455,23 @@ async def _run_command(
             await asyncio.shield(_terminate_process_tree(process))
         raise
     if process.returncode != 0:
-        detail = (stderr or stdout).decode("utf-8", errors="replace").strip()
+        detail = _decode_process_output(stderr or stdout).strip()
         LOGGER.error("外部处理命令失败：stage=%s command=%s detail=%s", stage, command[0], detail)
         raise IngestStageError(error_code, stage, redact_local_paths(detail[-1000:]) or f"退出码 {process.returncode}")
+
+
+# 用途：兼容 Windows 子进程通过管道输出 UTF-8 或本机代码页中文，避免错误信息出现乱码。
+def _decode_process_output(content: bytes) -> str:
+    if not content:
+        return ""
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        preferred = locale.getpreferredencoding(False) or "gbk"
+        try:
+            return content.decode(preferred)
+        except (LookupError, UnicodeDecodeError):
+            return content.decode("utf-8", errors="replace")
 
 
 # 用途：终止本任务启动的完整外部进程树，防止超时或服务停止后残留 CATIA 子进程。

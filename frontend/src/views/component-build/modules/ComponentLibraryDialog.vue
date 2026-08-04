@@ -2,11 +2,11 @@
 /**
  * ComponentLibraryDialog.vue
  * ==========================
- * 3-tab dialog for editing/creating a component.
+ * 用途：用于新增或编辑零件的三页签弹窗。
  *
- * Tab 1: 基础信息 — form fields matching createComponentBuild payload
- * Tab 2: 关联数据 — STEP, drawing, fusion status cards
- * Tab 3: YAML / ComponentSpec — field editor + YAML preview
+ * 页签一：基础信息——对应 createComponentBuild 请求字段。
+ * 页签二：关联数据——展示模型、图纸和融合任务的真实状态。
+ * 页签三：YAML / ComponentSpec——提供字段编辑与 YAML 预览。
  */
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -26,11 +26,12 @@ import {
 import type { ComponentSpecFieldPath } from '../component-spec-field-events'
 import { YamlWorkingDocumentError } from '../yaml-working-document'
 import { isSupportedPartSourceFile } from '../source-file'
+import { modelViewerLocation } from '../model-viewer-route'
 import ComponentSpecFieldEditor from './ComponentSpecFieldEditor.vue'
 import ComponentYamlPreview from './ComponentYamlPreview.vue'
 
 /**
- * Exposed to index.vue so it can call methods.
+ * 用途：向 index.vue 暴露可调用的弹窗方法。
  */
 defineExpose({
   open,
@@ -44,14 +45,14 @@ defineExpose({
 
 const router = useRouter()
 
-// ── Props ──
+// 用途：声明父组件输入。
 const props = defineProps<{
   catalog: Api.ComponentBuild.CatalogCategory[]
   catalogLoading: boolean
   submitting: boolean
 }>()
 
-// ── Emits ──
+// 用途：声明弹窗对外事件。
 const emit = defineEmits<{
   submit: [payload: {
     form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>
@@ -65,12 +66,12 @@ const emit = defineEmits<{
   startParsing: [buildId: string, role: Api.ComponentBuild.RetryRole]
 }>()
 
-// ── State ──
+// 用途：保存弹窗状态。
 const visible = ref(false)
 const activeTab = ref('basic')
 const formRef = ref<FormInstance>()
 
-// Editing state
+// 用途：保存编辑表单状态。
 const editingBuild = ref<Api.ComponentBuild.BuildDetail | null>(null)
 const isEditing = computed(() => Boolean(editingBuild.value))
 
@@ -78,7 +79,7 @@ const form = ref(createDefaultForm())
 const sourceFile = ref<File | null>(null)
 const drawingFile = ref<File | null>(null)
 
-// ComponentSpec state
+// 用途：保存 ComponentSpec 编辑状态。
 const componentSpec = ref<Api.ComponentBuild.ComponentSpecDocument | null>(null)
 const editorState = ref<ComponentSpecEditorState | null>(null)
 const specLoading = ref(false)
@@ -93,7 +94,7 @@ const currentYamlFilename = computed(() => editorState.value?.working.sourceFile
 const currentSpecFields = computed(() => editorState.value?.working.fields || [])
 const currentSpecData = computed(() => editorState.value?.working.data || {})
 
-// Build status
+// 用途：保存当前零件构建任务的真实状态。
 const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({})
 
 const formRules: FormRules = {
@@ -121,7 +122,7 @@ const generatedIdPreview = computed(() =>
       : '选择部件类型后自动生成'
 )
 
-// Source status
+// 用途：保存模型源文件和图纸源文件的独立处理状态。
 const canStartParsing = computed(() => (role: Api.ComponentBuild.RetryRole) => {
   if (!editingBuild.value) return false
   return role === 'reference_step'
@@ -169,7 +170,7 @@ function statusType(status: string): 'success' | 'primary' | 'warning' | 'danger
   return 'info'
 }
 
-// ── Methods ──
+// 用途：集中放置弹窗方法。
 
 function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'> {
   return {
@@ -356,12 +357,11 @@ function handleSubmit() {
 
 function handleViewCad() {
   if (!editingBuild.value?.id) return
-  router.push({
-    path: '/feature-center',
-    query: {
-      build_id: editingBuild.value.id
-    }
-  })
+  router.push(modelViewerLocation(
+    editingBuild.value.id,
+    editingBuild.value.cad_revision_id || '',
+    editingBuild.value.source_format
+  ))
 }
 
 function handleViewDrawing() {

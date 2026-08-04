@@ -6,7 +6,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadDrawingRegion, CadDrawingFact, CadModel, CadModelRevision, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
+from app.db.models import CadDrawingRegion, CadDrawingFact, CadEntity, CadModel, CadModelRevision, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
 
 
 class MemoryComponentBuildRepository:
@@ -39,6 +39,10 @@ class MemoryComponentBuildRepository:
 
     async def list_builds(self) -> list[ComponentBuild]:
         return sorted(self.builds.values(), key=lambda build: (build.created_at, str(build.id)), reverse=True)
+
+    async def list_structure_entities(self, revision_id: uuid.UUID) -> list:
+        """用途：内存仓储没有 CAD 实体表时返回空结构，保持旧单元测试向前兼容。"""
+        return []
 
     async def next_component_id(self, prefix: str) -> str:
         return _next_component_id(prefix, (build.component_id for build in self.builds.values()))
@@ -141,6 +145,18 @@ class SqlAlchemyComponentBuildRepository:
         result = await self.session.execute(select(ComponentBuild).order_by(ComponentBuild.created_at.desc(), ComponentBuild.id.desc()))
         return list(result.scalars().all())
 
+    async def list_structure_entities(self, revision_id: uuid.UUID) -> list[CadEntity]:
+        """用途：为统一 Viewer 读取真实结构节点，不把 Face/Edge 等海量拓扑塞入 BOM。"""
+        result = await self.session.execute(
+            select(CadEntity)
+            .where(
+                CadEntity.revision_id == revision_id,
+                CadEntity.entity_type.in_({"root", "assembly", "subassembly", "part", "imported_object", "body", "solid"}),
+            )
+            .order_by(CadEntity.sort_order, CadEntity.id)
+        )
+        return list(result.scalars().all())
+
     async def next_component_id(self, prefix: str) -> str:
         result = await self.session.execute(select(ComponentBuild.component_id))
         return _next_component_id(prefix, result.scalars().all())
@@ -208,7 +224,7 @@ class SqlAlchemyComponentBuildRepository:
         await self.session.commit()
         return build
 
-    # ── Helper queries for resource cleanup (used by service.delete_build) ──
+    # 用途：为 service.delete_build 提供资源清理所需的查询方法。
 
     async def list_drawing_sources(self, task_id: uuid.UUID) -> list[dict]:
         result = await self.session.execute(

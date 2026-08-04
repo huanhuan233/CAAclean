@@ -232,6 +232,8 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
         component_id="aero-general-001",
         component_name="航空框架",
         component_type="aero-general-part",
+        standard_number="RIB-03",
+        version="03.1",
         cad_revision_id=revision_id,
     )
     repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
@@ -262,6 +264,9 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
 
     assert contract["status"] == "ready"
     assert contract["source_format"] == "CATPART"
+    assert contract["summary"]["part_number"] == "RIB-03"
+    assert contract["summary"]["part_name"] == "航空框架"
+    assert contract["summary"]["version"] == "03.1"
     assert contract["viewer_asset"]["glb_url"].startswith(f"/api/component-builds/{build.id}/viewer/assets/")
     assert "cad-work" not in contract["viewer_asset"]["glb_url"]
     assert contract["feature_center"]["available"] is True

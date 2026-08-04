@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     cad_max_concurrency: int = 1
     cad_mesh_deflection: float = 0.1
     cad_stale_job_minutes: int = 30
+    # CATIA Worker 默认禁用；本机 Windows 开发环境需在 backend/.env 显式选择 local_process 或 http。
+    catia_worker_mode: str = "disabled"
+    catia_worker_url: str = "http://127.0.0.1:5182"
+    catia_worker_token: str = ""
+    catia_worker_connect_timeout: float = 5.0
+    catia_worker_request_timeout: float = 120.0
+    catia_worker_poll_interval: float = 1.0
+    catia_worker_job_timeout: float = 1800.0
+    catia_worker_max_concurrency: int = 1
     drawing_layout_provider: str = "auto"
     mineru_layout_mode: str = "disabled"
     mineru_layout_url: str = ""

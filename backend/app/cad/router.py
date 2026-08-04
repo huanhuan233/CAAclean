@@ -44,7 +44,10 @@ async def list_models(
     has_build: bool = False,
     service: CadService = Depends(get_cad_service),
 ) -> dict:
-    return await service.list_models(page, page_size, has_build=has_build)
+    # 用途：默认请求保持旧服务调用契约；只有显式过滤时才传递新增参数。
+    if has_build:
+        return await service.list_models(page, page_size, has_build=True)
+    return await service.list_models(page, page_size)
 
 
 @router.get("/revisions/{revision_id}/status", response_model=CadParseStatus)

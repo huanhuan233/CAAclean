@@ -428,6 +428,30 @@ declare namespace Api {
       current_stage: string | null;
       source_format: 'STEP' | 'CATPART';
       processing_route: 'step_cad_parse' | 'catia_feature_center';
+      summary: {
+        model_name: string;
+        source_file_name: string | null;
+        part_number: string;
+        part_name: string;
+        version: string;
+        material: string;
+        solid_count: number;
+        native_feature_count: number;
+        recognized_feature_count: number;
+        feature_face_mapping_available: boolean;
+      };
+      bom: {
+        assembly_mode: 'none' | 'single_part' | 'assembly';
+        default_visible: boolean;
+        part_count: number;
+        nodes: ViewerBomNode[];
+      };
+      worker: {
+        mode: string;
+        worker_job_id?: string;
+        status?: string;
+        stage?: string;
+      };
       viewer_asset: {
         glb_url: string;
         scene_manifest_url: string;
@@ -439,9 +463,39 @@ declare namespace Api {
         canonical_features_url?: string | null;
         feature_geometry_links_url?: string | null;
         measurements_url?: string | null;
+        topology_faces_url?: string | null;
+        topology_edges_url?: string | null;
+      };
+      native_semantics?: {
+        available: boolean;
+        features_url?: string | null;
       };
       error_code: string | null;
       error_message: string | null;
+    }
+
+    interface ViewerBomNode {
+      node_id: string;
+      parent_id: string;
+      name: string;
+      part_number: string;
+      instance_name: string;
+      version: string;
+      material: string;
+      node_type: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
+      quantity: number;
+      source_format: 'STEP' | 'CATPART';
+      level: number;
+      transform: Record<string, unknown> | null;
+      mesh_primitive_ids: string[];
+      entity_ids: string[];
+      solid_count: number;
+      volume: number | null;
+      bounding_box: Record<string, unknown> | null;
+      assembly_path: string;
+      constraint_status: string;
+      constraint_count: number | null;
+      children: ViewerBomNode[];
     }
 
     interface CreatePayload {

@@ -81,8 +81,8 @@ STEP 没有可信 Feature Center 特征时返回 `feature_center.available=false
 ### STEP
 
 - 源文件：`KUANG (2).stp`
-- part_id：`2582e8c0-c39a-4e5e-9c7b-a8dc18a120d8`
-- task_id：`ca60ab8f-25ec-4742-900f-d054559f0c05`
+- part_id：`8b52fe82-3582-44cd-8a36-78bcfd3625e3`
+- task_id：`e33145cf-8599-4734-a39a-5b34af467ee8`
 - 源 SHA-256：`5bca06f897df4d5f0ca8aaed3325b84d3537ded833e780acff3283c040746402`
 - 路线：`STEP / step_cad_parse`
 - GLB：1,276,344 字节，SHA-256 `98f828ee2d05225d3c5bba8f7e07b796b29a1f6395e0842bad1b71de1eff2076`
@@ -91,27 +91,70 @@ STEP 没有可信 Feature Center 特征时返回 `feature_center.available=false
 ### CATPart
 
 - 源文件：`kuang.CATPart`
-- part_id：`168cfde9-20ac-47f4-acb5-a73999d1e4e4`
-- task_id：`cc256419-1730-4042-92b1-c9f07b36a824`
+- part_id：`97ef202b-e87c-45bb-9714-13886c6467eb`
+- task_id：`ee13d500-59e5-4b69-abea-e5eb6f9bbb32`
 - 源 SHA-256：`41f07f1f51b6cc6330f0f7385edc3ba2bdae93a71973e058679fd9db2269bc94`
 - 路线：`CATPART / catia_feature_center`
 - CAA：941 个 Feature、1880 条关系、228 个参数、25 个声明式业务特征；Typed 233、Generic 708、Opaque 0、Failed 0。
-- 导出 STEP：3,612,470 字节，SHA-256 `a1201df027f4f60f07d81bdf01c01b6f98a2f68e2b795839f9711d9da1c1ff70`。
+- 导出 STEP：3,612,502 字节，SHA-256 `1c1521fb81902442ddf6ccc50ebe4bde6567014981d7d2c3560bd8fe453719b2`。
 - GLB：1,943,464 字节，SHA-256 `23a30e45e2130c0ef0cbbbef820f4aa6844d7be4f2434de9c6a9bc581a6f0698`。
 - 结果：`ready`，受控 GLB 和两个映射 URL 均返回 HTTP 200，浏览器创建 1 个 WebGL Canvas。
 - 本样件实际 Canonical Feature 数为 0，页面仍显示真实轻量化模型并如实提示无可信特征。
+
+同一 Revision 的重复重试会由进程内任务登记表去重，避免两个 Sidecar 同时争用事务式输出目录。Windows 子进程错误输出同时兼容 UTF-8 和本机代码页，页面不会再把“Feature Center 输出目录已存在”显示成乱码。任务只有在 Bundle、GLB 和映射文件全部校验后才进入 `ready`。
 
 ### 同件几何对照
 
 对照容差为 0.01 mm。两条路线的唯一实体数量均为 4，GLB 头可加载；包围盒最大差约 0.000189 mm，尺寸、中心和实体体积均在容差内，结果为 `match`。该检查用于发现单位错误、空模型和严重几何丢失，不是完整的模型版本比对。
 
-## 6. 本机配置
+## 6. Feature Center 页面状态
+
+Feature Center 仅展示 CATPart/CATIA 处理结果，STEP 始终进入 CAD 模型解析页。顶层菜单只保存“上一次真实成功 CATPart”的 `build_id`，不缓存或构造模型数据；没有成功记录时仍保留页面头部、三项导航栏、Viewer 外壳和右侧详情外壳，只不填充对象数据。独立 CATPart 的右侧详情由真实对象类型驱动，不显示数量、所属组件、装配层级或定位状态等装配实例字段。
+
+一级菜单继续保留图元建库、CAD 模型解析、Feature Center、二维图纸解析和专利附图标注。CAD 模型解析页只移除左侧“模型列表”，上传、刷新、装配/BOM、特征和几何拓扑入口仍保留。Feature Center 左侧折叠栏也固定保留装配结构、特征、几何拓扑三个入口和展开按钮。
+
+### 右侧详情分组
+
+详情面板只看“当前对象类型”和“是否存在真实装配上下文”，与 BOM 树当前是否展开无关。
+
+| 当前对象 | 详情分组 |
+| --- | --- |
+| 独立 CATPart | 零件属性、来源与特征、操作、高级拓扑信息 |
+| 独立 STEP | 零件属性、来源与识别结果、操作、高级拓扑信息 |
+| 装配中的 CATPart/STEP 实例 | 零件属性、装配实例属性、来源、装配定位、操作、高级拓扑信息 |
+| 总装或子装配 | 装配属性、装配统计、定位信息（有真实数据时）、操作 |
+| 设计特征 | 特征属性、参数、关联面、操作 |
+| Face、Edge、Vertex | 几何属性、拓扑归属、关联特征、操作 |
+
+独立零件不补 `数量=1`、所属组件、层级或“已定位”。CATPart 只有在原生特征和 Feature–Face 映射都真实可用时才启用“查看原生特征与关联面”；STEP 使用“查看识别特征与关联面”，没有映射时禁用。
+
+## 7. 本机配置
 
 后端从 `backend/.env` 读取已有 FreeCAD 和工作目录配置，并使用：
 
 ```text
 CAA_RADE_ROOT
 CAA_PREREQ_ROOT
+CATIA_WORKER_MODE
+CATIA_WORKER_URL
+CATIA_WORKER_JOB_TIMEOUT
 ```
 
 Python 依赖运行在 Conda 环境 `3dcad`。密钥、账号、本机绝对工作路径和上传源路径不进入业务响应或本文档。
+
+本机启动顺序如下，端口按部署配置调整：
+
+```bat
+conda activate 3dcad
+call 3DjiexiCAA\tools\start_catia_worker.bat
+cd backend
+python -m uvicorn app.main:app --host 127.0.0.1 --port 5180
+```
+
+Worker 健康检查：
+
+```bat
+call 3DjiexiCAA\tools\check_catia_worker.bat
+```
+
+当前后台任务运行在 Web 进程内。服务重启会中断正在运行的 Sidecar，任务会进入可重试失败状态；多 Web 进程部署还需要外部的单 Worker 调度约束。

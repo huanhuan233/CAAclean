@@ -1,12 +1,10 @@
 <script setup lang="ts">
 /**
- * index.vue — refactored for Component Library layout
- * ====================================================
- * Orchestrates: ComponentLibraryCatalog (left), ComponentLibraryTable (right),
- * ComponentLibraryDialog (modal), and ComponentYamlPreview (YAML tab).
+ * index.vue——图元库统一管理页面
+ * =================================
+ * 用途：编排左侧目录、右侧零件表、编辑弹窗和 YAML 预览。
  *
- * Preserves all existing business logic from the original file-tree version:
- * loadTree, loadCatalog, loadSelectedBuild, create/update, parsing, fusion, spec.
+ * 保留原文件树版本中的加载、增删改、解析、融合和规范编辑业务逻辑。
  */
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -27,6 +25,7 @@ import {
 } from '@/service/api';
 import { isOfflineRequestError, loadComponentSpecWithFallback } from './component-spec-loader';
 import { buildCatalogNavigation, type CatalogNavigationItem } from './catalog-navigation';
+import { modelViewerLocation } from './model-viewer-route';
 import ComponentLibraryCatalog from './modules/ComponentLibraryCatalog.vue';
 import ComponentLibraryTable from './modules/ComponentLibraryTable.vue';
 import ComponentLibraryDialog from './modules/ComponentLibraryDialog.vue';
@@ -40,10 +39,10 @@ const route = useRoute();
 const router = useRouter();
 const requestController = new AbortController();
 
-// ── Component refs ──
+// 用途：保存对子组件公开方法的引用。
 const libraryDialogRef = ref<InstanceType<typeof ComponentLibraryDialog> | null>(null);
 
-// ── Core state ──
+// 用途：保存页面核心状态。
 const treeLoading = ref(false);
 const catalogLoading = ref(false);
 const refreshing = ref(false);
@@ -65,17 +64,17 @@ const componentSpecLoading = ref(false);
 const componentSpecSaving = ref(false);
 let componentSpecRequestSequence = 0;
 
-// Fusion state (still used in dialog)
+// 用途：保存弹窗继续使用的融合状态。
 const fusionReport = ref<Api.ComponentBuild.FusionResponse | null>(null);
 const fusionLoading = ref(false);
 
-// ── Computed ──
+// 用途：集中声明页面派生状态。
 const catalogItems = computed<CatalogNavigationItem[]>(() => buildCatalogNavigation(treeData.value));
 
 const flatBuildRows = computed(() => {
   return flattenBuilds(treeData.value).map(build => {
     const detail = buildDetailMap.value[build.id]
-    // Prefer cached detail from backend, then from selected build, then tree fallback
+    // 用途：依次采用后端详情缓存、当前构建和目录节点中已有的真实字段。
     const cached = cachedBuildDetails.value[build.id]
     const merged = cached || (selectedBuild.value?.id === build.id ? selectedBuild.value : null) || detail
     return {
@@ -157,7 +156,7 @@ const buildDetailMap = computed(() => {
       }
     }
   }
-  // Merge in any previously-fetched details from the selected build
+  // 用途：合并当前构建已经从后端取得的详情。
   if (selectedBuild.value?.id && map[selectedBuild.value.id]) {
     map[selectedBuild.value.id] = {
       ...map[selectedBuild.value.id],
@@ -167,7 +166,7 @@ const buildDetailMap = computed(() => {
   return map
 });
 
-// ── Helper functions ──
+// 用途：集中放置页面辅助函数。
 function findCatalogLabel(code: string | null | undefined): string {
   if (!code) return ''
   const cat = catalog.value.find(c => c.category_code === code)
@@ -178,7 +177,7 @@ function findCatalogLabel(code: string | null | undefined): string {
 function flattenBuilds(nodes: ComponentTreeNode[], parentCategoryCode?: string | null, parentPartTypeCode?: string | null): ComponentTreeNode[] {
   const result: ComponentTreeNode[] = []
   for (const node of nodes) {
-    // Propagate category/part code from parent if node itself doesn't have it
+    // 用途：节点缺少分类或零件类型编码时，沿真实父目录继承。
     if (!node.category_code && parentCategoryCode) {
       node.category_code = parentCategoryCode
     }
@@ -200,7 +199,7 @@ function flattenBuilds(nodes: ComponentTreeNode[], parentCategoryCode?: string |
 function allBuildNodes(nodes: ComponentTreeNode[], parentCategoryCode?: string | null, parentPartTypeCode?: string | null): ComponentTreeNode[] {
   const result: ComponentTreeNode[] = []
   for (const node of nodes) {
-    // Propagate category/part code from parent if node itself doesn't have it
+    // 用途：节点缺少分类或零件类型编码时，沿真实父目录继承。
     if (!node.category_code && parentCategoryCode) {
       node.category_code = parentCategoryCode
     }
@@ -220,7 +219,7 @@ function allBuildNodes(nodes: ComponentTreeNode[], parentCategoryCode?: string |
 function countBuildsInCategory(code: string, parentCode?: string): number {
   return allBuildNodes(treeData.value).filter(node => {
     if (parentCode) {
-      // part_type_code — filter by part_type_code and category_code
+      // 用途：同时按零件类型编码和分类编码筛选。
       return node.part_type_code === code && node.category_code === parentCode
     }
     return node.category_code === code
@@ -337,7 +336,7 @@ function formatError(error: unknown, fallback: string) {
   return fallback
 }
 
-// ── Data loading ──
+// 用途：集中放置页面数据加载函数。
 
 async function loadSelectedBuild(buildId: string, options: { silent?: boolean } = {}): Promise<boolean> {
   if (!buildId) {
@@ -362,7 +361,7 @@ async function ensureBuildDetailLoaded(buildId: string) {
   const queryOptions = { signal: requestController.signal, silent: true }
   const result = await fetchComponentBuild(buildId, queryOptions)
   if (!result.error && result.data) {
-    // Will be picked up by the buildDetailMap computed next render
+    // 用途：保存后由 buildDetailMap 在下一次渲染中读取。
   }
 }
 
@@ -455,7 +454,7 @@ async function loadTree(options: { preserveSelection?: boolean; silent?: boolean
     if (!options.preserveSelection && selectedCatalogId.value === '__root__' && treeData.value.length) {
       selectedCatalogId.value = treeData.value[0].id
     }
-    // Load details for all builds to populate columns like standard_number
+    // 用途：读取全部构建详情，填充标准号等真实表格字段。
     void loadAllBuildDetails(options.silent)
     return true
   } finally {
@@ -536,7 +535,7 @@ function syncPolling() {
   }
 }
 
-// ── Event handlers ──
+// 用途：集中放置页面事件处理函数。
 
 function handleCatalogSelect(catalogId: string) {
   selectedCatalogId.value = catalogId
@@ -546,6 +545,12 @@ function handleRowClick(buildId: string) {
   selectedBuildId.value = buildId
   void loadSelectedBuild(buildId)
   openDialogForBuild(buildId)
+}
+
+// 用途：根据真实源格式进入对应工作台，防止 STEP 被错误送入 CATPart 专属 Feature Center。
+function openModelViewer(buildId: string, revisionId: string) {
+  const row = displayedRows.value.find(item => item.id === buildId);
+  router.push(modelViewerLocation(buildId, revisionId, row?.sourceFormat));
 }
 
 async function openDialogForBuild(buildId: string) {
@@ -576,7 +581,7 @@ function handleDialogSubmit(payload: {
     if (result.error || !result.data) throw result.error
     libraryDialogRef.value?.close()
     void router.replace({ path: '/component-build', query: { build_id: result.data.id } })
-    // Update cache with saved build data so the table reflects new values immediately
+    // 用途：用保存后的构建数据更新缓存，让表格立即显示新值。
     cachedBuildDetails.value = { ...cachedBuildDetails.value, [result.data.id]: result.data }
     void loadTree()
     selectedBuild.value = result.data
@@ -604,11 +609,11 @@ function handleDeleteBuild(buildId: string) {
     try {
       const result = await deleteComponentBuild(buildId)
       if (result.error) throw result.error
-      // Clear cached detail for deleted build
+      // 用途：清除已删除构建的详情缓存。
       const next = { ...cachedBuildDetails.value }
       delete next[buildId]
       cachedBuildDetails.value = next
-      // Remove from local tree
+      // 用途：从当前目录树移除已删除节点。
       treeData.value = treeData.value.filter(node => node.id !== buildId).map(node => ({
         ...node,
         children: removeNodeFromChildren(node.children, buildId)
@@ -618,7 +623,7 @@ function handleDeleteBuild(buildId: string) {
         selectedBuildId.value = ''
       }
       window.$message?.success('图元已删除')
-      // Reload from server
+      // 用途：删除后从服务端重新加载权威目录数据。
       void refresh()
     } catch (error) {
       window.$message?.error(formatError(error, '删除图元失败'))
@@ -737,13 +742,13 @@ function handleOpenCreateDialog() {
   libraryDialogRef.value?.open(null, buildStatuses.value, null)
 }
 
-// ── Watch ──
+// 用途：监听目录和路由变化。
 watch(treeData, syncPolling, { deep: true })
 watch(buildStatuses, statuses => {
   libraryDialogRef.value?.updateBuildStatuses(statuses)
 }, { deep: true })
 
-// ── Init ──
+// 用途：执行页面初始化。
 onMounted(async () => {
   const [treeOk, catalogOk] = await Promise.all([loadTree(), loadCatalog()])
   statusUnavailable.value = !(treeOk && catalogOk)
@@ -812,7 +817,7 @@ onBeforeUnmount(() => {
           @update:keyword="searchKeyword = $event"
           @edit="openDialogForBuild"
           @delete-build="handleDeleteBuild"
-          @view-cad-model="(bid) => router.push({ path: '/feature-center', query: { build_id: bid } })"
+          @view-cad-model="openModelViewer"
           @view-drawing="(bid, taskId) => router.push({ path: '/cad-spec', query: { revision_id: '', task_id: taskId, build_id: bid } })"
           @start-step-parsing="(bid) => handleStartParsing(bid, 'reference_step')"
           @start-drawing-parsing="(bid) => handleStartParsing(bid, 'drawing')"
@@ -863,7 +868,7 @@ export default { name: 'ComponentBuild' }
   gap: 16px;
 }
 
-/* ── Header ── */
+/* 页面标题栏样式 */
 .library-header {
   display: flex;
   align-items: center;
@@ -897,7 +902,7 @@ export default { name: 'ComponentBuild' }
   flex-shrink: 0;
 }
 
-/* ── Main layout ── */
+/* 页面主布局样式 */
 .library-main {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
@@ -922,7 +927,7 @@ export default { name: 'ComponentBuild' }
   margin-top: 12px;
 }
 
-/* ── Responsive ── */
+/* 响应式布局样式 */
 @media (max-width: 860px) {
   .component-library-page {
     padding: 12px;
