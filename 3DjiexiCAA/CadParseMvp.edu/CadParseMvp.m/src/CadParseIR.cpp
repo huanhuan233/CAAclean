@@ -1,4 +1,4 @@
-// ±¾ÎÄ¼ş°Ñ´¿Êı¾İ IR ÊÂÎñÊ½ĞòÁĞ»¯Îª JSON/JSONL£»ÇëÇóÄ¿Â¼Ö»»á³öÏÖÍêÕûµÄÒ»Ì×½á¹û¡£
+ï»¿// æœ¬æ–‡ä»¶æŠŠçº¯æ•°æ® IR äº‹åŠ¡å¼åºåˆ—åŒ–ä¸º JSON/JSONLï¼›è¯·æ±‚ç›®å½•åªä¼šå‡ºç°å®Œæ•´çš„ä¸€å¥—ç»“æœã€‚
 #include "CadParseIR.h"
 
 #include <direct.h>
@@ -13,7 +13,7 @@ namespace cadparse
 {
 namespace
 {
-// ÓÃÍ¾£ºÁ¬½Ó Windows Ä¿Â¼Óë²úÎïÎÄ¼şÃû£¬²¢¼æÈİÄ©Î²ÒÑÓĞ·Ö¸ô·ûµÄÄ¿Â¼¡£
+// ç”¨é€”ï¼šè¿æ¥ Windows ç›®å½•ä¸äº§ç‰©æ–‡ä»¶åï¼Œå¹¶å…¼å®¹æœ«å°¾å·²æœ‰åˆ†éš”ç¬¦çš„ç›®å½•ã€‚
 std::string JoinPath(const std::string& directory, const char* name)
 {
   if (directory.empty()) return name;
@@ -21,7 +21,7 @@ std::string JoinPath(const std::string& directory, const char* name)
   return directory + ((last == '\\' || last == '/') ? "" : "\\") + name;
 }
 
-// ÓÃÍ¾£º´Ó×óµ½ÓÒÖğ¼¶´´½¨Ä¿Â¼£»ÒÑ´æÔÚÄ¿Â¼²»ÊÓÎª´íÎó¡£
+// ç”¨é€”ï¼šä»å·¦åˆ°å³é€çº§åˆ›å»ºç›®å½•ï¼›å·²å­˜åœ¨ç›®å½•ä¸è§†ä¸ºé”™è¯¯ã€‚
 bool EnsureDirectory(const std::string& path, std::string& error)
 {
   if (path.empty()) { error = "output directory is empty"; return false; }
@@ -39,7 +39,7 @@ bool EnsureDirectory(const std::string& path, std::string& error)
   return true;
 }
 
-// ÓÃÍ¾£ºµİ¹éÉ¾³ı½öÓÉ±¾ Writer Éú³ÉµÄ staging/backup Ä¿Â¼£¬Ö§³ÖÊÂÎñÇåÀíºÍ»Ø¹ö¡£
+// ç”¨é€”ï¼šé€’å½’åˆ é™¤ä»…ç”±æœ¬ Writer ç”Ÿæˆçš„ staging/backup ç›®å½•ï¼Œæ”¯æŒäº‹åŠ¡æ¸…ç†å’Œå›æ»šã€‚
 bool RemoveTree(const std::string& path)
 {
   const DWORD attributes = GetFileAttributesA(path.c_str());
@@ -67,7 +67,7 @@ bool RemoveTree(const std::string& path)
   return RemoveDirectoryA(path.c_str()) != 0 || GetLastError() == ERROR_PATH_NOT_FOUND;
 }
 
-// ÓÃÍ¾£ºÔ­×ÓÇĞ»» staging ºÍÕıÊ½Ä¿Â¼£»¾É½á¹ûÏÈ¸ÄÃûÎª backup£¬Ê§°ÜÊ±¿É»Ö¸´¡£
+// ç”¨é€”ï¼šåŸå­åˆ‡æ¢ staging å’Œæ­£å¼ç›®å½•ï¼›æ—§ç»“æœå…ˆæ”¹åä¸º backupï¼Œå¤±è´¥æ—¶å¯æ¢å¤ã€‚
 bool CommitStaging(const std::string& staging, const std::string& output_dir, std::string& error)
 {
   const std::string backup = output_dir + ".cadparse_backup";
@@ -85,7 +85,7 @@ bool CommitStaging(const std::string& staging, const std::string& output_dir, st
   return true;
 }
 
-// ÓÃÍ¾£º°Ñ×Ö·û´®Êı×é°´ÏÖÓĞË³ĞòĞ´³É JSON£¬ËùÓĞÔªËØÍ³Ò»×ªÒå¡£
+// ç”¨é€”ï¼šæŠŠå­—ç¬¦ä¸²æ•°ç»„æŒ‰ç°æœ‰é¡ºåºå†™æˆ JSONï¼Œæ‰€æœ‰å…ƒç´ ç»Ÿä¸€è½¬ä¹‰ã€‚
 void WriteStringArray(std::ostream& output, const std::vector<std::string>& values)
 {
   output << '[';
@@ -94,7 +94,7 @@ void WriteStringArray(std::ostream& output, const std::vector<std::string>& valu
   output << ']';
 }
 
-// ÓÃÍ¾£º°ÑÎÈ¶¨ÅÅĞòµÄ string¡ústring map Ğ´³É JSON ¶ÔÏó¡£
+// ç”¨é€”ï¼šæŠŠç¨³å®šæ’åºçš„ stringâ†’string map å†™æˆ JSON å¯¹è±¡ã€‚
 void WriteStringMap(std::ostream& output, const std::map<std::string, std::string>& values)
 {
   output << '{';
@@ -103,7 +103,7 @@ void WriteStringMap(std::ostream& output, const std::map<std::string, std::strin
   output << '}';
 }
 
-// ÓÃÍ¾£º°ÑÎÈ¶¨ÅÅĞòµÄ string¡úlong map Ğ´³É JSON ¶ÔÏó¡£
+// ç”¨é€”ï¼šæŠŠç¨³å®šæ’åºçš„ stringâ†’long map å†™æˆ JSON å¯¹è±¡ã€‚
 void WriteCountMap(std::ostream& output, const std::map<std::string, long>& values)
 {
   output << '{';
@@ -112,13 +112,72 @@ void WriteCountMap(std::ostream& output, const std::map<std::string, long>& valu
   output << '}';
 }
 
-// ÓÃÍ¾£ºĞ´³ö¿É¿ÕÊıÖµ£¬±ÜÃâÓÃ 0 Ã°³äÃ»ÓĞ¹æ·¶»¯½á¹û¡£
+// ç”¨é€”ï¼šå†™å‡ºå¯ç©ºæ•°å€¼ï¼Œé¿å…ç”¨ 0 å†’å……æ²¡æœ‰è§„èŒƒåŒ–ç»“æœã€‚
 void WriteOptionalNumber(std::ostream& output, bool present, double value)
 {
   if (present) output << std::setprecision(15) << value; else output << "null";
 }
 
-// ÓÃÍ¾£ºĞ´³ö Feature ÄÚÇ¶µÄ String ²ÎÊı½á¹û£»¸Ã×Ö¶ÎÈÔÊôÓÚÔ­Ê¼ CAA ¶ÔÏó¡£
+// ç”¨é€”ï¼šå†™å‡ºå¯ç©ºå­—ç¬¦ä¸²ï¼›åˆæ³•ç©ºå­—ç¬¦ä¸²ä»è¾“å‡º ""ï¼Œæœªå–å¾—å­—æ®µæ‰è¾“å‡º nullã€‚
+void WriteOptionalString(std::ostream& output, const OptionalNativeHoleString& value)
+{
+  if (value.has_value) output << '"' << JsonEscape(value.value) << '"';
+  else output << "null";
+}
+
+// ç”¨é€”ï¼šå†™å‡º Native Hole çš„çº¯æ•°æ®è½½è·ï¼Œä¿æŒ number/boolean/array/null çš„ JSON ç±»å‹ã€‚
+void WriteNativeHole(std::ostream& output, const NativeHoleData& hole)
+{
+  output << "{\"semantic_kind\":\"" << JsonEscape(hole.semantic_kind)
+         << "\",\"value_source\":\"" << JsonEscape(hole.value_source)
+         << "\",\"interface_key\":\"" << JsonEscape(hole.interface_key)
+         << "\",\"hole_type\":\"" << JsonEscape(hole.hole_type)
+         << "\",\"hole_type_raw\":" << hole.hole_type_raw
+         << ",\"diameter_mm\":" << std::setprecision(15) << hole.diameter_mm
+         << ",\"origin_mm\":[" << hole.origin_mm[0] << ',' << hole.origin_mm[1]
+         << ',' << hole.origin_mm[2] << "]"
+         << ",\"direction\":[" << hole.direction[0] << ',' << hole.direction[1]
+         << ',' << hole.direction[2] << "]"
+         << ",\"bottom_limit\":{\"mode\":\"" << JsonEscape(hole.bottom_limit.mode)
+         << "\",\"mode_raw\":" << hole.bottom_limit.mode_raw << ",\"depth_mm\":";
+  WriteOptionalNumber(output, hole.bottom_limit.depth_mm.has_value,
+                      hole.bottom_limit.depth_mm.value);
+  output << ",\"depth_status\":\"" << JsonEscape(hole.bottom_limit.depth_mm.status)
+         << "\"},\"head\":{\"kind\":\"" << JsonEscape(hole.head.kind)
+         << "\",\"diameter_mm\":";
+  WriteOptionalNumber(output, hole.head.diameter_mm.has_value, hole.head.diameter_mm.value);
+  output << ",\"diameter_status\":\"" << JsonEscape(hole.head.diameter_mm.status)
+         << "\",\"depth_mm\":";
+  WriteOptionalNumber(output, hole.head.depth_mm.has_value, hole.head.depth_mm.value);
+  output << ",\"depth_status\":\"" << JsonEscape(hole.head.depth_mm.status)
+         << "\",\"angle_deg\":";
+  WriteOptionalNumber(output, hole.head.angle_deg.has_value, hole.head.angle_deg.value);
+  output << ",\"angle_status\":\"" << JsonEscape(hole.head.angle_deg.status)
+         << "\"},\"thread\":{\"enabled\":" << (hole.thread.enabled ? "true" : "false")
+         << ",\"mode_raw\":" << hole.thread.mode_raw << ",\"description\":";
+  WriteOptionalString(output, hole.thread.description);
+  output << ",\"description_status\":\"" << JsonEscape(hole.thread.description.status)
+         << "\",\"diameter_mm\":";
+  WriteOptionalNumber(output, hole.thread.diameter_mm.has_value, hole.thread.diameter_mm.value);
+  output << ",\"diameter_status\":\"" << JsonEscape(hole.thread.diameter_mm.status)
+         << "\",\"depth_mm\":";
+  WriteOptionalNumber(output, hole.thread.depth_mm.has_value, hole.thread.depth_mm.value);
+  output << ",\"depth_status\":\"" << JsonEscape(hole.thread.depth_mm.status)
+         << "\",\"pitch_mm\":";
+  WriteOptionalNumber(output, hole.thread.pitch_mm.has_value, hole.thread.pitch_mm.value);
+  output << ",\"pitch_status\":\"" << JsonEscape(hole.thread.pitch_mm.status)
+         << "\"},\"automation_alias\":";
+  if (hole.has_automation_alias)
+    output << '"' << JsonEscape(hole.automation_alias) << '"';
+  else
+    output << "null";
+  output << ",\"automation_alias_status\":\"" << JsonEscape(hole.automation_alias_status)
+         << "\",\"field_status\":";
+  WriteStringMap(output, hole.field_status);
+  output << '}';
+}
+
+// ç”¨é€”ï¼šå†™å‡º Feature å†…åµŒçš„ String å‚æ•°ç»“æœï¼›è¯¥å­—æ®µä»å±äºåŸå§‹ CAA å¯¹è±¡ã€‚
 void WriteParameterValue(std::ostream& output, const ParameterValueData& parameter)
 {
   output << "{\"parameter_kind\":\"" << JsonEscape(parameter.parameter_kind)
@@ -135,7 +194,7 @@ void WriteParameterValue(std::ostream& output, const ParameterValueData& paramet
          << "\",\"is_hidden\":\"" << JsonEscape(parameter.is_hidden) << "\"}";
 }
 
-// ÓÃÍ¾£º°´ cad_parse_mvp_v1 Schema Ğ´Ò»¸ö Feature£¬²»°üº¬ÈÎºÎÔ­ÉúÖ¸Õë»ò¾ä±ú¡£
+// ç”¨é€”ï¼šæŒ‰ cad_parse_mvp_v2 Schema å†™ä¸€ä¸ª Featureï¼Œä¸åŒ…å«ä»»ä½•åŸç”ŸæŒ‡é’ˆæˆ–å¥æŸ„ã€‚
 void WriteFeature(std::ostream& output, const FeatureRecord& record)
 {
   output << "{\"feature_id\":\"" << JsonEscape(record.feature_id)
@@ -162,10 +221,11 @@ void WriteFeature(std::ostream& output, const FeatureRecord& record)
          << "\",\"attributes\":";
   WriteStringMap(output, record.attributes);
   if (record.has_parameter) { output << ",\"parameter\":"; WriteParameterValue(output, record.parameter); }
+  if (record.has_native_hole) { output << ",\"native_hole\":"; WriteNativeHole(output, record.native_hole); }
   output << ",\"diagnostic_ids\":"; WriteStringArray(output, record.diagnostic_ids); output << '}';
 }
 
-// ÓÃÍ¾£ºĞ´Ò»Ìõ²ÎÊıÏû·ÑË÷Òı£¬parameter_id Ê¼ÖÕ¸´ÓÃÔ­ Feature ID¡£
+// ç”¨é€”ï¼šå†™ä¸€æ¡å‚æ•°æ¶ˆè´¹ç´¢å¼•ï¼Œparameter_id å§‹ç»ˆå¤ç”¨åŸ Feature IDã€‚
 void WriteParameter(std::ostream& output, const ParameterRecord& record)
 {
   output << "{\"parameter_id\":\"" << JsonEscape(record.parameter_id)
@@ -188,7 +248,7 @@ void WriteParameter(std::ostream& output, const ParameterRecord& record)
   WriteStringArray(output, record.diagnostic_ids); output << '}';
 }
 
-// ÓÃÍ¾£ºĞ´Ò»ÌõÉùÃ÷Ê½ÒµÎñÌØÕ÷¼°ÆäÀ´Ô´Ö¤¾İ£¬Ã÷È·Ã»ÓĞÖ´ĞĞ¼¸ºÎÊ¶±ğ¡£
+// ç”¨é€”ï¼šå†™ä¸€æ¡å£°æ˜å¼ä¸šåŠ¡ç‰¹å¾åŠå…¶æ¥æºè¯æ®ï¼Œæ˜ç¡®æ²¡æœ‰æ‰§è¡Œå‡ ä½•è¯†åˆ«ã€‚
 void WriteBusinessFeature(std::ostream& output, const BusinessFeatureRecord& record)
 {
   output << "{\"business_feature_id\":\"" << JsonEscape(record.business_feature_id)
@@ -229,7 +289,7 @@ void WriteBusinessFeature(std::ostream& output, const BusinessFeatureRecord& rec
   WriteStringArray(output, record.diagnostic_ids); output << '}';
 }
 
-// ÓÃÍ¾£ºÒÔ binary+truncate ´ò¿ª staging ²úÎï£¬Ê§°ÜÊ±·µ»ØÃ÷È·ÎÄ¼şÂ·¾¶¡£
+// ç”¨é€”ï¼šä»¥ binary+truncate æ‰“å¼€ staging äº§ç‰©ï¼Œå¤±è´¥æ—¶è¿”å›æ˜ç¡®æ–‡ä»¶è·¯å¾„ã€‚
 bool OpenOutput(std::ofstream& output, const std::string& path, std::string& error)
 {
   output.open(path.c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
@@ -237,7 +297,7 @@ bool OpenOutput(std::ofstream& output, const std::string& path, std::string& err
   return true;
 }
 
-// ÓÃÍ¾£ºË¢ĞÂ²¢¹Ø±Õ²úÎï£¬Í¬Ê±¼ì²éÑÓ³Ùµ½ flush/close ²Å±©Â¶µÄ´ÅÅÌ´íÎó¡£
+// ç”¨é€”ï¼šåˆ·æ–°å¹¶å…³é—­äº§ç‰©ï¼ŒåŒæ—¶æ£€æŸ¥å»¶è¿Ÿåˆ° flush/close æ‰æš´éœ²çš„ç£ç›˜é”™è¯¯ã€‚
 bool FinishOutput(std::ofstream& output, const char* artifact, std::string& error)
 {
   output.flush();
@@ -247,7 +307,7 @@ bool FinishOutput(std::ofstream& output, const char* artifact, std::string& erro
   return true;
 }
 
-// ÓÃÍ¾£º·µ»ØÎÄ¼ş×Ö½ÚÊı£»Manifest ²úÎïÍ³¼ÆÊ¹ÓÃ´ÅÅÌÊµ¼ÊÖµ¶ø²»ÊÇÄÚ´æ¹ÀËã¡£
+// ç”¨é€”ï¼šè¿”å›æ–‡ä»¶å­—èŠ‚æ•°ï¼›Manifest äº§ç‰©ç»Ÿè®¡ä½¿ç”¨ç£ç›˜å®é™…å€¼è€Œä¸æ˜¯å†…å­˜ä¼°ç®—ã€‚
 unsigned long FileSize(const std::string& path)
 {
   WIN32_FILE_ATTRIBUTE_DATA data;
@@ -255,7 +315,7 @@ unsigned long FileSize(const std::string& path)
   return data.nFileSizeLow;
 }
 
-// ÓÃÍ¾£ºÔÚĞ´ÅÌÇ°ÑéÖ¤ËùÓĞ¹ØÏµºÍÅÉÉúË÷Òı¶¼ÄÜ·´²éÔ­Ê¼ Feature£¬½ûÖ¹Ğü¿ÕÒıÓÃ½øÈëÕıÊ½½á¹û¡£
+// ç”¨é€”ï¼šåœ¨å†™ç›˜å‰éªŒè¯æ‰€æœ‰å…³ç³»å’Œæ´¾ç”Ÿç´¢å¼•éƒ½èƒ½åæŸ¥åŸå§‹ Featureï¼Œç¦æ­¢æ‚¬ç©ºå¼•ç”¨è¿›å…¥æ­£å¼ç»“æœã€‚
 bool ValidateReferences(const std::vector<FeatureRecord>& features,
                         const std::vector<RelationRecord>& relations,
                         const std::vector<ParameterRecord>& parameters,
@@ -293,10 +353,10 @@ bool ValidateReferences(const std::vector<FeatureRecord>& features,
 }
 }
 
-// ÓÃÍ¾£º´´½¨ JSON Writer ²¢±£´æÆÕÍ¨ JSON ÊÇ·ñ²ÉÓÃÒ×¶Á¿Õ°×¡£
+// ç”¨é€”ï¼šåˆ›å»º JSON Writer å¹¶ä¿å­˜æ™®é€š JSON æ˜¯å¦é‡‡ç”¨æ˜“è¯»ç©ºç™½ã€‚
 JsonArtifactWriter::JsonArtifactWriter(bool pretty) : _pretty(pretty) {}
 
-// ÓÃÍ¾£ºÎª¼òµ¥µ÷ÓÃ·½½¨Á¢²ÎÊı/ÒµÎñÅÉÉúË÷Òı£¬ÔÙµ÷ÓÃÍêÕûÊÂÎñĞ´³öÈë¿Ú¡£
+// ç”¨é€”ï¼šä¸ºç®€å•è°ƒç”¨æ–¹å»ºç«‹å‚æ•°/ä¸šåŠ¡æ´¾ç”Ÿç´¢å¼•ï¼Œå†è°ƒç”¨å®Œæ•´äº‹åŠ¡å†™å‡ºå…¥å£ã€‚
 bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
                                const std::vector<RelationRecord>& relations,
                                ParseContext& context,
@@ -310,7 +370,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   return Write(features, relations, parameters, business_features, context, output_dir, error);
 }
 
-// ÓÃÍ¾£ºÒ»´ÎĞ´Íê staging¡¢¼ÆËãÍ³¼ÆÓë¹şÏ£¡¢×îºóÉú³É Coverage/Manifest£¬ÔÙÔ­×ÓÌá½»Ä¿Â¼¡£
+// ç”¨é€”ï¼šä¸€æ¬¡å†™å®Œ stagingã€è®¡ç®—ç»Ÿè®¡ä¸å“ˆå¸Œã€æœ€åç”Ÿæˆ Coverage/Manifestï¼Œå†åŸå­æäº¤ç›®å½•ã€‚
 bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
                                const std::vector<RelationRecord>& relations,
                                const std::vector<ParameterRecord>& parameters,
@@ -369,7 +429,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "diagnostics.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "parser.log"), error)) return false;
-  output << "schema=cad_parse_mvp_v1\ninput=" << JsonEscape(context.metadata.input_file_name)
+  output << "schema=" << CAD_PARSE_SCHEMA_VERSION << "\ninput=" << JsonEscape(context.metadata.input_file_name)
          << "\nfeatures=" << features.size() << "\nparameters=" << parameters.size()
          << "\nbusiness_features=" << business_features.size() << "\ncoverage_conserved=true\n";
   feature = features.begin();
@@ -421,6 +481,11 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"business_feature_without_values_count\":" << context.statistics.business_feature_without_values_count
          << ",\"orphan_parameter_count\":" << context.statistics.orphan_parameter_count
          << ",\"ambiguous_parameter_owner_count\":" << context.statistics.ambiguous_parameter_owner_count
+         << ",\"native_hole_candidate_count\":" << context.statistics.native_hole_candidate_count
+         << ",\"native_hole_success_count\":" << context.statistics.native_hole_success_count
+         << ",\"native_hole_partial_count\":" << context.statistics.native_hole_partial_count
+         << ",\"native_hole_unsupported_count\":" << context.statistics.native_hole_unsupported_count
+         << ",\"native_hole_exception_count\":" << context.statistics.native_hole_exception_count
          << ",\"document_open_ms\":" << context.statistics.document_open_ms
          << ",\"traversal_ms\":" << context.statistics.traversal_ms
          << ",\"decoder_ms\":" << context.statistics.decoder_ms

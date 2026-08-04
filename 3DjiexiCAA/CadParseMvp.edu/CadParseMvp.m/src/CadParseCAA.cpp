@@ -1,5 +1,5 @@
-// ±¾ÎÄ¼şÊÇ½âÎöÆ÷Óë CATIA V5R21 PublicInterfaces µÄ±ß½ç¡£
-// Ëü¸ºÔğÒıÓÃ¼ÆÊı¡¢Session/Document ÉúÃüÖÜÆÚ¡¢ÀàĞÍÖ¸ÎÆ²É¼¯ºÍÈ·¶¨ĞÔ¹æ¸ñÊ÷±éÀú¡£
+ï»¿// æœ¬æ–‡ä»¶æ˜¯è§£æå™¨ä¸ CATIA V5R21 PublicInterfaces çš„è¾¹ç•Œã€‚
+// å®ƒè´Ÿè´£å¼•ç”¨è®¡æ•°ã€Session/Document ç”Ÿå‘½å‘¨æœŸã€ç±»å‹æŒ‡çº¹é‡‡é›†å’Œç¡®å®šæ€§è§„æ ¼æ ‘éå†ã€‚
 #include "CadParseCAA.h"
 
 #include "CATBaseUnknown.h"
@@ -17,6 +17,14 @@
 #include "CATSession.h"
 #include "CATSessionServices.h"
 #include "CATUnicodeString.h"
+#include "CATIAHole.h"
+#include "CATIALimit.h"
+#include "CATIALength.h"
+#include "CATIAAngle.h"
+#include "CATIAStrParam.h"
+#include "CATHoleDefs.h"
+#include "CATLimitDefs.h"
+#include "CATSafeArray.h"
 
 #include <algorithm>
 #include <cstring>
@@ -26,53 +34,73 @@
 
 namespace cadparse
 {
-// Í¨ÓÃ CAA ½Ó¿ÚÖ¸Õë RAII ÊØÎÀ¡£
-// Ä£°å²ÎÊı T ±£Áô¾ßÌå½Ó¿ÚÀàĞÍ£»ÊØÎÀ½Ó¹ÜÒ»¸öÒÑ³ÖÓĞÒıÓÃ£¬²¢ÔÚÎö¹¹Ê±µ÷ÓÃÒ»´Î Release¡£
+// é€šç”¨ CAA æ¥å£æŒ‡é’ˆ RAII å®ˆå«ã€‚
+// æ¨¡æ¿å‚æ•° T ä¿ç•™å…·ä½“æ¥å£ç±»å‹ï¼›å®ˆå«æ¥ç®¡ä¸€ä¸ªå·²æŒæœ‰å¼•ç”¨ï¼Œå¹¶åœ¨ææ„æ—¶è°ƒç”¨ä¸€æ¬¡ Releaseã€‚
 template <class T>
 class CaaInterfaceGuard
 {
 public:
-  // ÓÃÍ¾£º½Ó¹Ü pointer µ±Ç°´ú±íµÄ CAA ÒıÓÃ£»ÔÊĞí´«Èë¿ÕÖ¸Õë¡£
+  // ç”¨é€”ï¼šæ¥ç®¡ pointer å½“å‰ä»£è¡¨çš„ CAA å¼•ç”¨ï¼›å…è®¸ä¼ å…¥ç©ºæŒ‡é’ˆã€‚
   explicit CaaInterfaceGuard(T* pointer = 0) : _pointer(pointer) {}
-  // ÓÃÍ¾£ºÊÍ·Å¹¹ÔìÊ±½Ó¹ÜµÄÒıÓÃ£»²»ÊÍ·Å¿ÕÖ¸Õë¡£
+  // ç”¨é€”ï¼šé‡Šæ”¾æ„é€ æ—¶æ¥ç®¡çš„å¼•ç”¨ï¼›ä¸é‡Šæ”¾ç©ºæŒ‡é’ˆã€‚
   ~CaaInterfaceGuard() { if (_pointer) _pointer->Release(); }
-  // ÓÃÍ¾£º·µ»Ø½èÓÃÖ¸Õë¹©µ±Ç°×÷ÓÃÓòµ÷ÓÃ£»µ÷ÓÃÕß²»ÄÜ¶îÍâ Release¡£
+  // ç”¨é€”ï¼šè¿”å›å€Ÿç”¨æŒ‡é’ˆä¾›å½“å‰ä½œç”¨åŸŸè°ƒç”¨ï¼›è°ƒç”¨è€…ä¸èƒ½é¢å¤– Releaseã€‚
   T* Get() const { return _pointer; }
+  // ç”¨é€”ï¼šæŠŠå—ä¿æŠ¤çš„è¾“å‡ºæ§½äº¤ç»™ QueryInterface/getterï¼›å³ä½¿è°ƒç”¨æŠ›å¼‚å¸¸ä¹Ÿèƒ½é‡Šæ”¾å·²å†™å…¥å¼•ç”¨ã€‚
+  T*& Out() { return _pointer; }
 
 private:
-  // ÓÃÍ¾£º½ûÖ¹¸´ÖÆÊØÎÀ£¬±ÜÃâÁ½¸öÎö¹¹º¯Êı¶ÔÍ¬Ò»ÒıÓÃÖØ¸´ Release¡£
+  // ç”¨é€”ï¼šç¦æ­¢å¤åˆ¶å®ˆå«ï¼Œé¿å…ä¸¤ä¸ªææ„å‡½æ•°å¯¹åŒä¸€å¼•ç”¨é‡å¤ Releaseã€‚
   CaaInterfaceGuard(const CaaInterfaceGuard&);
-  // ÓÃÍ¾£º½ûÖ¹¸³Öµ£¬±£³ÖÒıÓÃÇåÀíÔğÈÎÎ¨Ò»¡£
+  // ç”¨é€”ï¼šç¦æ­¢èµ‹å€¼ï¼Œä¿æŒå¼•ç”¨æ¸…ç†è´£ä»»å”¯ä¸€ã€‚
   CaaInterfaceGuard& operator=(const CaaInterfaceGuard&);
   T* _pointer;
 };
 
-// ListComponents ·µ»ØµÄ¶Ñ·ÖÅäÁĞ±í×¨ÓÃÊØÎÀ£»¸ÃÁĞ±í°´ R21 API ÆõÔ¼Ê¹ÓÃ delete Ïú»Ù¡£
+// CATBSTR ä¸“ç”¨ RAIIï¼›R21 CATBSTR.h è¦æ±‚ç”± CATFreeString è€Œä¸æ˜¯ SysFreeString é‡Šæ”¾ã€‚
+class CaaBstrGuard
+{
+public:
+  // ç”¨é€”ï¼šåˆ›å»ºç©ºå­—ç¬¦ä¸²è¾“å‡ºæ§½ï¼Œä¾› Automation getter å†™å…¥ã€‚
+  CaaBstrGuard() : _value(0) {}
+  // ç”¨é€”ï¼šæŒ‰ç…§ CATBSTR Public å¥‘çº¦é‡Šæ”¾å·²è¿”å›å­—ç¬¦ä¸²ã€‚
+  ~CaaBstrGuard() { if (_value) CATFreeString(_value); }
+  // ç”¨é€”ï¼šè¿”å› getter æ‰€éœ€çš„å¼•ç”¨è¾“å‡ºæ§½ã€‚
+  CATBSTR& Out() { return _value; }
+  // ç”¨é€”ï¼šå€Ÿç”¨å·²è¿”å›å­—ç¬¦ä¸²è¿›è¡Œ UTF-8 è½¬æ¢ã€‚
+  CATBSTR Get() const { return _value; }
+private:
+  CaaBstrGuard(const CaaBstrGuard&);
+  CaaBstrGuard& operator=(const CaaBstrGuard&);
+  CATBSTR _value;
+};
+
+// ListComponents è¿”å›çš„å †åˆ†é…åˆ—è¡¨ä¸“ç”¨å®ˆå«ï¼›è¯¥åˆ—è¡¨æŒ‰ R21 API å¥‘çº¦ä½¿ç”¨ delete é”€æ¯ã€‚
 class SpecListGuard
 {
 public:
-  // ÓÃÍ¾£º½Ó¹Ü CATISpecObject ÁĞ±í¶ÔÏóµÄËùÓĞÈ¨¡£
+  // ç”¨é€”ï¼šæ¥ç®¡ CATISpecObject åˆ—è¡¨å¯¹è±¡çš„æ‰€æœ‰æƒã€‚
   explicit SpecListGuard(CATListValCATISpecObject_var* list) : _list(list) {}
-  // ÓÃÍ¾£ºÊÍ·ÅÕû¸öÁĞ±í°ü×°¶ÔÏó£»ÁĞ±íÄÚµÄ _var ÔªËØ×ÔĞĞ¹ÜÀí¸÷×ÔÒıÓÃ¡£
+  // ç”¨é€”ï¼šé‡Šæ”¾æ•´ä¸ªåˆ—è¡¨åŒ…è£…å¯¹è±¡ï¼›åˆ—è¡¨å†…çš„ _var å…ƒç´ è‡ªè¡Œç®¡ç†å„è‡ªå¼•ç”¨ã€‚
   ~SpecListGuard() { delete _list; }
 
 private:
-  // ÓÃÍ¾£º½ûÖ¹¸´ÖÆÁĞ±íËùÓĞÕß£¬±ÜÃâÖØ¸´ delete¡£
+  // ç”¨é€”ï¼šç¦æ­¢å¤åˆ¶åˆ—è¡¨æ‰€æœ‰è€…ï¼Œé¿å…é‡å¤ deleteã€‚
   SpecListGuard(const SpecListGuard&);
-  // ÓÃÍ¾£º½ûÖ¹ÁĞ±íÊØÎÀ¸³Öµ£¬±£³ÖÎ¨Ò»ËùÓĞÈ¨¡£
+  // ç”¨é€”ï¼šç¦æ­¢åˆ—è¡¨å®ˆå«èµ‹å€¼ï¼Œä¿æŒå”¯ä¸€æ‰€æœ‰æƒã€‚
   SpecListGuard& operator=(const SpecListGuard&);
   CATListValCATISpecObject_var* _list;
 };
 
-// CATIContainer::ListMembersHere Êä³öĞòÁĞµÄÒıÓÃÇåÀíÊØÎÀ¡£
-// ĞòÁĞ±¾ÉíÓÉµ÷ÓÃÕ»±£´æ£¬µ«ÆäÖĞÃ¿¸ö CATBaseUnknown_ptr ¶¼ĞèÒªÏÔÊ½ Release¡£
+// CATIContainer::ListMembersHere è¾“å‡ºåºåˆ—çš„å¼•ç”¨æ¸…ç†å®ˆå«ã€‚
+// åºåˆ—æœ¬èº«ç”±è°ƒç”¨æ ˆä¿å­˜ï¼Œä½†å…¶ä¸­æ¯ä¸ª CATBaseUnknown_ptr éƒ½éœ€è¦æ˜¾å¼ Releaseã€‚
 class BaseUnknownSequenceGuard
 {
 public:
-  // ÓÃÍ¾£º½èÓÃĞòÁĞ¶ÔÏó£¬²¢³Ğµ£ÆäËùÓĞ·Ç¿Õ³ÉÔ±ÒıÓÃµÄÇåÀíÔğÈÎ¡£
+  // ç”¨é€”ï¼šå€Ÿç”¨åºåˆ—å¯¹è±¡ï¼Œå¹¶æ‰¿æ‹…å…¶æ‰€æœ‰éç©ºæˆå‘˜å¼•ç”¨çš„æ¸…ç†è´£ä»»ã€‚
   explicit BaseUnknownSequenceGuard(SEQUENCE(CATBaseUnknown_ptr)& sequence)
     : _sequence(sequence) {}
-  // ÓÃÍ¾£º±éÀúĞòÁĞ¡¢Öğ¸ö Release£¬²¢ÖÃÁãÒÔ±ÜÃâĞü¿ÕÖ¸Õë±»ÔÙ´ÎÊ¹ÓÃ¡£
+  // ç”¨é€”ï¼šéå†åºåˆ—ã€é€ä¸ª Releaseï¼Œå¹¶ç½®é›¶ä»¥é¿å…æ‚¬ç©ºæŒ‡é’ˆè¢«å†æ¬¡ä½¿ç”¨ã€‚
   ~BaseUnknownSequenceGuard()
   {
     CATLONG32 index = 0;
@@ -87,15 +115,15 @@ public:
   }
 
 private:
-  // ÓÃÍ¾£º½ûÖ¹¸´ÖÆÇåÀíÊØÎÀ£¬±ÜÃâÍ¬Ò»ĞòÁĞ³ÉÔ±±»ÊÍ·ÅÁ½´Î¡£
+  // ç”¨é€”ï¼šç¦æ­¢å¤åˆ¶æ¸…ç†å®ˆå«ï¼Œé¿å…åŒä¸€åºåˆ—æˆå‘˜è¢«é‡Šæ”¾ä¸¤æ¬¡ã€‚
   BaseUnknownSequenceGuard(const BaseUnknownSequenceGuard&);
-  // ÓÃÍ¾£º½ûÖ¹¸³Öµ£»ÒıÓÃ³ÉÔ±±¾ÉíÒ²²»ÊÊºÏÖØĞÂ°ó¶¨¡£
+  // ç”¨é€”ï¼šç¦æ­¢èµ‹å€¼ï¼›å¼•ç”¨æˆå‘˜æœ¬èº«ä¹Ÿä¸é€‚åˆé‡æ–°ç»‘å®šã€‚
   BaseUnknownSequenceGuard& operator=(const BaseUnknownSequenceGuard&);
   SEQUENCE(CATBaseUnknown_ptr)& _sequence;
 };
 
-// ÓÃÍ¾£ºÍ¨¹ı R21 ConvertToUTF8 API °Ñ CATUnicodeString ¸´ÖÆÎª¶ÀÁ¢ std::string¡£
-// Ã¿¸ö Unicode ×Ö·û×î¶àÔ¤ÁôËÄ¸ö UTF-8 ×Ö½Ú£¬²¢¶îÍâ±£ÁôÖÕÖ¹Áã×Ö½Ú¿Õ¼ä¡£
+// ç”¨é€”ï¼šé€šè¿‡ R21 ConvertToUTF8 API æŠŠ CATUnicodeString å¤åˆ¶ä¸ºç‹¬ç«‹ std::stringã€‚
+// æ¯ä¸ª Unicode å­—ç¬¦æœ€å¤šé¢„ç•™å››ä¸ª UTF-8 å­—èŠ‚ï¼Œå¹¶é¢å¤–ä¿ç•™ç»ˆæ­¢é›¶å­—èŠ‚ç©ºé—´ã€‚
 std::string UnicodeToUtf8(const CATUnicodeString& value)
 {
   const size_t capacity = static_cast<size_t>(value.GetLengthInChar() + 1) * 4 + 1;
@@ -108,25 +136,124 @@ std::string UnicodeToUtf8(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
-// ÓÃÍ¾£º´Ó CATICkeParm::Name ·µ»ØµÄÏŞ¶¨Â·¾¶ÖĞÈ¡²ÎÊıÒ¶Ãû³Æ£¬¹éÊôÈÔÓÉÕæÊµ parent_of Í¼¾ö¶¨¡£
+// ç”¨é€”ï¼šä» CATICkeParm::Name è¿”å›çš„é™å®šè·¯å¾„ä¸­å–å‚æ•°å¶åç§°ï¼Œå½’å±ä»ç”±çœŸå® parent_of å›¾å†³å®šã€‚
 static std::string ParameterLeafName(const std::string& qualified_name)
 {
   const std::string::size_type separator = qualified_name.find_last_of("/\\");
   return separator == std::string::npos ? qualified_name : qualified_name.substr(separator + 1);
 }
 
-// ÓÃÍ¾£º´´½¨Î´´ò¿ªµÄ SessionGuard£¬²¢Ñ¡¶¨±¾ Batch Ê¹ÓÃµÄÎÈ¶¨ Session Ãû³Æ¡£
+// ç”¨é€”ï¼šæŠŠ Automation Public æ¥å£è¿”å›çš„ UTF-16 CATBSTR è½¬ä¸ºç‹¬ç«‹ UTF-8 å­—ç¬¦ä¸²ã€‚
+static std::string BstrToUtf8(const CATBSTR value)
+{
+  if (!value) return "";
+  const int wide_length = static_cast<int>(SysStringLen(value));
+  if (wide_length == 0) return "";
+  const int byte_length = WideCharToMultiByte(CP_UTF8, 0, value, wide_length,
+                                               0, 0, 0, 0);
+  if (byte_length <= 0) return "";
+  std::vector<char> buffer(static_cast<size_t>(byte_length));
+  WideCharToMultiByte(CP_UTF8, 0, value, wide_length, &buffer[0], byte_length, 0, 0);
+  return std::string(&buffer[0], static_cast<size_t>(byte_length));
+}
+
+// ç”¨é€”ï¼šä» CATIALength çš„çœŸå® Value å±æ€§è¯»å–æ¯«ç±³æ•°ï¼›è°ƒç”¨è€…è´Ÿè´£æ¥å£å¼•ç”¨ç”Ÿå‘½å‘¨æœŸã€‚
+static bool ReadLengthValue(CATIALength* length, double& value)
+{
+  return length && SUCCEEDED(length->get_Value(value));
+}
+
+// ç”¨é€”ï¼šä» CATIAAngle çš„çœŸå® Value å±æ€§è¯»å–è§’åº¦åŸå€¼ï¼›R21 å½“å‰æ ·ä»¶ä¸ä¾èµ–è¯¥å¯é€‰å­—æ®µã€‚
+static bool ReadAngleValue(CATIAAngle* angle, double& value)
+{
+  return angle && SUCCEEDED(angle->get_Value(value));
+}
+
+// ç”¨é€”ï¼šæŠŠ SAFEARRAY(VARIANT) çš„å¸¸è§æ•°å€¼ç±»å‹æ— æŸè½¬æ¢ä¸º doubleã€‚
+static bool VariantToDouble(const CATVariant& value, double& output)
+{
+  if (V_VT(&value) == VT_R8) { output = V_R8(&value); return true; }
+  if (V_VT(&value) == VT_R4) { output = V_R4(&value); return true; }
+  if (V_VT(&value) == VT_I4) { output = V_I4(&value); return true; }
+  if (V_VT(&value) == VT_I2) { output = V_I2(&value); return true; }
+  return false;
+}
+
+// ç”¨é€”ï¼šæŒ‰ CATIAHole Automation å¥‘çº¦é¢„åˆ†é…ä¸‰ä¸ª Variantï¼Œå¹¶è¯»å–åŸç‚¹æˆ–æ–¹å‘æ•°ç»„ã€‚
+static bool ReadHoleVector(CATIAHole* hole, bool origin, double output[3])
+{
+  if (!hole) return false;
+  CATSafeArrayVariant* array = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+  if (!array) return false;
+  HRESULT read_result = E_FAIL;
+  try
+  {
+    read_result = origin ? hole->GetOrigin(*array) : hole->GetDirection(*array);
+  }
+  catch (...)
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  if (FAILED(read_result))
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  CATVariant* values = 0;
+  if (FAILED(SafeArrayAccessData(array, reinterpret_cast<void**>(&values))) || !values)
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  bool valid = true;
+  int index = 0;
+  for (index = 0; index < 3; ++index)
+    if (!VariantToDouble(values[index], output[index])) valid = false;
+  SafeArrayUnaccessData(array);
+  SafeArrayDestroy(array);
+  return valid;
+}
+
+// ç”¨é€”ï¼šæŠŠ R21 CatHoleType çš„çœŸå®åŸå§‹æšä¸¾æ˜ å°„ä¸ºç¨³å®š Schema åç§°ã€‚
+static std::string HoleTypeName(CatHoleType type, bool& known)
+{
+  known = true;
+  if (type == catSimpleHole) return "simple";
+  if (type == catTaperedHole) return "tapered";
+  if (type == catCounterboredHole) return "counterbored";
+  if (type == catCountersunkHole) return "countersunk";
+  if (type == catCounterdrilledHole) return "counterdrilled";
+  known = false;
+  return "unknown";
+}
+
+// ç”¨é€”ï¼šæŠŠ R21 CatLimitMode çš„çœŸå®åŸå§‹æšä¸¾æ˜ å°„ä¸ºç¨³å®š Schema åç§°ã€‚
+static std::string LimitModeName(CatLimitMode mode, bool& known)
+{
+  known = true;
+  if (mode == catOffsetLimit) return "offset";
+  if (mode == catUpToNextLimit) return "up_to_next";
+  if (mode == catUpToLastLimit) return "up_to_last";
+  if (mode == catUpToPlaneLimit) return "up_to_plane";
+  if (mode == catUpToSurfaceLimit) return "up_to_surface";
+  if (mode == catUpThruNextLimit) return "up_thru_next";
+  known = false;
+  return "unknown";
+}
+
+// ç”¨é€”ï¼šåˆ›å»ºæœªæ‰“å¼€çš„ SessionGuardï¼Œå¹¶é€‰å®šæœ¬ Batch ä½¿ç”¨çš„ç¨³å®š Session åç§°ã€‚
 SessionGuard::SessionGuard() : _open(false), _name("CadParseMvpSession") {}
 
-// ÓÃÍ¾£ºÔÚ×÷ÓÃÓò½áÊøÊ±É¾³ıÒÑ³É¹¦´´½¨µÄ CATIA Session¡£
+// ç”¨é€”ï¼šåœ¨ä½œç”¨åŸŸç»“æŸæ—¶åˆ é™¤å·²æˆåŠŸåˆ›å»ºçš„ CATIA Sessionã€‚
 SessionGuard::~SessionGuard()
 {
   if (_open)
     Delete_Session(const_cast<char*>(_name.c_str()));
 }
 
-// ÓÃÍ¾£ºµ÷ÓÃ±¾»ú R21 Create_Session ³õÊ¼»¯ CAA ÔËĞĞ»·¾³¡£
-// ³É¹¦ºó _open ±äÎª true£»Ê§°ÜÊ±²»È¡µÃÇåÀíÔğÈÎ£¬²¢ÔÚ error ÖĞ·µ»ØÎÄµµ¼¶Ô­Òò¡£
+// ç”¨é€”ï¼šè°ƒç”¨æœ¬æœº R21 Create_Session åˆå§‹åŒ– CAA è¿è¡Œç¯å¢ƒã€‚
+// æˆåŠŸå _open å˜ä¸º trueï¼›å¤±è´¥æ—¶ä¸å–å¾—æ¸…ç†è´£ä»»ï¼Œå¹¶åœ¨ error ä¸­è¿”å›æ–‡æ¡£çº§åŸå› ã€‚
 bool SessionGuard::Open(std::string& error)
 {
   CATSession* session = 0;
@@ -140,10 +267,10 @@ bool SessionGuard::Open(std::string& error)
   return true;
 }
 
-// ÓÃÍ¾£º´´½¨¿Õ DocumentGuard£»0 ±íÊ¾µ±Ç°²»³ÖÓĞ CATDocument¡£
+// ç”¨é€”ï¼šåˆ›å»ºç©º DocumentGuardï¼›0 è¡¨ç¤ºå½“å‰ä¸æŒæœ‰ CATDocumentã€‚
 DocumentGuard::DocumentGuard() : _document(0) {}
 
-// ÓÃÍ¾£ºÈôÎÄµµÒÑ´ò¿ª£¬ÔòÍ¨¹ı CATDocumentServices::Remove ¹Ø±Õ²¢ÊÍ·ÅËü¡£
+// ç”¨é€”ï¼šè‹¥æ–‡æ¡£å·²æ‰“å¼€ï¼Œåˆ™é€šè¿‡ CATDocumentServices::Remove å…³é—­å¹¶é‡Šæ”¾å®ƒã€‚
 DocumentGuard::~DocumentGuard()
 {
   if (_document)
@@ -153,7 +280,7 @@ DocumentGuard::~DocumentGuard()
   }
 }
 
-// ÓÃÍ¾£ºÒÔ²»Çø·Ö´óĞ¡Ğ´·½Ê½¼ì²éÂ·¾¶ÊÇ·ñÒÔ .CATPart ½áÎ²¡£
+// ç”¨é€”ï¼šä»¥ä¸åŒºåˆ†å¤§å°å†™æ–¹å¼æ£€æŸ¥è·¯å¾„æ˜¯å¦ä»¥ .CATPart ç»“å°¾ã€‚
 static bool EndsWithCatPart(const std::string& path)
 {
   if (path.size() < 8) return false;
@@ -162,8 +289,8 @@ static bool EndsWithCatPart(const std::string& path)
   return suffix == ".catpart";
 }
 
-// ÓÃÍ¾£ºÏÈĞ£ÑéÎÄ¼ş´æÔÚĞÔºÍÀ©Õ¹Ãû£¬ÔÙÍ¨¹ı R21 ÎÄµµ·şÎñÒÔÖ»¶Á±êÖ¾´ò¿ª CATPart¡£
-// ³É¹¦Ê±±¾ÊØÎÀÈ¡µÃ _document µÄ¹Ø±ÕÔğÈÎ£»Ê§°Ü·µ»Ø false ÇÒ²»»áÁôÏÂ°ë´ò¿ªÎÄµµ¡£
+// ç”¨é€”ï¼šå…ˆæ ¡éªŒæ–‡ä»¶å­˜åœ¨æ€§å’Œæ‰©å±•åï¼Œå†é€šè¿‡ R21 æ–‡æ¡£æœåŠ¡ä»¥åªè¯»æ ‡å¿—æ‰“å¼€ CATPartã€‚
+// æˆåŠŸæ—¶æœ¬å®ˆå«å–å¾— _document çš„å…³é—­è´£ä»»ï¼›å¤±è´¥è¿”å› false ä¸”ä¸ä¼šç•™ä¸‹åŠæ‰“å¼€æ–‡æ¡£ã€‚
 bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
 {
   struct _stat file_status;
@@ -187,14 +314,14 @@ bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
   return true;
 }
 
-// ÓÃÍ¾£º·µ»Øµ±Ç°ÎÄµµµÄ½èÓÃÖ¸Õë£»ËùÓĞÈ¨ÈÔÊôÓÚ DocumentGuard¡£
+// ç”¨é€”ï¼šè¿”å›å½“å‰æ–‡æ¡£çš„å€Ÿç”¨æŒ‡é’ˆï¼›æ‰€æœ‰æƒä»å±äº DocumentGuardã€‚
 CATDocument* DocumentGuard::Get() const { return _document; }
 
-// ÊÊÅäÃ»ÓĞ CATISpecObject µÄ¾²Ì¬½Úµã£¬ÀıÈçÎÄµµºÍÈİÆ÷Èë¿Ú¡£
+// é€‚é…æ²¡æœ‰ CATISpecObject çš„é™æ€èŠ‚ç‚¹ï¼Œä¾‹å¦‚æ–‡æ¡£å’Œå®¹å™¨å…¥å£ã€‚
 class StaticObjectView : public INativeObjectView
 {
 public:
-  // ÓÃÍ¾£º´ÓÒÑÖª³£Á¿ºÍÃû³Æ¹¹ÔìÒ»¸ö´¿Êı¾İÀàĞÍÖ¸ÎÆ¡£
+  // ç”¨é€”ï¼šä»å·²çŸ¥å¸¸é‡å’Œåç§°æ„é€ ä¸€ä¸ªçº¯æ•°æ®ç±»å‹æŒ‡çº¹ã€‚
   StaticObjectView(const char* native_type, const char* kind, const std::string& name)
   {
     _fingerprint.native_type = native_type;
@@ -203,10 +330,10 @@ public:
     _fingerprint.display_name = name;
   }
 
-  // ÓÃÍ¾£º·µ»Ø±¾ÊÓÍ¼³ÖÓĞµÄÀàĞÍÖ¸ÎÆÖ»¶ÁÒıÓÃ¡£
+  // ç”¨é€”ï¼šè¿”å›æœ¬è§†å›¾æŒæœ‰çš„ç±»å‹æŒ‡çº¹åªè¯»å¼•ç”¨ã€‚
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
-  // ÓÃÍ¾£ºÎª¾²Ì¬½Úµã²¹³äÍ¨ÓÃ object_kind ÊôĞÔ£»¸Ã²Ù×÷²»»á·ÃÎÊ CAA ¶ÔÏó£¬Òò´Ë×ÜÊÇ³É¹¦¡£
+  // ç”¨é€”ï¼šä¸ºé™æ€èŠ‚ç‚¹è¡¥å……é€šç”¨ object_kind å±æ€§ï¼›è¯¥æ“ä½œä¸ä¼šè®¿é—® CAA å¯¹è±¡ï¼Œå› æ­¤æ€»æ˜¯æˆåŠŸã€‚
   bool ReadBasicAttributes(FeatureRecord& output, std::string&) const
   {
     output.attributes["object_kind"] = _fingerprint.container_kind;
@@ -217,25 +344,28 @@ private:
   TypeFingerprint _fingerprint;
 };
 
-// CATISpecObject µÄÖ»¶ÁÊÊÅäÆ÷£»½èÓÃÔ­ÉúÖ¸Õë£¬Ö»°Ñ¿ÉÑéÖ¤×Ö¶Î¸´ÖÆµ½ TypeFingerprint/IR¡£
-class SpecObjectView : public INativeObjectView, public IStringParameterView
+// CATISpecObject çš„åªè¯»é€‚é…å™¨ï¼›å€Ÿç”¨åŸç”ŸæŒ‡é’ˆï¼ŒåªæŠŠå¯éªŒè¯å­—æ®µå¤åˆ¶åˆ° TypeFingerprint/IRã€‚
+class SpecObjectView : public INativeObjectView, public IStringParameterView, public INativeHoleView
 {
 public:
-  // ÓÃÍ¾£º°ó¶¨Ò»¸ö½èÓÃ CATISpecObject£¬²¢Á¢¼´¹¹½¨ÎÈ¶¨ÀàĞÍÖ¸ÎÆ¡£
-  // context ÓÃÓÚ¼ÇÂ¼Ö¸ÎÆ¶ÁÈ¡ºÍ½Ó¿ÚÌ½²â²úÉúµÄÕï¶Ï/Í³¼Æ¡£
+  // ç”¨é€”ï¼šç»‘å®šä¸€ä¸ªå€Ÿç”¨ CATISpecObjectï¼Œå¹¶ç«‹å³æ„å»ºç¨³å®šç±»å‹æŒ‡çº¹ã€‚
+  // context ç”¨äºè®°å½•æŒ‡çº¹è¯»å–å’Œæ¥å£æ¢æµ‹äº§ç”Ÿçš„è¯Šæ–­/ç»Ÿè®¡ã€‚
   SpecObjectView(CATISpecObject* spec, ParseContext& context) : _spec(spec)
   {
     BuildFingerprint(context);
   }
 
-  // ÓÃÍ¾£º·µ»Ø¹¹Ôì½×¶ÎÒÑ¾­¸´ÖÆÍê³ÉµÄÀàĞÍÖ¸ÎÆ¡£
+  // ç”¨é€”ï¼šè¿”å›æ„é€ é˜¶æ®µå·²ç»å¤åˆ¶å®Œæˆçš„ç±»å‹æŒ‡çº¹ã€‚
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
-  // ÓÃÍ¾£ºÏò²ÎÊı Decoder ±©Â¶±¾ÊÊÅäÆ÷ÒÑÓĞµÄ IStringParameterView£¬²»ÒÀÀµ /GR RTTI¡£
+  // ç”¨é€”ï¼šå‘å‚æ•° Decoder æš´éœ²æœ¬é€‚é…å™¨å·²æœ‰çš„ IStringParameterViewï¼Œä¸ä¾èµ– /GR RTTIã€‚
   const IStringParameterView* GetStringParameterView() const { return this; }
 
-  // ÓÃÍ¾£º¶ÁÈ¡¾­¹ı R21 PublicInterfaces ÑéÖ¤µÄ»ù´¡×´Ì¬ºÍÈİÆ÷¿É·ÃÎÊĞÔ¡£
-  // ÈÎÒâ CAA Òì³£¶¼×ª³É false+error£¬ÓÉ Registry µÄ Generic/Opaque Á´¸ôÀë¡£
+  // ç”¨é€”ï¼šå‘ NativeHoleDecoder æš´éœ² CAA Hole é€‚é…å™¨ï¼Œä¸ä½¿ç”¨ RTTI æˆ–è·¨å±‚åŸç”ŸæŒ‡é’ˆã€‚
+  const INativeHoleView* GetNativeHoleView() const { return this; }
+
+  // ç”¨é€”ï¼šè¯»å–ç»è¿‡ R21 PublicInterfaces éªŒè¯çš„åŸºç¡€çŠ¶æ€å’Œå®¹å™¨å¯è®¿é—®æ€§ã€‚
+  // ä»»æ„ CAA å¼‚å¸¸éƒ½è½¬æˆ false+errorï¼Œç”± Registry çš„ Generic/Opaque é“¾éš”ç¦»ã€‚
   bool ReadBasicAttributes(FeatureRecord& output, std::string& error) const
   {
     if (!_spec)
@@ -258,7 +388,7 @@ public:
     }
   }
 
-  // ÓÃÍ¾£º²éÑ¯ R21 Public CATICkeParm£¬ÑéÖ¤ÆäÀàĞÍÈ·Îª String£¬ÔÙÍ¨¹ı Value()->AsString() ¶ÁÈ¡ÕæÊµÖµ¡£
+  // ç”¨é€”ï¼šæŸ¥è¯¢ R21 Public CATICkeParmï¼ŒéªŒè¯å…¶ç±»å‹ç¡®ä¸º Stringï¼Œå†é€šè¿‡ Value()->AsString() è¯»å–çœŸå®å€¼ã€‚
   StringParameterReadStatus ReadStringParameter(ParameterValueData& parameter,
                                                 std::string& error) const
   {
@@ -309,7 +439,7 @@ public:
       error = "CATICkeParm typed String value read raised an exception";
       return StringParameterValueException;
     }
-    // Name/Show/Ö»¶ÁºÍÒş²Ø×´Ì¬ÊÇ¸¨ÖúĞÅÏ¢£»ËüÃÇ²»¿É·ÃÎÊÊ±²»ÄÜ·ñ¶¨ÒÑ¾­³É¹¦È¡µÃµÄÕæÊµÖµ¡£
+    // Name/Show/åªè¯»å’Œéšè—çŠ¶æ€æ˜¯è¾…åŠ©ä¿¡æ¯ï¼›å®ƒä»¬ä¸å¯è®¿é—®æ—¶ä¸èƒ½å¦å®šå·²ç»æˆåŠŸå–å¾—çš„çœŸå®å€¼ã€‚
     try { parameter.parameter_name = ParameterLeafName(UnicodeToUtf8(raw_parameter->Name())); }
     catch (...) { parameter.parameter_name = ParameterLeafName(_fingerprint.display_name); }
     try { parameter.raw_display_text = UnicodeToUtf8(raw_parameter->Show()); }
@@ -321,16 +451,275 @@ public:
     return StringParameterReadSuccess;
   }
 
+  // ç”¨é€”ï¼šåœ¨å½“å‰ CATISpecObject ä¸Šç›´æ¥æŸ¥è¯¢ R21 Public CATIAHoleï¼Œå¹¶è¯»å–çœŸå®è®¾è®¡å‚æ•°ã€‚
+  NativeHoleReadStatus ReadNativeHole(NativeHoleData& output, std::string& error) const
+  {
+    if (!_spec)
+    {
+      error = "null CATISpecObject";
+      return NativeHoleInterfaceUnsupported;
+    }
+    CaaInterfaceGuard<CATIAHole> hole_guard;
+    try
+    {
+      const HRESULT query = _spec->QueryInterface(IID_CATIAHole,
+        reinterpret_cast<void**>(&hole_guard.Out()));
+      if (FAILED(query) || !hole_guard.Get())
+      {
+        error = "CATIAHole is not supported";
+        return NativeHoleInterfaceUnsupported;
+      }
+    }
+    catch (...)
+    {
+      error = "CATIAHole QueryInterface raised an exception";
+      return NativeHoleInterfaceQueryException;
+    }
+
+    CATIAHole* raw_hole = hole_guard.Get();
+    output.semantic_kind = "part_design_hole";
+    output.value_source = "typed_caa_value";
+    output.interface_key = "CATIAHole";
+    try
+    {
+      CatHoleType hole_type = catSimpleHole;
+      if (FAILED(raw_hole->get_Type(hole_type)))
+      {
+        error = "CATIAHole.Type read failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      bool known_hole_type = false;
+      output.hole_type_raw = static_cast<int>(hole_type);
+      output.hole_type = HoleTypeName(hole_type, known_hole_type);
+      output.field_status["hole_type"] = known_hole_type ? "success" : "unknown_enum";
+
+      CaaInterfaceGuard<CATIALength> diameter_guard;
+      if (FAILED(raw_hole->get_Diameter(diameter_guard.Out())) || !diameter_guard.Get())
+      {
+        error = "CATIAHole.Diameter interface read failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      if (!ReadLengthValue(diameter_guard.Get(), output.diameter_mm))
+      {
+        error = "CATIAHole.Diameter.Value read failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      output.field_status["diameter_mm"] = "success";
+
+      if (!ReadHoleVector(raw_hole, true, output.origin_mm))
+      {
+        error = "CATIAHole.GetOrigin failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      if (!ReadHoleVector(raw_hole, false, output.direction))
+      {
+        error = "CATIAHole.GetDirection failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      output.field_status["origin_mm"] = "success";
+      output.field_status["direction"] = "success";
+
+      CaaInterfaceGuard<CATIALimit> limit_guard;
+      if (FAILED(raw_hole->get_BottomLimit(limit_guard.Out())) || !limit_guard.Get())
+      {
+        error = "CATIAHole.BottomLimit read failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      CatLimitMode limit_mode = catOffsetLimit;
+      if (FAILED(limit_guard.Get()->get_LimitMode(limit_mode)))
+      {
+        error = "CATIALimit.LimitMode read failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      bool known_limit_mode = false;
+      output.bottom_limit.mode_raw = static_cast<int>(limit_mode);
+      output.bottom_limit.mode = LimitModeName(limit_mode, known_limit_mode);
+      output.field_status["bottom_limit.mode"] = known_limit_mode ? "success" : "unknown_enum";
+      if (limit_mode == catOffsetLimit)
+      {
+        CaaInterfaceGuard<CATIALength> depth_guard;
+        double depth = 0.0;
+        if (FAILED(limit_guard.Get()->get_Dimension(depth_guard.Out())) || !depth_guard.Get())
+        {
+          error = "CATIALimit.Dimension read failed for offset Hole";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (!ReadLengthValue(depth_guard.Get(), depth))
+        {
+          error = "CATIALimit.Dimension.Value read failed for offset Hole";
+          return NativeHoleRequiredValueReadException;
+        }
+        output.bottom_limit.depth_mm.Set(depth, "success");
+      }
+      else
+        output.bottom_limit.depth_mm.Clear("not_applicable");
+
+      output.head.kind = "none";
+      output.head.diameter_mm.Clear("not_applicable");
+      output.head.depth_mm.Clear("not_applicable");
+      output.head.angle_deg.Clear("not_applicable");
+      if (hole_type == catCounterboredHole || hole_type == catCounterdrilledHole)
+      {
+        CaaInterfaceGuard<CATIALength> head_diameter_guard;
+        CaaInterfaceGuard<CATIALength> head_depth_guard;
+        double head_diameter = 0.0;
+        double head_depth = 0.0;
+        if (FAILED(raw_hole->get_HeadDiameter(head_diameter_guard.Out())) ||
+            !head_diameter_guard.Get())
+        {
+          error = "CATIAHole.HeadDiameter read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (!ReadLengthValue(head_diameter_guard.Get(), head_diameter))
+        {
+          error = "CATIAHole.HeadDiameter.Value read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (FAILED(raw_hole->get_HeadDepth(head_depth_guard.Out())) || !head_depth_guard.Get())
+        {
+          error = "CATIAHole.HeadDepth read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (!ReadLengthValue(head_depth_guard.Get(), head_depth))
+        {
+          error = "CATIAHole.HeadDepth.Value read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        output.head.kind = hole_type == catCounterboredHole ? "counterbore" : "counterdrill";
+        output.head.diameter_mm.Set(head_diameter, "success");
+        output.head.depth_mm.Set(head_depth, "success");
+      }
+      if (hole_type == catTaperedHole || hole_type == catCounterdrilledHole ||
+          hole_type == catCountersunkHole)
+      {
+        CaaInterfaceGuard<CATIAAngle> head_angle_guard;
+        double head_angle = 0.0;
+        if (FAILED(raw_hole->get_HeadAngle(head_angle_guard.Out())) || !head_angle_guard.Get())
+        {
+          error = "CATIAHole.HeadAngle read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (!ReadAngleValue(head_angle_guard.Get(), head_angle))
+        {
+          error = "CATIAHole.HeadAngle.Value read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (hole_type == catTaperedHole) output.head.kind = "taper";
+        else if (hole_type == catCountersunkHole) output.head.kind = "countersink";
+        output.head.angle_deg.Set(head_angle, "typed_caa_angle_value");
+      }
+      if (hole_type == catCountersunkHole)
+      {
+        CaaInterfaceGuard<CATIALength> head_depth_guard;
+        double head_depth = 0.0;
+        if (FAILED(raw_hole->get_HeadDepth(head_depth_guard.Out())) || !head_depth_guard.Get() ||
+            !ReadLengthValue(head_depth_guard.Get(), head_depth))
+        {
+          error = "CATIAHole countersink HeadDepth read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        output.head.depth_mm.Set(head_depth, "success");
+      }
+
+      CatHoleThreadingMode threading_mode = catSmoothHoleThreading;
+      if (FAILED(raw_hole->get_ThreadingMode(threading_mode)))
+      {
+        error = "CATIAHole.ThreadingMode read failed";
+        return NativeHoleRequiredValueReadException;
+      }
+      output.thread.mode_raw = static_cast<int>(threading_mode);
+      output.thread.enabled = threading_mode == catThreadedHoleThreading;
+      output.field_status["thread.mode"] =
+        (threading_mode == catThreadedHoleThreading || threading_mode == catSmoothHoleThreading) ?
+        "success" : "unknown_enum";
+      if (!output.thread.enabled)
+      {
+        output.thread.description.Clear("not_applicable");
+        output.thread.diameter_mm.Clear("not_applicable");
+        output.thread.depth_mm.Clear("not_applicable");
+        output.thread.pitch_mm.Clear("not_applicable");
+      }
+      else
+      {
+        CaaInterfaceGuard<CATIALength> thread_diameter_guard;
+        CaaInterfaceGuard<CATIALength> thread_depth_guard;
+        CaaInterfaceGuard<CATIALength> thread_pitch_guard;
+        CaaInterfaceGuard<CATIAStrParam> description_guard;
+        double thread_diameter = 0.0;
+        double thread_depth = 0.0;
+        double thread_pitch = 0.0;
+        if (FAILED(raw_hole->get_ThreadDiameter(thread_diameter_guard.Out())) ||
+            !thread_diameter_guard.Get())
+        {
+          error = "CATIAHole.ThreadDiameter read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (FAILED(raw_hole->get_ThreadDepth(thread_depth_guard.Out())) ||
+            !thread_depth_guard.Get())
+        {
+          error = "CATIAHole.ThreadDepth read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (FAILED(raw_hole->get_ThreadPitch(thread_pitch_guard.Out())) ||
+            !thread_pitch_guard.Get())
+        {
+          error = "CATIAHole.ThreadPitch read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (FAILED(raw_hole->get_HoleThreadDescription(description_guard.Out())) ||
+            !description_guard.Get())
+        {
+          error = "CATIAHole.HoleThreadDescription read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        if (!ReadLengthValue(thread_diameter_guard.Get(), thread_diameter) ||
+            !ReadLengthValue(thread_depth_guard.Get(), thread_depth) ||
+            !ReadLengthValue(thread_pitch_guard.Get(), thread_pitch))
+        {
+          error = "CATIAHole threaded numeric Value read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        CaaBstrGuard description;
+        if (FAILED(description_guard.Get()->get_Value(description.Out())))
+        {
+          error = "CATIAHole thread description Value read failed";
+          return NativeHoleRequiredValueReadException;
+        }
+        const std::string description_utf8 = BstrToUtf8(description.Get());
+        output.thread.diameter_mm.Set(thread_diameter, "success");
+        output.thread.depth_mm.Set(thread_depth, "success");
+        output.thread.pitch_mm.Set(thread_pitch, "success");
+        output.thread.description.Set(description_utf8, "success");
+      }
+
+      CaaBstrGuard alias;
+      if (SUCCEEDED(raw_hole->get_Name(alias.Out())))
+      {
+        output.has_automation_alias = true;
+        output.automation_alias = BstrToUtf8(alias.Get());
+        output.automation_alias_status = "success";
+      }
+      else
+        output.automation_alias_status = "automation_alias_unavailable";
+    }
+    catch (...)
+    {
+      error = "CATIAHole required value read raised an exception";
+      return NativeHoleRequiredValueReadException;
+    }
+    return NativeHoleReadSuccess;
+  }
+
 private:
-  // R21 µÄÊÜ¿Ø½Ó¿ÚÌ½²âÆ÷£¬Ö»½ÓÊÜ´úÂëÖĞÏÔÊ½ÁĞ³öµÄÒÑÑéÖ¤½Ó¿Ú¼ü¡£
+  // R21 çš„å—æ§æ¥å£æ¢æµ‹å™¨ï¼Œåªæ¥å—ä»£ç ä¸­æ˜¾å¼åˆ—å‡ºçš„å·²éªŒè¯æ¥å£é”®ã€‚
   class R21InterfaceProbeService : public InterfaceProbeService
   {
   public:
-    // ÓÃÍ¾£º°ó¶¨´ıÌ½²âµÄ½èÓÃ CATISpecObject£¬²»Ôö¼ÓÒ²²»ÊÍ·ÅÆäÒıÓÃ¼ÆÊı¡£
+    // ç”¨é€”ï¼šç»‘å®šå¾…æ¢æµ‹çš„å€Ÿç”¨ CATISpecObjectï¼Œä¸å¢åŠ ä¹Ÿä¸é‡Šæ”¾å…¶å¼•ç”¨è®¡æ•°ã€‚
     explicit R21InterfaceProbeService(CATISpecObject* spec) : _spec(spec) {}
 
-    // ÓÃÍ¾£ºÌ½²âÒ»¸ö°×Ãûµ¥½Ó¿Ú£»³É¹¦Ê±×·¼Ó¼ü²¢Á¢¿ÌÊÍ·Å QueryInterface ·µ»ØµÄÁÙÊ±ÒıÓÃ¡£
-    // Î´Öª key ²»»á±»²Â²â£¬Ö±½Ó¼ÆÈëÌ½²âÊ§°Ü¡£
+    // ç”¨é€”ï¼šæ¢æµ‹ä¸€ä¸ªç™½åå•æ¥å£ï¼›æˆåŠŸæ—¶è¿½åŠ é”®å¹¶ç«‹åˆ»é‡Šæ”¾ QueryInterface è¿”å›çš„ä¸´æ—¶å¼•ç”¨ã€‚
+    // æœªçŸ¥ key ä¸ä¼šè¢«çŒœæµ‹ï¼Œç›´æ¥è®¡å…¥æ¢æµ‹å¤±è´¥ã€‚
     std::string Probe(const char* key, TypeFingerprint& fingerprint, ParseStatistics& statistics)
     {
       if (std::strcmp(key, "CATISpecObject") == 0)
@@ -343,6 +732,7 @@ private:
       if (std::strcmp(key, "CATIPrtPart") == 0) iid = &IID_CATIPrtPart;
       else if (std::strcmp(key, "CATIContainer") == 0) iid = &IID_CATIContainer;
       else if (std::strcmp(key, "CATIPrtContainer") == 0) iid = &IID_CATIPrtContainer;
+      else if (std::strcmp(key, "CATIAHole") == 0) iid = &IID_CATIAHole;
       if (!iid)
       {
         statistics.RecordProbe(key, fingerprint.native_type, "unselected", "not_attempted");
@@ -354,7 +744,7 @@ private:
         if (SUCCEEDED(_spec->QueryInterface(*iid, &result)) && result)
         {
           fingerprint.supported_interface_keys.push_back(key);
-          // QueryInterface ³É¹¦»áÔö¼ÓÒıÓÃ¼ÆÊı£»ÕâÀïÖ»ÑéÖ¤´æÔÚĞÔ£¬±ØĞëÁ¢¼´Åä¶Ô Release¡£
+          // QueryInterface æˆåŠŸä¼šå¢åŠ å¼•ç”¨è®¡æ•°ï¼›è¿™é‡ŒåªéªŒè¯å­˜åœ¨æ€§ï¼Œå¿…é¡»ç«‹å³é…å¯¹ Releaseã€‚
           static_cast<CATBaseUnknown*>(result)->Release();
           statistics.RecordProbe(key, fingerprint.native_type, "unselected", "supported");
           return "supported";
@@ -373,8 +763,8 @@ private:
     CATISpecObject* _spec;
   };
 
-  // ÓÃÍ¾£º´Ó CATISpecObject ¶ÁÈ¡ StartUp/SuperType/Ãû³Æ£¬²¢Ö´ĞĞ¹Ì¶¨½Ó¿Ú°×Ãûµ¥Ì½²â¡£
-  // ÈÎºÎ²»¿ÉÓÃ×Ö¶ÎÖ»²úÉú warning£»Î´ÑéÖ¤µÄ native runtime type ±£³ÖÎª¿Õ£¬²»½øĞĞ²Â²â¡£
+  // ç”¨é€”ï¼šä» CATISpecObject è¯»å– StartUp/SuperType/åç§°ï¼Œå¹¶æ‰§è¡Œå›ºå®šæ¥å£ç™½åå•æ¢æµ‹ã€‚
+  // ä»»ä½•ä¸å¯ç”¨å­—æ®µåªäº§ç”Ÿ warningï¼›æœªéªŒè¯çš„ native runtime type ä¿æŒä¸ºç©ºï¼Œä¸è¿›è¡ŒçŒœæµ‹ã€‚
   void BuildFingerprint(ParseContext& context)
   {
     if (!_spec) return;
@@ -398,6 +788,9 @@ private:
     probes.Probe("CATIPrtPart", _fingerprint, context.statistics);
     probes.Probe("CATIContainer", _fingerprint, context.statistics);
     probes.Probe("CATIPrtContainer", _fingerprint, context.statistics);
+    // Hole ä¸“ç”¨æ¢æµ‹åªå¯¹å·²é¢„ç­›é€‰å€™é€‰æ‰§è¡Œï¼›Typed Decoder éšåä»ä¼šå†æ¬¡æŸ¥è¯¢å¹¶è¯»å–å¿…éœ€å€¼ã€‚
+    if (_fingerprint.startup_type == "Hole")
+      probes.Probe("CATIAHole", _fingerprint, context.statistics);
     if (std::find(_fingerprint.supported_interface_keys.begin(),
                   _fingerprint.supported_interface_keys.end(), "CATIPrtPart") !=
         _fingerprint.supported_interface_keys.end())
@@ -408,17 +801,17 @@ private:
   TypeFingerprint _fingerprint;
 };
 
-// »ù´¡ Typed Decoder£º·â×°ËùÓĞºËĞÄ½Úµã¹²ÓĞµÄ¡°¶ÁÈ¡»ù´¡ÊôĞÔ²¢±ê¼Ç typed success¡±ĞĞÎª¡£
+// åŸºç¡€ Typed Decoderï¼šå°è£…æ‰€æœ‰æ ¸å¿ƒèŠ‚ç‚¹å…±æœ‰çš„â€œè¯»å–åŸºç¡€å±æ€§å¹¶æ ‡è®° typed successâ€è¡Œä¸ºã€‚
 class CoreDecoder : public IFeatureDecoder
 {
 public:
-  // ÓÃÍ¾£º±£´æÓÉ¾²Ì¬×Ö·û´®Ìá¹©µÄÎÈ¶¨ ID ºÍÏÔÊ½ÓÅÏÈ¼¶¡£
+  // ç”¨é€”ï¼šä¿å­˜ç”±é™æ€å­—ç¬¦ä¸²æä¾›çš„ç¨³å®š ID å’Œæ˜¾å¼ä¼˜å…ˆçº§ã€‚
   CoreDecoder(const char* id, int priority) : _id(id), _priority(priority) {}
-  // ÓÃÍ¾£º·µ»Ø¹¹ÔìÊ±°ó¶¨µÄ Decoder ID£»Core Decoder Ê¹ÓÃ×Ö·û´®³£Á¿£¬ÉúÃüÖÜÆÚ¸²¸ÇÕû¸ö½ø³Ì¡£
+  // ç”¨é€”ï¼šè¿”å›æ„é€ æ—¶ç»‘å®šçš„ Decoder IDï¼›Core Decoder ä½¿ç”¨å­—ç¬¦ä¸²å¸¸é‡ï¼Œç”Ÿå‘½å‘¨æœŸè¦†ç›–æ•´ä¸ªè¿›ç¨‹ã€‚
   const char* GetDecoderId() const { return _id; }
-  // ÓÃÍ¾£º·µ»ØÓÃÓÚ Registry ¾öÊ¤µÄÏÔÊ½ÓÅÏÈ¼¶¡£
+  // ç”¨é€”ï¼šè¿”å›ç”¨äº Registry å†³èƒœçš„æ˜¾å¼ä¼˜å…ˆçº§ã€‚
   int GetPriority() const { return _priority; }
-  // ÓÃÍ¾£ºÖ´ĞĞ Typed Decoder µÄ¹«¹²¶ÁÈ¡Âß¼­£»Ê§°ÜÊ±½»»Ø Registry ¼ÌĞø Generic/Opaque ¶µµ×¡£
+  // ç”¨é€”ï¼šæ‰§è¡Œ Typed Decoder çš„å…¬å…±è¯»å–é€»è¾‘ï¼›å¤±è´¥æ—¶äº¤å› Registry ç»§ç»­ Generic/Opaque å…œåº•ã€‚
   DecodeResult Decode(const INativeObjectView& view, ParseContext& context, FeatureRecord& output)
   {
     std::string error;
@@ -435,81 +828,82 @@ protected:
   int _priority;
 };
 
-// ÎÄµµ¸ù½Úµã Decoder£¬ÒÀ¾İ crawler Ã÷È·¸³ÓèµÄ container_kind Æ¥Åä¡£
+// æ–‡æ¡£æ ¹èŠ‚ç‚¹ Decoderï¼Œä¾æ® crawler æ˜ç¡®èµ‹äºˆçš„ container_kind åŒ¹é…ã€‚
 class DocumentDecoder : public CoreDecoder
 {
 public:
-  // ÓÃÍ¾£º´´½¨ÓÅÏÈ¼¶ 400¡¢ÎÈ¶¨ ID Îª document µÄ Decoder¡£
+  // ç”¨é€”ï¼šåˆ›å»ºä¼˜å…ˆçº§ 400ã€ç¨³å®š ID ä¸º document çš„ Decoderã€‚
   DocumentDecoder() : CoreDecoder("document", 400) {}
-  // ÓÃÍ¾£ºÖ»Æ¥Åä container_kind Îª document µÄ¾²Ì¬ÎÄµµÊÓÍ¼¡£
+  // ç”¨é€”ï¼šåªåŒ¹é… container_kind ä¸º document çš„é™æ€æ–‡æ¡£è§†å›¾ã€‚
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.container_kind == "document"; }
 };
 
-// Part Decoder£¬ÓÅÏÈÊ¹ÓÃÒÑÑéÖ¤ CATIPrtPart ½Ó¿Ú¼ü¶ø²»ÊÇÏÔÊ¾Ãû³Æ¡£
+// Part Decoderï¼Œä¼˜å…ˆä½¿ç”¨å·²éªŒè¯ CATIPrtPart æ¥å£é”®è€Œä¸æ˜¯æ˜¾ç¤ºåç§°ã€‚
 class PartDecoder : public CoreDecoder
 {
 public:
-  // ÓÃÍ¾£º´´½¨¸ßÓÅÏÈ¼¶ Part Decoder£¬Ê¹½Ó¿ÚÖ¤¾İÓÅÏÈÓÚÍ¨ÓÃÈİÆ÷Æ¥Åä¡£
+  // ç”¨é€”ï¼šåˆ›å»ºé«˜ä¼˜å…ˆçº§ Part Decoderï¼Œä½¿æ¥å£è¯æ®ä¼˜å…ˆäºé€šç”¨å®¹å™¨åŒ¹é…ã€‚
   PartDecoder() : CoreDecoder("part", 700) {}
-  // ÓÃÍ¾£º¼ì²é supported_interface_keys ÖĞÊÇ·ñ´æÔÚ CATIPrtPart¡£
+  // ç”¨é€”ï¼šæ£€æŸ¥ supported_interface_keys ä¸­æ˜¯å¦å­˜åœ¨ CATIPrtPartã€‚
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return std::find(fp.supported_interface_keys.begin(), fp.supported_interface_keys.end(),
                      "CATIPrtPart") != fp.supported_interface_keys.end(); }
 };
 
-// ÒÑÑéÖ¤ÈİÆ÷Èë¿ÚµÄ Typed Decoder¡£
+// å·²éªŒè¯å®¹å™¨å…¥å£çš„ Typed Decoderã€‚
 class ContainerDecoder : public CoreDecoder
 {
 public:
-  // ÓÃÍ¾£º´´½¨ ID Îª container¡¢ÓÅÏÈ¼¶ 350 µÄ Decoder¡£
+  // ç”¨é€”ï¼šåˆ›å»º ID ä¸º containerã€ä¼˜å…ˆçº§ 350 çš„ Decoderã€‚
   ContainerDecoder() : CoreDecoder("container", 350) {}
-  // ÓÃÍ¾£ºÆ¥Åä crawler Ã÷È·±ê¼ÇÎª container µÄ¾²Ì¬Èë¿Ú½Úµã¡£
+  // ç”¨é€”ï¼šåŒ¹é… crawler æ˜ç¡®æ ‡è®°ä¸º container çš„é™æ€å…¥å£èŠ‚ç‚¹ã€‚
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.container_kind == "container"; }
 };
 
-// Body »ù´¡ Decoder£»R21 PublicInterfaces Î´Ìá¹©ÒÑÈ·ÈÏ marker£¬Òò´ËÖ»Ê¹ÓÃ±£ÊØ StartUp ÀàĞÍÆ¥Åä¡£
+// Body åŸºç¡€ Decoderï¼›R21 PublicInterfaces æœªæä¾›å·²ç¡®è®¤ markerï¼Œå› æ­¤åªä½¿ç”¨ä¿å®ˆ StartUp ç±»å‹åŒ¹é…ã€‚
 class BodyDecoder : public CoreDecoder
 {
 public:
-  // ÓÃÍ¾£º´´½¨ ID Îª body¡¢ÓÅÏÈ¼¶ 500 µÄ Decoder¡£
+  // ç”¨é€”ï¼šåˆ›å»º ID ä¸º bodyã€ä¼˜å…ˆçº§ 500 çš„ Decoderã€‚
   BodyDecoder() : CoreDecoder("body", 500) {}
   // TODO(R21_API_VERIFY): installed PublicInterfaces contain no CATIBody marker interface.
-  // ÓÃÍ¾£ºÆ¥Åä±¾»ú×ÊÁÏÖĞÒÑÖªµÄ Body/MechanicalTool StartUp ÀàĞÍÎÄ±¾¡£
+  // ç”¨é€”ï¼šåŒ¹é…æœ¬æœºèµ„æ–™ä¸­å·²çŸ¥çš„ Body/MechanicalTool StartUp ç±»å‹æ–‡æœ¬ã€‚
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.startup_type == "Body" || fp.startup_type == "MechanicalTool"; }
 };
 
-// HybridBody »ù´¡ Decoder£»Í¬Ñù²»¼ÙÉè²»´æÔÚÖ¤¾İµÄ×¨ÓÃ marker ½Ó¿Ú¡£
+// HybridBody åŸºç¡€ Decoderï¼›åŒæ ·ä¸å‡è®¾ä¸å­˜åœ¨è¯æ®çš„ä¸“ç”¨ marker æ¥å£ã€‚
 class HybridBodyDecoder : public CoreDecoder
 {
 public:
-  // ÓÃÍ¾£º´´½¨ ID Îª hybrid_body¡¢ÓÅÏÈ¼¶ 500 µÄ Decoder¡£
+  // ç”¨é€”ï¼šåˆ›å»º ID ä¸º hybrid_bodyã€ä¼˜å…ˆçº§ 500 çš„ Decoderã€‚
   HybridBodyDecoder() : CoreDecoder("hybrid_body", 500) {}
   // TODO(R21_API_VERIFY): installed PublicInterfaces contain no CATIHybridBody marker interface.
-  // ÓÃÍ¾£ºÆ¥ÅäÒÑÈ·ÈÏµÄ HybridBody/GeometricalSet StartUp ÀàĞÍÎÄ±¾¡£
+  // ç”¨é€”ï¼šåŒ¹é…å·²ç¡®è®¤çš„ HybridBody/GeometricalSet StartUp ç±»å‹æ–‡æœ¬ã€‚
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.startup_type == "HybridBody" || fp.startup_type == "GeometricalSet"; }
 };
 
-// ÓÃÍ¾£º´´½¨ MVP µÄÎå¸ö»ù´¡ Typed Decoder£¬Í¬Ê±µÇ¼Çµ½ Registry ºÍËùÓĞÈ¨ vector¡£
-// Registry ½ö½èÓÃÖ¸Õë£»owned_decoders ÊÇÎ¨Ò»¸ºÔğ×îÖÕ delete µÄÈİÆ÷¡£
+// ç”¨é€”ï¼šåˆ›å»º MVP çš„äº”ä¸ªåŸºç¡€ Typed Decoderï¼ŒåŒæ—¶ç™»è®°åˆ° Registry å’Œæ‰€æœ‰æƒ vectorã€‚
+// Registry ä»…å€Ÿç”¨æŒ‡é’ˆï¼›owned_decoders æ˜¯å”¯ä¸€è´Ÿè´£æœ€ç»ˆ delete çš„å®¹å™¨ã€‚
 void RegisterCoreDecoders(FeatureTypeRegistry& registry,
                           std::vector<IFeatureDecoder*>& owned_decoders)
 {
   owned_decoders.push_back(new KnowledgewareStringParameterDecoder());
+  owned_decoders.push_back(new NativeHoleDecoder());
   owned_decoders.push_back(new DocumentDecoder());
   owned_decoders.push_back(new PartDecoder());
   owned_decoders.push_back(new ContainerDecoder());
   owned_decoders.push_back(new BodyDecoder());
   owned_decoders.push_back(new HybridBodyDecoder());
-  // C++03 Ã»ÓĞ·¶Î§ for£¬Ê¹ÓÃ iterator °´¹Ì¶¨Ë³Ğò×¢²á£»Æ¥Åä½á¹ûÈÔ²»ÒÀÀµ×¢²áË³Ğò¡£
+  // C++03 æ²¡æœ‰èŒƒå›´ forï¼Œä½¿ç”¨ iterator æŒ‰å›ºå®šé¡ºåºæ³¨å†Œï¼›åŒ¹é…ç»“æœä»ä¸ä¾èµ–æ³¨å†Œé¡ºåºã€‚
   std::vector<IFeatureDecoder*>::iterator it = owned_decoders.begin();
   for (; it != owned_decoders.end(); ++it) registry.Register(*it);
 }
 
-// ÓÃÍ¾£ºÊÍ·Å RegisterCoreDecoders ´´½¨µÄÈ«²¿ Decoder£¬²¢Çå¿ÕËùÓĞÈ¨ÈİÆ÷¡£
+// ç”¨é€”ï¼šé‡Šæ”¾ RegisterCoreDecoders åˆ›å»ºçš„å…¨éƒ¨ Decoderï¼Œå¹¶æ¸…ç©ºæ‰€æœ‰æƒå®¹å™¨ã€‚
 void DeleteCoreDecoders(std::vector<IFeatureDecoder*>& owned_decoders)
 {
   std::vector<IFeatureDecoder*>::iterator it = owned_decoders.begin();
@@ -517,8 +911,8 @@ void DeleteCoreDecoders(std::vector<IFeatureDecoder*>& owned_decoders)
   owned_decoders.clear();
 }
 
-// ÓÃÍ¾£º´´½¨Ò»´Î±éÀúËùĞèµÄ Crawler£¬²¢ÒÔÒıÓÃ±£´æ Registry¡¢ÉÏÏÂÎÄºÍÁ½¸öÊä³ö¼¯ºÏ¡£
-// ÕâĞ©ÒıÓÃ²»×ªÒÆËùÓĞÈ¨£¬µ÷ÓÃÕß±ØĞë±£Ö¤ËüÃÇ¸²¸ÇÕû¸ö Crawl ÉúÃüÖÜÆÚ¡£
+// ç”¨é€”ï¼šåˆ›å»ºä¸€æ¬¡éå†æ‰€éœ€çš„ Crawlerï¼Œå¹¶ä»¥å¼•ç”¨ä¿å­˜ Registryã€ä¸Šä¸‹æ–‡å’Œä¸¤ä¸ªè¾“å‡ºé›†åˆã€‚
+// è¿™äº›å¼•ç”¨ä¸è½¬ç§»æ‰€æœ‰æƒï¼Œè°ƒç”¨è€…å¿…é¡»ä¿è¯å®ƒä»¬è¦†ç›–æ•´ä¸ª Crawl ç”Ÿå‘½å‘¨æœŸã€‚
 UniversalFeatureCrawler::UniversalFeatureCrawler(FeatureTypeRegistry& registry, ParseContext& context,
                                                  std::vector<FeatureRecord>& features,
                                                  std::vector<RelationRecord>& relations)
@@ -526,8 +920,8 @@ UniversalFeatureCrawler::UniversalFeatureCrawler(FeatureTypeRegistry& registry, 
 {
 }
 
-// ÓÃÍ¾£ºÏÈÎª¶ÔÏó½¨Á¢»ù´¡ FeatureRecord£¬ÔÙÖ´ĞĞ Decoder£¬²¢°´ parent_id ½¨Á¢ÕıÊ½¹ØÏµ¡£
-// ·µ»ØĞÂ·ÖÅäµÄÎÈ¶¨ feature_id£¬¹©µİ¹é×Ó½Úµã×÷Îª parent_id Ê¹ÓÃ¡£
+// ç”¨é€”ï¼šå…ˆä¸ºå¯¹è±¡å»ºç«‹åŸºç¡€ FeatureRecordï¼Œå†æ‰§è¡Œ Decoderï¼Œå¹¶æŒ‰ parent_id å»ºç«‹æ­£å¼å…³ç³»ã€‚
+// è¿”å›æ–°åˆ†é…çš„ç¨³å®š feature_idï¼Œä¾›é€’å½’å­èŠ‚ç‚¹ä½œä¸º parent_id ä½¿ç”¨ã€‚
 std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
                                                const std::string& parent_id,
                                                const std::string& tree_path,
@@ -543,7 +937,7 @@ std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
   record.tree_path = tree_path;
   record.update_status = "unknown";
   record.visibility = "unknown";
-  // ¼´Ê¹ Decode ËæºóÊ§°Ü£¬ÀàĞÍ¹Û²ìºÍ»ù´¡¼ÇÂ¼Ò²ÒÑ¾­½¨Á¢£¬Âú×ã¡°²»¶ª¶ÔÏó¡±µÄÔ¼Êø¡£
+  // å³ä½¿ Decode éšåå¤±è´¥ï¼Œç±»å‹è§‚å¯Ÿå’ŒåŸºç¡€è®°å½•ä¹Ÿå·²ç»å»ºç«‹ï¼Œæ»¡è¶³â€œä¸ä¸¢å¯¹è±¡â€çš„çº¦æŸã€‚
   _catalog.Observe(view.GetFingerprint());
   _registry.DecodeObject(view, _context, record);
   if (record.update_status == "not_up_to_date")
@@ -569,14 +963,14 @@ std::string UniversalFeatureCrawler::AddObject(INativeObjectView& view,
   return record.feature_id;
 }
 
-// ÓÃÍ¾£ºµİ¹é·ÃÎÊÒ»¸ö¹æ¸ñ¶ÔÏó£¬ÑÏ¸ñ±£Áô ListComponents ·µ»ØµÄÔ­ÉúË³Ğò¡£
-// visited ÒÔÔËĞĞÆÚÖ¸ÕëÊ¶±ğÑ­»·£¬µ«Ö¸Õë½öÓÃÓÚ±¾´Î±éÀú¿ØÖÆ£¬¾ø²»Ğ´ÈëÊä³ö¡£
+// ç”¨é€”ï¼šé€’å½’è®¿é—®ä¸€ä¸ªè§„æ ¼å¯¹è±¡ï¼Œä¸¥æ ¼ä¿ç•™ ListComponents è¿”å›çš„åŸç”Ÿé¡ºåºã€‚
+// visited ä»¥è¿è¡ŒæœŸæŒ‡é’ˆè¯†åˆ«å¾ªç¯ï¼Œä½†æŒ‡é’ˆä»…ç”¨äºæœ¬æ¬¡éå†æ§åˆ¶ï¼Œç»ä¸å†™å…¥è¾“å‡ºã€‚
 bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string& parent_id,
                                         const std::string& parent_path,
                                         long native_enumeration_index,
                                         long container_enumeration_index)
 {
-  // ÖØ¸´µ½´ïÍ¬Ò»¸öÔ­Éú¶ÔÏóÊ±Ö±½Ó·µ»Ø£¬·ÀÖ¹Ñ­»·ÒıÓÃ»ò¶àÈë¿ÚÔì³ÉÎŞÏŞµİ¹é¡£
+  // é‡å¤åˆ°è¾¾åŒä¸€ä¸ªåŸç”Ÿå¯¹è±¡æ—¶ç›´æ¥è¿”å›ï¼Œé˜²æ­¢å¾ªç¯å¼•ç”¨æˆ–å¤šå…¥å£é€ æˆæ— é™é€’å½’ã€‚
   if (!spec || _visited.find(spec) != _visited.end()) return true;
   _visited.insert(spec);
 
@@ -594,7 +988,7 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
 
     CATListValCATISpecObject_var* children = spec->ListComponents();
     if (!children) return true;
-    // ListComponents ·µ»Ø¶Ñ¶ÔÏó£¬Á¢¼´½¨Á¢ÊØÎÀ£¬±£Ö¤ºóĞøÈÎºÎÒì³£Â·¾¶¶¼ÄÜ delete¡£
+    // ListComponents è¿”å›å †å¯¹è±¡ï¼Œç«‹å³å»ºç«‹å®ˆå«ï¼Œä¿è¯åç»­ä»»ä½•å¼‚å¸¸è·¯å¾„éƒ½èƒ½ deleteã€‚
     SpecListGuard children_guard(children);
     int index = 0;
     for (index = 1; index <= children->Size(); ++index)
@@ -610,15 +1004,15 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
   }
   catch (...)
   {
-    // ¶ÔÏó¼¶Òì³£×ª³ÉÕï¶Ï²¢·µ»Ø false£»ÉÏ²ã¿É¾ö¶¨Èë¿ÚÊ§°ÜÊÇ·ñÎªÎÄµµ¼¶ÖÂÃü´íÎó¡£
+    // å¯¹è±¡çº§å¼‚å¸¸è½¬æˆè¯Šæ–­å¹¶è¿”å› falseï¼›ä¸Šå±‚å¯å†³å®šå…¥å£å¤±è´¥æ˜¯å¦ä¸ºæ–‡æ¡£çº§è‡´å‘½é”™è¯¯ã€‚
     _context.AddDiagnostic("warning", "discovery", "OBJECT_TRAVERSAL_FAILED",
                            "CATISpecObject traversal failed; scan continued", parent_id);
     return false;
   }
 }
 
-// ÓÃÍ¾£º´Ó CATDocument ¸ù¿ªÊ¼Ö´ĞĞ MVP ÍêÕû·¢ÏÖÁ´Â·£¬²¢Ã¶¾ÙÒÑÑéÖ¤ Part ÈİÆ÷Óë¹æ¸ñ¶ÔÏóÈë¿Ú¡£
-// document ÊÇ DocumentGuard ÓµÓĞµÄ½èÓÃÖ¸Õë£»º¯Êı²»¹Ø±ÕÎÄµµ¡£Èë¿Ú¼¶Ê§°ÜÍ¨¹ı error ·µ»Ø false¡£
+// ç”¨é€”ï¼šä» CATDocument æ ¹å¼€å§‹æ‰§è¡Œ MVP å®Œæ•´å‘ç°é“¾è·¯ï¼Œå¹¶æšä¸¾å·²éªŒè¯ Part å®¹å™¨ä¸è§„æ ¼å¯¹è±¡å…¥å£ã€‚
+// document æ˜¯ DocumentGuard æ‹¥æœ‰çš„å€Ÿç”¨æŒ‡é’ˆï¼›å‡½æ•°ä¸å…³é—­æ–‡æ¡£ã€‚å…¥å£çº§å¤±è´¥é€šè¿‡ error è¿”å› falseã€‚
 bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
 {
   if (!document)
@@ -628,19 +1022,19 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
   try
   {
-  // ÎÄµµºÍÈİÆ÷²»ÊÇ CATISpecObject£¬ÏÈÓÃ StaticObjectView ÎªËüÃÇ½¨Á¢Í¬ÑùÍêÕûµÄ»ù´¡ IR¡£
+  // æ–‡æ¡£å’Œå®¹å™¨ä¸æ˜¯ CATISpecObjectï¼Œå…ˆç”¨ StaticObjectView ä¸ºå®ƒä»¬å»ºç«‹åŒæ ·å®Œæ•´çš„åŸºç¡€ IRã€‚
   StaticObjectView document_view("CATDocument", "document", UnicodeToUtf8(document->DisplayName()));
   const std::string document_id = AddObject(document_view, "", "/document", 0, 0);
 
   CATInit* init = 0;
-  // QueryInterface ³É¹¦»á·µ»Ø³ÖÓĞÒıÓÃ£»ÊØÎÀ±ØĞëÔÚ½ôÁÚ³É¹¦¼ì²éºó½Ó¹ÜËü¡£
+  // QueryInterface æˆåŠŸä¼šè¿”å›æŒæœ‰å¼•ç”¨ï¼›å®ˆå«å¿…é¡»åœ¨ç´§é‚»æˆåŠŸæ£€æŸ¥åæ¥ç®¡å®ƒã€‚
   if (FAILED(document->QueryInterface(IID_CATInit, reinterpret_cast<void**>(&init))) || !init)
   {
     error = "CATInit is unavailable on CATPart document";
     return false;
   }
   CaaInterfaceGuard<CATInit> init_guard(init);
-  // GetRootContainer ·µ»ØµÄ CATBaseUnknown ÒıÓÃÓÉ root_guard ¸ºÔğÊÍ·Å¡£
+  // GetRootContainer è¿”å›çš„ CATBaseUnknown å¼•ç”¨ç”± root_guard è´Ÿè´£é‡Šæ”¾ã€‚
   CATBaseUnknown* root = init->GetRootContainer("CATIPrtContainer");
   if (!root)
   {
@@ -659,14 +1053,14 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
   CaaInterfaceGuard<CATIPrtContainer> part_container_guard(part_container);
 
-  // °ÑÒÑÑéÖ¤µÄ Part Spec Container ×÷Îª¶ÀÁ¢ IR ½Úµã£¬ºóĞø Feature ¶¼¹ÒÔÚËüÏÂÃæ¡£
+  // æŠŠå·²éªŒè¯çš„ Part Spec Container ä½œä¸ºç‹¬ç«‹ IR èŠ‚ç‚¹ï¼Œåç»­ Feature éƒ½æŒ‚åœ¨å®ƒä¸‹é¢ã€‚
   StaticObjectView container_view("CATIPrtContainer", "container", "PartSpecContainer");
   const std::string container_id = AddObject(container_view, document_id,
                                               "/document/PartSpecContainer", 1, 1);
   ++_context.statistics.container_count;
 
   CATISpecObject_var part = NULL_var;
-  // _var ÊÇ CAA ÖÇÄÜÒıÓÃ°ü×°£¬Àë¿ª×÷ÓÃÓòÊ±×Ô¶¯¹ÜÀí GetPart ·µ»Ø¶ÔÏóµÄÒıÓÃ¼ÆÊı¡£
+  // _var æ˜¯ CAA æ™ºèƒ½å¼•ç”¨åŒ…è£…ï¼Œç¦»å¼€ä½œç”¨åŸŸæ—¶è‡ªåŠ¨ç®¡ç† GetPart è¿”å›å¯¹è±¡çš„å¼•ç”¨è®¡æ•°ã€‚
   try
   {
     part = part_container->GetPart();
@@ -696,7 +1090,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
 
   CATIContainer* generic_container = 0;
-  // CATIContainer ÊÇ²¹³äÈë¿Ú£º´æÔÚÊ±Ã¶¾Ùµ±Ç°ÈİÆ÷³ÉÔ±£¬²»´æÔÚÊ±½ö¼ÇÂ¼ info ¶ø²»²Â²âÌæ´ú API¡£
+  // CATIContainer æ˜¯è¡¥å……å…¥å£ï¼šå­˜åœ¨æ—¶æšä¸¾å½“å‰å®¹å™¨æˆå‘˜ï¼Œä¸å­˜åœ¨æ—¶ä»…è®°å½• info è€Œä¸çŒœæµ‹æ›¿ä»£ APIã€‚
   if (SUCCEEDED(root->QueryInterface(IID_CATIContainer,
                                      reinterpret_cast<void**>(&generic_container))) && generic_container)
   {
@@ -704,7 +1098,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
     try
     {
       SEQUENCE(CATBaseUnknown_ptr) members;
-      // ÏÈ½¨Á¢ĞòÁĞÊØÎÀ£¬ÔÙµ÷ÓÃÃ¶¾Ù£»Òì³£Ê±ÒÑ¾­·µ»ØµÄ³ÉÔ±ÒıÓÃÒ²ÄÜ±»ÊÍ·Å¡£
+      // å…ˆå»ºç«‹åºåˆ—å®ˆå«ï¼Œå†è°ƒç”¨æšä¸¾ï¼›å¼‚å¸¸æ—¶å·²ç»è¿”å›çš„æˆå‘˜å¼•ç”¨ä¹Ÿèƒ½è¢«é‡Šæ”¾ã€‚
       BaseUnknownSequenceGuard members_guard(members);
       const CATLONG32 count = generic_container->ListMembersHere("CATISpecObject", members);
       CATLONG32 index = 0;
@@ -716,7 +1110,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
         if (SUCCEEDED(member->QueryInterface(IID_CATISpecObject,
                                              reinterpret_cast<void**>(&member_spec))) && member_spec)
         {
-          // ÁÙÊ± QueryInterface ÒıÓÃÓÉ¾Ö²¿ÊØÎÀÊÍ·Å£»Á¢¼´°´Ã¶¾ÙÆ÷Ô­Ê¼Î»ÖÃ·ÃÎÊ¡£
+          // ä¸´æ—¶ QueryInterface å¼•ç”¨ç”±å±€éƒ¨å®ˆå«é‡Šæ”¾ï¼›ç«‹å³æŒ‰æšä¸¾å™¨åŸå§‹ä½ç½®è®¿é—®ã€‚
           CaaInterfaceGuard<CATISpecObject> member_spec_guard(member_spec);
           VisitSpec(member_spec, container_id, "/document/PartSpecContainer",
                     static_cast<long>(index + 1), 1);
@@ -749,7 +1143,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   }
   catch (...)
   {
-    // ×îÍâ²ã catch ÊÇÎÄµµ¼¶°²È«Íø£»ËùÓĞÒÑ´´½¨µÄ RAII ÊØÎÀÈÔ»á°´Õ»Õ¹¿ªË³ĞòÖ´ĞĞÇåÀí¡£
+    // æœ€å¤–å±‚ catch æ˜¯æ–‡æ¡£çº§å®‰å…¨ç½‘ï¼›æ‰€æœ‰å·²åˆ›å»ºçš„ RAII å®ˆå«ä»ä¼šæŒ‰æ ˆå±•å¼€é¡ºåºæ‰§è¡Œæ¸…ç†ã€‚
     error = "CAA traversal raised an unhandled exception";
     return false;
   }

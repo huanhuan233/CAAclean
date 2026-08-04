@@ -1,6 +1,6 @@
-# CATIA V5R21 CAA Parser MVP v1 架构
+# CATIA V5R21 CAA Parser MVP v2 架构
 
-Schema 为 `cad_parse_mvp_v1`。工程仍保持一个 CAA Framework 和一个 LOAD MODULE；逻辑层通过纯 C++ 契约隔离，避免为名称创建空 Framework。
+Schema 为 `cad_parse_mvp_v2`，Parser/Registry/Decoder Bundle 为 `1.2.0`。工程仍保持一个 CAA Framework 和一个 LOAD MODULE；逻辑层通过纯 C++ 契约隔离，避免为名称创建空 Framework。
 
 ## 运行链路
 
@@ -9,7 +9,7 @@ CadParseBatch
 → SessionGuard / DocumentGuard
 → UniversalFeatureCrawler（保留 CAA 枚举器原始顺序）
 → FeatureTypeRegistry
-→ KnowledgewareStringParameterDecoder 或基础 Typed Decoder
+→ KnowledgewareStringParameterDecoder / NativeHoleDecoder / 基础 Typed Decoder
 → Generic / Opaque
 → ParameterRecordBuilder
 → DeclaredBusinessFeatureAggregator
@@ -18,7 +18,7 @@ CadParseBatch
 → 目录原子改名提交
 ```
 
-`features.jsonl` 一行对应一个实际枚举到的 CAA 对象。String 参数也仍是原始 Feature；`parameters.jsonl` 只是用相同 `feature_id` 建立的消费索引。`business_features.jsonl` 是从 GSMTool 声明节点和真实父子关系聚合出的派生记录，不混入 `enumerated_total`。
+`features.jsonl` 一行对应一个实际枚举到的 CAA 对象。String 参数也仍是原始 Feature；`parameters.jsonl` 只是用相同 `feature_id` 建立的消费索引。Native Hole 载荷是原始 Hole Feature 的可选 Typed Payload，不复制对象、不进入参数索引。`business_features.jsonl` 是从 GSMTool 声明节点和真实父子关系聚合出的派生记录，不混入 `enumerated_total`。
 
 ## 确定性和输出事务
 
@@ -30,6 +30,8 @@ Writer 先在 `<output>.cadparse_stage` 完整写一次 features、relations、p
 
 - CAA 指针只存在于 `CadParseCAA.cpp` 的 Session、Document、Crawler 和 Native View 内。
 - 参数真实值通过 Public `CATICkeParm::Value()->AsString()` 读取；`Show()` 仅保存为 `raw_display_text`。
-- 当前“孔、槽、凸台”是 `declared_tree_parameter_aggregation`，不是 B-Rep 识别，也不是原生 Pad/Hole/Pocket Decoder。
+- `INativeFeatureDecoder`、`DecoderMatchStatus`、`DecoderContext` 和每类独立 Typed Payload 构成通用扩展边界；Crawler 不含 Hole 分支。
+- Native Hole 由 `CATISpecObject → QueryInterface(IID_CATIAHole)` 确认；StartUp 只做候选预筛选。失败统一回到 Generic/Opaque。
+- 当前 GSMTool“孔、槽、凸台”仍是 `declared_tree_parameter_aggregation`，不是 B-Rep 识别；只有真实 Part Design Hole 使用 `NativeHoleDecoder`。
 - 已验证关系只有 `parent_of` 和 `contains`；悬空关系或派生来源会在写盘前被拒绝。
 - 当前入口是 CATDocument、`CATIPrtContainer::GetPart`、`CATISpecObject::ListComponents` 和根 `CATIContainer::ListMembersHere`，不声称覆盖所有 CATPart 私有对象。

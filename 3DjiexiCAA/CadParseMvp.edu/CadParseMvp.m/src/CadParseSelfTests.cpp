@@ -1,9 +1,10 @@
-// ±¾ÎÄ¼şÊµÏÖ²»ÒÀÀµ CATIA Ğí¿ÉÖ¤µÄºËĞÄ×Ô²â£¬Í¨¹ıÎ±¶ÔÏóºÍÎ± Decoder ÑéÖ¤ Registry¡¢¶µµ×ºÍ IR¡£
-// ²âÊÔÑØÓÃ C++03 Óë¼«Ğ¡ TestRunner£¬²»ÒıÈë VS2008 »·¾³ÖĞ²»´æÔÚµÄµÚÈı·½²âÊÔ¿ò¼Ü¡£
+ï»¿// æœ¬æ–‡ä»¶å®ç°ä¸ä¾èµ– CATIA è®¸å¯è¯çš„æ ¸å¿ƒè‡ªæµ‹ï¼Œé€šè¿‡ä¼ªå¯¹è±¡å’Œä¼ª Decoder éªŒè¯ Registryã€å…œåº•å’Œ IRã€‚
+// æµ‹è¯•æ²¿ç”¨ C++03 ä¸æå° TestRunnerï¼Œä¸å¼•å…¥ VS2008 ç¯å¢ƒä¸­ä¸å­˜åœ¨çš„ç¬¬ä¸‰æ–¹æµ‹è¯•æ¡†æ¶ã€‚
 #include "CadParseContracts.h"
 #include "CadParseIR.h"
 
 #include <fstream>
+#include <limits>
 #include <cstdio>
 #include <iostream>
 #include <set>
@@ -13,21 +14,21 @@ using namespace std;
 
 namespace cadparse
 {
-// ¿É¿ØÖÆ¡°»ù´¡ÊôĞÔÊÇ·ñ¿É¶Á¡±µÄÎ±Ô­Éú¶ÔÏóÊÓÍ¼£¬ÓÃÀ´Çı¶¯ Generic ºÍ Opaque Â·¾¶¡£
+// å¯æ§åˆ¶â€œåŸºç¡€å±æ€§æ˜¯å¦å¯è¯»â€çš„ä¼ªåŸç”Ÿå¯¹è±¡è§†å›¾ï¼Œç”¨æ¥é©±åŠ¨ Generic å’Œ Opaque è·¯å¾„ã€‚
 class FakeView : public INativeObjectView
 {
 public:
-  // ÓÃÍ¾£º¹¹ÔìÖ¸¶¨ native_type µÄÎ±¶ÔÏó£¬²¢·ÅÈë°üº¬ÖĞÎÄ¡¢ÒıºÅµÄ UTF-8 ÏÔÊ¾Ãû¡£
+  // ç”¨é€”ï¼šæ„é€ æŒ‡å®š native_type çš„ä¼ªå¯¹è±¡ï¼Œå¹¶æ”¾å…¥åŒ…å«ä¸­æ–‡ã€å¼•å·çš„ UTF-8 æ˜¾ç¤ºåã€‚
   FakeView(const char* type, bool readable = true) : _readable(readable)
   {
     _fingerprint.native_type = type;
     _fingerprint.display_name = "\xE4\xB8\xAD\xE6\x96\x87\"name";
   }
 
-  // ÓÃÍ¾£º·µ»ØÎ±¶ÔÏóµÄÎÈ¶¨ÀàĞÍÖ¸ÎÆ¡£
+  // ç”¨é€”ï¼šè¿”å›ä¼ªå¯¹è±¡çš„ç¨³å®šç±»å‹æŒ‡çº¹ã€‚
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
-  // ÓÃÍ¾£º°´ _readable ¿ª¹ØÄ£Äâ»ù´¡ÊôĞÔ³É¹¦»òÊ§°Ü£¬¹©¶µµ×²âÊÔ¾«È·¿ØÖÆÂ·¾¶¡£
+  // ç”¨é€”ï¼šæŒ‰ _readable å¼€å…³æ¨¡æ‹ŸåŸºç¡€å±æ€§æˆåŠŸæˆ–å¤±è´¥ï¼Œä¾›å…œåº•æµ‹è¯•ç²¾ç¡®æ§åˆ¶è·¯å¾„ã€‚
   bool ReadBasicAttributes(FeatureRecord& record, std::string& error) const
   {
     if (!_readable)
@@ -44,12 +45,12 @@ private:
   bool _readable;
 };
 
-// ¿É·Ö±ğÄ£Äâ³É¹¦¡¢½Ó¿Ú²»Ö§³ÖºÍ¶ÁÈ¡Òì³£µÄ String ²ÎÊıÊÓÍ¼¡£
-// ¸ÃÊÓÍ¼²»ÒÀÀµ CAA£¬ÓÃÀ´ÑéÖ¤ Decoder µÄÆ¥ÅäÓë´íÎó¸ôÀëÆõÔ¼¡£
+// å¯åˆ†åˆ«æ¨¡æ‹ŸæˆåŠŸã€æ¥å£ä¸æ”¯æŒå’Œè¯»å–å¼‚å¸¸çš„ String å‚æ•°è§†å›¾ã€‚
+// è¯¥è§†å›¾ä¸ä¾èµ– CAAï¼Œç”¨æ¥éªŒè¯ Decoder çš„åŒ¹é…ä¸é”™è¯¯éš”ç¦»å¥‘çº¦ã€‚
 class FakeStringParameterView : public INativeObjectView, public IStringParameterView
 {
 public:
-  // ÓÃÍ¾£º´´½¨Ò»¸ö String ²ÎÊı²âÊÔ¶ÔÏó£¬²¢Ö¸¶¨¶ÁÈ¡½á¹ûºÍÕæÊµ×Ö·û´®Öµ¡£
+  // ç”¨é€”ï¼šåˆ›å»ºä¸€ä¸ª String å‚æ•°æµ‹è¯•å¯¹è±¡ï¼Œå¹¶æŒ‡å®šè¯»å–ç»“æœå’ŒçœŸå®å­—ç¬¦ä¸²å€¼ã€‚
   FakeStringParameterView(StringParameterReadStatus status, const std::string& value,
                           const std::string& name)
     : _status(status), _value(value)
@@ -60,20 +61,20 @@ public:
     _fingerprint.internal_name = name;
   }
 
-  // ÓÃÍ¾£º·µ»Ø²âÊÔ¶ÔÏóµÄ String/Literal ÀàĞÍÖ¸ÎÆ¡£
+  // ç”¨é€”ï¼šè¿”å›æµ‹è¯•å¯¹è±¡çš„ String/Literal ç±»å‹æŒ‡çº¹ã€‚
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
-  // ÓÃÍ¾£ºÈÃ String Decoder È¡µÃµ±Ç°Î±²ÎÊıÊÓÍ¼£¬²»ÒÀÀµ±àÒëÆ÷ RTTI¡£
+  // ç”¨é€”ï¼šè®© String Decoder å–å¾—å½“å‰ä¼ªå‚æ•°è§†å›¾ï¼Œä¸ä¾èµ–ç¼–è¯‘å™¨ RTTIã€‚
   const IStringParameterView* GetStringParameterView() const { return this; }
 
-  // ÓÃÍ¾£ºÎª Generic ¶µµ×Ìá¹©Ò»¸öÊ¼ÖÕ³É¹¦µÄ»ù´¡ÊôĞÔ¶ÁÈ¡Â·¾¶¡£
+  // ç”¨é€”ï¼šä¸º Generic å…œåº•æä¾›ä¸€ä¸ªå§‹ç»ˆæˆåŠŸçš„åŸºç¡€å±æ€§è¯»å–è·¯å¾„ã€‚
   bool ReadBasicAttributes(FeatureRecord& record, std::string&) const
   {
     record.attributes["generic_read"] = "success";
     return true;
   }
 
-  // ÓÃÍ¾£º°´ÕÕ¹¹ÔìÊ±Ö¸¶¨µÄ½á¹ûÄ£ÄâÀàĞÍ»¯ String ²ÎÊı½Ó¿Ú¶ÁÈ¡¡£
+  // ç”¨é€”ï¼šæŒ‰ç…§æ„é€ æ—¶æŒ‡å®šçš„ç»“æœæ¨¡æ‹Ÿç±»å‹åŒ– String å‚æ•°æ¥å£è¯»å–ã€‚
   StringParameterReadStatus ReadStringParameter(ParameterValueData& parameter,
                                                 std::string& error) const
   {
@@ -100,26 +101,90 @@ private:
   std::string _value;
 };
 
-// ¿ÉÅäÖÃ ID¡¢ÓÅÏÈ¼¶ºÍÅ×Òì³£ĞĞÎªµÄÎ± Typed Decoder¡£
+// API æ— å…³çš„ Hole ä¼ªè§†å›¾ï¼šç”¨å›ºå®šç»“æ„åŒ–æ•°æ®è¦†ç›–æˆåŠŸã€ä¸æ”¯æŒå’Œå¼‚å¸¸ä¸‰æ¡é€‚é…å™¨è·¯å¾„ã€‚
+class FakeNativeHoleView : public INativeObjectView, public INativeHoleView
+{
+public:
+  // ç”¨é€”ï¼šæ„é€  Hole æˆ– Pocket å€™é€‰ï¼Œå¹¶æ˜¾å¼æŒ‡å®šä¸“ç”¨æ¥å£è¯»å–ç»“æœï¼›åç§°ä¸å‚ä¸ç¡®è®¤ã€‚
+  FakeNativeHoleView(const char* startup_type, const char* display_name,
+                     NativeHoleReadStatus status, const NativeHoleData& data)
+    : _status(status), _data(data)
+  {
+    _fingerprint.startup_type = startup_type;
+    _fingerprint.display_name = display_name;
+    _fingerprint.internal_name = display_name;
+  }
+
+  // ç”¨é€”ï¼šè¿”å›å€™é€‰é¢„ç­›é€‰æ‰€éœ€çš„ç¨³å®šç±»å‹æŒ‡çº¹ã€‚
+  const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
+
+  // ç”¨é€”ï¼šæŠŠå½“å‰ä¼ªå¯¹è±¡æš´éœ²ä¸º Hole é€‚é…è§†å›¾ï¼Œé¿å… Core ä½¿ç”¨ RTTIã€‚
+  const INativeHoleView* GetNativeHoleView() const { return this; }
+
+  // ç”¨é€”ï¼šæ¨¡æ‹ŸçœŸå® CAA Adapter çš„æ¥å£ç¡®è®¤å’Œç»“æ„åŒ–å‚æ•°è¯»å–ç»“æœã€‚
+  NativeHoleReadStatus ReadNativeHole(NativeHoleData& output, std::string& error) const
+  {
+    output = _data;
+    if (_status != NativeHoleReadSuccess)
+      error = "fake native hole read failure";
+    return _status;
+  }
+
+  // ç”¨é€”ï¼šä¸ºä¸“ç”¨ Decoder å¤±è´¥åçš„ Generic å›é€€æä¾›å¯éªŒè¯çš„å¹²å‡€åŸºç¡€è®°å½•ã€‚
+  bool ReadBasicAttributes(FeatureRecord& record, std::string&) const
+  {
+    record.attributes["generic_read"] = "success";
+    return true;
+  }
+
+private:
+  TypeFingerprint _fingerprint;
+  NativeHoleReadStatus _status;
+  NativeHoleData _data;
+};
+
+// ä¸“é—¨æŠ›å¼‚å¸¸çš„ Hole ä¼ªè§†å›¾ï¼Œç”¨æ¥é”å®šæ‰€æœ‰è™šè°ƒç”¨éƒ½å¤„äºå¯¹è±¡çº§é”™è¯¯è¾¹ç•Œå†…ã€‚
+class ThrowingNativeHoleView : public INativeObjectView, public INativeHoleView
+{
+public:
+  // ç”¨é€”ï¼šmode=1 åœ¨å–å¾—è§†å›¾æ—¶æŠ›å‡ºï¼Œmode=2 åœ¨è¯»å–ä¸“ç”¨å€¼æ—¶æŠ›å‡ºã€‚
+  explicit ThrowingNativeHoleView(int mode) : _mode(mode)
+  { _fingerprint.startup_type = "Hole"; }
+  // ç”¨é€”ï¼šè¿”å› Hole å€™é€‰æŒ‡çº¹ã€‚
+  const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
+  // ç”¨é€”ï¼šæ¨¡æ‹Ÿ Native View å·¥å‚å¼‚å¸¸ã€‚
+  const INativeHoleView* GetNativeHoleView() const
+  { if (_mode == 1) throw "view exception"; return this; }
+  // ç”¨é€”ï¼šæ¨¡æ‹Ÿä¸“ç”¨ CAA è¯»å–å¼‚å¸¸ã€‚
+  NativeHoleReadStatus ReadNativeHole(NativeHoleData&, std::string&) const
+  { throw "read exception"; }
+  // ç”¨é€”ï¼šè®©å¼‚å¸¸å¯¹è±¡ä»å¯å®Œæˆ Generic å›é€€ã€‚
+  bool ReadBasicAttributes(FeatureRecord&, std::string&) const { return true; }
+private:
+  int _mode;
+  TypeFingerprint _fingerprint;
+};
+
+// å¯é…ç½® IDã€ä¼˜å…ˆçº§å’ŒæŠ›å¼‚å¸¸è¡Œä¸ºçš„ä¼ª Typed Decoderã€‚
 class TypedDecoder : public IFeatureDecoder
 {
 public:
-  // ÓÃÍ¾£º´´½¨²âÊÔ Decoder£»id Ê¹ÓÃ×Ö·û´®³£Á¿£¬²âÊÔÆÚ¼ä²»×ªÒÆÆäÄÚ´æËùÓĞÈ¨¡£
+  // ç”¨é€”ï¼šåˆ›å»ºæµ‹è¯• Decoderï¼›id ä½¿ç”¨å­—ç¬¦ä¸²å¸¸é‡ï¼Œæµ‹è¯•æœŸé—´ä¸è½¬ç§»å…¶å†…å­˜æ‰€æœ‰æƒã€‚
   TypedDecoder(const char* id, int priority, bool throws_on_decode = false)
     : _id(id), _priority(priority), _throws_on_decode(throws_on_decode) {}
 
-  // ÓÃÍ¾£º·µ»Ø²âÊÔÖ¸¶¨µÄÎÈ¶¨ Decoder ID¡£
+  // ç”¨é€”ï¼šè¿”å›æµ‹è¯•æŒ‡å®šçš„ç¨³å®š Decoder IDã€‚
   const char* GetDecoderId() const { return _id; }
-  // ÓÃÍ¾£º·µ»Ø²âÊÔÖ¸¶¨µÄÆ¥ÅäÓÅÏÈ¼¶¡£
+  // ç”¨é€”ï¼šè¿”å›æµ‹è¯•æŒ‡å®šçš„åŒ¹é…ä¼˜å…ˆçº§ã€‚
   int GetPriority() const { return _priority; }
 
-  // ÓÃÍ¾£ºÖ»Æ¥Åä native_type Îª Known µÄÎ±¶ÔÏó¡£
+  // ç”¨é€”ï¼šåªåŒ¹é… native_type ä¸º Known çš„ä¼ªå¯¹è±¡ã€‚
   bool Match(const TypeFingerprint& fingerprint, const INativeObjectView&) const
   {
     return fingerprint.native_type == "Known";
   }
 
-  // ÓÃÍ¾£ºÄ£Äâ³É¹¦ Typed Decode£¬»ò°´¿ª¹ØÅ×³öÒì³£ÑéÖ¤ Registry µÄÒì³£¸ôÀë¡£
+  // ç”¨é€”ï¼šæ¨¡æ‹ŸæˆåŠŸ Typed Decodeï¼Œæˆ–æŒ‰å¼€å…³æŠ›å‡ºå¼‚å¸¸éªŒè¯ Registry çš„å¼‚å¸¸éš”ç¦»ã€‚
   DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord& record)
   {
     if (_throws_on_decode)
@@ -136,18 +201,18 @@ private:
   bool _throws_on_decode;
 };
 
-// ¹ÊÒâÏÈÎÛÈ¾ output ÔÙ·µ»ØÊ§°ÜµÄ Decoder£¬ÓÃÓÚÑéÖ¤ Generic Ç°»á»Ö¸´¸É¾»»ù´¡¼ÇÂ¼¡£
+// æ•…æ„å…ˆæ±¡æŸ“ output å†è¿”å›å¤±è´¥çš„ Decoderï¼Œç”¨äºéªŒè¯ Generic å‰ä¼šæ¢å¤å¹²å‡€åŸºç¡€è®°å½•ã€‚
 class DirtyFailingDecoder : public IFeatureDecoder
 {
 public:
-  // ÓÃÍ¾£º·µ»ØÎÛÈ¾²âÊÔ Decoder µÄÎÈ¶¨ ID¡£
+  // ç”¨é€”ï¼šè¿”å›æ±¡æŸ“æµ‹è¯• Decoder çš„ç¨³å®š IDã€‚
   const char* GetDecoderId() const { return "dirty"; }
-  // ÓÃÍ¾£ºÌá¹©¸ßÓÚ Generic µÄÓÅÏÈ¼¶£¬È·±£¸Ã Decoder ÏÈ±»Ö´ĞĞ¡£
+  // ç”¨é€”ï¼šæä¾›é«˜äº Generic çš„ä¼˜å…ˆçº§ï¼Œç¡®ä¿è¯¥ Decoder å…ˆè¢«æ‰§è¡Œã€‚
   int GetPriority() const { return 100; }
-  // ÓÃÍ¾£ºÖ»Æ¥Åä Known ¶ÔÏó£¬Ê¹²âÊÔÂ·¾¶È·¶¨¡£
+  // ç”¨é€”ï¼šåªåŒ¹é… Known å¯¹è±¡ï¼Œä½¿æµ‹è¯•è·¯å¾„ç¡®å®šã€‚
   bool Match(const TypeFingerprint& fingerprint, const INativeObjectView&) const
   { return fingerprint.native_type == "Known"; }
-  // ÓÃÍ¾£ºĞ´Èë²»Ó¦Ğ¹Â©µÄ°ë³ÉÆ·ÊôĞÔºóÖ÷¶¯·µ»ØÊ§°Ü½á¹û¡£
+  // ç”¨é€”ï¼šå†™å…¥ä¸åº”æ³„æ¼çš„åŠæˆå“å±æ€§åä¸»åŠ¨è¿”å›å¤±è´¥ç»“æœã€‚
   DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord& record)
   {
     record.decoder_id = "dirty";
@@ -156,14 +221,14 @@ public:
   }
 };
 
-// ×îĞ¡²âÊÔÔËĞĞÆ÷£ºÀÛ¼ÆÊ§°ÜÊı²¢°ÑÊ§°ÜÓÃÀıÃû³ÆĞ´µ½±ê×¼´íÎóÁ÷¡£
+// æœ€å°æµ‹è¯•è¿è¡Œå™¨ï¼šç´¯è®¡å¤±è´¥æ•°å¹¶æŠŠå¤±è´¥ç”¨ä¾‹åç§°å†™åˆ°æ ‡å‡†é”™è¯¯æµã€‚
 class TestRunner
 {
 public:
-  // ÓÃÍ¾£º´´½¨ÉĞÎŞÊ§°ÜµÄ²âÊÔÔËĞĞÆ÷¡£
+  // ç”¨é€”ï¼šåˆ›å»ºå°šæ— å¤±è´¥çš„æµ‹è¯•è¿è¡Œå™¨ã€‚
   TestRunner() : _failures(0) {}
 
-  // ÓÃÍ¾£º¶ÏÑÔ condition£»Ê§°ÜÊ±µİÔö¼ÆÊı²¢Êä³ö±ãÓÚ¶¨Î»µÄÓÃÀıÃû³Æ¡£
+  // ç”¨é€”ï¼šæ–­è¨€ conditionï¼›å¤±è´¥æ—¶é€’å¢è®¡æ•°å¹¶è¾“å‡ºä¾¿äºå®šä½çš„ç”¨ä¾‹åç§°ã€‚
   void Check(bool condition, const char* name)
   {
     if (!condition)
@@ -173,14 +238,14 @@ public:
     }
   }
 
-  // ÓÃÍ¾£º·µ»ØÀÛ¼ÆÊ§°ÜÊı£¬¹©½ø³ÌÈë¿Ú×ª»»ÎªÍË³öÂë¡£
+  // ç”¨é€”ï¼šè¿”å›ç´¯è®¡å¤±è´¥æ•°ï¼Œä¾›è¿›ç¨‹å…¥å£è½¬æ¢ä¸ºé€€å‡ºç ã€‚
   int Failures() const { return _failures; }
 
 private:
   int _failures;
 };
 
-// ÓÃÍ¾£ºÒÔ¶ş½øÖÆ·½Ê½¶ÁÈ¡ÍêÕûÎÄ¼ş£¬±ÜÃâ Windows ÎÄ±¾»»ĞĞ×ª»»Ó°Ïì Golden ±È½Ï¡£
+// ç”¨é€”ï¼šä»¥äºŒè¿›åˆ¶æ–¹å¼è¯»å–å®Œæ•´æ–‡ä»¶ï¼Œé¿å… Windows æ–‡æœ¬æ¢è¡Œè½¬æ¢å½±å“ Golden æ¯”è¾ƒã€‚
 static std::string ReadWholeFile(const std::string& path)
 {
   std::ifstream input(path.c_str(), std::ios::in | std::ios::binary);
@@ -189,7 +254,7 @@ static std::string ReadWholeFile(const std::string& path)
   return content.str();
 }
 
-// ÓÃÍ¾£º¿ìËÙ¹¹ÔìÈ·¶¨×Ö¶ÎºÍÖµË³ĞòµÄ FeatureRecord£¬¹© JSONL Golden Output ²âÊÔÊ¹ÓÃ¡£
+// ç”¨é€”ï¼šå¿«é€Ÿæ„é€ ç¡®å®šå­—æ®µå’Œå€¼é¡ºåºçš„ FeatureRecordï¼Œä¾› JSONL Golden Output æµ‹è¯•ä½¿ç”¨ã€‚
 static FeatureRecord MakeFeature(const char* id, const char* parent, long index,
                                  const char* type, const char* name, const char* decoder)
 {
@@ -209,7 +274,7 @@ static FeatureRecord MakeFeature(const char* id, const char* parent, long index,
   return record;
 }
 
-// ÓÃÍ¾£º¹¹ÔìÉùÃ÷Ê½ GSMTool ºòÑ¡£¬¹©²ÎÊı¹éÊôÓëÒµÎñ¾ÛºÏ²âÊÔ¸´ÓÃ¡£
+// ç”¨é€”ï¼šæ„é€ å£°æ˜å¼ GSMTool å€™é€‰ï¼Œä¾›å‚æ•°å½’å±ä¸ä¸šåŠ¡èšåˆæµ‹è¯•å¤ç”¨ã€‚
 static FeatureRecord MakeGsmTool(const char* id, const char* parent, long index,
                                  const std::string& name)
 {
@@ -218,7 +283,7 @@ static FeatureRecord MakeGsmTool(const char* id, const char* parent, long index,
   return record;
 }
 
-// ÓÃÍ¾£º¹¹ÔìÒÑ¾­ÓÉ String Typed Decoder ³É¹¦¶ÁÈ¡µÄ²ÎÊı Feature¡£
+// ç”¨é€”ï¼šæ„é€ å·²ç»ç”± String Typed Decoder æˆåŠŸè¯»å–çš„å‚æ•° Featureã€‚
 static FeatureRecord MakeStringParameter(const char* id, const char* parent, long index,
                                          const std::string& name, const std::string& value)
 {
@@ -234,7 +299,36 @@ static FeatureRecord MakeStringParameter(const char* id, const char* parent, lon
   return record;
 }
 
-// ÓÃÍ¾£º×·¼ÓÒ»Ìõ parent_of ¹ØÏµ£¬Ä£Äâ Crawler ÒÑÈ·ÈÏµÄÕæÊµÊ÷±ß¡£
+// ç”¨é€”ï¼šæ„é€ ä¸€ä¸ªå­—æ®µå®Œæ•´çš„ç›²å­”è½½è·ï¼Œä¾› NativeHoleDecoder ä¸ JSON Golden æµ‹è¯•å¤ç”¨ã€‚
+static NativeHoleData MakeBlindHoleData()
+{
+  NativeHoleData data;
+  data.semantic_kind = "part_design_hole";
+  data.value_source = "typed_caa_value";
+  data.interface_key = "CATIAHole";
+  data.hole_type = "simple";
+  data.hole_type_raw = 0;
+  data.diameter_mm = 10.0;
+  data.origin_mm[0] = -65.0;
+  data.origin_mm[1] = -25.0;
+  data.origin_mm[2] = 0.0;
+  data.direction[0] = 0.0;
+  data.direction[1] = 0.0;
+  data.direction[2] = 1.0;
+  data.bottom_limit.mode = "offset";
+  data.bottom_limit.mode_raw = 0;
+  data.bottom_limit.depth_mm.Set(12.0, "success");
+  data.head.kind = "none";
+  data.thread.enabled = false;
+  data.thread.mode_raw = 1;
+  data.thread.description.status = "not_applicable";
+  data.thread.diameter_mm.status = "not_applicable";
+  data.thread.depth_mm.status = "not_applicable";
+  data.thread.pitch_mm.status = "not_applicable";
+  return data;
+}
+
+// ç”¨é€”ï¼šè¿½åŠ ä¸€æ¡ parent_of å…³ç³»ï¼Œæ¨¡æ‹Ÿ Crawler å·²ç¡®è®¤çš„çœŸå®æ ‘è¾¹ã€‚
 static void AddParentRelation(std::vector<RelationRecord>& relations,
                               const char* parent, const char* child)
 {
@@ -245,12 +339,12 @@ static void AddParentRelation(std::vector<RelationRecord>& relations,
   relations.push_back(relation);
 }
 
-// ÓÃÍ¾£ºË³ĞòÖ´ĞĞÈ«²¿ API ÎŞ¹Ø×Ô²â²¢·µ»ØÊ§°ÜÊıÁ¿£»0 ±íÊ¾ËùÓĞ²»±äÁ¿¾ùÂú×ã¡£
+// ç”¨é€”ï¼šé¡ºåºæ‰§è¡Œå…¨éƒ¨ API æ— å…³è‡ªæµ‹å¹¶è¿”å›å¤±è´¥æ•°é‡ï¼›0 è¡¨ç¤ºæ‰€æœ‰ä¸å˜é‡å‡æ»¡è¶³ã€‚
 int SelfTestSuite::RunAll()
 {
   TestRunner tests;
 
-  // ÑéÖ¤ ID ÔÚµ¥´Î revision ÄÚÎ¨Ò»¡¢¹Ì¶¨¿í¶ÈÇÒ´Ó F000001 ¿ªÊ¼¡£
+  // éªŒè¯ ID åœ¨å•æ¬¡ revision å†…å”¯ä¸€ã€å›ºå®šå®½åº¦ä¸”ä» F000001 å¼€å§‹ã€‚
   FeatureIdGenerator ids;
   std::set<std::string> generated_ids;
   int i = 0;
@@ -259,13 +353,13 @@ int SelfTestSuite::RunAll()
   tests.Check(generated_ids.size() == 1000 && *generated_ids.begin() == "F000001",
               "ID generation is unique and revision-local");
 
-  // ÑéÖ¤ UTF-8 ×Ö½Ú±£³Ö²»±ä£¬Í¬Ê±ÕıÈ·×ªÒåÒıºÅ¡¢·´Ğ±¸ÜºÍ»»ĞĞ¡£
+  // éªŒè¯ UTF-8 å­—èŠ‚ä¿æŒä¸å˜ï¼ŒåŒæ—¶æ­£ç¡®è½¬ä¹‰å¼•å·ã€åæ–œæ å’Œæ¢è¡Œã€‚
   const std::string raw = "\xE4\xB8\xAD\xE6\x96\x87\"\\\n";
   const std::string escaped = "\xE4\xB8\xAD\xE6\x96\x87\\\"\\\\\\n";
   tests.Check(JsonEscape(raw) == escaped,
               "JSON escaping preserves UTF-8 and escapes quote slash newline");
 
-  // ÑéÖ¤´æÔÚ×¨ÓÃÆ¥ÅäÊ±Ñ¡Ôñ Typed Decoder£¬¶ø²»ÊÇ Generic¡£
+  // éªŒè¯å­˜åœ¨ä¸“ç”¨åŒ¹é…æ—¶é€‰æ‹© Typed Decoderï¼Œè€Œä¸æ˜¯ Genericã€‚
   ParseContext typed_context;
   FeatureTypeRegistry typed_registry;
   TypedDecoder typed_decoder("known", 20);
@@ -277,7 +371,7 @@ int SelfTestSuite::RunAll()
   tests.Check(typed.decoder_id == "known" && typed.decode_level == "typed",
               "Registry selects specialized decoder");
 
-  // ÑéÖ¤Î´Öª¶ÔÏóÃ»ÓĞ×¨ÓÃÆ¥ÅäÊ±ÈÔ²úÉú Generic ¼ÇÂ¼¡£
+  // éªŒè¯æœªçŸ¥å¯¹è±¡æ²¡æœ‰ä¸“ç”¨åŒ¹é…æ—¶ä»äº§ç”Ÿ Generic è®°å½•ã€‚
   ParseContext generic_context;
   FeatureTypeRegistry generic_registry;
   FeatureRecord generic;
@@ -287,7 +381,7 @@ int SelfTestSuite::RunAll()
   tests.Check(generic.decoder_id == "generic" && generic.decode_level == "generic",
               "Unknown feature uses Generic decoder");
 
-  // ÑéÖ¤Á¬»ù´¡ÊôĞÔ¶¼²»¿É¶ÁÊ±½øÈë Opaque£¬ÇÒÊ§°Ü½×¶Î±»±£Áô¡£
+  // éªŒè¯è¿åŸºç¡€å±æ€§éƒ½ä¸å¯è¯»æ—¶è¿›å…¥ Opaqueï¼Œä¸”å¤±è´¥é˜¶æ®µè¢«ä¿ç•™ã€‚
   ParseContext opaque_context;
   FeatureTypeRegistry opaque_registry;
   FeatureRecord opaque;
@@ -298,7 +392,7 @@ int SelfTestSuite::RunAll()
               opaque.attributes["failure_stage"] == "generic",
               "Unreadable feature preserves an Opaque record");
 
-  // ÑéÖ¤Í¬ÓÅÏÈ¼¶ Decoder ÎŞÂÛ×¢²áË³ĞòÈçºÎ¶¼ÒÔÎÈ¶¨ ID ¾öÊ¤£¬²¢²úÉú³åÍ»Õï¶Ï¡£
+  // éªŒè¯åŒä¼˜å…ˆçº§ Decoder æ— è®ºæ³¨å†Œé¡ºåºå¦‚ä½•éƒ½ä»¥ç¨³å®š ID å†³èƒœï¼Œå¹¶äº§ç”Ÿå†²çªè¯Šæ–­ã€‚
   ParseContext tie_context_a;
   FeatureTypeRegistry tie_registry_a;
   TypedDecoder z_decoder("z", 10);
@@ -320,7 +414,7 @@ int SelfTestSuite::RunAll()
               !tie_context_a.diagnostics.empty() && !tie_context_b.diagnostics.empty(),
               "Equal priority conflict is deterministic and diagnosed");
 
-  // ÑéÖ¤ Typed Decoder Å×Òì³£²»»áÔ½¹ı¶ÔÏó±ß½ç£¬¶ø»á×Ô¶¯½µ¼¶µ½ Generic¡£
+  // éªŒè¯ Typed Decoder æŠ›å¼‚å¸¸ä¸ä¼šè¶Šè¿‡å¯¹è±¡è¾¹ç•Œï¼Œè€Œä¼šè‡ªåŠ¨é™çº§åˆ° Genericã€‚
   ParseContext exception_context;
   FeatureTypeRegistry exception_registry;
   TypedDecoder throwing_decoder("throwing", 50, true);
@@ -331,7 +425,7 @@ int SelfTestSuite::RunAll()
   tests.Check(isolated.decode_level == "generic" && !exception_context.diagnostics.empty(),
               "Decoder exception is isolated and falls back to Generic");
 
-  // ÑéÖ¤Ê§°Ü Typed Decoder Ğ´ÈëµÄ°ë³ÉÆ·²»»áÎÛÈ¾Ëæºó³É¹¦µÄ Generic ½á¹û¡£
+  // éªŒè¯å¤±è´¥ Typed Decoder å†™å…¥çš„åŠæˆå“ä¸ä¼šæ±¡æŸ“éšåæˆåŠŸçš„ Generic ç»“æœã€‚
   ParseContext dirty_context;
   FeatureTypeRegistry dirty_registry;
   DirtyFailingDecoder dirty_decoder;
@@ -343,7 +437,7 @@ int SelfTestSuite::RunAll()
               clean_fallback.attributes.find("partial_typed_value") == clean_fallback.attributes.end(),
               "Failed typed decoder cannot leak partial state into Generic fallback");
 
-  // ÑéÖ¤ËÄÖÖ×îÖÕ·ÖÀàµÄËãÊõÊØºã£¬ÉÙ¼ÆÈÎºÎÒ»Àà¶¼±ØĞë±»·¢ÏÖ¡£
+  // éªŒè¯å››ç§æœ€ç»ˆåˆ†ç±»çš„ç®—æœ¯å®ˆæ’ï¼Œå°‘è®¡ä»»ä½•ä¸€ç±»éƒ½å¿…é¡»è¢«å‘ç°ã€‚
   ParseStatistics valid_coverage;
   valid_coverage.enumerated_total = 4;
   valid_coverage.typed_count = 1;
@@ -355,7 +449,7 @@ int SelfTestSuite::RunAll()
   tests.Check(valid_coverage.IsConserved() && !invalid_coverage.IsConserved(),
               "Coverage conservation detects mismatch");
 
-  // ÑéÖ¤Î´ÖªÀàĞÍ¼¯ºÏÈ¥ÖØ£¬ÒÔ¼° CoverageTracker ¿É¸´ÓÃÍ¬Ò»ÊØºã¹æÔò¡£
+  // éªŒè¯æœªçŸ¥ç±»å‹é›†åˆå»é‡ï¼Œä»¥åŠ CoverageTracker å¯å¤ç”¨åŒä¸€å®ˆæ’è§„åˆ™ã€‚
   UnknownTypeCollector unknown_types;
   TypeFingerprint unknown_a;
   unknown_a.startup_type = "Pad";
@@ -365,7 +459,7 @@ int SelfTestSuite::RunAll()
   tests.Check(unknown_types.Count() == 1 && CoverageTracker::Validate(valid_coverage),
               "Unknown type collection is distinct and coverage validation is reusable");
 
-  // ÑéÖ¤ String ²ÎÊıÖ»ÓĞÔÚÀàĞÍ»¯½Ó¿ÚºÍÖµ¶ÁÈ¡¶¼³É¹¦ºó²Å¼ÆÈë Typed¡£
+  // éªŒè¯ String å‚æ•°åªæœ‰åœ¨ç±»å‹åŒ–æ¥å£å’Œå€¼è¯»å–éƒ½æˆåŠŸåæ‰è®¡å…¥ Typedã€‚
   ParseContext string_context;
   FeatureTypeRegistry string_registry;
   KnowledgewareStringParameterDecoder string_decoder;
@@ -380,7 +474,7 @@ int SelfTestSuite::RunAll()
               string_feature.parameter.value_source == "typed_caa_value",
               "String parameter decoder records a typed CAA value");
 
-  // ÑéÖ¤½Ó¿Ú²»Ö§³ÖÊÇÕı³£ÄÜÁ¦½á¹û£º½øÈë Generic£¬µ«²»Ôö¼Ó probe_exception_count¡£
+  // éªŒè¯æ¥å£ä¸æ”¯æŒæ˜¯æ­£å¸¸èƒ½åŠ›ç»“æœï¼šè¿›å…¥ Genericï¼Œä½†ä¸å¢åŠ  probe_exception_countã€‚
   ParseContext unsupported_context;
   FeatureTypeRegistry unsupported_registry;
   unsupported_registry.Register(&string_decoder);
@@ -393,7 +487,7 @@ int SelfTestSuite::RunAll()
               unsupported_context.statistics.probe_exception_count == 0,
               "Unsupported String interface falls back without becoming an exception");
 
-  // ÑéÖ¤²ÎÊı¶ÁÈ¡Òì³£±»¸ôÀëµ½µ±Ç°¶ÔÏó£¬²¢ÁôÏÂÃ÷È·´íÎóÂë¡£
+  // éªŒè¯å‚æ•°è¯»å–å¼‚å¸¸è¢«éš”ç¦»åˆ°å½“å‰å¯¹è±¡ï¼Œå¹¶ç•™ä¸‹æ˜ç¡®é”™è¯¯ç ã€‚
   ParseContext parameter_exception_context;
   FeatureTypeRegistry parameter_exception_registry;
   parameter_exception_registry.Register(&string_decoder);
@@ -408,7 +502,7 @@ int SelfTestSuite::RunAll()
               parameter_exception_context.diagnostics[0].code == "PARAM_VALUE_READ_EXCEPTION",
               "String parameter read exceptions are isolated and diagnosed");
 
-  // ÑéÖ¤¿Õ×Ö·û´®ÊÇºÏ·¨µÄ³É¹¦Öµ£¬²»ÄÜ½öÆ¾ empty ×Ô¶¯¸Ä³É unavailable¡£
+  // éªŒè¯ç©ºå­—ç¬¦ä¸²æ˜¯åˆæ³•çš„æˆåŠŸå€¼ï¼Œä¸èƒ½ä»…å‡­ empty è‡ªåŠ¨æ”¹æˆ unavailableã€‚
   ParseContext empty_context;
   FeatureTypeRegistry empty_registry;
   empty_registry.Register(&string_decoder);
@@ -421,7 +515,192 @@ int SelfTestSuite::RunAll()
               empty_feature.parameter.value_text.empty(),
               "Empty String parameter values remain successful typed values");
 
-  // ÑéÖ¤ÍêÕûÊıÖµ+µ¥Î»×Ö·û´®¿É¹æ·¶»¯£¬Í¬Ê±Ô­Ê¼Öµ±£³Ö²»±ä¡£
+  // éªŒè¯ StartUp åªè´Ÿè´£å€™é€‰é¢„ç­›é€‰ï¼šå¿…é¡»ç”± Hole ä¸“ç”¨è§†å›¾ç¡®è®¤åæ‰èƒ½æˆä¸º Typedã€‚
+  NativeHoleDecoder native_hole_decoder;
+  NativeHoleData blind_data = MakeBlindHoleData();
+  ParseContext hole_context;
+  FeatureTypeRegistry hole_registry;
+  hole_registry.Register(&native_hole_decoder);
+  FeatureRecord renamed_hole;
+  renamed_hole.feature_id = "F400001";
+  FakeNativeHoleView renamed_hole_view("Hole", "CoolingPort_A",
+                                       NativeHoleReadSuccess, blind_data);
+  hole_registry.DecodeObject(renamed_hole_view, hole_context, renamed_hole);
+  tests.Check(renamed_hole.decode_level == "typed" && renamed_hole.has_native_hole &&
+              renamed_hole.decoder_id == "NativeHoleDecoder" &&
+              renamed_hole.native_hole.diameter_mm == 10.0 &&
+              hole_context.statistics.native_hole_candidate_count == 1 &&
+              hole_context.statistics.native_hole_success_count == 1,
+              "Native Hole is typed only after its dedicated interface succeeds");
+
+  // éªŒè¯ä»…æœ‰ Hole StartUp ä½†æ¥å£ä¸æ”¯æŒæ—¶å›é€€ Genericï¼Œunsupported ä¸ç®—å¼‚å¸¸ã€‚
+  ParseContext hole_unsupported_context;
+  FeatureTypeRegistry hole_unsupported_registry;
+  hole_unsupported_registry.Register(&native_hole_decoder);
+  FeatureRecord unsupported_hole;
+  unsupported_hole.feature_id = "F400002";
+  FakeNativeHoleView unsupported_hole_view("Hole", "HoleCandidate",
+                                           NativeHoleInterfaceUnsupported, blind_data);
+  hole_unsupported_registry.DecodeObject(unsupported_hole_view,
+                                         hole_unsupported_context, unsupported_hole);
+  tests.Check(unsupported_hole.decode_level == "generic" && !unsupported_hole.has_native_hole &&
+              hole_unsupported_context.statistics.native_hole_unsupported_count == 1 &&
+              hole_unsupported_context.statistics.native_hole_exception_count == 0,
+              "Unsupported Hole interface falls back without becoming an exception");
+
+  // éªŒè¯ Pocket å³ä½¿æ‹¥æœ‰ç›¸åŒä¼ªè§†å›¾ä¹Ÿä¸ä¼šæˆä¸º Hole å€™é€‰ï¼Œæ›´ä¸ä¼šäº§ç”Ÿ native_hole è½½è·ã€‚
+  ParseContext pocket_context;
+  FeatureTypeRegistry pocket_registry;
+  pocket_registry.Register(&native_hole_decoder);
+  FeatureRecord pocket;
+  pocket.feature_id = "F400003";
+  FakeNativeHoleView pocket_view("Pocket", "Pocket_Control",
+                                 NativeHoleInterfaceUnsupported, blind_data);
+  pocket_registry.DecodeObject(pocket_view, pocket_context, pocket);
+  tests.Check(pocket.decode_level == "generic" && !pocket.has_native_hole &&
+              pocket_context.statistics.native_hole_candidate_count == 0,
+              "Pocket is not misclassified as a Native Hole");
+
+  // éªŒè¯ QueryInterface å¼‚å¸¸ä¸å¿…éœ€å­—æ®µå¼‚å¸¸åˆ†åˆ«è¿›å…¥ exception/partialï¼Œå¹¶ä¿æŒå¯¹è±¡çº§éš”ç¦»ã€‚
+  ParseContext hole_error_context;
+  FeatureTypeRegistry hole_error_registry;
+  hole_error_registry.Register(&native_hole_decoder);
+  FeatureRecord query_error_hole;
+  query_error_hole.feature_id = "F400004";
+  FakeNativeHoleView query_error_view("Hole", "Q", NativeHoleInterfaceQueryException,
+                                      blind_data);
+  hole_error_registry.DecodeObject(query_error_view, hole_error_context, query_error_hole);
+  FeatureRecord required_error_hole;
+  required_error_hole.feature_id = "F400005";
+  FakeNativeHoleView required_error_view("Hole", "R", NativeHoleRequiredValueReadException,
+                                         blind_data);
+  hole_error_registry.DecodeObject(required_error_view, hole_error_context, required_error_hole);
+  tests.Check(query_error_hole.decode_level == "generic" &&
+              required_error_hole.decode_level == "generic" &&
+              hole_error_context.statistics.native_hole_exception_count == 1 &&
+              hole_error_context.statistics.native_hole_partial_count == 1 &&
+              hole_error_context.statistics.IsNativeHoleConserved(),
+              "Native Hole query and required-value failures are isolated and conserved");
+
+  // éªŒè¯ Native View çš„ä¸¤å¤„è™šè°ƒç”¨å³ä½¿ç›´æ¥æŠ›å¼‚å¸¸ï¼Œä¹Ÿå„è‡ªå½¢æˆ exception ç»ˆæ€å¹¶ç»§ç»­ Genericã€‚
+  ParseContext throwing_hole_context;
+  FeatureTypeRegistry throwing_hole_registry;
+  throwing_hole_registry.Register(&native_hole_decoder);
+  FeatureRecord throwing_get_hole;
+  throwing_get_hole.feature_id = "F400011";
+  ThrowingNativeHoleView throwing_get_view(1);
+  throwing_hole_registry.DecodeObject(throwing_get_view, throwing_hole_context,
+                                      throwing_get_hole);
+  FeatureRecord throwing_read_hole;
+  throwing_read_hole.feature_id = "F400012";
+  ThrowingNativeHoleView throwing_read_view(2);
+  throwing_hole_registry.DecodeObject(throwing_read_view, throwing_hole_context,
+                                      throwing_read_hole);
+  tests.Check(throwing_get_hole.decode_level == "generic" &&
+              throwing_read_hole.decode_level == "generic" &&
+              throwing_hole_context.statistics.native_hole_candidate_count == 2 &&
+              throwing_hole_context.statistics.native_hole_exception_count == 2 &&
+              throwing_hole_context.statistics.IsNativeHoleConserved(),
+              "Thrown Native Hole view calls preserve terminal statistics and fallback");
+
+  // éªŒè¯ Up To Last æ·±åº¦æ˜ç¡®ä¸ºä¸é€‚ç”¨ï¼Œä¸”å¯é€‰å­—æ®µä¸é€‚ç”¨ä¸é™ä½æˆåŠŸç»“æœã€‚
+  NativeHoleData through_data = blind_data;
+  through_data.bottom_limit.mode = "up_to_last";
+  through_data.bottom_limit.mode_raw = 2;
+  through_data.bottom_limit.depth_mm.Clear("not_applicable");
+  ParseContext through_context;
+  FeatureTypeRegistry through_registry;
+  through_registry.Register(&native_hole_decoder);
+  FeatureRecord through_hole;
+  through_hole.feature_id = "F400006";
+  FakeNativeHoleView through_view("Hole", "Through", NativeHoleReadSuccess, through_data);
+  through_registry.DecodeObject(through_view, through_context, through_hole);
+  tests.Check(through_hole.has_native_hole &&
+              !through_hole.native_hole.bottom_limit.depth_mm.has_value &&
+              through_hole.native_hole.bottom_limit.depth_mm.status == "not_applicable" &&
+              through_context.statistics.native_hole_partial_count == 0,
+              "Up To Last depth is null and not_applicable without becoming partial");
+
+  // éªŒè¯æœªçŸ¥æšä¸¾ä¿ç•™ raw å€¼å¹¶äº§ç”Ÿè¯Šæ–­ï¼Œä½†ä¸ä¼šç”¨çŒœæµ‹åç§°æ›¿æ¢æ¥å£ç»“æœã€‚
+  NativeHoleData unknown_enum_data = blind_data;
+  unknown_enum_data.hole_type = "unknown";
+  unknown_enum_data.hole_type_raw = 99;
+  unknown_enum_data.field_status["hole_type"] = "unknown_enum";
+  ParseContext unknown_enum_context;
+  FeatureTypeRegistry unknown_enum_registry;
+  unknown_enum_registry.Register(&native_hole_decoder);
+  FeatureRecord unknown_enum_hole;
+  unknown_enum_hole.feature_id = "F400007";
+  FakeNativeHoleView unknown_enum_view("Hole", "UnknownEnum", NativeHoleReadSuccess,
+                                       unknown_enum_data);
+  unknown_enum_registry.DecodeObject(unknown_enum_view, unknown_enum_context, unknown_enum_hole);
+  tests.Check(unknown_enum_hole.decode_level == "typed" &&
+              unknown_enum_hole.native_hole.hole_type_raw == 99 &&
+              !unknown_enum_context.diagnostics.empty() &&
+              unknown_enum_context.diagnostics[0].code == "NATIVE_HOLE_ENUM_UNKNOWN",
+              "Unknown Native Hole enum preserves raw value and emits a diagnostic");
+
+  // éªŒè¯é›¶å‘é‡ä¸èƒ½è¿›å…¥ Typed Payloadï¼Œä¸”å¤±è´¥æ•°æ®ä¸ä¼šæ±¡æŸ“ Generic ç»“æœã€‚
+  NativeHoleData invalid_direction_data = blind_data;
+  invalid_direction_data.direction[0] = 0.0;
+  invalid_direction_data.direction[1] = 0.0;
+  invalid_direction_data.direction[2] = 0.0;
+  ParseContext invalid_direction_context;
+  FeatureTypeRegistry invalid_direction_registry;
+  invalid_direction_registry.Register(&native_hole_decoder);
+  FeatureRecord invalid_direction_hole;
+  invalid_direction_hole.feature_id = "F400008";
+  FakeNativeHoleView invalid_direction_view("Hole", "BadDirection", NativeHoleReadSuccess,
+                                            invalid_direction_data);
+  invalid_direction_registry.DecodeObject(invalid_direction_view, invalid_direction_context,
+                                          invalid_direction_hole);
+  tests.Check(invalid_direction_hole.decode_level == "generic" &&
+              !invalid_direction_hole.has_native_hole &&
+              invalid_direction_context.statistics.native_hole_partial_count == 1 &&
+              invalid_direction_context.statistics.IsNativeHoleConserved(),
+              "Invalid Hole direction falls back without leaking a Typed payload");
+
+  // éªŒè¯å¯é€‰æ·±åº¦å‡ºç° NaN æ—¶ä¸ä¼šç”Ÿæˆéæ³• JSONï¼Œè€Œæ˜¯æŒ‰å¿…éœ€è¯­ä¹‰é™çº§åˆ° Genericã€‚
+  NativeHoleData invalid_optional_data = blind_data;
+  const double nonfinite_depth = std::numeric_limits<double>::quiet_NaN();
+  invalid_optional_data.bottom_limit.depth_mm.Set(nonfinite_depth, "success");
+  ParseContext invalid_optional_context;
+  FeatureTypeRegistry invalid_optional_registry;
+  invalid_optional_registry.Register(&native_hole_decoder);
+  FeatureRecord invalid_optional_hole;
+  invalid_optional_hole.feature_id = "F400009";
+  FakeNativeHoleView invalid_optional_view("Hole", "BadDepth", NativeHoleReadSuccess,
+                                           invalid_optional_data);
+  invalid_optional_registry.DecodeObject(invalid_optional_view, invalid_optional_context,
+                                         invalid_optional_hole);
+  tests.Check(invalid_optional_hole.decode_level == "generic" &&
+              !invalid_optional_hole.has_native_hole &&
+              invalid_optional_context.statistics.native_hole_partial_count == 1,
+              "Non-finite optional Hole value cannot reach JSON output");
+
+  // éªŒè¯æ²‰å­”å¤´éƒ¨å’Œèºçº¹å­”å­—æ®µä¿ç•™çœŸå®æ•°å€¼åŠæ¥å£è¿”å›çš„æè¿°ï¼Œä¸ç”± Decoder æ‹¼æ¥ã€‚
+  NativeHoleData counterbore_data = blind_data;
+  counterbore_data.hole_type = "counterbored";
+  counterbore_data.hole_type_raw = 2;
+  counterbore_data.head.kind = "counterbore";
+  counterbore_data.head.diameter_mm.Set(18.0, "success");
+  counterbore_data.head.depth_mm.Set(5.0, "success");
+  NativeHoleData threaded_data = blind_data;
+  threaded_data.diameter_mm = 8.376;
+  threaded_data.thread.enabled = true;
+  threaded_data.thread.mode_raw = 0;
+  threaded_data.thread.description.Set("M10x1.5", "success");
+  threaded_data.thread.diameter_mm.Set(10.0, "success");
+  threaded_data.thread.depth_mm.Set(10.0, "success");
+  threaded_data.thread.pitch_mm.Set(1.5, "success");
+  tests.Check(counterbore_data.head.diameter_mm.has_value &&
+              counterbore_data.head.depth_mm.value == 5.0 &&
+              threaded_data.thread.enabled &&
+              threaded_data.thread.description.value == "M10x1.5" &&
+              threaded_data.thread.pitch_mm.value == 1.5,
+              "Counterbore and threaded Hole typed payloads preserve dedicated values");
+
+  // éªŒè¯å®Œæ•´æ•°å€¼+å•ä½å­—ç¬¦ä¸²å¯è§„èŒƒåŒ–ï¼ŒåŒæ—¶åŸå§‹å€¼ä¿æŒä¸å˜ã€‚
   ParameterValueData numeric_parameter;
   numeric_parameter.value_text = " -1.25e2 mm ";
   ParameterValueNormalizer::Normalize(numeric_parameter);
@@ -431,7 +710,7 @@ int SelfTestSuite::RunAll()
               numeric_parameter.value_text == " -1.25e2 mm ",
               "Numeric String values with explicit units are normalized without data loss");
 
-  // ÑéÖ¤¸´ÔÓ¸´ºÏ×Ö·û´®Ö»±£ÁôÔ­ÎÄ£¬²»Î±ÔìÊıÖµ»ò¼¸ºÎ½á¹¹¡£
+  // éªŒè¯å¤æ‚å¤åˆå­—ç¬¦ä¸²åªä¿ç•™åŸæ–‡ï¼Œä¸ä¼ªé€ æ•°å€¼æˆ–å‡ ä½•ç»“æ„ã€‚
   ParameterValueData complex_parameter;
   complex_parameter.value_text = "bbox=(0,0,0);(10,20,30)";
   ParameterValueNormalizer::Normalize(complex_parameter);
@@ -439,7 +718,7 @@ int SelfTestSuite::RunAll()
               complex_parameter.value_text == "bbox=(0,0,0);(10,20,30)",
               "Complex String parameter values are preserved verbatim");
 
-  // ÑéÖ¤Ì½²âÍ³¼Æ°Ñ supported¡¢unsupported¡¢exception ·Ö¿ª£¬²¢±£Áô»ã×ÜÎ¬¶È¡£
+  // éªŒè¯æ¢æµ‹ç»Ÿè®¡æŠŠ supportedã€unsupportedã€exception åˆ†å¼€ï¼Œå¹¶ä¿ç•™æ±‡æ€»ç»´åº¦ã€‚
   ParseStatistics probe_statistics;
   probe_statistics.RecordProbe("CATICkeParm", "String", "unselected", "supported");
   probe_statistics.RecordProbe("CATIPrtPart", "String", "unselected", "unsupported");
@@ -450,7 +729,7 @@ int SelfTestSuite::RunAll()
               probe_statistics.probe_outcome_counts.size() == 3,
               "Interface probe outcomes are counted without treating unsupported as failure");
 
-  // ÑéÖ¤²ÎÊı Owner ´Ó parent_of ÕæÊµ¹ØÏµÏòÉÏÕÒµ½×î½üÒµÎñ GSMTool£¬¶ø²»ÊÇ½âÎö×Ö·û´®Â·¾¶¡£
+  // éªŒè¯å‚æ•° Owner ä» parent_of çœŸå®å…³ç³»å‘ä¸Šæ‰¾åˆ°æœ€è¿‘ä¸šåŠ¡ GSMToolï¼Œè€Œä¸æ˜¯è§£æå­—ç¬¦ä¸²è·¯å¾„ã€‚
   std::vector<FeatureRecord> ownership_features;
   ownership_features.push_back(MakeGsmTool("F200001", "", 1, "\xE5\xAD\x94.1"));
   ownership_features.push_back(MakeGsmTool("F200002", "F200001", 2,
@@ -468,7 +747,7 @@ int SelfTestSuite::RunAll()
               ownership_parameters[0].owner_feature_id == "F200001",
               "Parameter ownership resolves through real parent relations");
 
-  // ÑéÖ¤Ã»ÓĞÈÎºÎÒµÎñ×æÏÈµÄ²ÎÊı±£ÁôÎª¹ÂÁ¢²ÎÊı²¢¼ÆÈë Coverage¡£
+  // éªŒè¯æ²¡æœ‰ä»»ä½•ä¸šåŠ¡ç¥–å…ˆçš„å‚æ•°ä¿ç•™ä¸ºå­¤ç«‹å‚æ•°å¹¶è®¡å…¥ Coverageã€‚
   std::vector<FeatureRecord> orphan_features;
   orphan_features.push_back(MakeStringParameter("F210001", "", 1, "P", "v"));
   std::vector<RelationRecord> no_relations;
@@ -479,7 +758,7 @@ int SelfTestSuite::RunAll()
               orphan_context.statistics.orphan_parameter_count == 1,
               "Orphan parameters remain indexed with an empty owner");
 
-  // ÑéÖ¤Í¬Ò»²ÎÊı´æÔÚÁ½¸öÒµÎñ×æÏÈÊ±±ê¼ÇÆçÒå£¬²»ÄÜ¾²Ä¬ÌôÑ¡Ò»¸ö Owner¡£
+  // éªŒè¯åŒä¸€å‚æ•°å­˜åœ¨ä¸¤ä¸ªä¸šåŠ¡ç¥–å…ˆæ—¶æ ‡è®°æ­§ä¹‰ï¼Œä¸èƒ½é™é»˜æŒ‘é€‰ä¸€ä¸ª Ownerã€‚
   std::vector<FeatureRecord> ambiguous_features;
   ambiguous_features.push_back(MakeGsmTool("F220001", "", 1, "\xE5\xAD\x94.1"));
   ambiguous_features.push_back(MakeGsmTool("F220002", "", 2, "\xE6\xA7\xBD.1"));
@@ -496,13 +775,13 @@ int SelfTestSuite::RunAll()
               ambiguous_context.statistics.ambiguous_parameter_owner_count == 1,
               "Ambiguous parameter owners are reported instead of guessed");
 
-  // ÑéÖ¤ CATIA ÊµÀıºó×ºÖ»ÔÚÍêÕûµÄ .Êı×Ö ½áÎ²Ê±ÒÆ³ı£¬.10 ²»»á±»µ±³É .1 µÄÇ°×º¡£
+  // éªŒè¯ CATIA å®ä¾‹åç¼€åªåœ¨å®Œæ•´çš„ .æ•°å­— ç»“å°¾æ—¶ç§»é™¤ï¼Œ.10 ä¸ä¼šè¢«å½“æˆ .1 çš„å‰ç¼€ã€‚
   tests.Check(BusinessFeatureRuleCatalog::NormalizeInstanceName("\xE5\xAD\x94.1") == "\xE5\xAD\x94" &&
               BusinessFeatureRuleCatalog::NormalizeInstanceName("\xE5\xAD\x94.10") == "\xE5\xAD\x94" &&
               BusinessFeatureRuleCatalog::NormalizeInstanceName("A.1x") == "A.1x",
               "Business feature instance suffix normalization is exact");
 
-  // ÑéÖ¤¾ÛºÏ±£³ÖÔ­Éú±éÀúË³Ğò£¬²¢ĞÎ³É boss/hole/slot ÈıÀàÉùÃ÷Ê½¼ÇÂ¼¡£
+  // éªŒè¯èšåˆä¿æŒåŸç”Ÿéå†é¡ºåºï¼Œå¹¶å½¢æˆ boss/hole/slot ä¸‰ç±»å£°æ˜å¼è®°å½•ã€‚
   std::vector<FeatureRecord> aggregate_features;
   aggregate_features.push_back(MakeGsmTool("F300001", "", 1, "\xE5\x87\xB8\xE5\x8F\xB0.1"));
   aggregate_features.push_back(MakeStringParameter("F300002", "F300001", 2,
@@ -535,7 +814,7 @@ int SelfTestSuite::RunAll()
               business_features[2].source_feature_id == "F300005",
               "Declared business aggregation classifies records in traversal order");
 
-  // ÑéÖ¤Ãû³ÆºÍ¡°ÌØÕ÷ÀàĞÍ¡±²ÎÊı³åÍ»Ê±Êä³ö declared_unknown/ambiguous£¬¶ø²»ÊÇÇ¿ĞĞ·ÖÀà¡£
+  // éªŒè¯åç§°å’Œâ€œç‰¹å¾ç±»å‹â€å‚æ•°å†²çªæ—¶è¾“å‡º declared_unknown/ambiguousï¼Œè€Œä¸æ˜¯å¼ºè¡Œåˆ†ç±»ã€‚
   aggregate_features[3].parameter.value_text = "\xE6\xA7\xBD";
   aggregate_parameters.clear();
   business_features.clear();
@@ -549,7 +828,7 @@ int SelfTestSuite::RunAll()
               business_features[1].classification_status == "ambiguous",
               "Conflicting declared feature evidence becomes ambiguous");
 
-  // ÑéÖ¤²ÎÊıºÍÒµÎñÌØÕ÷Á½Ì×ĞÂÔöÊØºã¹ØÏµ¡£
+  // éªŒè¯å‚æ•°å’Œä¸šåŠ¡ç‰¹å¾ä¸¤å¥—æ–°å¢å®ˆæ’å…³ç³»ã€‚
   ParseStatistics derived_statistics;
   derived_statistics.parameter_total = 4;
   derived_statistics.parameter_value_success = 1;
@@ -565,19 +844,19 @@ int SelfTestSuite::RunAll()
               derived_statistics.IsBusinessFeatureConserved(),
               "Parameter and declared business feature statistics are conserved");
 
-  // ÑéÖ¤ SHA-256 ±ê×¼ÒÑÖªÏòÁ¿£¬±ÜÃâ Manifest Ğ´ÈëÎ´¾­ÑéÖ¤µÄÕªÒª¡£
+  // éªŒè¯ SHA-256 æ ‡å‡†å·²çŸ¥å‘é‡ï¼Œé¿å… Manifest å†™å…¥æœªç»éªŒè¯çš„æ‘˜è¦ã€‚
   tests.Check(Sha256String("abc") ==
               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
               "SHA-256 matches the standard abc vector");
 
-  // ÑéÖ¤Ä¬ÈÏÂ·¾¶²ßÂÔÖ»±£ÁôÎÄ¼şÃû£¬²»°Ñ±¾»ú¾ø¶ÔÄ¿Â¼Ğ´Èë½»¸¶Êı¾İ¡£
+  // éªŒè¯é»˜è®¤è·¯å¾„ç­–ç•¥åªä¿ç•™æ–‡ä»¶åï¼Œä¸æŠŠæœ¬æœºç»å¯¹ç›®å½•å†™å…¥äº¤ä»˜æ•°æ®ã€‚
   tests.Check(SourcePathForOutput("D:\\secret\\models\\part.CATPart", false) ==
               "part.CATPart" &&
               SourcePathForOutput("D:\\secret\\models\\part.CATPart", true) ==
               "D:\\secret\\models\\part.CATPart",
               "Source path output is redacted unless explicitly enabled");
 
-  // ¹¹ÔìÁ½½ÚµãÎ±¶ÔÏóÊ÷ºÍÒ»Ìõ¹ØÏµ£¬Á¬ĞøĞ´ÈëÁ½¸öÄ¿Â¼ÒÔ±È½ÏÈ·¶¨ĞÔÊä³ö¡£
+  // æ„é€ ä¸¤èŠ‚ç‚¹ä¼ªå¯¹è±¡æ ‘å’Œä¸€æ¡å…³ç³»ï¼Œè¿ç»­å†™å…¥ä¸¤ä¸ªç›®å½•ä»¥æ¯”è¾ƒç¡®å®šæ€§è¾“å‡ºã€‚
   std::vector<FeatureRecord> features;
   features.push_back(MakeFeature("F000001", "", 1, "Document", "demo", "document"));
   features.push_back(MakeFeature("F000002", "F000001", 2, "Part", "Part1", "part"));
@@ -609,7 +888,7 @@ int SelfTestSuite::RunAll()
               ReadWholeFile(output_b + "\\business_features.jsonl"),
               "Output order is deterministic across consecutive runs");
 
-  // Golden ÎÄ±¾Ëø¶¨×Ö¶Î¼¯ºÏ¡¢×Ö¶ÎË³Ğò¡¢¶ÔÏóË³ĞòÒÔ¼°Ã¿ĞĞÒ»¸ö JSON ¶ÔÏóµÄ¸ñÊ½¡£
+  // Golden æ–‡æœ¬é”å®šå­—æ®µé›†åˆã€å­—æ®µé¡ºåºã€å¯¹è±¡é¡ºåºä»¥åŠæ¯è¡Œä¸€ä¸ª JSON å¯¹è±¡çš„æ ¼å¼ã€‚
   const std::string expected_features =
     "{\"feature_id\":\"F000001\",\"parent_id\":\"\",\"native_enumeration_index\":0,"
     "\"container_enumeration_index\":0,\"traversal_index\":1,"
@@ -631,7 +910,35 @@ int SelfTestSuite::RunAll()
                 "decoder_match feature_id=F000001 decoder=document") != std::string::npos,
               "Parser log records deterministic decoder matches");
 
-  // ÑéÖ¤ÅÉÉú¼ÇÂ¼´æÔÚĞü¿ÕÀ´Ô´ ID Ê± Writer ¾Ü¾øÉú³ÉÕıÊ½½á¹û¡£
+  // éªŒè¯ Hole JSON ä½¿ç”¨æ•°å­—æ•°ç»„ã€å¸ƒå°”å€¼å’Œ nullï¼Œè€Œä¸æ˜¯å­—ç¬¦ä¸²åŒ–æ•°å€¼æˆ–ä¼ªé€  0ã€‚
+  FeatureRecord hole_json_feature = MakeFeature("F400010", "", 1, "", "CoolingPort_A",
+                                                "NativeHoleDecoder");
+  hole_json_feature.fingerprint.startup_type = "Hole";
+  hole_json_feature.decoder_version = "1.0.0";
+  hole_json_feature.has_native_hole = true;
+  hole_json_feature.native_hole = through_data;
+  std::vector<FeatureRecord> hole_json_features;
+  hole_json_features.push_back(hole_json_feature);
+  std::vector<RelationRecord> hole_json_relations;
+  ParseContext hole_json_context;
+  hole_json_context.statistics.enumerated_total = 1;
+  hole_json_context.statistics.typed_count = 1;
+  hole_json_context.statistics.native_hole_candidate_count = 1;
+  hole_json_context.statistics.native_hole_success_count = 1;
+  tests.Check(writer.Write(hole_json_features, hole_json_relations, hole_json_context,
+                           "selftest_output_native_hole", write_error),
+              "Native Hole JSON artifact writes successfully");
+  const std::string hole_json = ReadWholeFile("selftest_output_native_hole\\features.jsonl");
+  tests.Check(hole_json.find("\"origin_mm\":[-65,-25,0]") != std::string::npos &&
+              hole_json.find("\"direction\":[0,0,1]") != std::string::npos &&
+              hole_json.find("\"depth_mm\":null") != std::string::npos &&
+              hole_json.find("\"enabled\":false") != std::string::npos,
+              "Native Hole JSON preserves number arrays boolean and null types");
+  tests.Check(ReadWholeFile("selftest_output_native_hole\\parser.log").find(
+                "schema=cad_parse_mvp_v2") != std::string::npos,
+              "Native Hole payload advances the parser schema to v2");
+
+  // éªŒè¯æ´¾ç”Ÿè®°å½•å­˜åœ¨æ‚¬ç©ºæ¥æº ID æ—¶ Writer æ‹’ç»ç”Ÿæˆæ­£å¼ç»“æœã€‚
   std::vector<BusinessFeatureRecord> invalid_business;
   BusinessFeatureRecord dangling;
   dangling.source_feature_id = "F999999";
@@ -645,7 +952,7 @@ int SelfTestSuite::RunAll()
                             invalid_reference_context, "selftest_invalid_reference", write_error),
               "Artifact writer rejects dangling business feature sources");
 
-  // ÑéÖ¤ staging ´´½¨Ê§°ÜÊ±ÇëÇóµÄÊä³öÄ¿Â¼²»»á³öÏÖÒ»Ì×Ã²ËÆÍêÕûµÄ°ë³ÉÆ·¡£
+  // éªŒè¯ staging åˆ›å»ºå¤±è´¥æ—¶è¯·æ±‚çš„è¾“å‡ºç›®å½•ä¸ä¼šå‡ºç°ä¸€å¥—è²Œä¼¼å®Œæ•´çš„åŠæˆå“ã€‚
   const char* blocker = "selftest_transaction_blocker";
   {
     std::ofstream blocker_file(blocker, std::ios::out | std::ios::binary | std::ios::trunc);
@@ -660,7 +967,7 @@ int SelfTestSuite::RunAll()
               "Artifact transaction failure leaves no complete-looking requested output");
   std::remove(blocker);
 
-  // ËùÓĞ Check ¶¼Ö´ĞĞºóÒ»´ÎĞÔ·µ»ØÊ§°ÜÊı£¬±ãÓÚÍ¬Ò»´ÎÔËĞĞ¿´µ½¶à¸ö¶ÀÁ¢ÎÊÌâ¡£
+  // æ‰€æœ‰ Check éƒ½æ‰§è¡Œåä¸€æ¬¡æ€§è¿”å›å¤±è´¥æ•°ï¼Œä¾¿äºåŒä¸€æ¬¡è¿è¡Œçœ‹åˆ°å¤šä¸ªç‹¬ç«‹é—®é¢˜ã€‚
   return tests.Failures();
 }
 }

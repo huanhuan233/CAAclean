@@ -22,7 +22,14 @@ call tools\run_r21_x86.bat --self-test
 解析样件（默认脱敏输入路径）：
 
 ```bat
-call tools\run_r21_x86.bat --input "D:\3Djiexiother\kuang.CATPart" --output "D:\3Djiexiother\kuang_parse_v1" --read-only --pretty
+call tools\run_r21_x86.bat --input "D:\3Djiexiother\kuang.CATPart" --output "D:\3Djiexiother\kuang_parse_v2" --read-only --pretty
+```
+
+Native Hole 回归样件：
+
+```bat
+call tools\run_r21_x86.bat --input "tests\fixtures\catia_r21\partdesign_holes_updated.CATPart" --output "%TEMP%\cadparse_native_hole_updated" --read-only
+call tools\run_r21_x86.bat --input "tests\fixtures\catia_r21\partdesign_holes_stale.CATPart" --output "%TEMP%\cadparse_native_hole_stale" --read-only
 ```
 
 只有调试时才显式加入 `--include-source-path`；默认 `manifest.json` 和 `parser.log` 只保留文件名。

@@ -115,7 +115,7 @@ call tools\run_r21_x86.bat --input "tests\fixtures\catia_r21\partdesign_holes_up
 call tools\run_r21_x86.bat --input "tests\fixtures\catia_r21\partdesign_holes_stale.CATPart" --output "%TEMP%\cadparse_fixture_stale" --read-only
 ```
 
-实际结果中两个文件均解析 275 个对象，`typed=9`、`generic=266`、`opaque=0`、`failed=0`、关系 548 条，且无悬空关系。五个 `startup_type=Hole` 的对象仍由 Generic Decoder 处理；本轮没有实现或宣称 `NativeHoleDecoder`。`business_features.jsonl` 为空，现有声明式业务特征语义未被修改。
+在 Schema v2 / Parser 1.2.0 的实际结果中，两个文件均解析 275 个对象，`typed=14`、`generic=261`、`opaque=0`、`failed=0`、关系 548 条，且无悬空关系。五个原生 Hole 均由 `NativeHoleDecoder` 通过同一对象的 Public `CATIAHole` 接口确认并产生 Typed 载荷；`Pocket_Control` 保持 Generic 且没有 `native_hole` 字段。`business_features.jsonl` 为空，现有声明式业务特征语义未被修改。
 
 updated 文件连续解析两次后，`features.jsonl`、`relations.jsonl`、`parameters.jsonl` 和 `business_features.jsonl` 的 SHA-256 均分别一致。updated 的五个顶层 Hole 在解析记录中均为 `up_to_date`；stale 的五个顶层 Hole 均为 `not_up_to_date`。
 
@@ -127,4 +127,4 @@ updated 文件连续解析两次后，`features.jsonl`、`relations.jsonl`、`pa
 
 本机 R21 对隐藏 Automation 会话中的 `Selection.Search("Topology.Face,...")` 未返回 Pad 拓扑面，因此生成器采用本机 IDL 明确支持的 `AddNewHoleFromSketch`：在 XY 基准面创建单点定位草图，再建立原生 Hole。Hole 创建后调用 `Reverse` 指向正 Z，Pocket 显式设置为 regular orientation；保存后验证器再次读取方向，并以最终实体体积小于基体体积证明减料真实发生。这种方式会产生比“直接选择顶面”更多的草图对象，但不影响 Hole 的原生 Part Design 类型、专有属性或实体结果。
 
-Automation 的显式测试名称可由 `Part.FindObjectByName` 取回；当前 CAA Generic 输出使用内部规格名称（例如 `Hole.1`）而不是 Automation 别名。这正是验证器必须依赖 Hole 专用接口、不能依赖显示名称的原因之一。
+Automation 的显式测试名称可由 `Part.FindObjectByName` 取回。当前 CAA 规格名称仍是 `Hole.1` 至 `Hole.5`，而 `NativeHoleDecoder` 可从同一 `CATIAHole` 的 Public `CATIABase::get_Name` 取得 `Hole_Blind` 至 `CoolingPort_A` 别名；两者分别保存。这正是 Decoder 必须依赖 Hole 专用接口、不能依赖显示名称的原因之一。

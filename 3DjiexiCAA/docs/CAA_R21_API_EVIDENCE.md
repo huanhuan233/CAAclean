@@ -34,10 +34,30 @@
 | 编译状态 | R21 mkmk + VS2008 Win32 编译/链接通过 |
 | 样件状态 | `kuang.CATPart` 228 个 String 参数全部类型化读取成功，空值仍允许作为成功值 |
 
+## Native Part Design Hole 类型化读取
+
+| 项目 | 已验证内容 |
+|---|---|
+| 专用接口 | `CATIAHole`，IID 为本机生成头声明的 `IID_CATIAHole`（IDL DCE：`a6ae2c93-64f9-11d1-a27f0000f87546fd`） |
+| 头文件 | `PartInterfaces/PublicGenerated/intel_a/CATIAHole.h`；原始契约为 `PartInterfaces/PublicInterfaces/CATIAHole.idl` |
+| Framework / 链接 | `PartInterfaces`；`CATPartInterfaces`、`PartInterfacesUUID` |
+| 访问级别 | Public，`CATIAHole.idl` 标注 `@CAA2Level L1`、`@CAA2Usage U3`；未使用 ProtectedInterfaces |
+| 准确获取链路 | Crawler 当前 `CATISpecObject*` → `QueryInterface(IID_CATIAHole, ...)` → `CATIAHole*`；成功引用由 `CaaInterfaceGuard` 在对象级 Decode 结束时 `Release()` |
+| 候选与确认 | `startup_type == "Hole"` 只预筛选；仅 QueryInterface 成功且必需属性读取完成才输出 Typed |
+| 孔型 | `CATIAHole::get_Type` + `CATHoleDefs.h` 的 `CatHoleType`：Simple、Tapered、Counterbored、Countersunk、Counterdrilled；保留 raw 枚举 |
+| 直径/头部 | `get_Diameter`；头部严格按 IDL 适用矩阵读取：Tapered=Angle、Counterbored=Diameter+Depth、Counterdrilled=三者、Countersunk=Depth+Angle；R21 文档明确 Length 为 mm、Angle 为 decimal degrees |
+| 原点/方向 | `GetOrigin`、`GetDirection`，使用三元素 `SAFEARRAY(VARIANT)`；输出 number 数组 |
+| BottomLimit | `get_BottomLimit` → `CATIALimit::get_LimitMode/get_Dimension`；`CATLimitDefs.h` 定义 Offset、Up To Last 等。非 Offset 深度为 `null/not_applicable` |
+| 螺纹 | `get_ThreadingMode`、`get_ThreadDiameter`、`get_ThreadDepth`、`get_ThreadPitch`、`get_HoleThreadDescription`；描述来自 `CATIAStrParam::get_Value`，不自行拼接 |
+| Automation 别名 | 同一个 `CATIAHole` 继承 Public `CATIABase::get_Name`；可得到 `Hole_Blind` 至 `CoolingPort_A`，与 CAA 规格内部名 `Hole.1` 至 `Hole.5` 分开保存 |
+| 异常策略 | E_NOINTERFACE → unsupported；QueryInterface 抛出 → exception；接口已确认但必需值失败 → partial 并 Generic 回退；不适用可选字段不计 partial |
+| 构建状态 | 2026-08-04，R21 mkmk 5.21 + VS2008 Win32 编译、链接通过 |
+| 运行状态 | updated/stale 两个合法样件均 275 对象；5 个 Hole 全部 `NativeHoleDecoder` Typed；Pocket 保持 Generic；updated Hole up-to-date，stale Hole not-up-to-date |
+
 ## 证据缺口
 
 - `TODO(R21_API_VERIFY)`：没有确认 Public R21 原生实现类名 getter，`native_type` 不猜测，使用 Late Type 写入 `startup_type`。
 - `TODO(R21_API_VERIFY)`：没有确认 CATIA 安装 SP/HF 的 Public 运行时 API；Runtime SP/HF 写 `unknown`。文件头 `V5R21SP0HF0` 只进入低置信 `source_file_hint`。
 - `TODO(R21_API_VERIFY)`：没有 Public 持久 Feature ID；ID 是同入口/同实现下 revision-local。
 - `ListComponents` 文档说明结果 unordered。当前保留原始枚举次序且同机双跑字节稳定，但不声称跨 CATIA 实现或版本完全稳定。
-- 当前没有验证原生 Pad/Pocket/Hole 接口，也没有执行 B-Rep、Feature–Face 或制造特征识别。
+- 当前没有验证原生 Pad/Pocket 专用 Decoder，也没有执行 B-Rep、Feature–Face 或制造特征识别；Native Hole 结果是保存的 Part Design 设计语义读取。
