@@ -25,8 +25,11 @@
 #include "CATIALength.h"
 #include "CATIAAngle.h"
 #include "CATIAStrParam.h"
+#include "CATBody.h"
+#include "CATCell.h"
 #include "CATHoleDefs.h"
 #include "CATLimitDefs.h"
+#include "ListPOfCATCell.h"
 #include "CATPrismDefs.h"
 #include "CATSafeArray.h"
 
@@ -138,6 +141,175 @@ std::string UnicodeToUtf8(const CATUnicodeString& value)
     byte_count = buffer.size() - 1;
   buffer[byte_count] = 0;
   return std::string(&buffer[0], byte_count);
+}
+
+// 用途：把 CGM 拓扑维度转换成面向 IR 的稳定分类文本。
+// 未知维度保留为 unknown，不猜测为某种拓扑单元。
+static const char* TopologyCellKind(short dimension)
+{
+  if (dimension == 0) return "vertex";
+  if (dimension == 1) return "edge";
+  if (dimension == 2) return "face";
+  if (dimension == 3) return "volume";
+  return "unknown";
+}
+
+// 用途：将 R21 Public CATTopology 枚举出来的单元写成纯数据记录。
+// cell 指针只在当前函数内读取维度和 domain 数，不写入 IR，也不作为 ID 决胜依据。
+static void AppendTopologyCell(ParseContext& context, const std::string& body_id,
+                               const char* prefix, long index, CATCell* cell)
+{
+  NativeTopologyCellRecord record;
+  std::ostringstream id;
+  id << body_id << "_" << prefix;
+  if (index < 10) id << "00000";
+  else if (index < 100) id << "0000";
+  else if (index < 1000) id << "000";
+  else if (index < 10000) id << "00";
+  else if (index < 100000) id << "0";
+  id << index;
+  record.cell_id = id.str();
+  record.body_id = body_id;
+  record.topology_index = index;
+  record.stable_id_method = "cat_topology_dimension_order_revision_local";
+  record.value_source = "typed_caa_public_cat_topology";
+  if (!cell)
+  {
+    record.cell_kind = "unknown";
+    record.dimension = -1;
+    context.topology_cells.push_back(record);
+    return;
+  }
+  try
+  {
+    const short dimension = cell->GetDimension();
+    record.dimension = static_cast<long>(dimension);
+    record.cell_kind = TopologyCellKind(dimension);
+  }
+  catch (...)
+  {
+    record.cell_kind = "unknown";
+    record.dimension = -1;
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_DIMENSION_FAILED",
+                            "CATCell::GetDimension raised an exception", ""));
+  }
+  try { record.domain_count = static_cast<long>(cell->GetNbDomains()); }
+  catch (...)
+  {
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_DOMAIN_COUNT_FAILED",
+                            "CATCell::GetNbDomains raised an exception", ""));
+  }
+  try { record.internal_domain_count = static_cast<long>(cell->GetNbInternalDomains()); }
+  catch (...)
+  {
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_INTERNAL_DOMAIN_COUNT_FAILED",
+                            "CATCell::GetNbInternalDomains raised an exception", ""));
+  }
+  context.topology_cells.push_back(record);
+}
+
+// 用途：按 CATTopology::GetAllCells 的原生顺序枚举指定维度拓扑单元。
+// 该顺序只承诺同一文件、同一 R21/解析器版本内稳定，不承诺跨版本稳定。
+static void AppendTopologyCellsByDimension(ParseContext& context, CATBody* body,
+                                           const std::string& body_id,
+                                           short dimension,
+                                           const char* prefix)
+{
+  if (!body) return;
+  CATLISTP(CATCell) cells;
+  try
+  {
+    body->GetAllCells(cells, dimension);
+  }
+  catch (...)
+  {
+    context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_ENUMERATION_FAILED",
+                          "CATTopology::GetAllCells raised an exception", "");
+    return;
+  }
+  int index = 0;
+  for (index = 1; index <= cells.Size(); ++index)
+  {
+    AppendTopologyCell(context, body_id, prefix, static_cast<long>(index), cells[index]);
+  }
+}
+
+// 用途：从 Part 的主实体 CATBody 读取真实拓扑数量和 Face/Edge/Vertex/Volume 列表。
+// 当前只建立几何出口，不建立 Feature->Face 映射，因此能力矩阵仍如实保持映射 not_available。
+static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
+                                         const std::string& part_feature_id,
+                                         ParseContext& context)
+{
+  if (!part_spec) return;
+  CATIPrtPart* part_interface = 0;
+  try
+  {
+    if (FAILED(part_spec->QueryInterface(IID_CATIPrtPart,
+                                         reinterpret_cast<void**>(&part_interface))) ||
+        !part_interface)
+      return;
+  }
+  catch (...)
+  {
+    context.AddDiagnostic("warning", "topology", "CATIPRTPART_QUERY_EXCEPTION",
+                          "CATIPrtPart QueryInterface raised an exception", part_feature_id);
+    return;
+  }
+  CaaInterfaceGuard<CATIPrtPart> part_guard(part_interface);
+  CATBody_var body_var = NULL_var;
+  try
+  {
+    body_var = part_interface->GetSolid();
+  }
+  catch (...)
+  {
+    context.AddDiagnostic("warning", "topology", "PART_MAIN_SOLID_READ_FAILED",
+                          "CATIPrtPart::GetSolid raised an exception", part_feature_id);
+    return;
+  }
+  if (body_var == NULL_var)
+  {
+    context.AddDiagnostic("info", "topology", "PART_MAIN_SOLID_UNAVAILABLE",
+                          "CATIPrtPart::GetSolid returned null", part_feature_id);
+    return;
+  }
+  CATBody* body = body_var;
+  if (!body) return;
+
+  NativeTopologyBodyRecord body_record;
+  body_record.body_id = "TB000001";
+  body_record.source_feature_id = part_feature_id;
+  body_record.source_kind = "catiprtpart_main_solid";
+  body_record.read_status = "success";
+  body_record.value_source = "typed_caa_public_cat_body";
+  body_record.stability_scope = "same_input_same_r21_parser_revision";
+  try
+  {
+    int vertices = 0;
+    int edges = 0;
+    int faces = 0;
+    int volumes = 0;
+    body->GetCellNumbers(&vertices, &edges, &faces, &volumes);
+    body_record.vertex_count = static_cast<long>(vertices);
+    body_record.edge_count = static_cast<long>(edges);
+    body_record.face_count = static_cast<long>(faces);
+    body_record.volume_count = static_cast<long>(volumes);
+  }
+  catch (...)
+  {
+    body_record.read_status = "partial";
+    body_record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_COUNT_FAILED",
+                            "CATTopology::GetCellNumbers raised an exception", part_feature_id));
+  }
+  context.topology_bodies.push_back(body_record);
+  AppendTopologyCellsByDimension(context, body, body_record.body_id, 2, "F");
+  AppendTopologyCellsByDimension(context, body, body_record.body_id, 1, "E");
+  AppendTopologyCellsByDimension(context, body, body_record.body_id, 0, "V");
+  AppendTopologyCellsByDimension(context, body, body_record.body_id, 3, "S");
 }
 
 // 用途：从 CATICkeParm::Name 返回的限定路径中取参数叶名称，归属仍由真实 parent_of 图决定。
@@ -1327,6 +1499,11 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
     const std::string path = parent_path + "/" + segment;
     const std::string id = AddObject(view, parent_id, path, native_enumeration_index,
                                      container_enumeration_index);
+    if (std::find(fp.supported_interface_keys.begin(), fp.supported_interface_keys.end(),
+                  "CATIPrtPart") != fp.supported_interface_keys.end())
+    {
+      CollectPartMainSolidTopology(spec, id, _context);
+    }
 
     CATListValCATISpecObject_var* children = spec->ListComponents();
     if (!children) return true;

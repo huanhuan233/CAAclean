@@ -41,3 +41,31 @@ Writer 先在 `<output>.cadparse_stage` 完整写一次 features、relations、p
 - 当前 GSMTool“孔、槽、凸台”仍是 `declared_tree_parameter_aggregation`，不是 B-Rep 识别；只有真实 Part Design Hole 使用 `NativeHoleDecoder`。
 - 已验证关系只有 `parent_of` 和 `contains`；悬空关系或派生来源会在写盘前被拒绝。
 - 当前入口是 CATDocument、`CATIPrtContainer::GetPart`、`CATISpecObject::ListComponents` 和根 `CATIContainer::ListMembersHere`，不声称覆盖所有 CATPart 私有对象。
+# CAA MVP 架构增量：原生拓扑出口
+
+Schema `cad_parse_mvp_v4` 在既有 `features.jsonl` / `native_features.jsonl` 基础上新增两个 CAA 原生拓扑文件：
+
+```text
+native_topology_bodies.jsonl
+native_topology_cells.jsonl
+```
+
+这两个文件来自 CATIA R21 Public `CATIPrtPart::GetSolid()` 和 `CATTopology`，用于证明最终实体的 Face/Edge/Vertex/Volume 已经能够在 CAA 端读取。
+
+注意：它们不是新的规格树对象，不参与：
+
+```text
+enumerated_total = typed_count + generic_count + opaque_count + failed_count
+```
+
+当前仍未实现：
+
+```text
+Feature -> Face
+Face -> Feature
+FTA -> Face
+Triangle -> Face
+制造特征识别
+```
+
+因此前端或 Feature Center 只能把这些拓扑记录作为“真实 Face 拾取/几何详情”的基础数据，不能把它解释为“已完成特征关联面”。

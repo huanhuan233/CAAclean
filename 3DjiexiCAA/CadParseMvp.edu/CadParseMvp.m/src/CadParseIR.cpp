@@ -305,6 +305,41 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
   output << '}';
 }
 
+// 用途：写出一个 CAA 原生结果体摘要；它不是规格树 Feature，不参与对象守恒计数。
+void WriteNativeTopologyBody(std::ostream& output, const NativeTopologyBodyRecord& record)
+{
+  output << "{\"body_id\":\"" << JsonEscape(record.body_id)
+         << "\",\"source_feature_id\":\"" << JsonEscape(record.source_feature_id)
+         << "\",\"source_kind\":\"" << JsonEscape(record.source_kind)
+         << "\",\"read_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"vertex_count\":" << record.vertex_count
+         << ",\"edge_count\":" << record.edge_count
+         << ",\"face_count\":" << record.face_count
+         << ",\"volume_count\":" << record.volume_count
+         << ",\"stability_scope\":\"" << JsonEscape(record.stability_scope)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+// 用途：写出一个 CAA 原生拓扑单元摘要；cell_id 是本次解析内稳定编号，不是 CATIA 指针。
+void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecord& record)
+{
+  output << "{\"cell_id\":\"" << JsonEscape(record.cell_id)
+         << "\",\"body_id\":\"" << JsonEscape(record.body_id)
+         << "\",\"cell_kind\":\"" << JsonEscape(record.cell_kind)
+         << "\",\"topology_index\":" << record.topology_index
+         << ",\"dimension\":" << record.dimension
+         << ",\"domain_count\":" << record.domain_count
+         << ",\"internal_domain_count\":" << record.internal_domain_count
+         << ",\"stable_id_method\":\"" << JsonEscape(record.stable_id_method)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
 // 用途：写一条参数消费索引，parameter_id 始终复用原 Feature ID。
 void WriteParameter(std::ostream& output, const ParameterRecord& record)
 {
@@ -494,6 +529,20 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteNativeFeature(output, *feature); output << '\n'; }
   if (!FinishOutput(output, "native_features.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "native_topology_bodies.jsonl"), error)) return false;
+  std::vector<NativeTopologyBodyRecord>::const_iterator topology_body =
+    context.topology_bodies.begin();
+  for (; topology_body != context.topology_bodies.end(); ++topology_body)
+  { WriteNativeTopologyBody(output, *topology_body); output << '\n'; }
+  if (!FinishOutput(output, "native_topology_bodies.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "native_topology_cells.jsonl"), error)) return false;
+  std::vector<NativeTopologyCellRecord>::const_iterator topology_cell =
+    context.topology_cells.begin();
+  for (; topology_cell != context.topology_cells.end(); ++topology_cell)
+  { WriteNativeTopologyCell(output, *topology_cell); output << '\n'; }
+  if (!FinishOutput(output, "native_topology_cells.jsonl", error)) return false;
+
   // 用途：能力状态从本轮真实 CAA 出口推导；未实现或未验证的拓扑、FTA、映射绝不标记为完成。
   if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
   long native_hole_decoded = 0;
@@ -506,9 +555,10 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
     if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism") ++native_prism_decoded;
     if (feature->decode_level == "generic") ++native_generic;
   }
+  const bool has_native_topology = !context.topology_bodies.empty();
   output << "{\"spec_tree_extraction\":\"partial\""
          << ",\"native_feature_extraction\":\"partial\""
-         << ",\"topology_extraction\":\"not_available\""
+         << ",\"topology_extraction\":\"" << (has_native_topology ? "partial" : "not_available") << "\""
          << ",\"native_feature_topology_mapping\":\"not_available\""
          << ",\"fta_extraction\":\"not_available\""
          << ",\"fta_topology_mapping\":\"not_available\""
@@ -518,7 +568,9 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_hole_decoded_count\":" << native_hole_decoded
          << ",\"native_prism_decoded_count\":" << native_prism_decoded
          << ",\"native_generic_count\":" << native_generic
-         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"B-Rep, FTA and native-feature topology links are not emitted by this CAA revision\"]}\n";
+         << ",\"native_topology_body_count\":" << context.topology_bodies.size()
+         << ",\"native_topology_cell_count\":" << context.topology_cells.size()
+         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"Feature-to-topology, FTA-to-topology and manufacturing recognition are not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "relations.jsonl"), error)) return false;
@@ -621,7 +673,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;

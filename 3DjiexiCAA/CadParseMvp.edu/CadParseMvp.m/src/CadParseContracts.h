@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v3"
-#define CAD_PARSE_PARSER_VERSION "1.3.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.3.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.3.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v4"
+#define CAD_PARSE_PARSER_VERSION "1.4.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.4.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.4.0"
 
 namespace cadparse
 {
@@ -361,6 +361,47 @@ struct BusinessFeatureRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// CAA 原生结果体摘要；这是从 R21 Public CATBody/CATTopology 读取的真实拓扑出口。
+// 这里仍不保存 CATBody 指针，body_id 只是本次解析版本内的稳定编号。
+struct NativeTopologyBodyRecord
+{
+  // 用途：初始化为不可用状态，只有适配器成功读取 CATBody 后才改成 success。
+  NativeTopologyBodyRecord()
+    : vertex_count(0), edge_count(0), face_count(0), volume_count(0) {}
+
+  std::string body_id;
+  std::string source_feature_id;
+  std::string source_kind;
+  std::string read_status;
+  std::string value_source;
+  long vertex_count;
+  long edge_count;
+  long face_count;
+  long volume_count;
+  std::string stability_scope;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// CAA 原生拓扑单元摘要；用于证明 Face/Edge/Vertex 已经从 CATBody 真实枚举。
+// 当前阶段不写入内存地址，也不把这些 cell_id 声称为跨模型版本稳定。
+struct NativeTopologyCellRecord
+{
+  // 用途：提供明确初值，避免读取失败路径出现伪造的维度或顺序。
+  NativeTopologyCellRecord()
+    : topology_index(0), dimension(-1), domain_count(0), internal_domain_count(0) {}
+
+  std::string cell_id;
+  std::string body_id;
+  std::string cell_kind;
+  long topology_index;
+  long dimension;
+  long domain_count;
+  long internal_domain_count;
+  std::string stable_id_method;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
 // 解码器执行终态；候选判断与执行结果分离，避免把 StartUp 预筛选误当成类型化成功。
 enum DecoderOutcome
 {
@@ -499,6 +540,8 @@ public:
 
   ParseStatistics statistics;
   std::vector<DiagnosticRecord> diagnostics;
+  std::vector<NativeTopologyBodyRecord> topology_bodies;
+  std::vector<NativeTopologyCellRecord> topology_cells;
   std::map<std::string, std::string> runtime_info;
   ParseMetadata metadata;
 };

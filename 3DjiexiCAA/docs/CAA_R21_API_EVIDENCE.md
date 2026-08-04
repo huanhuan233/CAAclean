@@ -61,3 +61,15 @@
 - `TODO(R21_API_VERIFY)`：没有 Public 持久 Feature ID；ID 是同入口/同实现下 revision-local。
 - `ListComponents` 文档说明结果 unordered。当前保留原始枚举次序且同机双跑字节稳定，但不声称跨 CATIA 实现或版本完全稳定。
 - 当前没有验证原生 Pad/Pocket 专用 Decoder，也没有执行 B-Rep、Feature–Face 或制造特征识别；Native Hole 结果是保存的 Part Design 设计语义读取。
+# 2026-08-05：CAA 原生拓扑出口证据
+
+| 接口/类 | 头文件 | Framework | Public/Protected | 使用位置 | 验证状态 |
+| --- | --- | --- | --- | --- | --- |
+| `CATIPrtPart` / `IID_CATIPrtPart` | `MecModInterfaces/PublicInterfaces/CATIPrtPart.h` | `MecModInterfaces` | Public L1/U3 | `CadParseCAA.cpp::CollectPartMainSolidTopology` | R21 mkmk 通过，`kuang.CATPart` 实测成功 |
+| `CATIPrtPart::GetSolid()` | `MecModInterfaces/PublicInterfaces/CATIPrtPart.h` | `MecModInterfaces` | Public L1/U3 | 获取 Part 主实体 `CATBody` | R21 mkmk 通过，输出 `TB000001` |
+| `CATBody` | `GMModelInterfaces/PublicInterfaces/CATBody.h` | `GMModelInterfaces` | Public L1/U3 | 主实体拓扑对象 | 已新增 `IdentityCard` 依赖和 `CATGMModelInterfaces` 链接 |
+| `CATTopology::GetCellNumbers()` | `GMModelInterfaces/PublicInterfaces/CATTopology.h` | `GMModelInterfaces` | Public L1/U3 | 输出 vertex/edge/face/volume 数量 | `kuang.CATPart` 实测 442/711/281/1 |
+| `CATTopology::GetAllCells()` | `GMModelInterfaces/PublicInterfaces/CATTopology.h` | `GMModelInterfaces` | Public L1/U3 | 枚举 Face/Edge/Vertex/Volume 单元 | `kuang.CATPart` 实测输出 1435 条 cell |
+| `CATCell::GetDimension()` / `GetNbDomains()` / `GetNbInternalDomains()` | `GMModelInterfaces/PublicInterfaces/CATCell.h` | `GMModelInterfaces` | Public L1/U3 | 输出单元维度和 domain 摘要 | R21 mkmk 通过，样件运行成功 |
+
+当前只输出最终实体拓扑摘要和 revision-local cell ID；尚未通过 R21 Public 接口建立 `Feature -> Face` 或 `FTA -> Face` 映射，因此相关能力仍标记为 `not_available`。

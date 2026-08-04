@@ -54,3 +54,39 @@ call tools\run_r21_x86.bat --input "tests\fixtures\catia_r21\partdesign_holes_st
 输出包含：`manifest.json`、`features.jsonl`、`relations.jsonl`、`parameters.jsonl`、`business_features.jsonl`、`diagnostics.json`、`coverage.json`、`parser.log`。输入不存在、Session/Document 打开失败、守恒或来源引用失败、输出事务失败都返回非零码。
 
 本机 mkmk 会提示缺少 JDK 1.6/Intel Fortran；当前纯 C++ 模块仍可成功构建，是否成功以 mkmk 错误扫描和 `intel_a\code\bin\CadParseMvp.exe` 是否生成共同判断。
+# R21 构建与运行记录：cad_parse_mvp_v4
+
+本轮新增 `GMModelInterfaces` Public 依赖，用于链接 `CATBody`、`CATTopology` 和 `CATCell`。
+
+构建命令：
+
+```bat
+set CAA_RADE_ROOT=D:\CATIA\Rade21
+set CAA_PREREQ_ROOT=D:\CATIA
+set RADECATSettingPath=%APPDATA%\DassaultSystemes\CATSettings\RADE
+call 3DjiexiCAA\tools\build_r21_x86.bat
+```
+
+自测命令：
+
+```bat
+call 3DjiexiCAA\tools\run_r21_x86.bat --self-test
+```
+
+kuang 回归命令：
+
+```bat
+call 3DjiexiCAA\tools\run_r21_x86.bat --input D:\3Djiexiother\kuang.CATPart --output %TEMP%\cadparse_topology_kuang_v1 --read-only
+```
+
+实测结果：
+
+```text
+R21 mkmk: 通过
+self-test: 通过
+kuang.CATPart: parsed 941 objects; parameters=228; declared_business_features=25
+native_topology_body_count=1
+native_topology_cell_count=1435
+```
+
+构建日志仍会提示本机未在注册表中检测到 JDK 1.6 / Intel Fortran / VSTA，但当前 CAA C++ 编译、链接和运行均成功。

@@ -5,6 +5,8 @@ AddPrereqComponent("System", Public);
 AddPrereqComponent("ObjectModelerBase", Public);
 AddPrereqComponent("ObjectSpecsModeler", Public);
 AddPrereqComponent("MecModInterfaces", Public);
+// 用途：提供 Public CATBody/CATTopology/CATCell，用于读取最终实体的真实 Face/Edge/Vertex 拓扑摘要。
+AddPrereqComponent("GMModelInterfaces", Public);
 // 用途：提供 Public CATICkeParm/CATICkeType/CATICkeInst 的类型化 String 参数读取契约。
 AddPrereqComponent("KnowledgeInterfaces", Public);
 // 用途：提供 Public CATIAHole/CATIALimit、真实枚举和对应 Automation C++ 接口。
