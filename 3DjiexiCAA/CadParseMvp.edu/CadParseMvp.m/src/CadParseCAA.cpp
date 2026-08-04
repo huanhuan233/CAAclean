@@ -768,7 +768,7 @@ private:
   void BuildFingerprint(ParseContext& context)
   {
     if (!_spec) return;
-    // TODO(R21_API_VERIFY): no documented Public R21 native runtime type getter was confirmed.
+    // TODO(R21_API_VERIFY)：尚未确认 R21 公开接口中存在有文档依据的原生运行时类型读取方法。
     try
     {
       _fingerprint.startup_type = UnicodeToUtf8(_spec->GetType());
@@ -868,7 +868,7 @@ class BodyDecoder : public CoreDecoder
 public:
   // 用途：创建 ID 为 body、优先级 500 的 Decoder。
   BodyDecoder() : CoreDecoder("body", 500) {}
-  // TODO(R21_API_VERIFY): installed PublicInterfaces contain no CATIBody marker interface.
+  // TODO(R21_API_VERIFY)：已安装的公开接口中未找到 CATIBody 标记接口。
   // 用途：匹配本机资料中已知的 Body/MechanicalTool StartUp 类型文本。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.startup_type == "Body" || fp.startup_type == "MechanicalTool"; }
@@ -880,7 +880,7 @@ class HybridBodyDecoder : public CoreDecoder
 public:
   // 用途：创建 ID 为 hybrid_body、优先级 500 的 Decoder。
   HybridBodyDecoder() : CoreDecoder("hybrid_body", 500) {}
-  // TODO(R21_API_VERIFY): installed PublicInterfaces contain no CATIHybridBody marker interface.
+  // TODO(R21_API_VERIFY)：已安装的公开接口中未找到 CATIHybridBody 标记接口。
   // 用途：匹配已确认的 HybridBody/GeometricalSet StartUp 类型文本。
   bool Match(const TypeFingerprint& fp, const INativeObjectView&) const
   { return fp.startup_type == "HybridBody" || fp.startup_type == "GeometricalSet"; }
