@@ -11,6 +11,8 @@ LINK_WITH = \
   CATObjectSpecsModeler \
   CATMecModInterfaces \
   CATGMModelInterfaces \
+  CATTPSItf \
+  CATTPSUUID \
   KnowledgeItf \
   CATPartInterfaces \
   PartInterfacesUUID

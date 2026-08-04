@@ -73,3 +73,15 @@
 | `CATCell::GetDimension()` / `GetNbDomains()` / `GetNbInternalDomains()` | `GMModelInterfaces/PublicInterfaces/CATCell.h` | `GMModelInterfaces` | Public L1/U3 | 输出单元维度和 domain 摘要 | R21 mkmk 通过，样件运行成功 |
 
 当前只输出最终实体拓扑摘要和 revision-local cell ID；尚未通过 R21 Public 接口建立 `Feature -> Face` 或 `FTA -> Face` 映射，因此相关能力仍标记为 `not_available`。
+
+# 2026-08-05：FTA/TPS 集合级出口证据
+
+| 接口/类 | 头文件 | Framework | Public/Protected | 使用位置 | 验证状态 |
+| --- | --- | --- | --- | --- | --- |
+| `CATITPSDocument` / `IID_CATITPSDocument` | `CATTPSInterfaces/PublicInterfaces/CATITPSDocument.h` | `CATTPSInterfaces` | Public L1/U3 | `CadParseCAA.cpp::CollectFtaSets` | R21 mkmk 通过，`kuang.CATPart` 查询成功 |
+| `CATITPSDocument::GetSets()` | `CATTPSInterfaces/PublicInterfaces/CATITPSDocument.h` | `CATTPSInterfaces` | Public L1/U3 | 枚举文档 TPS Set 列表 | `kuang.CATPart` 实测扫描完成且 set 数为 0 |
+| `CATITPSSet` / `IID_CATITPSSet` | `CATTPSInterfaces/PublicInterfaces/CATITPSSet.h` | `CATTPSInterfaces` | Public L1/U3 | 对 Set item 查询集合接口 | R21 mkmk 通过；当前样件无 Set，因此未进入逐项读取 |
+| `CATITPSList::Count/Item` | `CATTPSInterfaces/PublicInterfaces/CATITPSList.h` | `CATTPSInterfaces` | Public L1/U3 | 读取 Set/TPS 数量 | R21 mkmk 通过，空集合路径实测成功 |
+| `CATITPSGeometryList::Count` | `CATTPSInterfaces/PublicInterfaces/CATITPSGeometryList.h` | `CATTPSInterfaces` | Public L1/U3 | 读取 TPS Set 几何引用数量 | R21 mkmk 通过；当前样件无 Set |
+
+当前只输出 `fta_sets.jsonl` 的集合级摘要。具体公差语义、TTRS、FTA->Topology 映射仍未实现，不能把 `fta_extraction=complete` 解读为已经完成 FTA 语义解析。

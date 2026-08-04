@@ -10,6 +10,11 @@
 #include "CATIPrtContainer.h"
 #include "CATIPrtPart.h"
 #include "CATISpecObject.h"
+#include "CATITPSComponent.h"
+#include "CATITPSDocument.h"
+#include "CATITPSGeometryList.h"
+#include "CATITPSList.h"
+#include "CATITPSSet.h"
 #include "CATLISTV_CATISpecObject.h"
 #include "CATICkeInst.h"
 #include "CATICkeParm.h"
@@ -310,6 +315,164 @@ static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
   AppendTopologyCellsByDimension(context, body, body_record.body_id, 1, "E");
   AppendTopologyCellsByDimension(context, body, body_record.body_id, 0, "V");
   AppendTopologyCellsByDimension(context, body, body_record.body_id, 3, "S");
+}
+
+// 用途：释放 CATITPSList 中按 Item 返回的组件接口；局部守卫只接管一个 Query/Item 引用。
+template <class T>
+class TpsInterfaceGuard
+{
+public:
+  explicit TpsInterfaceGuard(T* pointer = 0) : _pointer(pointer) {}
+  ~TpsInterfaceGuard() { if (_pointer) _pointer->Release(); }
+  T* Get() const { return _pointer; }
+  T*& Out() { return _pointer; }
+
+private:
+  TpsInterfaceGuard(const TpsInterfaceGuard&);
+  TpsInterfaceGuard& operator=(const TpsInterfaceGuard&);
+  T* _pointer;
+};
+
+// 用途：读取一个 TPS Set 中已验证可访问的数量信息；不解析具体公差语义，也不建立拓扑映射。
+static void FillFtaSetCounts(CATITPSSet* set_interface, FtaSetRecord& record,
+                             ParseContext& context)
+{
+  if (!set_interface)
+  {
+    record.read_status = "failed";
+    return;
+  }
+  record.read_status = "success";
+  record.value_source = "typed_caa_public_tps";
+  record.semantic_detail_status = "not_implemented";
+  record.topology_mapping_status = "not_available";
+
+  CATITPSList* tps_list = 0;
+  if (SUCCEEDED(set_interface->GetTPSs(&tps_list)) && tps_list)
+  {
+    TpsInterfaceGuard<CATITPSList> list_guard(tps_list);
+    unsigned int count = 0;
+    if (SUCCEEDED(tps_list->Count(&count))) record.tps_count = static_cast<long>(count);
+    else
+      record.diagnostic_ids.push_back(
+        context.AddDiagnostic("warning", "fta", "TPS_SET_TPS_COUNT_FAILED",
+                              "CATITPSList::Count failed for TPS list", ""));
+  }
+  else
+  {
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("info", "fta", "TPS_SET_TPS_LIST_UNAVAILABLE",
+                            "CATITPSSet::GetTPSs returned no list", ""));
+  }
+
+  CATITPSGeometryList* geometry_list = 0;
+  if (SUCCEEDED(set_interface->GetGeometries(&geometry_list)) && geometry_list)
+  {
+    TpsInterfaceGuard<CATITPSGeometryList> geometry_guard(geometry_list);
+    unsigned int count = 0;
+    if (SUCCEEDED(geometry_list->Count(&count))) record.geometry_count = static_cast<long>(count);
+    else
+      record.diagnostic_ids.push_back(
+        context.AddDiagnostic("warning", "fta", "TPS_SET_GEOMETRY_COUNT_FAILED",
+                              "CATITPSGeometryList::Count failed for geometry list", ""));
+  }
+  else
+  {
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("info", "fta", "TPS_SET_GEOMETRY_LIST_UNAVAILABLE",
+                            "CATITPSSet::GetGeometries returned no list", ""));
+  }
+}
+
+// 用途：从 CATDocument 查询 R21 Public CATITPSDocument，并枚举文档内 TPS Set。
+// 如果文档不支持 FTA/TPS 接口，只记录 not_available，不生成假 Annotation。
+static void CollectFtaSets(CATDocument* document, ParseContext& context,
+                           const std::string& document_feature_id)
+{
+  context.runtime_info["fta_extraction_status"] = "not_available";
+  if (!document) return;
+  CATITPSDocument* tps_document = 0;
+  try
+  {
+    if (FAILED(document->QueryInterface(IID_CATITPSDocument,
+                                        reinterpret_cast<void**>(&tps_document))) ||
+        !tps_document)
+    {
+      context.AddDiagnostic("info", "fta", "TPS_DOCUMENT_UNSUPPORTED",
+                            "CATDocument does not expose CATITPSDocument", document_feature_id);
+      return;
+    }
+  }
+  catch (...)
+  {
+    context.runtime_info["fta_extraction_status"] = "failed";
+    context.AddDiagnostic("warning", "fta", "TPS_DOCUMENT_QUERY_EXCEPTION",
+                          "CATITPSDocument QueryInterface raised an exception", document_feature_id);
+    return;
+  }
+
+  TpsInterfaceGuard<CATITPSDocument> tps_document_guard(tps_document);
+  CATITPSList* sets = 0;
+  HRESULT result = E_FAIL;
+  try
+  {
+    result = tps_document->GetSets(&sets, CATTPSSSMRecursive, FALSE);
+  }
+  catch (...)
+  {
+    context.runtime_info["fta_extraction_status"] = "failed";
+    context.AddDiagnostic("warning", "fta", "TPS_GET_SETS_EXCEPTION",
+                          "CATITPSDocument::GetSets raised an exception", document_feature_id);
+    return;
+  }
+  if (FAILED(result) || !sets)
+  {
+    context.runtime_info["fta_extraction_status"] = "partial";
+    context.AddDiagnostic("info", "fta", "TPS_SETS_EMPTY_OR_UNAVAILABLE",
+                          "CATITPSDocument::GetSets returned no set list", document_feature_id);
+    return;
+  }
+  TpsInterfaceGuard<CATITPSList> sets_guard(sets);
+  unsigned int count = 0;
+  if (FAILED(sets->Count(&count)))
+  {
+    context.runtime_info["fta_extraction_status"] = "partial";
+    context.AddDiagnostic("warning", "fta", "TPS_SET_COUNT_FAILED",
+                          "CATITPSList::Count failed for set list", document_feature_id);
+    return;
+  }
+  context.runtime_info["fta_extraction_status"] = "complete";
+
+  unsigned int index = 0;
+  for (index = 0; index < count; ++index)
+  {
+    CATITPSComponent* component = 0;
+    if (FAILED(sets->Item(index, &component)) || !component) continue;
+    TpsInterfaceGuard<CATITPSComponent> component_guard(component);
+    CATITPSSet* set_interface = 0;
+    if (FAILED(component->QueryInterface(IID_CATITPSSet,
+                                         reinterpret_cast<void**>(&set_interface))) ||
+        !set_interface)
+    {
+      context.AddDiagnostic("warning", "fta", "TPS_SET_QUERY_FAILED",
+                            "TPS set item does not expose CATITPSSet", document_feature_id);
+      continue;
+    }
+    TpsInterfaceGuard<CATITPSSet> set_guard(set_interface);
+    FtaSetRecord record;
+    std::ostringstream id;
+    id << "FTA";
+    if (index + 1 < 10) id << "00000";
+    else if (index + 1 < 100) id << "0000";
+    else if (index + 1 < 1000) id << "000";
+    else if (index + 1 < 10000) id << "00";
+    else if (index + 1 < 100000) id << "0";
+    id << (index + 1);
+    record.fta_set_id = id.str();
+    record.set_index = static_cast<long>(index + 1);
+    FillFtaSetCounts(set_interface, record, context);
+    context.fta_sets.push_back(record);
+  }
 }
 
 // 用途：从 CATICkeParm::Name 返回的限定路径中取参数叶名称，归属仍由真实 parent_of 图决定。
@@ -1544,6 +1707,7 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   // 文档和容器不是 CATISpecObject，先用 StaticObjectView 为它们建立同样完整的基础 IR。
   StaticObjectView document_view("CATDocument", "document", UnicodeToUtf8(document->DisplayName()));
   const std::string document_id = AddObject(document_view, "", "/document", 0, 0);
+  CollectFtaSets(document, _context, document_id);
 
   CATInit* init = 0;
   // QueryInterface 成功会返回持有引用；守卫必须在紧邻成功检查后接管它。

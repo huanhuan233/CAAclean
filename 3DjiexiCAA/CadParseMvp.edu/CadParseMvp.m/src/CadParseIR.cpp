@@ -340,6 +340,22 @@ void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecor
   output << '}';
 }
 
+// 用途：写出一个 FTA/TPS Set 摘要；它只表示原生标注集合事实，不表示已完成语义解析或拓扑映射。
+void WriteFtaSet(std::ostream& output, const FtaSetRecord& record)
+{
+  output << "{\"fta_set_id\":\"" << JsonEscape(record.fta_set_id)
+         << "\",\"set_index\":" << record.set_index
+         << ",\"read_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"tps_count\":" << record.tps_count
+         << ",\"geometry_count\":" << record.geometry_count
+         << ",\"semantic_detail_status\":\"" << JsonEscape(record.semantic_detail_status)
+         << "\",\"topology_mapping_status\":\"" << JsonEscape(record.topology_mapping_status)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
 // 用途：写一条参数消费索引，parameter_id 始终复用原 Feature ID。
 void WriteParameter(std::ostream& output, const ParameterRecord& record)
 {
@@ -543,6 +559,12 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteNativeTopologyCell(output, *topology_cell); output << '\n'; }
   if (!FinishOutput(output, "native_topology_cells.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "fta_sets.jsonl"), error)) return false;
+  std::vector<FtaSetRecord>::const_iterator fta_set = context.fta_sets.begin();
+  for (; fta_set != context.fta_sets.end(); ++fta_set)
+  { WriteFtaSet(output, *fta_set); output << '\n'; }
+  if (!FinishOutput(output, "fta_sets.jsonl", error)) return false;
+
   // 用途：能力状态从本轮真实 CAA 出口推导；未实现或未验证的拓扑、FTA、映射绝不标记为完成。
   if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
   long native_hole_decoded = 0;
@@ -556,11 +578,15 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
     if (feature->decode_level == "generic") ++native_generic;
   }
   const bool has_native_topology = !context.topology_bodies.empty();
+  const std::map<std::string, std::string>::const_iterator fta_status_it =
+    context.runtime_info.find("fta_extraction_status");
+  const std::string fta_status = fta_status_it == context.runtime_info.end() ?
+    "not_available" : fta_status_it->second;
   output << "{\"spec_tree_extraction\":\"partial\""
          << ",\"native_feature_extraction\":\"partial\""
          << ",\"topology_extraction\":\"" << (has_native_topology ? "partial" : "not_available") << "\""
          << ",\"native_feature_topology_mapping\":\"not_available\""
-         << ",\"fta_extraction\":\"not_available\""
+         << ",\"fta_extraction\":\"" << JsonEscape(fta_status) << "\""
          << ",\"fta_topology_mapping\":\"not_available\""
          << ",\"mesh_face_mapping\":\"not_available\""
          << ",\"manufacturing_feature_recognition\":\"not_performed\""
@@ -570,7 +596,8 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_generic_count\":" << native_generic
          << ",\"native_topology_body_count\":" << context.topology_bodies.size()
          << ",\"native_topology_cell_count\":" << context.topology_cells.size()
-         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"Feature-to-topology, FTA-to-topology and manufacturing recognition are not emitted by this CAA revision\"]}\n";
+         << ",\"fta_set_count\":" << context.fta_sets.size()
+         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"Feature-to-topology, FTA-to-topology and manufacturing recognition are not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "relations.jsonl"), error)) return false;
@@ -673,7 +700,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "fta_sets.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;

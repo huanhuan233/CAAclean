@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v4"
-#define CAD_PARSE_PARSER_VERSION "1.4.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.4.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.4.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v5"
+#define CAD_PARSE_PARSER_VERSION "1.5.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.5.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.5.0"
 
 namespace cadparse
 {
@@ -402,6 +402,24 @@ struct NativeTopologyCellRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// FTA/TPS 集合级摘要；当前只记录 R21 Public 接口能可靠取得的集合和数量。
+// 详细公差语义和 TPS->Face 映射必须等后续逐类接口验证后再输出。
+struct FtaSetRecord
+{
+  // 用途：初始化计数为零，避免在接口失败时留下随机值。
+  FtaSetRecord() : set_index(0), tps_count(0), geometry_count(0) {}
+
+  std::string fta_set_id;
+  long set_index;
+  std::string read_status;
+  std::string value_source;
+  long tps_count;
+  long geometry_count;
+  std::string semantic_detail_status;
+  std::string topology_mapping_status;
+  std::vector<std::string> diagnostic_ids;
+};
+
 // 解码器执行终态；候选判断与执行结果分离，避免把 StartUp 预筛选误当成类型化成功。
 enum DecoderOutcome
 {
@@ -542,6 +560,7 @@ public:
   std::vector<DiagnosticRecord> diagnostics;
   std::vector<NativeTopologyBodyRecord> topology_bodies;
   std::vector<NativeTopologyCellRecord> topology_cells;
+  std::vector<FtaSetRecord> fta_sets;
   std::map<std::string, std::string> runtime_info;
   ParseMetadata metadata;
 };

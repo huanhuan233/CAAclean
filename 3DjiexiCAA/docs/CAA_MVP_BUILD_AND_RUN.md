@@ -57,6 +57,7 @@ call tools\run_r21_x86.bat --input "tests\fixtures\catia_r21\partdesign_holes_st
 # R21 构建与运行记录：cad_parse_mvp_v4
 
 本轮新增 `GMModelInterfaces` Public 依赖，用于链接 `CATBody`、`CATTopology` 和 `CATCell`。
+随后新增 `CATTPSInterfaces` Public 依赖，用于链接 `CATITPSDocument`、`CATITPSSet`、`CATITPSList` 和 `CATITPSGeometryList`。
 
 构建命令：
 
@@ -87,6 +88,9 @@ self-test: 通过
 kuang.CATPart: parsed 941 objects; parameters=228; declared_business_features=25
 native_topology_body_count=1
 native_topology_cell_count=1435
+fta_extraction=complete
+fta_set_count=0
 ```
 
 构建日志仍会提示本机未在注册表中检测到 JDK 1.6 / Intel Fortran / VSTA，但当前 CAA C++ 编译、链接和运行均成功。
+链接 CATTPSUUID 时还会出现 Dassault 预编译库缺少 `vc90.pdb` 的调试符号警告；该警告不影响 exe 生成和样件运行。

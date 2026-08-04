@@ -69,3 +69,15 @@ Triangle -> Face
 ```
 
 因此前端或 Feature Center 只能把这些拓扑记录作为“真实 Face 拾取/几何详情”的基础数据，不能把它解释为“已完成特征关联面”。
+
+Schema `cad_parse_mvp_v5` 继续新增 `fta_sets.jsonl`。该文件只保存 FTA/TPS Set 级事实和数量，不保存具体公差语义，也不建立 FTA 到 Face 的关联。
+
+当 `CATITPSDocument` 可用且集合扫描完成但数量为 0 时：
+
+```text
+fta_extraction = complete
+fta_set_count = 0
+fta_sets.jsonl = empty
+```
+
+这表示文档没有 TPS Set，不表示解析器伪造了 FTA，也不表示 FTA 语义和关联面已经完成。

@@ -70,11 +70,35 @@ capabilities.json
 
 ```text
 native_feature_topology_mapping = not_available
-fta_extraction = not_available
 fta_topology_mapping = not_available
 mesh_face_mapping = not_available
 manufacturing_feature_recognition = not_performed
 ```
+
+## FTA/TPS 集合级出口
+
+Schema `cad_parse_mvp_v5` 新增：
+
+```text
+fta_sets.jsonl
+```
+
+它使用 R21 Public `CATITPSDocument`、`CATITPSSet`、`CATITPSList` 和 `CATITPSGeometryList` 读取文档内 FTA/TPS Set 数量，以及每个 Set 的 TPS 数和几何引用数。
+
+当前只输出集合级摘要，不输出具体公差语义，不输出 FTA 到 Face 的映射：
+
+```json
+{
+  "fta_set_id": "FTA000001",
+  "set_index": 1,
+  "tps_count": 0,
+  "geometry_count": 0,
+  "semantic_detail_status": "not_implemented",
+  "topology_mapping_status": "not_available"
+}
+```
+
+如果文档公开 `CATITPSDocument` 且扫描完成但没有 TPS Set，`fta_extraction` 写为 `complete`，`fta_set_count` 写为 `0`，`fta_sets.jsonl` 为空文件。这表示“没有集合”，不是“解析失败”。
 
 ## R21 实测结果
 
@@ -92,9 +116,10 @@ parameters = 228
 declared_business_features = 25
 native_topology_body_count = 1
 native_topology_cell_count = 1435
+fta_extraction = complete
+fta_set_count = 0
 face_count = 281
 edge_count = 711
 vertex_count = 442
 volume_count = 1
 ```
-
