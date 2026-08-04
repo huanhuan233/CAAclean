@@ -70,6 +70,13 @@ const void* INativeHoleView::TypeToken()
   return &token;
 }
 
+// 用途：返回唯一静态地址作为原生 Prism 能力类型令牌，不依赖 RTTI 或 CAA 指针。
+const void* INativePrismView::TypeToken()
+{
+  static const char token = 0;
+  return &token;
+}
+
 // 用途：接管新载荷并释放旧载荷；相同指针不会重复释放。
 void FeatureRecord::SetTypedPayload(ITypedPayload* payload)
 {
@@ -458,6 +465,192 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
   output.decode_level = "typed";
   output.decode_status = "success";
   return DecodeResult(true, "typed");
+}
+
+namespace
+{
+// 用途：用同一套确认链读取 Pad/Pocket Prism 参数，具体能力由 capability_id 决定。
+DecodeResult DecodeNativePrismFeature(const INativeObjectView& view,
+                                      ParseContext& context,
+                                      FeatureRecord& output,
+                                      const char* capability_id,
+                                      const char* interface_key,
+                                      const char* decoder_id)
+{
+  std::string basic_error;
+  bool basic_read = false;
+  try { basic_read = view.ReadBasicAttributes(output, basic_error); }
+  catch (...) { basic_error = "basic state view raised an exception"; }
+  if (!basic_read)
+  {
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_prism", "NATIVE_PRISM_BASIC_STATE_READ_FAILED",
+      basic_error.c_str(), output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+  }
+
+  const INativeCapabilityView* capability = 0;
+  try { capability = view.FindCapability(capability_id); }
+  catch (...)
+  {
+    context.statistics.RecordProbe(interface_key, output.fingerprint.native_type,
+                                   decoder_id, "exception");
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_prism", "NATIVE_PRISM_INTERFACE_QUERY_EXCEPTION",
+      "FindCapability(NativePad/NativePocket) raised an exception", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_PRISM_INTERFACE_QUERY_EXCEPTION",
+                        DecoderOutcomeException);
+  }
+  if (!capability || std::string(capability->GetCapabilityId()) != capability_id)
+  {
+    context.statistics.RecordProbe(interface_key, output.fingerprint.native_type,
+                                   decoder_id, "unsupported");
+    return DecodeResult(false, "failed", "NATIVE_PRISM_INTERFACE_UNSUPPORTED",
+                        DecoderOutcomeUnsupported);
+  }
+  if (capability->GetCapabilityTypeToken() != INativePrismView::TypeToken())
+  {
+    context.statistics.RecordProbe(interface_key, output.fingerprint.native_type,
+                                   decoder_id, "exception");
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_prism", "NATIVE_PRISM_CAPABILITY_TYPE_MISMATCH",
+      "Native Prism capability type token mismatch", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_PRISM_CAPABILITY_TYPE_MISMATCH",
+                        DecoderOutcomeException);
+  }
+
+  const INativePrismView* prism_view = static_cast<const INativePrismView*>(capability);
+  NativePrismData data;
+  std::string error;
+  NativePrismReadStatus status = NativePrismInterfaceQueryException;
+  try { status = prism_view->ReadNativePrism(capability_id, data, error); }
+  catch (...) { error = "Native Prism view read raised an exception"; }
+  if (status != NativePrismReadSuccess)
+  {
+    const char* code = "NATIVE_PRISM_INTERFACE_UNSUPPORTED";
+    const char* probe_result = "unsupported";
+    DecoderOutcome outcome = DecoderOutcomeUnsupported;
+    if (status == NativePrismInterfaceQueryException)
+    {
+      code = "NATIVE_PRISM_INTERFACE_QUERY_EXCEPTION";
+      probe_result = "exception";
+      outcome = DecoderOutcomeException;
+    }
+    else if (status == NativePrismRequiredValueReadException)
+    {
+      code = "NATIVE_PRISM_REQUIRED_VALUE_READ_EXCEPTION";
+      probe_result = "supported";
+      outcome = DecoderOutcomePartial;
+    }
+    context.statistics.RecordProbe(interface_key, output.fingerprint.native_type,
+                                   decoder_id, probe_result);
+    const std::string diagnostic_id = context.AddDiagnostic(
+      status == NativePrismInterfaceUnsupported ? "info" : "warning",
+      "native_prism", code, error.empty() ? code : error.c_str(), output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", code, outcome);
+  }
+
+  int axis = 0;
+  double direction_norm_squared = 0.0;
+  for (axis = 0; axis < 3; ++axis)
+  {
+    if (!IsFiniteNativeHoleNumber(data.direction[axis]))
+    {
+      const std::string diagnostic_id = context.AddDiagnostic(
+        "warning", "native_prism", "NATIVE_PRISM_DIRECTION_INVALID",
+        "Prism direction is non-finite", output.feature_id);
+      output.diagnostic_ids.push_back(diagnostic_id);
+      return DecodeResult(false, "failed", "NATIVE_PRISM_DIRECTION_INVALID",
+                          DecoderOutcomePartial);
+    }
+    direction_norm_squared += data.direction[axis] * data.direction[axis];
+  }
+  if (direction_norm_squared < 1.0e-16)
+  {
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_prism", "NATIVE_PRISM_DIRECTION_INVALID",
+      "Prism direction vector is zero length", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_PRISM_DIRECTION_INVALID",
+                        DecoderOutcomePartial);
+  }
+  if ((data.first_limit.dimension_mm.has_value &&
+       !IsFiniteNativeHoleNumber(data.first_limit.dimension_mm.value)) ||
+      (data.second_limit.dimension_mm.has_value &&
+       !IsFiniteNativeHoleNumber(data.second_limit.dimension_mm.value)))
+  {
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_prism", "NATIVE_PRISM_VALUE_NONFINITE",
+      "Prism limit dimension is non-finite", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_PRISM_VALUE_NONFINITE",
+                        DecoderOutcomePartial);
+  }
+
+  context.statistics.RecordProbe(interface_key, output.fingerprint.native_type,
+                                 decoder_id, "supported");
+  output.SetTypedPayload(new NativePrismPayload(data));
+  output.decoder_id = decoder_id;
+  output.decoder_version = "1.0.0";
+  output.decode_level = "typed";
+  output.decode_status = "success";
+  return DecodeResult(true, "typed");
+}
+}
+
+// 用途：返回原生 Pad 解码器的稳定注册编号。
+const char* NativePadDecoder::GetDecoderId() const { return "NativePadDecoder"; }
+// 用途：让 Pad 在通用基础解码器之前参与选择，同时低于 Hole 的专用优先级。
+int NativePadDecoder::GetPriority() const { return 880; }
+// 用途：标识该解码器属于零件设计特征家族。
+const char* NativePadDecoder::GetFeatureFamily() const { return "part_design"; }
+// 用途：仅以 StartUp 文本做候选预筛选，真正确认必须依赖 CATIAPad 接口。
+DecoderMatchStatus NativePadDecoder::GetMatchStatus(const TypeFingerprint& fingerprint,
+                                                     const INativeObjectView&) const
+{
+  return fingerprint.startup_type == "Pad" ? DecoderCandidate : DecoderNotCandidate;
+}
+// 用途：把显式候选状态转换为旧布尔匹配契约。
+bool NativePadDecoder::Match(const TypeFingerprint& fingerprint,
+                             const INativeObjectView& view) const
+{
+  return GetMatchStatus(fingerprint, view) == DecoderCandidate;
+}
+// 用途：通过 NativePad 能力读取 CATIAPad/CATIAPrism 真实参数，失败后允许通用兜底。
+DecodeResult NativePadDecoder::Decode(const INativeObjectView& view, ParseContext& context,
+                                      FeatureRecord& output)
+{
+  return DecodeNativePrismFeature(view, context, output, "NativePad", "CATIAPad",
+                                  GetDecoderId());
+}
+
+// 用途：返回原生 Pocket 解码器的稳定注册编号。
+const char* NativePocketDecoder::GetDecoderId() const { return "NativePocketDecoder"; }
+// 用途：让 Pocket 在通用基础解码器之前参与选择，同时低于 Hole 的专用优先级。
+int NativePocketDecoder::GetPriority() const { return 880; }
+// 用途：标识该解码器属于零件设计特征家族。
+const char* NativePocketDecoder::GetFeatureFamily() const { return "part_design"; }
+// 用途：仅以 StartUp 文本做候选预筛选，真正确认必须依赖 CATIAPocket 接口。
+DecoderMatchStatus NativePocketDecoder::GetMatchStatus(const TypeFingerprint& fingerprint,
+                                                        const INativeObjectView&) const
+{
+  return fingerprint.startup_type == "Pocket" ? DecoderCandidate : DecoderNotCandidate;
+}
+// 用途：把显式候选状态转换为旧布尔匹配契约。
+bool NativePocketDecoder::Match(const TypeFingerprint& fingerprint,
+                                const INativeObjectView& view) const
+{
+  return GetMatchStatus(fingerprint, view) == DecoderCandidate;
+}
+// 用途：通过 NativePocket 能力读取 CATIAPocket/CATIAPrism 真实参数，失败后允许通用兜底。
+DecodeResult NativePocketDecoder::Decode(const INativeObjectView& view, ParseContext& context,
+                                         FeatureRecord& output)
+{
+  return DecodeNativePrismFeature(view, context, output, "NativePocket", "CATIAPocket",
+                                  GetDecoderId());
 }
 
 // 用途：返回通用解码器的稳定编号，供结果和统计追溯。

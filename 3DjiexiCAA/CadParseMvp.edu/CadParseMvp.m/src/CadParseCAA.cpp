@@ -18,12 +18,16 @@
 #include "CATSessionServices.h"
 #include "CATUnicodeString.h"
 #include "CATIAHole.h"
+#include "CATIAPad.h"
+#include "CATIAPocket.h"
+#include "CATIAPrism.h"
 #include "CATIALimit.h"
 #include "CATIALength.h"
 #include "CATIAAngle.h"
 #include "CATIAStrParam.h"
 #include "CATHoleDefs.h"
 #include "CATLimitDefs.h"
+#include "CATPrismDefs.h"
 #include "CATSafeArray.h"
 
 #include <algorithm>
@@ -215,6 +219,42 @@ static bool ReadHoleVector(CATIAHole* hole, bool origin, double output[3])
   return valid;
 }
 
+// 用途：按 CATIAPrism Automation 契约读取绝对方向数组。
+static bool ReadPrismDirection(CATIAPrism* prism, double output[3])
+{
+  if (!prism) return false;
+  CATSafeArrayVariant* array = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+  if (!array) return false;
+  HRESULT read_result = E_FAIL;
+  try { read_result = prism->GetDirection(*array); }
+  catch (...)
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  if (FAILED(read_result))
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  CATVariant* values = 0;
+  if (FAILED(SafeArrayAccessData(array, reinterpret_cast<void**>(&values))) || !values)
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  bool valid = true;
+  int index = 0;
+  for (index = 0; index < 3; ++index)
+    if (!VariantToDouble(values[index], output[index])) valid = false;
+  SafeArrayUnaccessData(array);
+  SafeArrayDestroy(array);
+  return valid;
+}
+
+// 用途：供 Prism 终止边界读取复用已有 Limit 枚举映射。
+static std::string LimitModeName(CatLimitMode mode, bool& known);
+
 // 用途：把 R21 CatHoleType 的真实原始枚举映射为稳定 Schema 名称。
 static std::string HoleTypeName(CatHoleType type, bool& known)
 {
@@ -226,6 +266,71 @@ static std::string HoleTypeName(CatHoleType type, bool& known)
   if (type == catCounterdrilledHole) return "counterdrilled";
   known = false;
   return "unknown";
+}
+
+// 用途：把 R21 CatPrismExtrusionDirection 映射为稳定 Schema 名称，同时保留 raw 枚举。
+static std::string PrismDirectionTypeName(CatPrismExtrusionDirection type, bool& known)
+{
+  known = true;
+  if (type == catNormalToSketchDirection) return "normal_to_sketch";
+  if (type == catNotNormalToSketchDirection) return "not_normal_to_sketch";
+  known = false;
+  return "unknown";
+}
+
+// 用途：把 R21 CatPrismOrientation 映射为稳定 Schema 名称，同时保留 raw 枚举。
+static std::string PrismOrientationName(CatPrismOrientation orientation, bool& known)
+{
+  known = true;
+  if (orientation == catRegularOrientation) return "regular";
+  if (orientation == catInverseOrientation) return "inverse";
+  known = false;
+  return "unknown";
+}
+
+// 用途：读取 Prism 的一个终止边界；非 Offset 终止不伪造尺寸。
+static bool ReadPrismLimit(CATIALimit* limit, NativePrismLimitData& output, std::string& error)
+{
+  if (!limit)
+  {
+    error = "CATIALimit is null";
+    return false;
+  }
+  CatLimitMode mode = catOffsetLimit;
+  if (FAILED(limit->get_LimitMode(mode)))
+  {
+    error = "CATIALimit.LimitMode read failed";
+    return false;
+  }
+  bool known_mode = false;
+  output.mode_raw = static_cast<int>(mode);
+  output.mode = LimitModeName(mode, known_mode);
+  output.dimension_mm.Clear(mode == catOffsetLimit ? "unavailable" : "not_applicable");
+  output.limiting_element_status = "not_attempted";
+  if (!known_mode) return true;
+  if (mode == catOffsetLimit)
+  {
+    CaaInterfaceGuard<CATIALength> dimension_guard;
+    double dimension = 0.0;
+    if (FAILED(limit->get_Dimension(dimension_guard.Out())) || !dimension_guard.Get())
+    {
+      error = "CATIALimit.Dimension read failed";
+      return false;
+    }
+    if (!ReadLengthValue(dimension_guard.Get(), dimension))
+    {
+      error = "CATIALimit.Dimension.Value read failed";
+      return false;
+    }
+    output.dimension_mm.Set(dimension, "success");
+    output.limiting_element_status = "not_applicable";
+  }
+  else
+  {
+    output.dimension_mm.Clear("not_applicable");
+    output.limiting_element_status = "supported_but_not_resolved_to_ir";
+  }
+  return true;
 }
 
 // 用途：把 R21 CatLimitMode 的真实原始枚举映射为稳定 Schema 名称。
@@ -347,11 +452,47 @@ private:
 // CATISpecObject 的只读适配器；借用原生指针，只把可验证字段复制到 TypeFingerprint/IR。
 class SpecObjectView : public INativeObjectView, public IStringParameterView, public INativeHoleView
 {
+private:
+  // Pad/Pocket 使用独立能力代理，避免同一个 SpecObjectView 同时返回多个互斥 CapabilityId。
+  class PrismCapabilityView : public INativePrismView
+  {
+  public:
+    // 用途：先创建空代理，宿主构造函数体内再绑定，避免 VS2008 禁止在初始化列表传 this。
+    PrismCapabilityView() : _owner(0), _capability_id("") {}
+    // 用途：绑定宿主对象和稳定能力编号；宿主负责实际 CAA 查询。
+    void Bind(const SpecObjectView* owner, const char* capability_id)
+    {
+      _owner = owner;
+      _capability_id = capability_id;
+    }
+    // 用途：返回 NativePad 或 NativePocket，供 Decoder 严格确认能力来源。
+    const char* GetCapabilityId() const { return _capability_id; }
+    // 用途：把读取请求转交给宿主 SpecObjectView，不保存任何 CAA 指针。
+    NativePrismReadStatus ReadNativePrism(const char* requested_capability,
+                                          NativePrismData& output,
+                                          std::string& error) const
+    {
+      if (!_owner || std::strcmp(requested_capability, _capability_id) != 0)
+      {
+        error = "Native Prism capability mismatch";
+        return NativePrismInterfaceUnsupported;
+      }
+      return _owner->ReadNativePrism(requested_capability, output, error);
+    }
+
+  private:
+    const SpecObjectView* _owner;
+    const char* _capability_id;
+  };
+
 public:
   // 用途：绑定一个借用 CATISpecObject，并立即构建稳定类型指纹。
   // context 用于记录指纹读取和接口探测产生的诊断/统计。
-  SpecObjectView(CATISpecObject* spec, ParseContext& context) : _spec(spec)
+  SpecObjectView(CATISpecObject* spec, ParseContext& context)
+    : _spec(spec)
   {
+    _pad_capability.Bind(this, "NativePad");
+    _pocket_capability.Bind(this, "NativePocket");
     BuildFingerprint(context);
   }
 
@@ -364,7 +505,11 @@ public:
   // 用途：按能力标识暴露 CAA 原生适配器；新增能力不需要修改 Crawler 或对象视图接口。
   const INativeCapabilityView* FindCapability(const char* capability_id) const
   {
-    return capability_id && std::string(capability_id) == "NativeHole" ? this : 0;
+    if (!capability_id) return 0;
+    if (std::string(capability_id) == "NativeHole") return this;
+    if (std::string(capability_id) == "NativePad") return &_pad_capability;
+    if (std::string(capability_id) == "NativePocket") return &_pocket_capability;
+    return 0;
   }
 
   // 用途：读取经过 R21 PublicInterfaces 验证的基础状态和容器可访问性。
@@ -713,6 +858,189 @@ public:
     return NativeHoleReadSuccess;
   }
 
+  // 用途：在当前 CATISpecObject 上查询 R21 Public CATIAPad/CATIAPocket，再通过 CATIAPrism 读取公共拉伸参数。
+  NativePrismReadStatus ReadNativePrism(const char* requested_capability,
+                                        NativePrismData& output,
+                                        std::string& error) const
+  {
+    if (!_spec)
+    {
+      error = "null CATISpecObject";
+      return NativePrismInterfaceUnsupported;
+    }
+    const bool wants_pad = requested_capability &&
+      std::strcmp(requested_capability, "NativePad") == 0;
+    const bool wants_pocket = requested_capability &&
+      std::strcmp(requested_capability, "NativePocket") == 0;
+    if (!wants_pad && !wants_pocket)
+    {
+      error = "unknown Native Prism capability";
+      return NativePrismInterfaceUnsupported;
+    }
+
+    CaaInterfaceGuard<CATIAPrism> prism_guard;
+    try
+    {
+      if (wants_pad)
+      {
+        CaaInterfaceGuard<CATIAPad> pad_guard;
+        const HRESULT query = _spec->QueryInterface(IID_CATIAPad,
+          reinterpret_cast<void**>(&pad_guard.Out()));
+        if (FAILED(query) || !pad_guard.Get())
+        {
+          error = "CATIAPad is not supported";
+          return NativePrismInterfaceUnsupported;
+        }
+        CATIAPrism* prism = 0;
+        const HRESULT prism_query = pad_guard.Get()->QueryInterface(IID_CATIAPrism,
+          reinterpret_cast<void**>(&prism));
+        if (FAILED(prism_query) || !prism)
+        {
+          error = "CATIAPad does not expose CATIAPrism";
+          return NativePrismRequiredValueReadException;
+        }
+        prism_guard.Out() = prism;
+        output.semantic_kind = "part_design_pad";
+        output.material_operation = "add_material";
+        output.interface_key = "CATIAPad";
+      }
+      else
+      {
+        CaaInterfaceGuard<CATIAPocket> pocket_guard;
+        const HRESULT query = _spec->QueryInterface(IID_CATIAPocket,
+          reinterpret_cast<void**>(&pocket_guard.Out()));
+        if (FAILED(query) || !pocket_guard.Get())
+        {
+          error = "CATIAPocket is not supported";
+          return NativePrismInterfaceUnsupported;
+        }
+        CATIAPrism* prism = 0;
+        const HRESULT prism_query = pocket_guard.Get()->QueryInterface(IID_CATIAPrism,
+          reinterpret_cast<void**>(&prism));
+        if (FAILED(prism_query) || !prism)
+        {
+          error = "CATIAPocket does not expose CATIAPrism";
+          return NativePrismRequiredValueReadException;
+        }
+        prism_guard.Out() = prism;
+        output.semantic_kind = "part_design_pocket";
+        output.material_operation = "remove_material";
+        output.interface_key = "CATIAPocket";
+      }
+    }
+    catch (...)
+    {
+      error = wants_pad ? "CATIAPad QueryInterface raised an exception" :
+        "CATIAPocket QueryInterface raised an exception";
+      return NativePrismInterfaceQueryException;
+    }
+
+    CATIAPrism* raw_prism = prism_guard.Get();
+    output.value_source = "typed_caa_value";
+    try
+    {
+      CatPrismExtrusionDirection direction_type = catNormalToSketchDirection;
+      if (FAILED(raw_prism->get_DirectionType(direction_type)))
+      {
+        error = "CATIAPrism.DirectionType read failed";
+        return NativePrismRequiredValueReadException;
+      }
+      bool known_direction_type = false;
+      output.direction_type_raw = static_cast<int>(direction_type);
+      output.direction_type = PrismDirectionTypeName(direction_type, known_direction_type);
+      output.field_status["direction_type"] =
+        known_direction_type ? "success" : "unknown_enum";
+
+      CatPrismOrientation orientation = catRegularOrientation;
+      if (FAILED(raw_prism->get_DirectionOrientation(orientation)))
+      {
+        error = "CATIAPrism.DirectionOrientation read failed";
+        return NativePrismRequiredValueReadException;
+      }
+      bool known_orientation = false;
+      output.direction_orientation_raw = static_cast<int>(orientation);
+      output.direction_orientation = PrismOrientationName(orientation, known_orientation);
+      output.field_status["direction_orientation"] =
+        known_orientation ? "success" : "unknown_enum";
+
+      if (!ReadPrismDirection(raw_prism, output.direction))
+      {
+        error = "CATIAPrism.GetDirection failed";
+        return NativePrismRequiredValueReadException;
+      }
+      output.field_status["direction"] = "success";
+
+      CAT_VARIANT_BOOL value = FALSE;
+      if (FAILED(raw_prism->get_IsSymmetric(value)))
+      {
+        error = "CATIAPrism.IsSymmetric read failed";
+        return NativePrismRequiredValueReadException;
+      }
+      output.is_symmetric = value != FALSE;
+      if (FAILED(raw_prism->get_IsThin(value)))
+      {
+        error = "CATIAPrism.IsThin read failed";
+        return NativePrismRequiredValueReadException;
+      }
+      output.is_thin = value != FALSE;
+      if (FAILED(raw_prism->get_NeutralFiber(value)))
+      {
+        output.neutral_fiber = false;
+        output.field_status["neutral_fiber"] = "unavailable";
+      }
+      else
+      {
+        output.neutral_fiber = value != FALSE;
+        output.field_status["neutral_fiber"] = "success";
+      }
+      if (FAILED(raw_prism->get_MergeEnd(value)))
+      {
+        output.merge_end = false;
+        output.field_status["merge_end"] = "unavailable";
+      }
+      else
+      {
+        output.merge_end = value != FALSE;
+        output.field_status["merge_end"] = "success";
+      }
+      output.field_status["is_symmetric"] = "success";
+      output.field_status["is_thin"] = "success";
+
+      CaaInterfaceGuard<CATIALimit> first_limit_guard;
+      CaaInterfaceGuard<CATIALimit> second_limit_guard;
+      if (FAILED(raw_prism->get_FirstLimit(first_limit_guard.Out())) ||
+          !first_limit_guard.Get())
+      {
+        error = "CATIAPrism.FirstLimit read failed";
+        return NativePrismRequiredValueReadException;
+      }
+      if (FAILED(raw_prism->get_SecondLimit(second_limit_guard.Out())) ||
+          !second_limit_guard.Get())
+      {
+        error = "CATIAPrism.SecondLimit read failed";
+        return NativePrismRequiredValueReadException;
+      }
+      if (!ReadPrismLimit(first_limit_guard.Get(), output.first_limit, error))
+      {
+        error = std::string("CATIAPrism.FirstLimit ") + error;
+        return NativePrismRequiredValueReadException;
+      }
+      if (!ReadPrismLimit(second_limit_guard.Get(), output.second_limit, error))
+      {
+        error = std::string("CATIAPrism.SecondLimit ") + error;
+        return NativePrismRequiredValueReadException;
+      }
+      output.field_status["first_limit"] = "success";
+      output.field_status["second_limit"] = "success";
+    }
+    catch (...)
+    {
+      error = "CATIAPrism required value read raised an exception";
+      return NativePrismRequiredValueReadException;
+    }
+    return NativePrismReadSuccess;
+  }
+
 private:
   // R21 的受控接口探测器，只接受代码中显式列出的已验证接口键。
   class R21InterfaceProbeService : public InterfaceProbeService
@@ -736,6 +1064,8 @@ private:
       else if (std::strcmp(key, "CATIContainer") == 0) iid = &IID_CATIContainer;
       else if (std::strcmp(key, "CATIPrtContainer") == 0) iid = &IID_CATIPrtContainer;
       else if (std::strcmp(key, "CATIAHole") == 0) iid = &IID_CATIAHole;
+      else if (std::strcmp(key, "CATIAPad") == 0) iid = &IID_CATIAPad;
+      else if (std::strcmp(key, "CATIAPocket") == 0) iid = &IID_CATIAPocket;
       if (!iid)
       {
         statistics.RecordProbe(key, fingerprint.native_type, "unselected", "not_attempted");
@@ -794,6 +1124,11 @@ private:
     // Hole 专用探测只对已预筛选候选执行；Typed Decoder 随后仍会再次查询并读取必需值。
     if (_fingerprint.startup_type == "Hole")
       probes.Probe("CATIAHole", _fingerprint, context.statistics);
+    // Pad/Pocket 专用探测只对候选执行；这里只证明接口存在，参数读取仍由 Decoder 完成。
+    if (_fingerprint.startup_type == "Pad")
+      probes.Probe("CATIAPad", _fingerprint, context.statistics);
+    if (_fingerprint.startup_type == "Pocket")
+      probes.Probe("CATIAPocket", _fingerprint, context.statistics);
     if (std::find(_fingerprint.supported_interface_keys.begin(),
                   _fingerprint.supported_interface_keys.end(), "CATIPrtPart") !=
         _fingerprint.supported_interface_keys.end())
@@ -802,6 +1137,8 @@ private:
 
   CATISpecObject* _spec;
   TypeFingerprint _fingerprint;
+  PrismCapabilityView _pad_capability;
+  PrismCapabilityView _pocket_capability;
 };
 
 // 基础 Typed Decoder：封装所有核心节点共有的“读取基础属性并标记 typed success”行为。
@@ -896,6 +1233,8 @@ void RegisterCoreDecoders(FeatureTypeRegistry& registry,
 {
   owned_decoders.push_back(new KnowledgewareStringParameterDecoder());
   owned_decoders.push_back(new NativeHoleDecoder());
+  owned_decoders.push_back(new NativePadDecoder());
+  owned_decoders.push_back(new NativePocketDecoder());
   owned_decoders.push_back(new DocumentDecoder());
   owned_decoders.push_back(new PartDecoder());
   owned_decoders.push_back(new ContainerDecoder());

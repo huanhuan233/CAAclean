@@ -177,6 +177,44 @@ void WriteNativeHole(std::ostream& output, const NativeHoleData& hole)
   output << '}';
 }
 
+// 用途：写出 Prism 终止边界，区分真实尺寸值、不适用和不可访问状态。
+void WriteNativePrismLimit(std::ostream& output, const NativePrismLimitData& limit)
+{
+  output << "{\"mode\":\"" << JsonEscape(limit.mode)
+         << "\",\"mode_raw\":" << limit.mode_raw
+         << ",\"dimension_mm\":";
+  WriteOptionalNumber(output, limit.dimension_mm.has_value, limit.dimension_mm.value);
+  output << ",\"dimension_status\":\"" << JsonEscape(limit.dimension_mm.status)
+         << "\",\"limiting_element_status\":\""
+         << JsonEscape(limit.limiting_element_status) << "\"}";
+}
+
+// 用途：写出 Native Pad/Pocket 的 Prism 载荷，所有数值保持 JSON number/null 类型。
+void WriteNativePrism(std::ostream& output, const NativePrismData& prism)
+{
+  output << "{\"semantic_kind\":\"" << JsonEscape(prism.semantic_kind)
+         << "\",\"material_operation\":\"" << JsonEscape(prism.material_operation)
+         << "\",\"value_source\":\"" << JsonEscape(prism.value_source)
+         << "\",\"interface_key\":\"" << JsonEscape(prism.interface_key)
+         << "\",\"direction_type\":\"" << JsonEscape(prism.direction_type)
+         << "\",\"direction_type_raw\":" << prism.direction_type_raw
+         << ",\"direction_orientation\":\"" << JsonEscape(prism.direction_orientation)
+         << "\",\"direction_orientation_raw\":" << prism.direction_orientation_raw
+         << ",\"direction\":[" << std::setprecision(15) << prism.direction[0] << ','
+         << prism.direction[1] << ',' << prism.direction[2] << "]"
+         << ",\"is_symmetric\":" << (prism.is_symmetric ? "true" : "false")
+         << ",\"is_thin\":" << (prism.is_thin ? "true" : "false")
+         << ",\"neutral_fiber\":" << (prism.neutral_fiber ? "true" : "false")
+         << ",\"merge_end\":" << (prism.merge_end ? "true" : "false")
+         << ",\"first_limit\":";
+  WriteNativePrismLimit(output, prism.first_limit);
+  output << ",\"second_limit\":";
+  WriteNativePrismLimit(output, prism.second_limit);
+  output << ",\"field_status\":";
+  WriteStringMap(output, prism.field_status);
+  output << '}';
+}
+
 // 用途：写出 Feature 内嵌的 String 参数结果；该字段仍属于原始 CAA 对象。
 void WriteParameterValue(std::ostream& output, const ParameterValueData& parameter)
 {
@@ -228,6 +266,43 @@ void WriteFeature(std::ostream& output, const FeatureRecord& record)
     record.GetTypedPayload()->WriteJsonProperty(output);
   }
   output << ",\"diagnostic_ids\":"; WriteStringArray(output, record.diagnostic_ids); output << '}';
+}
+
+// 用途：把每个实际遍历到的 CAA 规格对象投影为原生特征出口记录；未有专用 Decoder 的对象如实标记 generic，绝不伪造拓扑结果。
+void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
+{
+  const ITypedPayload* payload = record.GetTypedPayload();
+  const bool is_native_hole = payload && std::string(payload->GetPayloadTypeId()) == "native_hole";
+  const bool is_native_prism = payload && std::string(payload->GetPayloadTypeId()) == "native_prism";
+  std::string canonical_native_type;
+  if (is_native_hole) canonical_native_type = "hole";
+  else if (is_native_prism && record.decoder_id == "NativePadDecoder") canonical_native_type = "pad";
+  else if (is_native_prism && record.decoder_id == "NativePocketDecoder") canonical_native_type = "pocket";
+  const char* decoder_status = record.decode_level == "typed" ? "decoded" :
+    (record.decode_level == "generic" ? "generic" :
+     (record.decode_level == "opaque" ? "unsupported" : "failed"));
+  output << "{\"native_feature_id\":\"" << JsonEscape(record.feature_id)
+         << "\",\"source_object_id\":\"" << JsonEscape(record.feature_id)
+         << "\",\"part_id\":\"\",\"instance_id\":null,\"body_id\":\"\""
+         << ",\"parent_feature_id\":";
+  if (record.parent_id.empty()) output << "null";
+  else output << '"' << JsonEscape(record.parent_id) << '"';
+  output << ",\"name\":\"" << JsonEscape(record.fingerprint.display_name)
+         << "\",\"startup_type\":\"" << JsonEscape(record.fingerprint.startup_type)
+         << "\",\"canonical_native_type\":\"" << JsonEscape(canonical_native_type)
+         << "\",\"decoder\":\"" << JsonEscape(record.decoder_id)
+         << "\",\"decoder_status\":\"" << decoder_status
+         << "\",\"suppressed\":false,\"active\":true,\"parameters\":{}"
+         << ",\"references\":[],\"result_topology_refs\":[]"
+         << ",\"update_status\":\"" << JsonEscape(record.update_status)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  if (is_native_hole || is_native_prism)
+  {
+    output << ',';
+    payload->WriteJsonProperty(output);
+  }
+  output << '}';
 }
 
 // 用途：写一条参数消费索引，parameter_id 始终复用原 Feature ID。
@@ -365,6 +440,13 @@ void NativeHolePayload::WriteJsonProperty(std::ostream& output) const
   WriteNativeHole(output, _data);
 }
 
+// 用途：让 Pad/Pocket 的 Prism 载荷自行写出 native_prism 属性，中央 Writer 不包含类型分支。
+void NativePrismPayload::WriteJsonProperty(std::ostream& output) const
+{
+  output << "\"native_prism\":";
+  WriteNativePrism(output, _data);
+}
+
 // 用途：创建 JSON Writer 并保存普通 JSON 是否采用易读空白。
 JsonArtifactWriter::JsonArtifactWriter(bool pretty) : _pretty(pretty) {}
 
@@ -406,6 +488,38 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   std::vector<FeatureRecord>::const_iterator feature = features.begin();
   for (; feature != features.end(); ++feature) { WriteFeature(output, *feature); output << '\n'; }
   if (!FinishOutput(output, "features.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "native_features.jsonl"), error)) return false;
+  for (feature = features.begin(); feature != features.end(); ++feature)
+  { WriteNativeFeature(output, *feature); output << '\n'; }
+  if (!FinishOutput(output, "native_features.jsonl", error)) return false;
+
+  // 用途：能力状态从本轮真实 CAA 出口推导；未实现或未验证的拓扑、FTA、映射绝不标记为完成。
+  if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
+  long native_hole_decoded = 0;
+  long native_prism_decoded = 0;
+  long native_generic = 0;
+  for (feature = features.begin(); feature != features.end(); ++feature)
+  {
+    const ITypedPayload* payload = feature->GetTypedPayload();
+    if (payload && std::string(payload->GetPayloadTypeId()) == "native_hole") ++native_hole_decoded;
+    if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism") ++native_prism_decoded;
+    if (feature->decode_level == "generic") ++native_generic;
+  }
+  output << "{\"spec_tree_extraction\":\"partial\""
+         << ",\"native_feature_extraction\":\"partial\""
+         << ",\"topology_extraction\":\"not_available\""
+         << ",\"native_feature_topology_mapping\":\"not_available\""
+         << ",\"fta_extraction\":\"not_available\""
+         << ",\"fta_topology_mapping\":\"not_available\""
+         << ",\"mesh_face_mapping\":\"not_available\""
+         << ",\"manufacturing_feature_recognition\":\"not_performed\""
+         << ",\"native_feature_record_count\":" << features.size()
+         << ",\"native_hole_decoded_count\":" << native_hole_decoded
+         << ",\"native_prism_decoded_count\":" << native_prism_decoded
+         << ",\"native_generic_count\":" << native_generic
+         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"B-Rep, FTA and native-feature topology links are not emitted by this CAA revision\"]}\n";
+  if (!FinishOutput(output, "capabilities.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "relations.jsonl"), error)) return false;
   std::vector<RelationRecord>::const_iterator relation = relations.begin();
@@ -507,11 +621,11 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;
-  for (; artifact < 7; ++artifact)
+  for (; artifact < 9; ++artifact)
   {
     const std::string path = JoinPath(staging, names[artifact]);
     std::string hash_error;
@@ -552,7 +666,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << spacing << "\"model_contains_stale_objects\":" << (context.statistics.not_up_to_date_count ? "true" : "false")
          << ',' << spacing << "\"artifacts\":{";
   artifact = 0;
-  for (; artifact < 7; ++artifact)
+  for (; artifact < 9; ++artifact)
   {
     if (artifact) output << ',';
     output << '"' << names[artifact] << "\":{\"size_bytes\":" << artifact_sizes[names[artifact]]

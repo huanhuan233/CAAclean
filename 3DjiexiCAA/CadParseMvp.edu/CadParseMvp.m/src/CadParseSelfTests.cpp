@@ -144,6 +144,78 @@ private:
   NativeHoleData _data;
 };
 
+// API 无关的 Prism 伪能力：一个对象可以精确暴露 NativePad 或 NativePocket。
+class FakeNativePrismCapability : public INativePrismView
+{
+public:
+  // 用途：绑定能力名称、读取状态和待返回的结构化 Prism 数据。
+  FakeNativePrismCapability(const char* capability_id, NativePrismReadStatus status,
+                            const NativePrismData& data)
+    : _capability_id(capability_id), _status(status), _data(data) {}
+
+  // 用途：返回 NativePad 或 NativePocket，供 Decoder 验证能力来源。
+  const char* GetCapabilityId() const { return _capability_id.c_str(); }
+
+  // 用途：模拟 CAA Adapter 的 Pad/Pocket 接口确认和公共 Prism 参数读取。
+  NativePrismReadStatus ReadNativePrism(const char* requested_capability,
+                                        NativePrismData& output,
+                                        std::string& error) const
+  {
+    if (!requested_capability || requested_capability != _capability_id)
+    {
+      error = "fake native prism capability mismatch";
+      return NativePrismInterfaceUnsupported;
+    }
+    output = _data;
+    if (_status != NativePrismReadSuccess)
+      error = "fake native prism read failure";
+    return _status;
+  }
+
+private:
+  std::string _capability_id;
+  NativePrismReadStatus _status;
+  NativePrismData _data;
+};
+
+// API 无关的 Prism 伪对象：StartUp 只做候选，能力对象决定是否真正 Typed。
+class FakeNativePrismView : public INativeObjectView
+{
+public:
+  // 用途：创建 Pad/Pocket 候选，并可选择是否暴露对应原生能力。
+  FakeNativePrismView(const char* startup_type, const char* display_name,
+                      const char* exposed_capability, NativePrismReadStatus status,
+                      const NativePrismData& data)
+    : _capability(exposed_capability, status, data), _exposed_capability(exposed_capability)
+  {
+    _fingerprint.startup_type = startup_type;
+    _fingerprint.display_name = display_name;
+    _fingerprint.internal_name = display_name;
+  }
+
+  // 用途：返回候选预筛选所需的稳定类型指纹。
+  const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
+
+  // 用途：按统一能力协议暴露 Pad/Pocket 伪视图。
+  const INativeCapabilityView* FindCapability(const char* capability_id) const
+  {
+    return capability_id && std::string(capability_id) == _exposed_capability
+      ? &_capability : 0;
+  }
+
+  // 用途：为专用 Decoder 失败后的 Generic 回退提供可验证的干净基础记录。
+  bool ReadBasicAttributes(FeatureRecord& record, std::string&) const
+  {
+    record.attributes["generic_read"] = "success";
+    return true;
+  }
+
+private:
+  TypeFingerprint _fingerprint;
+  FakeNativePrismCapability _capability;
+  std::string _exposed_capability;
+};
+
 // 仅用于协议自测的合成能力，用来证明新增能力不需要扩展中央对象视图的方法列表。
 class SyntheticCapability : public INativeCapabilityView
 {
@@ -418,6 +490,49 @@ static const NativeHoleData* GetNativeHoleData(const FeatureRecord& record)
   const ITypedPayload* payload = record.GetTypedPayload();
   if (!payload || std::string(payload->GetPayloadTypeId()) != "native_hole") return 0;
   return &static_cast<const NativeHolePayload*>(payload)->GetData();
+}
+
+// 用途：构造一个字段完整的 Pad/Pocket Prism 载荷，供原生 Prism Decoder 测试复用。
+static NativePrismData MakeNativePrismData(const char* semantic_kind,
+                                           const char* material_operation,
+                                           const char* interface_key)
+{
+  NativePrismData data;
+  data.semantic_kind = semantic_kind;
+  data.material_operation = material_operation;
+  data.value_source = "typed_caa_value";
+  data.interface_key = interface_key;
+  data.direction_type = "normal_to_sketch";
+  data.direction_type_raw = 0;
+  data.direction_orientation = "regular";
+  data.direction_orientation_raw = 0;
+  data.direction[0] = 0.0;
+  data.direction[1] = 0.0;
+  data.direction[2] = 1.0;
+  data.is_symmetric = false;
+  data.is_thin = false;
+  data.neutral_fiber = false;
+  data.merge_end = false;
+  data.first_limit.mode = "offset";
+  data.first_limit.mode_raw = 0;
+  data.first_limit.dimension_mm.Set(25.0, "success");
+  data.first_limit.limiting_element_status = "not_applicable";
+  data.second_limit.mode = "offset";
+  data.second_limit.mode_raw = 0;
+  data.second_limit.dimension_mm.Set(0.0, "success");
+  data.second_limit.limiting_element_status = "not_applicable";
+  data.field_status["direction"] = "success";
+  data.field_status["first_limit"] = "success";
+  data.field_status["second_limit"] = "success";
+  return data;
+}
+
+// 用途：在不使用 RTTI 的情况下取得原生 Prism 强类型载荷；类型不符时返回空指针。
+static const NativePrismData* GetNativePrismData(const FeatureRecord& record)
+{
+  const ITypedPayload* payload = record.GetTypedPayload();
+  if (!payload || std::string(payload->GetPayloadTypeId()) != "native_prism") return 0;
+  return &static_cast<const NativePrismPayload*>(payload)->GetData();
 }
 
 // 用途：追加一条 parent_of 关系，模拟 Crawler 已确认的真实树边。
@@ -726,6 +841,74 @@ int SelfTestSuite::RunAll()
   tests.Check(pocket.decode_level == "generic" && !GetNativeHoleData(pocket) &&
               pocket_context.statistics.native_hole_candidate_count == 0,
               "Pocket is not misclassified as a Native Hole");
+
+  // 验证 Pad 必须通过 NativePad 能力确认后才会从 Generic 提升为 Typed。
+  NativePadDecoder native_pad_decoder;
+  NativePrismData pad_data = MakeNativePrismData("part_design_pad", "add_material",
+                                                 "CATIAPad");
+  ParseContext pad_context;
+  FeatureTypeRegistry pad_registry;
+  pad_registry.Register(&native_pad_decoder);
+  FeatureRecord pad_feature;
+  pad_feature.feature_id = "F410001";
+  FakeNativePrismView pad_view("Pad", "Pad_Base", "NativePad",
+                               NativePrismReadSuccess, pad_data);
+  pad_registry.DecodeObject(pad_view, pad_context, pad_feature);
+  const NativePrismData* decoded_pad = GetNativePrismData(pad_feature);
+  tests.Check(pad_feature.decode_level == "typed" && decoded_pad &&
+              pad_feature.decoder_id == "NativePadDecoder" &&
+              decoded_pad->interface_key == "CATIAPad" &&
+              decoded_pad->material_operation == "add_material",
+              "Native Pad is typed only after CATIAPad capability succeeds");
+
+  // 验证 Pocket 必须通过 NativePocket 能力确认，并保留去材料语义。
+  NativePocketDecoder native_pocket_decoder;
+  NativePrismData pocket_data = MakeNativePrismData("part_design_pocket",
+                                                    "remove_material", "CATIAPocket");
+  ParseContext native_pocket_context;
+  FeatureTypeRegistry native_pocket_registry;
+  native_pocket_registry.Register(&native_pocket_decoder);
+  FeatureRecord native_pocket_feature;
+  native_pocket_feature.feature_id = "F410002";
+  FakeNativePrismView native_pocket_view("Pocket", "Pocket_Control", "NativePocket",
+                                         NativePrismReadSuccess, pocket_data);
+  native_pocket_registry.DecodeObject(native_pocket_view, native_pocket_context,
+                                      native_pocket_feature);
+  const NativePrismData* decoded_pocket = GetNativePrismData(native_pocket_feature);
+  tests.Check(native_pocket_feature.decode_level == "typed" && decoded_pocket &&
+              native_pocket_feature.decoder_id == "NativePocketDecoder" &&
+              decoded_pocket->interface_key == "CATIAPocket" &&
+              decoded_pocket->material_operation == "remove_material",
+              "Native Pocket is typed only after CATIAPocket capability succeeds");
+
+  // 验证只有 StartUp=Pad 但不支持 NativePad 能力时必须回退 Generic。
+  ParseContext pad_unsupported_context;
+  FeatureTypeRegistry pad_unsupported_registry;
+  pad_unsupported_registry.Register(&native_pad_decoder);
+  FeatureRecord unsupported_pad;
+  unsupported_pad.feature_id = "F410003";
+  FakeNativePrismView unsupported_pad_view("Pad", "PadCandidate", "NativePocket",
+                                           NativePrismInterfaceUnsupported, pad_data);
+  pad_unsupported_registry.DecodeObject(unsupported_pad_view, pad_unsupported_context,
+                                        unsupported_pad);
+  tests.Check(unsupported_pad.decode_level == "generic" &&
+              !GetNativePrismData(unsupported_pad) &&
+              pad_unsupported_context.statistics.probe_exception_count == 0,
+              "Unsupported Pad capability falls back without exception");
+
+  // 验证 Pocket 不会被 Pad Decoder 抢占，避免 Part Design 反例被误判。
+  ParseContext pad_vs_pocket_context;
+  FeatureTypeRegistry pad_vs_pocket_registry;
+  pad_vs_pocket_registry.Register(&native_pad_decoder);
+  FeatureRecord pad_vs_pocket;
+  pad_vs_pocket.feature_id = "F410004";
+  FakeNativePrismView pad_vs_pocket_view("Pocket", "Pocket_Control", "NativePocket",
+                                         NativePrismReadSuccess, pocket_data);
+  pad_vs_pocket_registry.DecodeObject(pad_vs_pocket_view, pad_vs_pocket_context,
+                                      pad_vs_pocket);
+  tests.Check(pad_vs_pocket.decode_level == "generic" &&
+              !GetNativePrismData(pad_vs_pocket),
+              "NativePadDecoder does not claim Pocket startup candidates");
 
   // 验证 QueryInterface 异常与必需字段异常分别进入 exception/partial，并保持对象级隔离。
   ParseContext hole_error_context;
@@ -1118,8 +1301,8 @@ int SelfTestSuite::RunAll()
               hole_json.find("\"enabled\":false") != std::string::npos,
               "Native Hole JSON preserves number arrays boolean and null types");
   tests.Check(ReadWholeFile("selftest_output_native_hole\\parser.log").find(
-                "schema=cad_parse_mvp_v2") != std::string::npos,
-              "Native Hole payload advances the parser schema to v2");
+                "schema=cad_parse_mvp_v3") != std::string::npos,
+              "Native feature capability artifacts advance the parser schema to v3");
 
   // 验证派生记录存在悬空来源 ID 时 Writer 拒绝生成正式结果。
   std::vector<BusinessFeatureRecord> invalid_business;

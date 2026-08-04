@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v2"
-#define CAD_PARSE_PARSER_VERSION "1.2.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.2.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.2.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v3"
+#define CAD_PARSE_PARSER_VERSION "1.3.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.3.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.3.0"
 
 namespace cadparse
 {
@@ -170,6 +170,61 @@ public:
 
 private:
   NativeHoleData _data;
+};
+
+// Prism 终止边界；Pad 和 Pocket 都复用该结构，但不把两者混为同一种业务语义。
+struct NativePrismLimitData
+{
+  // 用途：默认按未知终止方式初始化，避免读取失败时出现合法枚举假象。
+  NativePrismLimitData() : mode_raw(-1) {}
+  std::string mode;
+  int mode_raw;
+  OptionalNativeHoleNumber dimension_mm;
+  std::string limiting_element_status;
+};
+
+// 与 API 无关的 Pad/Pocket 公共 Prism 载荷；这里只保存真实接口读取到的纯数据。
+struct NativePrismData
+{
+  // 用途：为枚举、方向和布尔状态提供明确未读取初值。
+  NativePrismData()
+    : direction_type_raw(-1), direction_orientation_raw(-1), is_symmetric(false),
+      is_thin(false), neutral_fiber(false), merge_end(false)
+  {
+    direction[0] = direction[1] = direction[2] = 0.0;
+  }
+
+  std::string semantic_kind;
+  std::string material_operation;
+  std::string value_source;
+  std::string interface_key;
+  std::string direction_type;
+  int direction_type_raw;
+  std::string direction_orientation;
+  int direction_orientation_raw;
+  double direction[3];
+  bool is_symmetric;
+  bool is_thin;
+  bool neutral_fiber;
+  bool merge_end;
+  NativePrismLimitData first_limit;
+  NativePrismLimitData second_limit;
+  std::map<std::string, std::string> field_status;
+};
+
+// Pad/Pocket 的强类型载荷；JSON 字段名 native_prism 用于承载这类草图拉伸设计语义。
+class NativePrismPayload : public ITypedPayload
+{
+public:
+  explicit NativePrismPayload(const NativePrismData& data) : _data(data) {}
+  const char* GetPayloadTypeId() const { return "native_prism"; }
+  ITypedPayload* Clone() const { return new NativePrismPayload(*this); }
+  void WriteJsonProperty(std::ostream& output) const;
+  // 用途：返回只读 Prism 数据，消费者先检查载荷类型标识后再调用。
+  const NativePrismData& GetData() const { return _data; }
+
+private:
+  NativePrismData _data;
 };
 
 // 单个被枚举对象在 features.jsonl 中对应一条特征记录。
@@ -466,6 +521,15 @@ enum NativeHoleReadStatus
   NativeHoleRequiredValueReadException = 3
 };
 
+// 原生 Prism 读取状态；Pad/Pocket 使用同一套对象级隔离结果。
+enum NativePrismReadStatus
+{
+  NativePrismReadSuccess = 0,
+  NativePrismInterfaceUnsupported = 1,
+  NativePrismInterfaceQueryException = 2,
+  NativePrismRequiredValueReadException = 3
+};
+
 // 解码器的候选判断只是预筛选，不等价于专用接口已经确认成功。
 enum DecoderMatchStatus
 {
@@ -514,6 +578,22 @@ public:
   // 用途：读取并验证专用原生孔数据，返回值决定类型化结果或通用回退。
   virtual NativeHoleReadStatus ReadNativeHole(NativeHoleData& output,
                                               std::string& error) const = 0;
+};
+
+// 原生 Pad/Pocket 的 API 无关适配边界；具体 CATIAPad/CATIAPocket/CATIAPrism 查询留在 CAA 层。
+class INativePrismView : public INativeCapabilityView
+{
+public:
+  virtual ~INativePrismView() {}
+  // 用途：返回 NativePad 或 NativePocket，便于 Decoder 严格确认能力种类。
+  virtual const char* GetCapabilityId() const = 0;
+  // 用途：提供 Prism 强类型令牌，防止仅凭同名字符串执行不安全转换。
+  static const void* TypeToken();
+  const void* GetCapabilityTypeToken() const { return TypeToken(); }
+  // 用途：读取 Pad/Pocket 的真实 Prism 参数，requested_capability 必须是 NativePad 或 NativePocket。
+  virtual NativePrismReadStatus ReadNativePrism(const char* requested_capability,
+                                                NativePrismData& output,
+                                                std::string& error) const = 0;
 };
 
 // 原生对象的最小 API 无关视图。
@@ -600,6 +680,34 @@ public:
   bool Match(const TypeFingerprint&, const INativeObjectView&) const;
   DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
   // 用途：专用接口不支持或读取失败后，允许其他已注册 Typed Decoder 继续确认。
+  bool ContinueTypedAfterFailure() const { return true; }
+};
+
+// 使用 R21 公开 CATIAPad/CATIAPrism 接口确认并读取 Part Design Pad。
+class NativePadDecoder : public INativeFeatureDecoder
+{
+public:
+  const char* GetDecoderId() const;
+  int GetPriority() const;
+  const char* GetFeatureFamily() const;
+  DecoderMatchStatus GetMatchStatus(const TypeFingerprint&,
+                                    const INativeObjectView&) const;
+  bool Match(const TypeFingerprint&, const INativeObjectView&) const;
+  DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
+  bool ContinueTypedAfterFailure() const { return true; }
+};
+
+// 使用 R21 公开 CATIAPocket/CATIAPrism 接口确认并读取 Part Design Pocket。
+class NativePocketDecoder : public INativeFeatureDecoder
+{
+public:
+  const char* GetDecoderId() const;
+  int GetPriority() const;
+  const char* GetFeatureFamily() const;
+  DecoderMatchStatus GetMatchStatus(const TypeFingerprint&,
+                                    const INativeObjectView&) const;
+  bool Match(const TypeFingerprint&, const INativeObjectView&) const;
+  DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
   bool ContinueTypedAfterFailure() const { return true; }
 };
 
