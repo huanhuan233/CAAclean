@@ -3,6 +3,7 @@
 #ifndef CAD_PARSE_CONTRACTS_H
 #define CAD_PARSE_CONTRACTS_H
 
+#include <iosfwd>
 #include <map>
 #include <set>
 #include <string>
@@ -143,6 +144,34 @@ struct NativeHoleData
   std::map<std::string, std::string> field_status;
 };
 
+// 类型化载荷的通用所有权与序列化协议；每种特征仍由独立强类型派生类保存数据。
+class ITypedPayload
+{
+public:
+  virtual ~ITypedPayload() {}
+  // 用途：返回稳定载荷类型标识，供消费者在不使用 RTTI 的情况下确认具体类型。
+  virtual const char* GetPayloadTypeId() const = 0;
+  // 用途：创建独立深副本，使 FeatureRecord 的复制不共享可释放指针。
+  virtual ITypedPayload* Clone() const = 0;
+  // 用途：写出一个完整 JSON 属性；中央写出器只负责调用，不包含特征类型分支。
+  virtual void WriteJsonProperty(std::ostream& output) const = 0;
+};
+
+// 原生孔的强类型载荷实现；JSON 字段名保持 native_hole，与既有 Schema 兼容。
+class NativeHolePayload : public ITypedPayload
+{
+public:
+  explicit NativeHolePayload(const NativeHoleData& data) : _data(data) {}
+  const char* GetPayloadTypeId() const { return "native_hole"; }
+  ITypedPayload* Clone() const { return new NativeHolePayload(*this); }
+  void WriteJsonProperty(std::ostream& output) const;
+  // 用途：返回只读强类型数据，消费者先检查载荷类型标识后再调用。
+  const NativeHoleData& GetData() const { return _data; }
+
+private:
+  NativeHoleData _data;
+};
+
 // 单个被枚举对象在 features.jsonl 中对应一条特征记录。
 // 记录只包含纯数据，因此离开 CATIA 会话后仍然有效。
 struct FeatureRecord
@@ -151,7 +180,19 @@ struct FeatureRecord
   // 采用 C++03 初始化列表，兼容目标编译器。
   FeatureRecord()
     : native_enumeration_index(0), container_enumeration_index(0), traversal_index(0),
-      has_parameter(false), has_native_hole(false) {}
+      has_parameter(false), _typed_payload(0) {}
+  // 用途：深复制可选类型化载荷，保证记录副本具有独立所有权。
+  FeatureRecord(const FeatureRecord& other);
+  // 用途：释放本记录独占的类型化载荷。
+  ~FeatureRecord();
+  // 用途：采用深复制替换当前内容，并正确释放旧载荷。
+  FeatureRecord& operator=(const FeatureRecord& other);
+  // 用途：接管调用方创建的载荷指针；传入空指针表示清除载荷。
+  void SetTypedPayload(ITypedPayload* payload);
+  // 用途：返回借用载荷指针，其生命周期不超过当前 FeatureRecord。
+  const ITypedPayload* GetTypedPayload() const { return _typed_payload; }
+  // 用途：清除并释放当前载荷，供专用解码失败后的通用回退使用。
+  void ClearTypedPayload();
 
   std::string feature_id;
   std::string parent_id;
@@ -170,8 +211,9 @@ struct FeatureRecord
   std::vector<std::string> diagnostic_ids;
   bool has_parameter;
   ParameterValueData parameter;
-  bool has_native_hole;
-  NativeHoleData native_hole;
+
+private:
+  ITypedPayload* _typed_payload;
 };
 
 // 表示两个已存在中间表示对象之间的有向关系。
@@ -264,17 +306,33 @@ struct BusinessFeatureRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// 解码器执行终态；候选判断与执行结果分离，避免把 StartUp 预筛选误当成类型化成功。
+enum DecoderOutcome
+{
+  DecoderOutcomeNotMatched = 0,
+  DecoderOutcomeUnsupported = 1,
+  DecoderOutcomeSuccess = 2,
+  DecoderOutcomePartial = 3,
+  DecoderOutcomeException = 4,
+  DecoderOutcomeRejected = 5,
+  DecoderOutcomeConflict = 6
+};
+
 // 解码器返回的统一结果，用于选择类型化、通用或不透明兜底路径。
 struct DecodeResult
 {
-  // 用途：构造解码结果；默认表示类型化解码成功。
+  // 用途：构造解码结果；旧调用未显式给出终态时按 success 推导成功或拒绝。
   // 入参使用 const char* 以兼容 C++03，成员仍以 std::string 保存。
-  DecodeResult(bool ok = true, const char* result_level = "typed", const char* detail = "")
-    : success(ok), level(result_level), message(detail) {}
+  DecodeResult(bool ok = true, const char* result_level = "typed", const char* detail = "",
+               DecoderOutcome result_outcome = DecoderOutcomeSuccess)
+    : success(ok), level(result_level), message(detail),
+      outcome(ok ? result_outcome :
+        (result_outcome == DecoderOutcomeSuccess ? DecoderOutcomeRejected : result_outcome)) {}
 
   bool success;
   std::string level;
   std::string message;
+  DecoderOutcome outcome;
 };
 
 // 保存单次解析的统计值，并负责校验各类数量守恒。
@@ -335,6 +393,7 @@ struct ParseStatistics
   long output_ms;
   long total_ms;
   std::map<std::string, long> decoder_hits;
+  std::map<std::string, long> decoder_outcome_counts;
   std::map<std::string, long> probe_outcome_counts;
   std::map<std::string, long> not_up_to_date_by_native_type;
   std::map<std::string, long> not_up_to_date_by_decoder;
@@ -431,11 +490,27 @@ public:
                                                         std::string& error) const = 0;
 };
 
+// 所有原生能力共用的查询边界。能力对象由原生适配器拥有，调用方只可在当前对象生命周期内借用。
+class INativeCapabilityView
+{
+public:
+  virtual ~INativeCapabilityView() {}
+  // 用途：返回稳定能力标识；调用方必须先比较该标识，再转换到具体能力接口。
+  virtual const char* GetCapabilityId() const = 0;
+  // 用途：返回进程内稳定类型令牌；Decoder 必须同时核对编号和令牌后才能向下转换。
+  virtual const void* GetCapabilityTypeToken() const { return 0; }
+};
+
 // 原生孔的 API 无关适配边界；具体接口查询和引用释放只在 CAA 层发生。
-class INativeHoleView
+class INativeHoleView : public INativeCapabilityView
 {
 public:
   virtual ~INativeHoleView() {}
+  // 用途：声明本视图提供原生孔能力，避免中央对象视图增加专用 Getter。
+  const char* GetCapabilityId() const { return "NativeHole"; }
+  // 用途：提供原生孔强类型令牌，防止仅凭同名字符串执行不安全转换。
+  static const void* TypeToken();
+  const void* GetCapabilityTypeToken() const { return TypeToken(); }
   // 用途：读取并验证专用原生孔数据，返回值决定类型化结果或通用回退。
   virtual NativeHoleReadStatus ReadNativeHole(NativeHoleData& output,
                                               std::string& error) const = 0;
@@ -452,8 +527,8 @@ public:
   virtual const TypeFingerprint& GetFingerprint() const = 0;
   // 用途：返回可选的字符串参数视图，避免使用 C++ 运行时类型识别。
   virtual const IStringParameterView* GetStringParameterView() const { return 0; }
-  // 用途：返回可选的原生孔适配视图；默认空值保证其他对象无需依赖 CATIA。
-  virtual const INativeHoleView* GetNativeHoleView() const { return 0; }
+  // 用途：按稳定能力标识查询可选原生视图；新增能力不再修改本接口的方法列表。
+  virtual const INativeCapabilityView* FindCapability(const char*) const { return 0; }
   // 用途：读取所有对象都应具备的基础属性。
   // 返回假时通过 error 说明原因，注册中心随后可进入不透明兜底。
   virtual bool ReadBasicAttributes(FeatureRecord& output, std::string& error) const = 0;
@@ -495,6 +570,8 @@ public:
   virtual DecodeResult Decode(const INativeObjectView& object_view,
                               ParseContext& context,
                               FeatureRecord& output) = 0;
+  // 用途：声明本解码器失败后注册中心能否继续尝试下一候选；默认立即统一回退。
+  virtual bool ContinueTypedAfterFailure() const { return false; }
 };
 
 // 原生设计特征解码器的通用扩展协议；注册中心仍只依赖基础解码器接口。
@@ -522,6 +599,8 @@ public:
                                     const INativeObjectView&) const;
   bool Match(const TypeFingerprint&, const INativeObjectView&) const;
   DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
+  // 用途：专用接口不支持或读取失败后，允许其他已注册 Typed Decoder 继续确认。
+  bool ContinueTypedAfterFailure() const { return true; }
 };
 
 // 使用 R21 CATICkeParm 接口读取知识工程字符串参数的专用解码器。
@@ -536,6 +615,8 @@ public:
   bool Match(const TypeFingerprint&, const INativeObjectView&) const;
   // 用途：调用字符串参数视图读取真实值；失败后由注册中心统一回退。
   DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
+  // 用途：当前字符串接口不可用时允许其他类型化能力继续尝试。
+  bool ContinueTypedAfterFailure() const { return true; }
 };
 
 // 未命中专用类型时读取基础属性的通用解码器。
@@ -568,9 +649,9 @@ class DecoderRegistry
 public:
   // 用途：注册一个非空解码器指针。
   void Register(IFeatureDecoder* decoder);
-  // 用途：选择最佳解码器，并输出同优先级冲突信息。
-  // 返回的指针仍由调用方拥有，注册中心不会释放。
-  IFeatureDecoder* Find(const TypeFingerprint&, const INativeObjectView&, ParseContext&) const;
+  // 用途：按优先级和稳定编号收集全部候选；返回指针仍由调用方拥有。
+  void FindCandidates(const TypeFingerprint&, const INativeObjectView&, ParseContext&,
+                      std::vector<IFeatureDecoder*>& candidates) const;
 
 private:
   std::vector<IFeatureDecoder*> _decoders;

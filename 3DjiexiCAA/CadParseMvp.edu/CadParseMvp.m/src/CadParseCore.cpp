@@ -16,6 +16,75 @@
 
 namespace cadparse
 {
+// 用途：深复制普通字段和类型化载荷，避免多个记录共享同一可释放对象。
+FeatureRecord::FeatureRecord(const FeatureRecord& other)
+  : feature_id(other.feature_id), parent_id(other.parent_id),
+    native_enumeration_index(other.native_enumeration_index),
+    container_enumeration_index(other.container_enumeration_index),
+    traversal_index(other.traversal_index), fingerprint(other.fingerprint),
+    tree_path(other.tree_path), update_status(other.update_status),
+    visibility(other.visibility), decoder_id(other.decoder_id),
+    decoder_version(other.decoder_version), decode_level(other.decode_level),
+    decode_status(other.decode_status), attributes(other.attributes),
+    diagnostic_ids(other.diagnostic_ids), has_parameter(other.has_parameter),
+    parameter(other.parameter),
+    _typed_payload(other._typed_payload ? other._typed_payload->Clone() : 0)
+{}
+
+// 用途：释放本记录独占的类型化载荷。
+FeatureRecord::~FeatureRecord()
+{
+  delete _typed_payload;
+}
+
+// 用途：复制全部纯数据字段，并通过 Clone 建立载荷深副本。
+FeatureRecord& FeatureRecord::operator=(const FeatureRecord& other)
+{
+  if (this == &other) return *this;
+  FeatureRecord temporary(other);
+  std::swap(feature_id, temporary.feature_id);
+  std::swap(parent_id, temporary.parent_id);
+  std::swap(native_enumeration_index, temporary.native_enumeration_index);
+  std::swap(container_enumeration_index, temporary.container_enumeration_index);
+  std::swap(traversal_index, temporary.traversal_index);
+  std::swap(fingerprint, temporary.fingerprint);
+  std::swap(tree_path, temporary.tree_path);
+  std::swap(update_status, temporary.update_status);
+  std::swap(visibility, temporary.visibility);
+  std::swap(decoder_id, temporary.decoder_id);
+  std::swap(decoder_version, temporary.decoder_version);
+  std::swap(decode_level, temporary.decode_level);
+  std::swap(decode_status, temporary.decode_status);
+  std::swap(attributes, temporary.attributes);
+  std::swap(diagnostic_ids, temporary.diagnostic_ids);
+  std::swap(has_parameter, temporary.has_parameter);
+  std::swap(parameter, temporary.parameter);
+  std::swap(_typed_payload, temporary._typed_payload);
+  return *this;
+}
+
+// 用途：返回唯一静态地址作为原生孔能力类型令牌，不依赖 RTTI 或 CAA 指针。
+const void* INativeHoleView::TypeToken()
+{
+  static const char token = 0;
+  return &token;
+}
+
+// 用途：接管新载荷并释放旧载荷；相同指针不会重复释放。
+void FeatureRecord::SetTypedPayload(ITypedPayload* payload)
+{
+  if (_typed_payload == payload) return;
+  delete _typed_payload;
+  _typed_payload = payload;
+}
+
+// 用途：清除类型化载荷，确保失败解码器的半成品不能污染通用结果。
+void FeatureRecord::ClearTypedPayload()
+{
+  delete _typed_payload;
+  _typed_payload = 0;
+}
+
 // 用途：把所有统计量初始化为零，防止未赋值数据进入覆盖率报告。
 ParseStatistics::ParseStatistics()
   : enumerated_total(0), typed_count(0), generic_count(0), opaque_count(0), failed_count(0),
@@ -138,7 +207,8 @@ DecodeResult KnowledgewareStringParameterDecoder::Decode(const INativeObjectView
       "PARAM_INTERFACE_UNSUPPORTED", "object adapter has no String parameter view",
       output.feature_id);
     output.diagnostic_ids.push_back(id);
-    return DecodeResult(false, "failed", "String parameter interface unsupported");
+    return DecodeResult(false, "failed", "String parameter interface unsupported",
+                        DecoderOutcomeUnsupported);
   }
 
   ParameterValueData parameter;
@@ -163,7 +233,10 @@ DecodeResult KnowledgewareStringParameterDecoder::Decode(const INativeObjectView
     const std::string id = context.AddDiagnostic("warning", "parameter", code,
       error.empty() ? "String parameter read failed" : error.c_str(), output.feature_id);
     output.diagnostic_ids.push_back(id);
-    return DecodeResult(false, "failed", error.empty() ? code : error.c_str());
+    DecoderOutcome outcome = DecoderOutcomeUnsupported;
+    if (status == StringParameterQueryException) outcome = DecoderOutcomeException;
+    else if (status == StringParameterValueException) outcome = DecoderOutcomePartial;
+    return DecodeResult(false, "failed", error.empty() ? code : error.c_str(), outcome);
   }
 
   context.statistics.RecordProbe("CATICkeParm", output.fingerprint.native_type,
@@ -232,8 +305,8 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
       basic_error.c_str(), output.feature_id);
     output.diagnostic_ids.push_back(diagnostic_id);
   }
-  const INativeHoleView* hole_view = 0;
-  try { hole_view = view.GetNativeHoleView(); }
+  const INativeCapabilityView* capability = 0;
+  try { capability = view.FindCapability("NativeHole"); }
   catch (...)
   {
     ++context.statistics.native_hole_exception_count;
@@ -241,17 +314,31 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
                                    GetDecoderId(), "exception");
     const std::string diagnostic_id = context.AddDiagnostic(
       "warning", "native_hole", "NATIVE_HOLE_INTERFACE_QUERY_EXCEPTION",
-      "GetNativeHoleView raised an exception", output.feature_id);
+      "FindCapability(NativeHole) raised an exception", output.feature_id);
     output.diagnostic_ids.push_back(diagnostic_id);
-    return DecodeResult(false, "failed", "NATIVE_HOLE_INTERFACE_QUERY_EXCEPTION");
+    return DecodeResult(false, "failed", "NATIVE_HOLE_INTERFACE_QUERY_EXCEPTION",
+                        DecoderOutcomeException);
   }
-  if (!hole_view)
+  if (!capability || std::string(capability->GetCapabilityId()) != "NativeHole")
   {
     ++context.statistics.native_hole_unsupported_count;
     context.statistics.RecordProbe("CATIAHole", output.fingerprint.native_type,
                                    GetDecoderId(), "unsupported");
-    return DecodeResult(false, "failed", "NATIVE_HOLE_INTERFACE_UNSUPPORTED");
+    return DecodeResult(false, "failed", "NATIVE_HOLE_INTERFACE_UNSUPPORTED",
+                        DecoderOutcomeUnsupported);
   }
+  if (capability->GetCapabilityTypeToken() != INativeHoleView::TypeToken())
+  {
+    ++context.statistics.native_hole_exception_count;
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_hole", "NATIVE_HOLE_CAPABILITY_TYPE_MISMATCH",
+      "NativeHole capability type token mismatch", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_HOLE_CAPABILITY_TYPE_MISMATCH",
+                        DecoderOutcomeException);
+  }
+  // 能力编号与强类型令牌均已确认，可以安全转换到原生孔视图。
+  const INativeHoleView* hole_view = static_cast<const INativeHoleView*>(capability);
 
   NativeHoleData data;
   std::string error;
@@ -283,7 +370,10 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
       status == NativeHoleInterfaceUnsupported ? "info" : "warning",
       "native_hole", code, error.empty() ? code : error.c_str(), output.feature_id);
     output.diagnostic_ids.push_back(diagnostic_id);
-    return DecodeResult(false, "failed", code);
+    DecoderOutcome outcome = DecoderOutcomeUnsupported;
+    if (status == NativeHoleInterfaceQueryException) outcome = DecoderOutcomeException;
+    else if (status == NativeHoleRequiredValueReadException) outcome = DecoderOutcomePartial;
+    return DecodeResult(false, "failed", code, outcome);
   }
 
   context.statistics.RecordProbe("CATIAHole", output.fingerprint.native_type,
@@ -295,7 +385,8 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
       "warning", "native_hole", "NATIVE_HOLE_VALUE_NONFINITE",
       "required Hole diameter is invalid", output.feature_id);
     output.diagnostic_ids.push_back(diagnostic_id);
-    return DecodeResult(false, "failed", "NATIVE_HOLE_VALUE_NONFINITE");
+    return DecodeResult(false, "failed", "NATIVE_HOLE_VALUE_NONFINITE",
+                        DecoderOutcomePartial);
   }
   int axis = 0;
   double direction_norm_squared = 0.0;
@@ -309,7 +400,8 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
         "warning", "native_hole", "NATIVE_HOLE_VALUE_NONFINITE",
         "Hole origin or direction is non-finite", output.feature_id);
       output.diagnostic_ids.push_back(diagnostic_id);
-      return DecodeResult(false, "failed", "NATIVE_HOLE_VALUE_NONFINITE");
+      return DecodeResult(false, "failed", "NATIVE_HOLE_VALUE_NONFINITE",
+                          DecoderOutcomePartial);
     }
     direction_norm_squared += data.direction[axis] * data.direction[axis];
   }
@@ -320,7 +412,8 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
       "warning", "native_hole", "NATIVE_HOLE_DIRECTION_INVALID",
       "Hole direction has zero length", output.feature_id);
     output.diagnostic_ids.push_back(diagnostic_id);
-    return DecodeResult(false, "failed", "NATIVE_HOLE_DIRECTION_INVALID");
+    return DecodeResult(false, "failed", "NATIVE_HOLE_DIRECTION_INVALID",
+                        DecoderOutcomePartial);
   }
 
   const OptionalNativeHoleNumber* optional_numbers[] = {
@@ -343,7 +436,8 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
         "warning", "native_hole", "NATIVE_HOLE_VALUE_NONFINITE",
         "optional Hole numeric value is non-finite", output.feature_id);
       output.diagnostic_ids.push_back(diagnostic_id);
-      return DecodeResult(false, "failed", "NATIVE_HOLE_VALUE_NONFINITE");
+      return DecodeResult(false, "failed", "NATIVE_HOLE_VALUE_NONFINITE",
+                          DecoderOutcomePartial);
     }
   }
 
@@ -358,8 +452,7 @@ DecodeResult NativeHoleDecoder::Decode(const INativeObjectView& view,
   }
 
   ++context.statistics.native_hole_success_count;
-  output.has_native_hole = true;
-  output.native_hole = data;
+  output.SetTypedPayload(new NativeHolePayload(data));
   output.decoder_id = GetDecoderId();
   output.decoder_version = "1.0.0";
   output.decode_level = "typed";
@@ -474,17 +567,50 @@ bool CoverageTracker::Validate(const ParseStatistics& statistics)
     statistics.IsBusinessFeatureConserved() && statistics.IsNativeHoleConserved();
 }
 
-// 用途：遍历注册解码器，执行候选匹配并确定唯一最佳解码器。
-// 同优先级冲突通过稳定编号决胜，并把冲突数量返回给调用方。
-IFeatureDecoder* DecoderRegistry::Find(const TypeFingerprint& fingerprint,
-                                       const INativeObjectView& view,
-                                       ParseContext& context) const
+namespace
 {
-  IFeatureDecoder* best = 0;
-  int equal_best_count = 0;
-  int matched_count = 0;
+// 用途：为候选解码器建立确定顺序，优先级降序且稳定编号升序。
+bool DecoderOrder(const IFeatureDecoder* left, const IFeatureDecoder* right)
+{
+  if (left->GetPriority() != right->GetPriority())
+    return left->GetPriority() > right->GetPriority();
+  return std::string(left->GetDecoderId()) < right->GetDecoderId();
+}
+
+// 用途：把解码终态转换成稳定统计键文本。
+const char* DecoderOutcomeName(DecoderOutcome outcome)
+{
+  switch (outcome)
+  {
+  case DecoderOutcomeNotMatched: return "not_matched";
+  case DecoderOutcomeUnsupported: return "unsupported";
+  case DecoderOutcomeSuccess: return "success";
+  case DecoderOutcomePartial: return "partial";
+  case DecoderOutcomeException: return "exception";
+  case DecoderOutcomeRejected: return "rejected";
+  case DecoderOutcomeConflict: return "conflict";
+  }
+  return "rejected";
+}
+
+// 用途：按解码器编号和终态累计通用统计，兼容任意后续专用特征。
+void RecordDecoderOutcome(ParseContext& context, const IFeatureDecoder* decoder,
+                          DecoderOutcome outcome)
+{
+  const std::string key = std::string(decoder->GetDecoderId()) + "\x1f" +
+    DecoderOutcomeName(outcome);
+  ++context.statistics.decoder_outcome_counts[key];
+}
+}
+
+// 用途：遍历注册解码器并按确定顺序返回候选，匹配异常只影响当前解码器。
+void DecoderRegistry::FindCandidates(const TypeFingerprint& fingerprint,
+                                     const INativeObjectView& view,
+                                     ParseContext& context,
+                                     std::vector<IFeatureDecoder*>& candidates) const
+{
+  candidates.clear();
   std::vector<IFeatureDecoder*>::const_iterator it = _decoders.begin();
-  // 每个匹配调用都有异常边界，单个解码器异常不会中止对象扫描。
   for (; it != _decoders.end(); ++it)
   {
     IFeatureDecoder* candidate = *it;
@@ -497,32 +623,17 @@ IFeatureDecoder* DecoderRegistry::Find(const TypeFingerprint& fingerprint,
     {
       context.AddDiagnostic("warning", "registry", "DECODER_MATCH_EXCEPTION",
                             candidate->GetDecoderId(), "");
+      RecordDecoderOutcome(context, candidate, DecoderOutcomeException);
       continue;
     }
     if (!matched)
+    {
+      RecordDecoderOutcome(context, candidate, DecoderOutcomeNotMatched);
       continue;
-    ++matched_count;
-
-    if (!best || candidate->GetPriority() > best->GetPriority())
-    {
-      best = candidate;
-      equal_best_count = 1;
     }
-    else if (candidate->GetPriority() == best->GetPriority())
-    {
-      ++equal_best_count;
-      // 排除最佳解码器自身，只统计同优先级的其他候选。
-      if (DecoderMatchEngine::IsBetter(candidate, best))
-        best = candidate;
-    }
+    candidates.push_back(candidate);
   }
-  if (best && equal_best_count > 1)
-    context.AddDiagnostic("warning", "registry", "DECODER_PRIORITY_TIE",
-                          "stable decoder id tie break", "");
-  if (best && matched_count > 1)
-    context.AddDiagnostic("warning", "registry", "DECODER_MATCH_CONFLICT",
-                          "multiple typed decoders matched; priority and stable id selected one", "");
-  return best;
+  std::sort(candidates.begin(), candidates.end(), DecoderOrder);
 }
 
 // 用途：构造特征类型注册中心并绑定通用与不透明兜底实现。
@@ -543,35 +654,74 @@ DecodeResult FeatureTypeRegistry::DecodeObject(const INativeObjectView& view, Pa
   output.fingerprint = view.GetFingerprint();
   // 特征编号由爬取层预先分配；解码器不得改写编号和树位置信息。
   const FeatureRecord fallback_base = output;
-  IFeatureDecoder* decoder = _registry.Find(output.fingerprint, view, context);
+  std::vector<IFeatureDecoder*> candidates;
+  _registry.FindCandidates(output.fingerprint, view, context, candidates);
+  IFeatureDecoder* decoder = 0;
   DecodeResult result(false, "failed", "no typed decoder");
-
-  if (decoder)
+  std::vector<std::string> failure_diagnostic_ids;
+  size_t candidate_index = 0;
+  for (; candidate_index < candidates.size(); ++candidate_index)
   {
-    // 解码器匹配异常被隔离为对象级诊断，不能让整份 CATPart 失败。
+    IFeatureDecoder* candidate = candidates[candidate_index];
+    FeatureRecord attempt = fallback_base;
+    DecodeResult attempt_result(false, "failed", "decoder not executed");
     try
     {
-      result = decoder->Decode(view, context, output);
+      attempt_result = candidate->Decode(view, context, attempt);
     }
     catch (...)
     {
       const std::string id = context.AddDiagnostic("warning", "decoder", "DECODER_EXCEPTION",
-                                                   decoder->GetDecoderId(), output.feature_id);
-      output.diagnostic_ids.push_back(id);
-      result = DecodeResult(false, "failed", "typed decoder exception");
+                                                   candidate->GetDecoderId(), output.feature_id);
+      failure_diagnostic_ids.push_back(id);
+      attempt_result = DecodeResult(false, "failed", "typed decoder exception",
+                                    DecoderOutcomeException);
     }
-  }
-
-  if (!decoder || !result.success)
-  {
-    if (decoder && result.message != "typed decoder exception")
+    RecordDecoderOutcome(context, candidate, attempt_result.outcome);
+    if (attempt_result.success)
+    {
+      decoder = candidate;
+      output = attempt;
+      result = attempt_result;
+      // 只执行同优先级剩余候选来检测真实双成功；低优先级候选在成功后停止。
+      size_t peer_index = candidate_index + 1;
+      for (; peer_index < candidates.size() &&
+             candidates[peer_index]->GetPriority() == candidate->GetPriority(); ++peer_index)
+      {
+        FeatureRecord peer_attempt = fallback_base;
+        DecodeResult peer_result(false, "failed", "peer decoder not executed");
+        try { peer_result = candidates[peer_index]->Decode(view, context, peer_attempt); }
+        catch (...) { peer_result = DecodeResult(false, "failed", "peer decoder exception",
+                                                  DecoderOutcomeException); }
+        RecordDecoderOutcome(context, candidates[peer_index], peer_result.outcome);
+        if (peer_result.success)
+        {
+          const std::string id = context.AddDiagnostic(
+            "warning", "registry", "DECODER_SUCCESS_CONFLICT",
+            "multiple equal-priority decoders succeeded; stable decoder id retained",
+            output.feature_id);
+          output.diagnostic_ids.push_back(id);
+          RecordDecoderOutcome(context, candidates[peer_index], DecoderOutcomeConflict);
+        }
+      }
+      break;
+    }
+    failure_diagnostic_ids.insert(failure_diagnostic_ids.end(),
+                                  attempt.diagnostic_ids.begin(), attempt.diagnostic_ids.end());
+    if (attempt_result.message != "typed decoder exception" &&
+        attempt_result.outcome != DecoderOutcomeUnsupported)
     {
       const std::string id = context.AddDiagnostic("warning", "decoder", "DECODER_FAILED",
-                                                   result.message.c_str(), output.feature_id);
-      output.diagnostic_ids.push_back(id);
+                                                   attempt_result.message.c_str(), output.feature_id);
+      failure_diagnostic_ids.push_back(id);
     }
-    const std::vector<std::string> failure_diagnostic_ids = output.diagnostic_ids;
-    // 类型化解码失败后清除专用载荷，再进入通用兜底，避免污染结果。
+    // Unsupported 是正常能力缺失，Registry 必须自动续试；其他失败遵循 Decoder 策略。
+    if (attempt_result.outcome != DecoderOutcomeUnsupported &&
+        !candidate->ContinueTypedAfterFailure()) break;
+  }
+
+  if (!decoder)
+  {
     output = fallback_base;
     output.diagnostic_ids = failure_diagnostic_ids;
     result = _generic.Decode(view, context, output);

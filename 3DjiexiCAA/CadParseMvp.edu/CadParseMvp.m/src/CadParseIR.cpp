@@ -221,7 +221,12 @@ void WriteFeature(std::ostream& output, const FeatureRecord& record)
          << "\",\"attributes\":";
   WriteStringMap(output, record.attributes);
   if (record.has_parameter) { output << ",\"parameter\":"; WriteParameterValue(output, record.parameter); }
-  if (record.has_native_hole) { output << ",\"native_hole\":"; WriteNativeHole(output, record.native_hole); }
+  // 类型化载荷自行写出完整属性，中央 Writer 无需知道 Synthetic、Hole 或后续特征类型。
+  if (record.GetTypedPayload())
+  {
+    output << ',';
+    record.GetTypedPayload()->WriteJsonProperty(output);
+  }
   output << ",\"diagnostic_ids\":"; WriteStringArray(output, record.diagnostic_ids); output << '}';
 }
 
@@ -351,6 +356,13 @@ bool ValidateReferences(const std::vector<FeatureRecord>& features,
   }
   return true;
 }
+}
+
+// 用途：让原生孔载荷自行写出兼容的 native_hole 属性，中央 Writer 不包含类型判断。
+void NativeHolePayload::WriteJsonProperty(std::ostream& output) const
+{
+  output << "\"native_hole\":";
+  WriteNativeHole(output, _data);
 }
 
 // 用途：创建 JSON Writer 并保存普通 JSON 是否采用易读空白。

@@ -361,8 +361,11 @@ public:
   // 用途：向参数 Decoder 暴露本适配器已有的 IStringParameterView，不依赖 /GR RTTI。
   const IStringParameterView* GetStringParameterView() const { return this; }
 
-  // 用途：向 NativeHoleDecoder 暴露 CAA Hole 适配器，不使用 RTTI 或跨层原生指针。
-  const INativeHoleView* GetNativeHoleView() const { return this; }
+  // 用途：按能力标识暴露 CAA 原生适配器；新增能力不需要修改 Crawler 或对象视图接口。
+  const INativeCapabilityView* FindCapability(const char* capability_id) const
+  {
+    return capability_id && std::string(capability_id) == "NativeHole" ? this : 0;
+  }
 
   // 用途：读取经过 R21 PublicInterfaces 验证的基础状态和容器可访问性。
   // 任意 CAA 异常都转成 false+error，由 Registry 的 Generic/Opaque 链隔离。

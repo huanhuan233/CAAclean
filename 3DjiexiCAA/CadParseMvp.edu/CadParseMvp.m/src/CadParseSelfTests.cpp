@@ -118,8 +118,9 @@ public:
   // 用途：返回候选预筛选所需的稳定类型指纹。
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
 
-  // 用途：把当前伪对象暴露为 Hole 适配视图，避免 Core 使用 RTTI。
-  const INativeHoleView* GetNativeHoleView() const { return this; }
+  // 用途：按统一能力协议暴露原生孔视图，避免 Core 使用 RTTI。
+  const INativeCapabilityView* FindCapability(const char* capability_id) const
+  { return capability_id && std::string(capability_id) == "NativeHole" ? this : 0; }
 
   // 用途：模拟真实 CAA Adapter 的接口确认和结构化参数读取结果。
   NativeHoleReadStatus ReadNativeHole(NativeHoleData& output, std::string& error) const
@@ -143,6 +144,51 @@ private:
   NativeHoleData _data;
 };
 
+// 仅用于协议自测的合成能力，用来证明新增能力不需要扩展中央对象视图的方法列表。
+class SyntheticCapability : public INativeCapabilityView
+{
+public:
+  // 返回固定能力标识，测试不依赖 CATIA 或 CAA 头文件。
+  const char* GetCapabilityId() const { return "SyntheticCapability"; }
+};
+
+// 仅用于协议自测的合成对象；它通过统一查找方法公开能力，而不是新增专用 Getter。
+class SyntheticCapabilityObjectView : public INativeObjectView
+{
+public:
+  const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
+  const INativeCapabilityView* FindCapability(const char* capability_id) const
+  {
+    return capability_id && std::string(capability_id) == _capability.GetCapabilityId()
+      ? &_capability : 0;
+  }
+  bool ReadBasicAttributes(FeatureRecord&, std::string&) const { return true; }
+
+private:
+  TypeFingerprint _fingerprint;
+  SyntheticCapability _capability;
+};
+
+// 合成载荷只用于验证通用所有权和写出协议，不代表任何生产特征类型。
+class SyntheticPayload : public ITypedPayload
+{
+public:
+  explicit SyntheticPayload(int value) : _value(value) { ++live_count; }
+  SyntheticPayload(const SyntheticPayload& other) : _value(other._value) { ++live_count; }
+  ~SyntheticPayload() { --live_count; }
+  const char* GetPayloadTypeId() const { return "synthetic"; }
+  ITypedPayload* Clone() const { return new SyntheticPayload(*this); }
+  void WriteJsonProperty(std::ostream& output) const
+  { output << "\"synthetic\":{\"value\":" << _value << '}'; }
+  int Value() const { return _value; }
+  static int live_count;
+
+private:
+  int _value;
+};
+
+int SyntheticPayload::live_count = 0;
+
 // 专门抛异常的 Hole 伪视图，用来锁定所有虚调用都处于对象级错误边界内。
 class ThrowingNativeHoleView : public INativeObjectView, public INativeHoleView
 {
@@ -152,8 +198,8 @@ public:
   { _fingerprint.startup_type = "Hole"; }
   // 用途：返回 Hole 候选指纹。
   const TypeFingerprint& GetFingerprint() const { return _fingerprint; }
-  // 用途：模拟 Native View 工厂异常。
-  const INativeHoleView* GetNativeHoleView() const
+  // 用途：模拟能力查询工厂异常。
+  const INativeCapabilityView* FindCapability(const char*) const
   { if (_mode == 1) throw "view exception"; return this; }
   // 用途：模拟专用 CAA 读取异常。
   NativeHoleReadStatus ReadNativeHole(NativeHoleData&, std::string&) const
@@ -219,6 +265,44 @@ public:
     record.attributes["partial_typed_value"] = "must_not_leak";
     return DecodeResult(false, "failed", "intentional partial failure");
   }
+};
+
+// 可配置终态的测试解码器，用来验证注册中心的续试、冲突和统计规则。
+class OutcomeDecoder : public IFeatureDecoder
+{
+public:
+  // 用途：保存稳定编号、优先级、返回终态以及失败后是否允许继续尝试。
+  OutcomeDecoder(const char* id, int priority, DecoderOutcome outcome,
+                 bool continue_after_failure)
+    : _id(id), _priority(priority), _outcome(outcome),
+      _continue_after_failure(continue_after_failure) {}
+  // 用途：返回测试指定的稳定解码器编号。
+  const char* GetDecoderId() const { return _id; }
+  // 用途：返回测试指定的解码器优先级。
+  int GetPriority() const { return _priority; }
+  // 用途：让测试对象固定进入候选集合，以便只验证执行状态机。
+  bool Match(const TypeFingerprint& fingerprint, const INativeObjectView&) const
+  { return fingerprint.native_type == "Known"; }
+  // 用途：声明当前失败是否允许注册中心继续尝试下一个候选。
+  bool ContinueTypedAfterFailure() const { return _continue_after_failure; }
+  // 用途：按配置返回成功、部分、不支持或异常等终态，并仅在成功时写入正式结果。
+  DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord& record)
+  {
+    if (_outcome == DecoderOutcomeException) throw "configured exception";
+    if (_outcome == DecoderOutcomeSuccess || _outcome == DecoderOutcomePartial)
+    {
+      record.decoder_id = _id;
+      record.decode_level = "typed";
+      record.decode_status = _outcome == DecoderOutcomeSuccess ? "success" : "partial";
+      return DecodeResult(true, "typed", "", _outcome);
+    }
+    return DecodeResult(false, "failed", "configured outcome", _outcome);
+  }
+private:
+  const char* _id;
+  int _priority;
+  DecoderOutcome _outcome;
+  bool _continue_after_failure;
 };
 
 // 最小测试运行器：累计失败数并把失败用例名称写到标准错误流。
@@ -328,6 +412,14 @@ static NativeHoleData MakeBlindHoleData()
   return data;
 }
 
+// 用途：在不使用 RTTI 的情况下取得原生孔强类型载荷；类型不符时返回空指针。
+static const NativeHoleData* GetNativeHoleData(const FeatureRecord& record)
+{
+  const ITypedPayload* payload = record.GetTypedPayload();
+  if (!payload || std::string(payload->GetPayloadTypeId()) != "native_hole") return 0;
+  return &static_cast<const NativeHolePayload*>(payload)->GetData();
+}
+
 // 用途：追加一条 parent_of 关系，模拟 Crawler 已确认的真实树边。
 static void AddParentRelation(std::vector<RelationRecord>& relations,
                               const char* parent, const char* child)
@@ -358,6 +450,30 @@ int SelfTestSuite::RunAll()
   const std::string escaped = "\xE4\xB8\xAD\xE6\x96\x87\\\"\\\\\\n";
   tests.Check(JsonEscape(raw) == escaped,
               "JSON escaping preserves UTF-8 and escapes quote slash newline");
+
+  // 验证新能力仅通过统一查询入口接入；中央对象视图不需要新增专用方法。
+  SyntheticCapabilityObjectView synthetic_view;
+  const INativeCapabilityView* synthetic_capability =
+    synthetic_view.FindCapability("SyntheticCapability");
+  tests.Check(synthetic_capability &&
+              std::string(synthetic_capability->GetCapabilityId()) == "SyntheticCapability" &&
+              synthetic_view.FindCapability("MissingCapability") == 0,
+              "Capability lookup is extensible without a dedicated object-view getter");
+
+  // 验证 FeatureRecord 深复制并独占释放通用载荷，避免异常和回退路径泄漏或共享悬空指针。
+  {
+    FeatureRecord payload_source;
+    payload_source.SetTypedPayload(new SyntheticPayload(17));
+    FeatureRecord payload_copy(payload_source);
+    const ITypedPayload* copied_base = payload_copy.GetTypedPayload();
+    const SyntheticPayload* copied = copied_base &&
+      std::string(copied_base->GetPayloadTypeId()) == "synthetic"
+      ? static_cast<const SyntheticPayload*>(copied_base) : 0;
+    tests.Check(copied && copied->Value() == 17 && SyntheticPayload::live_count == 2,
+                "Typed payload clone produces independent owned data");
+  }
+  tests.Check(SyntheticPayload::live_count == 0,
+              "Typed payload ownership releases every clone");
 
   // 验证存在专用匹配时选择 Typed Decoder，而不是 Generic。
   ParseContext typed_context;
@@ -436,6 +552,55 @@ int SelfTestSuite::RunAll()
   tests.Check(clean_fallback.decode_level == "generic" &&
               clean_fallback.attributes.find("partial_typed_value") == clean_fallback.attributes.end(),
               "Failed typed decoder cannot leak partial state into Generic fallback");
+
+  // 验证高优先级解码器返回 Unsupported 且允许续试时，下一个专用解码器可以正式接管。
+  ParseContext continue_context;
+  FeatureTypeRegistry continue_registry;
+  OutcomeDecoder unsupported_decoder("unsupported_high", 200,
+                                     DecoderOutcomeUnsupported, true);
+  OutcomeDecoder succeeding_decoder("success_low", 100,
+                                    DecoderOutcomeSuccess, false);
+  continue_registry.Register(&unsupported_decoder);
+  continue_registry.Register(&succeeding_decoder);
+  FeatureRecord continued;
+  continued.feature_id = "F000007";
+  continue_registry.DecodeObject(known_view, continue_context, continued);
+  tests.Check(continued.decoder_id == "success_low" && continued.decode_level == "typed" &&
+              continue_context.statistics.decoder_outcome_counts["unsupported_high\x1funsupported"] == 1 &&
+              continue_context.statistics.decoder_outcome_counts["success_low\x1fsuccess"] == 1,
+              "Unsupported decoder continues to the next typed decoder");
+
+  // 验证不允许续试的失败会立即进入 Generic，后续候选不能覆盖统一回退结果。
+  ParseContext stop_context;
+  FeatureTypeRegistry stop_registry;
+  OutcomeDecoder rejected_decoder("rejected_high", 200,
+                                  DecoderOutcomeRejected, false);
+  stop_registry.Register(&rejected_decoder);
+  stop_registry.Register(&succeeding_decoder);
+  FeatureRecord stopped;
+  stopped.feature_id = "F000008";
+  stop_registry.DecodeObject(known_view, stop_context, stopped);
+  tests.Check(stopped.decoder_id == "generic" && stopped.decode_level == "generic" &&
+              stop_context.statistics.decoder_outcome_counts["success_low\x1fsuccess"] == 0,
+              "Rejected decoder without continuation falls back immediately");
+
+  // 验证同优先级多个解码器成功时只保留稳定编号较小者，并产生正式成功冲突诊断。
+  ParseContext success_conflict_context;
+  FeatureTypeRegistry success_conflict_registry;
+  OutcomeDecoder success_z("success_z", 300, DecoderOutcomeSuccess, false);
+  OutcomeDecoder success_a("success_a", 300, DecoderOutcomeSuccess, false);
+  success_conflict_registry.Register(&success_z);
+  success_conflict_registry.Register(&success_a);
+  FeatureRecord conflicted;
+  conflicted.feature_id = "F000009";
+  success_conflict_registry.DecodeObject(known_view, success_conflict_context, conflicted);
+  bool has_success_conflict = false;
+  for (size_t conflict_index = 0;
+       conflict_index < success_conflict_context.diagnostics.size(); ++conflict_index)
+    if (success_conflict_context.diagnostics[conflict_index].code == "DECODER_SUCCESS_CONFLICT")
+      has_success_conflict = true;
+  tests.Check(conflicted.decoder_id == "success_a" && has_success_conflict,
+              "Equal-priority double success is deterministic and diagnosed");
 
   // 验证四种最终分类的算术守恒，少计任何一类都必须被发现。
   ParseStatistics valid_coverage;
@@ -526,9 +691,10 @@ int SelfTestSuite::RunAll()
   FakeNativeHoleView renamed_hole_view("Hole", "CoolingPort_A",
                                        NativeHoleReadSuccess, blind_data);
   hole_registry.DecodeObject(renamed_hole_view, hole_context, renamed_hole);
-  tests.Check(renamed_hole.decode_level == "typed" && renamed_hole.has_native_hole &&
+  const NativeHoleData* renamed_hole_data = GetNativeHoleData(renamed_hole);
+  tests.Check(renamed_hole.decode_level == "typed" && renamed_hole_data &&
               renamed_hole.decoder_id == "NativeHoleDecoder" &&
-              renamed_hole.native_hole.diameter_mm == 10.0 &&
+              renamed_hole_data->diameter_mm == 10.0 &&
               hole_context.statistics.native_hole_candidate_count == 1 &&
               hole_context.statistics.native_hole_success_count == 1,
               "Native Hole is typed only after its dedicated interface succeeds");
@@ -543,7 +709,7 @@ int SelfTestSuite::RunAll()
                                            NativeHoleInterfaceUnsupported, blind_data);
   hole_unsupported_registry.DecodeObject(unsupported_hole_view,
                                          hole_unsupported_context, unsupported_hole);
-  tests.Check(unsupported_hole.decode_level == "generic" && !unsupported_hole.has_native_hole &&
+  tests.Check(unsupported_hole.decode_level == "generic" && !GetNativeHoleData(unsupported_hole) &&
               hole_unsupported_context.statistics.native_hole_unsupported_count == 1 &&
               hole_unsupported_context.statistics.native_hole_exception_count == 0,
               "Unsupported Hole interface falls back without becoming an exception");
@@ -557,7 +723,7 @@ int SelfTestSuite::RunAll()
   FakeNativeHoleView pocket_view("Pocket", "Pocket_Control",
                                  NativeHoleInterfaceUnsupported, blind_data);
   pocket_registry.DecodeObject(pocket_view, pocket_context, pocket);
-  tests.Check(pocket.decode_level == "generic" && !pocket.has_native_hole &&
+  tests.Check(pocket.decode_level == "generic" && !GetNativeHoleData(pocket) &&
               pocket_context.statistics.native_hole_candidate_count == 0,
               "Pocket is not misclassified as a Native Hole");
 
@@ -615,9 +781,10 @@ int SelfTestSuite::RunAll()
   through_hole.feature_id = "F400006";
   FakeNativeHoleView through_view("Hole", "Through", NativeHoleReadSuccess, through_data);
   through_registry.DecodeObject(through_view, through_context, through_hole);
-  tests.Check(through_hole.has_native_hole &&
-              !through_hole.native_hole.bottom_limit.depth_mm.has_value &&
-              through_hole.native_hole.bottom_limit.depth_mm.status == "not_applicable" &&
+  const NativeHoleData* through_hole_data = GetNativeHoleData(through_hole);
+  tests.Check(through_hole_data &&
+              !through_hole_data->bottom_limit.depth_mm.has_value &&
+              through_hole_data->bottom_limit.depth_mm.status == "not_applicable" &&
               through_context.statistics.native_hole_partial_count == 0,
               "Up To Last depth is null and not_applicable without becoming partial");
 
@@ -635,7 +802,8 @@ int SelfTestSuite::RunAll()
                                        unknown_enum_data);
   unknown_enum_registry.DecodeObject(unknown_enum_view, unknown_enum_context, unknown_enum_hole);
   tests.Check(unknown_enum_hole.decode_level == "typed" &&
-              unknown_enum_hole.native_hole.hole_type_raw == 99 &&
+              GetNativeHoleData(unknown_enum_hole) &&
+              GetNativeHoleData(unknown_enum_hole)->hole_type_raw == 99 &&
               !unknown_enum_context.diagnostics.empty() &&
               unknown_enum_context.diagnostics[0].code == "NATIVE_HOLE_ENUM_UNKNOWN",
               "Unknown Native Hole enum preserves raw value and emits a diagnostic");
@@ -655,7 +823,7 @@ int SelfTestSuite::RunAll()
   invalid_direction_registry.DecodeObject(invalid_direction_view, invalid_direction_context,
                                           invalid_direction_hole);
   tests.Check(invalid_direction_hole.decode_level == "generic" &&
-              !invalid_direction_hole.has_native_hole &&
+              !GetNativeHoleData(invalid_direction_hole) &&
               invalid_direction_context.statistics.native_hole_partial_count == 1 &&
               invalid_direction_context.statistics.IsNativeHoleConserved(),
               "Invalid Hole direction falls back without leaking a Typed payload");
@@ -674,7 +842,7 @@ int SelfTestSuite::RunAll()
   invalid_optional_registry.DecodeObject(invalid_optional_view, invalid_optional_context,
                                          invalid_optional_hole);
   tests.Check(invalid_optional_hole.decode_level == "generic" &&
-              !invalid_optional_hole.has_native_hole &&
+              !GetNativeHoleData(invalid_optional_hole) &&
               invalid_optional_context.statistics.native_hole_partial_count == 1,
               "Non-finite optional Hole value cannot reach JSON output");
 
@@ -910,13 +1078,28 @@ int SelfTestSuite::RunAll()
                 "decoder_match feature_id=F000001 decoder=document") != std::string::npos,
               "Parser log records deterministic decoder matches");
 
+  // 验证中央 Writer 只调用通用载荷协议，新增合成载荷时不需要增加类型分支。
+  FeatureRecord synthetic_json_feature = MakeFeature(
+    "F300001", "", 1, "Synthetic", "Synthetic", "SyntheticDecoder");
+  synthetic_json_feature.SetTypedPayload(new SyntheticPayload(23));
+  std::vector<FeatureRecord> synthetic_json_features;
+  synthetic_json_features.push_back(synthetic_json_feature);
+  ParseContext synthetic_json_context;
+  synthetic_json_context.statistics.enumerated_total = 1;
+  synthetic_json_context.statistics.typed_count = 1;
+  tests.Check(writer.Write(synthetic_json_features, std::vector<RelationRecord>(),
+                           synthetic_json_context, "selftest_output_synthetic_payload", write_error),
+              "Synthetic payload artifact writes successfully");
+  tests.Check(ReadWholeFile("selftest_output_synthetic_payload\\features.jsonl").find(
+                "\"synthetic\":{\"value\":23}") != std::string::npos,
+              "Central writer serializes a new payload without a dedicated branch");
+
   // 验证 Hole JSON 使用数字数组、布尔值和 null，而不是字符串化数值或伪造 0。
   FeatureRecord hole_json_feature = MakeFeature("F400010", "", 1, "", "CoolingPort_A",
                                                 "NativeHoleDecoder");
   hole_json_feature.fingerprint.startup_type = "Hole";
   hole_json_feature.decoder_version = "1.0.0";
-  hole_json_feature.has_native_hole = true;
-  hole_json_feature.native_hole = through_data;
+  hole_json_feature.SetTypedPayload(new NativeHolePayload(through_data));
   std::vector<FeatureRecord> hole_json_features;
   hole_json_features.push_back(hole_json_feature);
   std::vector<RelationRecord> hole_json_relations;
