@@ -85,3 +85,14 @@
 | `CATITPSGeometryList::Count` | `CATTPSInterfaces/PublicInterfaces/CATITPSGeometryList.h` | `CATTPSInterfaces` | Public L1/U3 | 读取 TPS Set 几何引用数量 | R21 mkmk 通过；当前样件无 Set |
 
 当前只输出 `fta_sets.jsonl` 的集合级摘要。具体公差语义、TTRS、FTA->Topology 映射仍未实现，不能把 `fta_extraction=complete` 解读为已经完成 FTA 语义解析。
+
+# 2026-08-05：原生特征 ResultOUT 拓扑证据
+
+| 接口/类 | 头文件 | Framework | Public/Protected | 使用位置 | 验证状态 |
+| --- | --- | --- | --- | --- | --- |
+| `CATIShapeFeatureBody` / `IID_CATIShapeFeatureBody` | `MecModInterfaces/PublicInterfaces/CATIShapeFeatureBody.h` | `MecModInterfaces` | Public L1/U3 | `CadParseCAA.cpp::CollectNativeFeatureResultTopology` | R21 mkmk 通过，`kuang.CATPart` 实测读到 2 条 |
+| `CATIShapeFeatureBody::GetResultOUT()` | `MecModInterfaces/PublicInterfaces/CATIShapeFeatureBody.h` | `MecModInterfaces` | Public L1/U3 | 取得形状特征 ResultOUT 内部结果对象 | R21 mkmk 通过，样件运行成功 |
+| `CATIGeometricalElement` / `IID_CATIGeometricalElement` | `MecModInterfaces/PublicInterfaces/CATIGeometricalElement.h` | `MecModInterfaces` | Public L1/U3 | 对 ResultOUT 查询几何结果接口 | R21 mkmk 通过 |
+| `CATIGeometricalElement::GetBodyResult()` | `MecModInterfaces/PublicInterfaces/CATIGeometricalElement.h` | `MecModInterfaces` | Public L1/U3 | 取得 ResultOUT 对应 `CATBody` | `kuang.CATPart` 实测成功 |
+
+该出口只证明设计特征中间结果体可读取；尚未把 ResultOUT 的 cell 与最终主实体 cell 做稳定匹配，因此 `native_feature_topology_mapping` 仍为 `not_available`。

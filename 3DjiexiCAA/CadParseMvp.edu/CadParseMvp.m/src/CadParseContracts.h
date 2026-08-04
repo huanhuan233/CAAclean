@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v5"
-#define CAD_PARSE_PARSER_VERSION "1.5.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.5.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.5.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v6"
+#define CAD_PARSE_PARSER_VERSION "1.6.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.6.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.6.0"
 
 namespace cadparse
 {
@@ -420,6 +420,27 @@ struct FtaSetRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// 原生设计特征 ResultOUT 拓扑摘要；用于区分“特征有结果体”和“已映射到最终 Face”。
+// 当前只读取 ResultOUT 对应 CATBody 的数量，不把这些面伪装成最终主实体面。
+struct NativeFeatureResultRecord
+{
+  // 用途：初始化计数为零，读取失败时仍能输出明确状态而不是随机数。
+  NativeFeatureResultRecord()
+    : vertex_count(0), edge_count(0), face_count(0), volume_count(0) {}
+
+  std::string result_id;
+  std::string source_feature_id;
+  std::string source_kind;
+  std::string read_status;
+  std::string value_source;
+  long vertex_count;
+  long edge_count;
+  long face_count;
+  long volume_count;
+  std::string final_body_mapping_status;
+  std::vector<std::string> diagnostic_ids;
+};
+
 // 解码器执行终态；候选判断与执行结果分离，避免把 StartUp 预筛选误当成类型化成功。
 enum DecoderOutcome
 {
@@ -561,6 +582,7 @@ public:
   std::vector<NativeTopologyBodyRecord> topology_bodies;
   std::vector<NativeTopologyCellRecord> topology_cells;
   std::vector<FtaSetRecord> fta_sets;
+  std::vector<NativeFeatureResultRecord> native_feature_results;
   std::map<std::string, std::string> runtime_info;
   ParseMetadata metadata;
 };

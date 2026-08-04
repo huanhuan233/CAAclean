@@ -356,6 +356,24 @@ void WriteFtaSet(std::ostream& output, const FtaSetRecord& record)
   output << '}';
 }
 
+// 用途：写出一个原生设计特征 ResultOUT 拓扑摘要；它不等同于最终主实体 Face 映射。
+void WriteNativeFeatureResult(std::ostream& output, const NativeFeatureResultRecord& record)
+{
+  output << "{\"result_id\":\"" << JsonEscape(record.result_id)
+         << "\",\"source_feature_id\":\"" << JsonEscape(record.source_feature_id)
+         << "\",\"source_kind\":\"" << JsonEscape(record.source_kind)
+         << "\",\"read_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"vertex_count\":" << record.vertex_count
+         << ",\"edge_count\":" << record.edge_count
+         << ",\"face_count\":" << record.face_count
+         << ",\"volume_count\":" << record.volume_count
+         << ",\"final_body_mapping_status\":\"" << JsonEscape(record.final_body_mapping_status)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
 // 用途：写一条参数消费索引，parameter_id 始终复用原 Feature ID。
 void WriteParameter(std::ostream& output, const ParameterRecord& record)
 {
@@ -565,6 +583,13 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteFtaSet(output, *fta_set); output << '\n'; }
   if (!FinishOutput(output, "fta_sets.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "native_feature_results.jsonl"), error)) return false;
+  std::vector<NativeFeatureResultRecord>::const_iterator feature_result =
+    context.native_feature_results.begin();
+  for (; feature_result != context.native_feature_results.end(); ++feature_result)
+  { WriteNativeFeatureResult(output, *feature_result); output << '\n'; }
+  if (!FinishOutput(output, "native_feature_results.jsonl", error)) return false;
+
   // 用途：能力状态从本轮真实 CAA 出口推导；未实现或未验证的拓扑、FTA、映射绝不标记为完成。
   if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
   long native_hole_decoded = 0;
@@ -597,6 +622,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_topology_body_count\":" << context.topology_bodies.size()
          << ",\"native_topology_cell_count\":" << context.topology_cells.size()
          << ",\"fta_set_count\":" << context.fta_sets.size()
+         << ",\"native_feature_result_count\":" << context.native_feature_results.size()
          << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"Feature-to-topology, FTA-to-topology and manufacturing recognition are not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
 
@@ -700,7 +726,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "fta_sets.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_feature_results.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "fta_sets.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;

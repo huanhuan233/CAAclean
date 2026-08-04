@@ -10,11 +10,13 @@
 #include "CATIPrtContainer.h"
 #include "CATIPrtPart.h"
 #include "CATISpecObject.h"
+#include "CATIShapeFeatureBody.h"
 #include "CATITPSComponent.h"
 #include "CATITPSDocument.h"
 #include "CATITPSGeometryList.h"
 #include "CATITPSList.h"
 #include "CATITPSSet.h"
+#include "CATIGeometricalElement.h"
 #include "CATLISTV_CATISpecObject.h"
 #include "CATICkeInst.h"
 #include "CATICkeParm.h"
@@ -315,6 +317,150 @@ static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
   AppendTopologyCellsByDimension(context, body, body_record.body_id, 1, "E");
   AppendTopologyCellsByDimension(context, body, body_record.body_id, 0, "V");
   AppendTopologyCellsByDimension(context, body, body_record.body_id, 3, "S");
+}
+
+// 用途：从 CATBody 安全读取拓扑数量，并写入特征 ResultOUT 摘要。
+// body 是借用指针，只在当前函数内读数量，不跨越文档生命周期保存。
+static void FillNativeFeatureResultCounts(CATBody* body,
+                                          NativeFeatureResultRecord& record,
+                                          ParseContext& context)
+{
+  if (!body)
+  {
+    record.read_status = "unavailable";
+    return;
+  }
+  try
+  {
+    int vertices = 0;
+    int edges = 0;
+    int faces = 0;
+    int volumes = 0;
+    body->GetCellNumbers(&vertices, &edges, &faces, &volumes);
+    record.vertex_count = static_cast<long>(vertices);
+    record.edge_count = static_cast<long>(edges);
+    record.face_count = static_cast<long>(faces);
+    record.volume_count = static_cast<long>(volumes);
+    record.read_status = "success";
+  }
+  catch (...)
+  {
+    record.read_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_CELL_COUNT_FAILED",
+                            "CATTopology::GetCellNumbers failed for feature ResultOUT", record.source_feature_id));
+  }
+}
+
+// 用途：读取单个形状特征的 ResultOUT 拓扑摘要。
+// 该摘要用于后续映射算法输入，但当前不宣称这些 cell 已与最终主实体 Face 对齐。
+static void CollectNativeFeatureResultTopology(CATISpecObject* spec,
+                                               const std::string& feature_id,
+                                               const TypeFingerprint& fingerprint,
+                                               ParseContext& context)
+{
+  if (!spec) return;
+  CATIShapeFeatureBody* shape_body = 0;
+  try
+  {
+    if (FAILED(spec->QueryInterface(IID_CATIShapeFeatureBody,
+                                    reinterpret_cast<void**>(&shape_body))) ||
+        !shape_body)
+      return;
+  }
+  catch (...)
+  {
+    context.AddDiagnostic("warning", "result_topology", "SHAPE_FEATURE_BODY_QUERY_EXCEPTION",
+                          "CATIShapeFeatureBody QueryInterface raised an exception", feature_id);
+    return;
+  }
+  CaaInterfaceGuard<CATIShapeFeatureBody> shape_guard(shape_body);
+
+  NativeFeatureResultRecord record;
+  std::ostringstream id;
+  id << "NFR";
+  const long index = static_cast<long>(context.native_feature_results.size() + 1);
+  if (index < 10) id << "00000";
+  else if (index < 100) id << "0000";
+  else if (index < 1000) id << "000";
+  else if (index < 10000) id << "00";
+  else if (index < 100000) id << "0";
+  id << index;
+  record.result_id = id.str();
+  record.source_feature_id = feature_id;
+  record.source_kind = fingerprint.startup_type.empty() ?
+    fingerprint.native_type : fingerprint.startup_type;
+  record.read_status = "unavailable";
+  record.value_source = "typed_caa_public_shape_feature_body";
+  record.final_body_mapping_status = "not_available";
+
+  CATISpecObject_var result_out = NULL_var;
+  try
+  {
+    result_out = shape_body->GetResultOUT();
+  }
+  catch (...)
+  {
+    record.read_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_OUT_FAILED",
+                            "CATIShapeFeatureBody::GetResultOUT raised an exception", feature_id));
+    context.native_feature_results.push_back(record);
+    return;
+  }
+  if (result_out == NULL_var)
+  {
+    context.native_feature_results.push_back(record);
+    return;
+  }
+
+  CATIGeometricalElement* geometrical = 0;
+  CATISpecObject* result_spec = result_out;
+  if (!result_spec)
+  {
+    context.native_feature_results.push_back(record);
+    return;
+  }
+  try
+  {
+    if (FAILED(result_spec->QueryInterface(IID_CATIGeometricalElement,
+                                           reinterpret_cast<void**>(&geometrical))) ||
+        !geometrical)
+    {
+      context.native_feature_results.push_back(record);
+      return;
+    }
+  }
+  catch (...)
+  {
+    record.read_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_GEOMETRY_QUERY_EXCEPTION",
+                            "CATIGeometricalElement QueryInterface raised an exception", feature_id));
+    context.native_feature_results.push_back(record);
+    return;
+  }
+  CaaInterfaceGuard<CATIGeometricalElement> geometry_guard(geometrical);
+  CATBody_var result_body = NULL_var;
+  try
+  {
+    result_body = geometrical->GetBodyResult();
+  }
+  catch (...)
+  {
+    record.read_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_BODY_FAILED",
+                            "CATIGeometricalElement::GetBodyResult raised an exception", feature_id));
+    context.native_feature_results.push_back(record);
+    return;
+  }
+  if (result_body != NULL_var)
+  {
+    CATBody* body = result_body;
+    FillNativeFeatureResultCounts(body, record, context);
+  }
+  context.native_feature_results.push_back(record);
 }
 
 // 用途：释放 CATITPSList 中按 Item 返回的组件接口；局部守卫只接管一个 Query/Item 引用。
@@ -1667,6 +1813,7 @@ bool UniversalFeatureCrawler::VisitSpec(CATISpecObject* spec, const std::string&
     {
       CollectPartMainSolidTopology(spec, id, _context);
     }
+    CollectNativeFeatureResultTopology(spec, id, fp, _context);
 
     CATListValCATISpecObject_var* children = spec->ListComponents();
     if (!children) return true;

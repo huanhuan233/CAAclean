@@ -90,6 +90,7 @@ native_topology_body_count=1
 native_topology_cell_count=1435
 fta_extraction=complete
 fta_set_count=0
+native_feature_result_count=2
 ```
 
 构建日志仍会提示本机未在注册表中检测到 JDK 1.6 / Intel Fortran / VSTA，但当前 CAA C++ 编译、链接和运行均成功。

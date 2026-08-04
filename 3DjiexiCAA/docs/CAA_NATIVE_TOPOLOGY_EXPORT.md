@@ -100,6 +100,40 @@ fta_sets.jsonl
 
 如果文档公开 `CATITPSDocument` 且扫描完成但没有 TPS Set，`fta_extraction` 写为 `complete`，`fta_set_count` 写为 `0`，`fta_sets.jsonl` 为空文件。这表示“没有集合”，不是“解析失败”。
 
+## 原生特征 ResultOUT 出口
+
+Schema `cad_parse_mvp_v6` 新增：
+
+```text
+native_feature_results.jsonl
+```
+
+它使用 R21 Public：
+
+```text
+CATISpecObject
+→ CATIShapeFeatureBody
+→ GetResultOUT()
+→ CATIGeometricalElement
+→ GetBodyResult()
+→ CATTopology::GetCellNumbers()
+```
+
+该文件说明某个原生设计特征是否具有可读取的 ResultOUT 拓扑结果体。它不是最终主实体 Face 归属，因此每条记录都必须保留：
+
+```text
+final_body_mapping_status = not_available
+```
+
+kuang 样件实测读取到 2 条 ResultOUT 摘要：
+
+```text
+NFR000001 source_feature_id=F000011 face_count=281 edge_count=711 vertex_count=442 volume_count=1
+NFR000002 source_feature_id=F000018 face_count=217 edge_count=575 vertex_count=364 volume_count=1
+```
+
+这一步只是为后续 Feature→Face 对齐提供真实 CAA 输入，不得把它描述为 Feature–Face 映射完成。
+
 ## R21 实测结果
 
 命令：
@@ -118,6 +152,7 @@ native_topology_body_count = 1
 native_topology_cell_count = 1435
 fta_extraction = complete
 fta_set_count = 0
+native_feature_result_count = 2
 face_count = 281
 edge_count = 711
 vertex_count = 442

@@ -81,3 +81,5 @@ fta_sets.jsonl = empty
 ```
 
 这表示文档没有 TPS Set，不表示解析器伪造了 FTA，也不表示 FTA 语义和关联面已经完成。
+
+Schema `cad_parse_mvp_v6` 继续新增 `native_feature_results.jsonl`。它保存原生形状特征 ResultOUT 的拓扑数量，用于后续映射算法输入。该文件仍不是正式 Feature–Face 映射，不能驱动前端“关联面可用”的判断。
