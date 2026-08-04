@@ -1,17 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import {
-  buildNativeFeatureTree,
-  flattenFeatureTree,
-  projectFeatureTree,
-  splitHighlight
-} from './native-feature-tree';
-import type {
-  FeatureTreeCategory,
-  FeatureTreeKind,
-  FeatureTreeNode,
-  NativeFeatureRecord
-} from './native-feature-tree';
+import { buildNativeFeatureTree, flattenFeatureTree, projectFeatureTree, splitHighlight } from './native-feature-tree';
+import type { FeatureTreeCategory, FeatureTreeKind, FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
 
 defineOptions({ name: 'NativeFeatureTree' });
 
@@ -42,16 +32,16 @@ const category = ref<FeatureTreeCategory>('all');
 const userExpandedKeys = ref<string[]>([]);
 const savedExpandedKeys = ref<string[]>([]);
 
-const sourceTree = computed(() => buildNativeFeatureTree(
-  props.records,
-  props.sourceFileName,
-  props.faceRefsByFeatureId || {}
-));
-const projection = computed(() => projectFeatureTree(sourceTree.value, {
-  showSystem: showSystem.value,
-  query: query.value,
-  category: category.value
-}));
+const sourceTree = computed(() =>
+  buildNativeFeatureTree(props.records, props.sourceFileName, props.faceRefsByFeatureId || {})
+);
+const projection = computed(() =>
+  projectFeatureTree(sourceTree.value, {
+    showSystem: showSystem.value,
+    query: query.value,
+    category: category.value
+  })
+);
 const visibleNodes = computed(() => flattenFeatureTree(projection.value.nodes));
 
 const KIND_ICONS: Record<FeatureTreeKind, string> = {
@@ -103,6 +93,10 @@ async function syncTreeState() {
     if (state) state.expanded = expanded.has(node.id);
   });
   treeRef.value?.setCurrentKey(props.selectedId || undefined);
+  await nextTick();
+  document
+    .querySelector('.native-feature-tree .el-tree-node.is-current > .el-tree-node__content')
+    ?.scrollIntoView({ block: 'nearest' });
 }
 
 function handleExpand(node: FeatureTreeNode) {
@@ -131,9 +125,13 @@ function highlightParts(text: string) {
   return splitHighlight(text, query.value);
 }
 
-watch(sourceTree, () => {
-  userExpandedKeys.value = defaultExpandedKeys();
-}, { immediate: true });
+watch(
+  sourceTree,
+  () => {
+    userExpandedKeys.value = defaultExpandedKeys();
+  },
+  { immediate: true }
+);
 
 watch(query, (value, previous) => {
   if (value && !previous) savedExpandedKeys.value = [...userExpandedKeys.value];
@@ -156,14 +154,17 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
           </button>
         </template>
         <div class="filter-options">
-          <label v-for="option in [
-            ['all', '全部节点'],
-            ['mapped', '仅看有关联面'],
-            ['sketch', '仅看草图'],
-            ['solid', '仅看实体特征'],
-            ['datum', '仅看基准元素']
-          ]" :key="option[0]">
-            <input v-model="category" type="radio" :value="option[0]">
+          <label
+            v-for="option in [
+              ['all', '全部节点'],
+              ['mapped', '仅看有关联面'],
+              ['sketch', '仅看草图'],
+              ['solid', '仅看实体特征'],
+              ['datum', '仅看基准元素']
+            ]"
+            :key="option[0]"
+          >
+            <input v-model="category" type="radio" :value="option[0]" />
             <span>{{ option[1] }}</span>
           </label>
         </div>
@@ -188,12 +189,17 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
         @node-collapse="handleCollapse"
       >
         <template #default="{ data }">
-          <ElTooltip :content="`${data.displayName}${data.nativeType ? ` · ${data.nativeType}` : ''}`" placement="right" :show-after="500">
+          <ElTooltip
+            :content="`${data.displayName}${data.nativeType ? ` · ${data.nativeType}` : ''}`"
+            placement="right"
+            :show-after="500"
+          >
             <span class="feature-tree-row" :class="[`kind-${data.kind}`, { system: data.isSystem }]">
               <span class="node-icon"><SvgIcon :icon="iconFor(data.kind)" /></span>
               <span class="node-title">
                 <template v-for="(part, index) in highlightParts(data.displayName)" :key="`${data.id}-${index}`">
-                  <mark v-if="part.matched">{{ part.text }}</mark><span v-else>{{ part.text }}</span>
+                  <mark v-if="part.matched">{{ part.text }}</mark>
+                  <span v-else>{{ part.text }}</span>
                 </template>
               </span>
               <span v-if="data.faceRefs.length" class="mapping-dot" title="已建立 Feature–Face 映射" />
@@ -202,7 +208,10 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
           </ElTooltip>
         </template>
       </ElTree>
-      <ElEmpty v-else :description="query || category !== 'all' ? '没有匹配的原生特征' : '没有可用的 CAA 原生特征索引'" />
+      <ElEmpty
+        v-else
+        :description="query || category !== 'all' ? '没有匹配的原生特征' : '没有可用的 CAA 原生特征索引'"
+      />
     </div>
 
     <footer class="system-node-switch">
@@ -216,33 +225,166 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
 </template>
 
 <style scoped>
-.native-tree-browser { display: flex; height: 100%; min-height: 0; flex-direction: column; }
-.tree-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 7px; padding: 9px 10px; }
-.filter-trigger { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--el-border-color); border-radius: 6px; background: var(--el-bg-color); padding: 0; }
-.filter-trigger:hover, .filter-trigger.active { border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.filter-options { display: flex; flex-direction: column; gap: 9px; }
-.filter-options label { display: flex; cursor: pointer; align-items: center; gap: 8px; font-size: 13px; }
-.native-tree-scroll { min-height: 0; flex: 1; overflow: auto; padding: 1px 7px 8px; }
-.native-feature-tree { --el-tree-node-hover-bg-color: var(--el-fill-color-light); background: transparent; }
-.native-feature-tree :deep(.el-tree-node) { position: relative; }
-.native-feature-tree :deep(.el-tree-node__children) { border-left: 1px solid var(--el-border-color-lighter); margin-left: 9px; }
-.native-feature-tree :deep(.el-tree-node__content) { height: 34px; border-radius: 7px; margin: 1px 0; padding-right: 5px; }
-.native-feature-tree :deep(.el-tree-node__content::before) { position: absolute; left: -10px; width: 10px; border-top: 1px solid var(--el-border-color-lighter); content: ''; }
-.native-feature-tree :deep(.el-tree-node.is-current > .el-tree-node__content) { color: var(--el-color-primary); background: var(--el-color-primary-light-9); box-shadow: inset 2px 0 0 var(--el-color-primary); }
-.native-feature-tree :deep(.el-tree-node__expand-icon) { color: var(--el-text-color-regular); }
-.feature-tree-row { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
-.feature-tree-row.system { color: var(--el-text-color-secondary); }
-.node-icon { display: grid; flex: 0 0 20px; color: var(--el-text-color-regular); font-size: 19px; place-items: center; }
-.kind-datum .node-icon { color: var(--el-text-color-secondary); }
-.kind-body .node-icon { color: var(--el-color-success); }
-.kind-geometry_set .node-icon { color: var(--el-color-warning); }
-.kind-pocket .node-icon, .kind-hole .node-icon, .kind-fillet .node-icon { color: var(--el-color-warning); }
-.node-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-title mark { border-radius: 2px; background: var(--el-color-warning-light-7); color: inherit; padding: 0 1px; }
-.node-kind { max-width: 72px; flex: 0 1 auto; color: var(--el-text-color-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mapping-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--el-color-success); }
-.system-node-switch { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--el-border-color-lighter); padding: 9px 12px; }
-.system-node-switch div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
-.system-node-switch strong { font-size: 13px; }
-.system-node-switch span { color: var(--el-text-color-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-tree-browser {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+.tree-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 7px;
+  padding: 9px 10px;
+}
+.filter-trigger {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+  padding: 0;
+}
+.filter-trigger:hover,
+.filter-trigger.active {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.filter-options {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.filter-options label {
+  display: flex;
+  cursor: pointer;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.native-tree-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 1px 7px 8px;
+}
+.native-feature-tree {
+  --el-tree-node-hover-bg-color: var(--el-fill-color-light);
+  background: transparent;
+}
+.native-feature-tree :deep(.el-tree-node) {
+  position: relative;
+}
+.native-feature-tree :deep(.el-tree-node__children) {
+  border-left: 1px solid var(--el-border-color-lighter);
+  margin-left: 9px;
+}
+.native-feature-tree :deep(.el-tree-node__content) {
+  height: 34px;
+  border-radius: 7px;
+  margin: 1px 0;
+  padding-right: 5px;
+}
+.native-feature-tree :deep(.el-tree-node__content::before) {
+  position: absolute;
+  left: -10px;
+  width: 10px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  content: '';
+}
+.native-feature-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  box-shadow: inset 2px 0 0 var(--el-color-primary);
+}
+.native-feature-tree :deep(.el-tree-node__expand-icon) {
+  color: var(--el-text-color-regular);
+}
+.feature-tree-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.feature-tree-row.system {
+  color: var(--el-text-color-secondary);
+}
+.node-icon {
+  display: grid;
+  flex: 0 0 20px;
+  color: var(--el-text-color-regular);
+  font-size: 19px;
+  place-items: center;
+}
+.kind-datum .node-icon {
+  color: var(--el-text-color-secondary);
+}
+.kind-body .node-icon {
+  color: var(--el-color-success);
+}
+.kind-geometry_set .node-icon {
+  color: var(--el-color-warning);
+}
+.kind-pocket .node-icon,
+.kind-hole .node-icon,
+.kind-fillet .node-icon {
+  color: var(--el-color-warning);
+}
+.node-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-title mark {
+  border-radius: 2px;
+  background: var(--el-color-warning-light-7);
+  color: inherit;
+  padding: 0 1px;
+}
+.node-kind {
+  max-width: 72px;
+  flex: 0 1 auto;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mapping-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--el-color-success);
+}
+.system-node-switch {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding: 9px 12px;
+}
+.system-node-switch div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.system-node-switch strong {
+  font-size: 13px;
+}
+.system-node-switch span {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>

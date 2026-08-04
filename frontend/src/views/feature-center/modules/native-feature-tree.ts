@@ -120,7 +120,12 @@ function featureKind(record: NativeFeatureRecord): FeatureTreeKind {
 }
 
 function sequenceOf(record: NativeFeatureRecord) {
-  return Number(record.traversal_index ?? record.container_enumeration_index ?? record.native_enumeration_index ?? Number.MAX_SAFE_INTEGER);
+  return Number(
+    record.traversal_index ??
+      record.container_enumeration_index ??
+      record.native_enumeration_index ??
+      Number.MAX_SAFE_INTEGER
+  );
 }
 
 function sortNodes(nodes: FeatureTreeNode[]) {
@@ -135,7 +140,9 @@ export function buildNativeFeatureTree(
   faceRefsByFeatureId: Record<string, string[]> = {}
 ): FeatureTreeNode[] {
   const nodes = new Map<string, FeatureTreeNode>();
-  const ordered = [...records].sort((left, right) => sequenceOf(left) - sequenceOf(right) || left.feature_id.localeCompare(right.feature_id));
+  const ordered = [...records].sort(
+    (left, right) => sequenceOf(left) - sequenceOf(right) || left.feature_id.localeCompare(right.feature_id)
+  );
   ordered.forEach(record => {
     const kind = featureKind(record);
     const rawName = String(record.display_name || record.internal_name || record.feature_id);
@@ -184,23 +191,27 @@ export function buildNativeFeatureTree(
       isContainer: true,
       faceRefs: []
     };
-    datums.forEach(node => { node.parentId = group.id; });
+    datums.forEach(node => {
+      node.parentId = group.id;
+    });
     part.children = [...part.children.filter(child => !datumIds.has(child.id)), group];
     sortNodes(part.children);
   }
 
   if (!roots.some(node => node.kind === 'catpart')) {
-    return [{
-      id: `source:${sourceFileName}`,
-      name: sourceFileName,
-      displayName: baseName(sourceFileName),
-      kind: 'catpart',
-      sequence: 0,
-      children: roots,
-      isSystem: false,
-      isContainer: true,
-      faceRefs: []
-    }];
+    return [
+      {
+        id: `source:${sourceFileName}`,
+        name: sourceFileName,
+        displayName: baseName(sourceFileName),
+        kind: 'catpart',
+        sequence: 0,
+        children: roots,
+        isSystem: false,
+        isContainer: true,
+        faceRefs: []
+      }
+    ];
   }
   return roots;
 }
@@ -215,7 +226,10 @@ function categoryMatches(node: FeatureTreeNode, category: FeatureTreeCategory) {
 
 function textMatches(node: FeatureTreeNode, query: string) {
   if (!query) return true;
-  const haystack = [node.displayName, node.nativeType, node.id, node.sourceRef].filter(Boolean).join(' ').toLocaleLowerCase();
+  const haystack = [node.displayName, node.nativeType, node.id, node.sourceRef]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase();
   return haystack.includes(query.toLocaleLowerCase());
 }
 
@@ -240,12 +254,14 @@ export function projectFeatureTree(
       const children = filterNodes(node.children);
       const ownMatch = textMatches(node, query) && categoryMatches(node, category);
       if (!ownMatch && !children.length) return [];
-      return [{ ...node, children: ownMatch && query ? node.children : children }];
+      return [{ ...node, children: ownMatch && query ? hideSystem(node.children) : children }];
     });
   }
 
   const nodes = filterNodes(hideSystem(source));
-  const expandedKeys = flattenFeatureTree(nodes).filter(node => node.children.length > 0).map(node => node.id);
+  const expandedKeys = flattenFeatureTree(nodes)
+    .filter(node => node.children.length > 0)
+    .map(node => node.id);
   return { nodes, expandedKeys };
 }
 

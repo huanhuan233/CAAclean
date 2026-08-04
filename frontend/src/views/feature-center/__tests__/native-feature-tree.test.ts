@@ -10,7 +10,13 @@ import type { NativeFeatureRecord } from '../modules/native-feature-tree';
 
 const records: NativeFeatureRecord[] = [
   { feature_id: 'F1', traversal_index: 1, native_type: 'CATDocument', display_name: 'D:\\secret\\source.CATPart' },
-  { feature_id: 'F2', parent_id: 'F1', traversal_index: 2, native_type: 'CATIPrtContainer', display_name: 'PartSpecContainer' },
+  {
+    feature_id: 'F2',
+    parent_id: 'F1',
+    traversal_index: 2,
+    native_type: 'CATIPrtContainer',
+    display_name: 'PartSpecContainer'
+  },
   { feature_id: 'F3', parent_id: 'F2', traversal_index: 3, startup_type: 'MechanicalPart', display_name: 'Part2' },
   { feature_id: 'F4', parent_id: 'F3', traversal_index: 4, startup_type: 'GSMPlane', display_name: 'xy 平面' },
   { feature_id: 'F5', parent_id: 'F4', traversal_index: 5, startup_type: 'GSMInternal', display_name: 'GSMInternal.1' },
@@ -24,10 +30,22 @@ test('语义树隐藏技术容器、归组基准元素并保持真实建模顺�
   const nodes = flattenFeatureTree(tree.nodes);
 
   assert.equal(tree.nodes[0].displayName, 'source.CATPart');
-  assert.equal(nodes.some(node => node.displayName.includes('D:\\')), false);
-  assert.equal(nodes.some(node => node.nativeType === 'CATIPrtContainer'), false);
-  assert.deepEqual(nodes.find(node => node.kind === 'datum_group')?.children.map(node => node.displayName), ['xy 平面']);
-  assert.deepEqual(nodes.find(node => node.kind === 'body')?.children.map(node => node.displayName), ['草图.1', '凹槽.1']);
+  assert.equal(
+    nodes.some(node => node.displayName.includes('D:\\')),
+    false
+  );
+  assert.equal(
+    nodes.some(node => node.nativeType === 'CATIPrtContainer'),
+    false
+  );
+  assert.deepEqual(
+    nodes.find(node => node.kind === 'datum_group')?.children.map(node => node.displayName),
+    ['xy 平面']
+  );
+  assert.deepEqual(
+    nodes.find(node => node.kind === 'body')?.children.map(node => node.displayName),
+    ['草图.1', '凹槽.1']
+  );
 });
 
 test('开启系统节点后保留原始类型且不改变业务节点顺序', () => {
@@ -36,7 +54,10 @@ test('开启系统节点后保留原始类型且不改变业务节点顺序', ()
 
   assert.equal(nodes.find(node => node.id === 'F2')?.isSystem, true);
   assert.equal(nodes.find(node => node.id === 'F5')?.nativeType, 'GSMInternal');
-  assert.deepEqual(nodes.find(node => node.kind === 'body')?.children.map(node => node.id), ['F7', 'F8']);
+  assert.deepEqual(
+    nodes.find(node => node.kind === 'body')?.children.map(node => node.id),
+    ['F7', 'F8']
+  );
 });
 
 test('搜索名称、类型和稳定编号时保留祖先并返回自动展开键', () => {
@@ -68,4 +89,15 @@ test('搜索高亮保持原文本且不使用 HTML 拼接', () => {
     { text: 'Pocket', matched: true },
     { text: '.1', matched: false }
   ]);
+});
+
+test('命中父节点时不会把默认隐藏的技术后代重新带回结果', () => {
+  const result = projectFeatureTree(buildNativeFeatureTree(records, 'source.CATPart'), {
+    showSystem: false,
+    query: 'xy 平面'
+  });
+  assert.equal(
+    flattenFeatureTree(result.nodes).some(node => node.id === 'F5'),
+    false
+  );
 });

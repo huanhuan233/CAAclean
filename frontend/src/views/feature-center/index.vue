@@ -4,15 +4,18 @@ import { useRoute, useRouter } from 'vue-router';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import {
-  buildFaceToFeatureIndex,
-  facesForFeature,
-  parseJsonLines
-} from './modules/feature-center-bundle';
+import { fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
+import { buildFaceToFeatureIndex, facesForFeature, parseJsonLines } from './modules/feature-center-bundle';
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
 import { buildDetailPanelLayout } from './modules/detail-panel';
 import type { DetailGroup } from './modules/detail-panel';
+import CadViewerControls from './modules/CadViewerControls.vue';
+import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
+import OrientationGizmo from './modules/OrientationGizmo.vue';
+import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
+import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
+import type { CadSelectionTarget } from './modules/cad-selection';
 import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
 import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
 import {
@@ -20,14 +23,8 @@ import {
   resolveFeatureCenterBuildId,
   saveRecentFeatureCenterBuildId
 } from './modules/recent-result';
-import {
-  defaultBomVisible,
-  geometryDisplayId,
-  tabsForSource,
-  workerStageLabel
-} from './modules/viewer-workspace';
+import { defaultBomVisible, geometryDisplayId, tabsForSource, workerStageLabel } from './modules/viewer-workspace';
 import type { ViewerTab } from './modules/viewer-workspace';
-import { fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
 
 defineOptions({ name: 'FeatureCenterViewer' });
 
@@ -97,6 +94,15 @@ const geometryKeyword = ref('');
 const geometryLimit = ref(160);
 const selectedBomPrimitiveIds = ref<string[]>([]);
 const navigationWidth = ref(310);
+const toolMode = ref<ToolMode>('select');
+const sceneMode = ref<SceneMode>('whole');
+const selectionTarget = ref<CadSelectionTarget | null>(null);
+const explodableGroupCount = ref(0);
+const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
+  x: { x: 66, y: 45, depth: 0 },
+  y: { x: 42, y: 21, depth: 0 },
+  z: { x: 24, y: 56, depth: 0 }
+});
 
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
@@ -109,8 +115,17 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const faceObjects = new Map<string, THREE.Mesh[]>();
 const primitiveObjects = new Map<string, THREE.Mesh[]>();
+let pickableObjects: THREE.Object3D[] = [];
+let pointerDownPosition: { x: number; y: number } | null = null;
 const clippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
 const workspaceStyle = computed(() => ({ '--navigation-width': `${navigationWidth.value}px` }));
+const canIsolate = computed(() => {
+  if (selectedFaceId.value) return true;
+  if (selectedBomNode.value)
+    return selectedBomPrimitiveIds.value.length > 0 || contract.value?.bom.assembly_mode === 'single_part';
+  return Boolean(featureMeshMap.value && facesForFeature(featureMeshMap.value, selectedFeatureId.value).length);
+});
+const canExplode = computed(() => contract.value?.bom.assembly_mode === 'assembly' && explodableGroupCount.value > 1);
 
 // 用途：只展示真实契约中的格式；没有历史结果时保持空值，绝不伪造 CATPart 或 STEP 标签。
 const sourceFormat = computed(() => contract.value?.source_format);
@@ -134,18 +149,16 @@ const nativeFaceRefs = computed(() => {
   });
   return index;
 });
-const nativeTreeNodes = computed(() => buildNativeFeatureTree(
-  nativeFeatures.value,
-  contract.value?.summary.source_file_name || '',
-  nativeFaceRefs.value
-));
-const nativeTreeNodeIndex = computed(() => new Map(
-  flattenFeatureTree(nativeTreeNodes.value).map(node => [node.id, node])
-));
+const nativeTreeNodes = computed(() =>
+  buildNativeFeatureTree(nativeFeatures.value, contract.value?.summary.source_file_name || '', nativeFaceRefs.value)
+);
+const nativeTreeNodeIndex = computed(
+  () => new Map(flattenFeatureTree(nativeTreeNodes.value).map(node => [node.id, node]))
+);
 const selectedNativeTreeNode = computed(() => nativeTreeNodeIndex.value.get(selectedNativeFeatureId.value) ?? null);
 const selectedNativeTreeParent = computed(() => {
   const parentId = selectedNativeTreeNode.value?.parentId;
-  return parentId ? nativeTreeNodeIndex.value.get(parentId) ?? null : null;
+  return parentId ? (nativeTreeNodeIndex.value.get(parentId) ?? null) : null;
 });
 const selectedNativeParameters = computed(() => Object.entries(selectedNativeFeature.value?.attributes || {}));
 const selectedNativeFaces = computed(() => nativeFaceRefs.value[selectedNativeFeatureId.value] || []);
@@ -156,13 +169,14 @@ const filteredFaces = computed(() => {
     : topologyFaces.value;
   return source.slice(0, geometryLimit.value);
 });
-const selectedTitle = computed(() =>
-  selectedBomNode.value?.name
-  || selectedNativeFeature.value?.display_name
-  || selectedFeature.value?.subtype
-  || selectedFace.value?.face_id
-  || contract.value?.summary.model_name
-  || ''
+const selectedTitle = computed(
+  () =>
+    selectedBomNode.value?.name ||
+    selectedNativeFeature.value?.display_name ||
+    selectedFeature.value?.subtype ||
+    selectedFace.value?.face_id ||
+    contract.value?.summary.model_name ||
+    ''
 );
 const mappingAvailable = computed(() => Boolean(contract.value?.summary.feature_face_mapping_available));
 const detailNode = computed(() => selectedBomNode.value ?? contract.value?.bom.nodes[0] ?? null);
@@ -287,7 +301,8 @@ async function loadBuildBundle(buildId: string) {
       fetchAsset(viewerAsset.feature_mesh_map_url),
       fetchAsset(viewerAsset.glb_url)
     ]);
-    const [manifestBuffer, canonicalBuffer, measurementBuffer, nextFaceMapBuffer, featureMapBuffer, modelBuffer] = mandatoryBuffers;
+    const [manifestBuffer, canonicalBuffer, measurementBuffer, nextFaceMapBuffer, featureMapBuffer, modelBuffer] =
+      mandatoryBuffers;
     const decode = (buffer: ArrayBuffer) => new TextDecoder('utf-8').decode(buffer);
     const manifest = JSON.parse(decode(manifestBuffer)) as BundleManifest;
     if (manifest.schema_version !== 'cad_feature_center_v1') throw new Error('Feature Center Schema 不兼容');
@@ -299,7 +314,8 @@ async function loadBuildBundle(buildId: string) {
       ['lightweight/model.glb', modelBuffer]
     ] as const) {
       const expected = manifest.output_files[relativePath]?.sha256;
-      if (!expected || await sha256Buffer(buffer) !== expected) throw new Error(`Bundle 文件哈希不匹配：${relativePath}`);
+      if (!expected || (await sha256Buffer(buffer)) !== expected)
+        throw new Error(`Bundle 文件哈希不匹配：${relativePath}`);
     }
     const nextFeatureMap = JSON.parse(decode(featureMapBuffer)) as FeatureMeshMap;
     const nextFaceMap = JSON.parse(decode(nextFaceMapBuffer)) as FaceMeshMap;
@@ -345,14 +361,18 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const requests: Promise<void>[] = [];
   if (nativeUrl) {
-    requests.push(fetchAsset(nativeUrl).then(buffer => {
-      nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
-    }));
+    requests.push(
+      fetchAsset(nativeUrl).then(buffer => {
+        nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
+      })
+    );
   }
   if (facesUrl) {
-    requests.push(fetchAsset(facesUrl).then(buffer => {
-      topologyFaces.value = parseJsonLines<TopologyFaceRecord>(new TextDecoder().decode(buffer));
-    }));
+    requests.push(
+      fetchAsset(facesUrl).then(buffer => {
+        topologyFaces.value = parseJsonLines<TopologyFaceRecord>(new TextDecoder().decode(buffer));
+      })
+    );
   }
   await Promise.all(requests);
 }
@@ -367,23 +387,26 @@ async function loadGlb(buffer: ArrayBuffer) {
   disposeModel(modelRoot);
   faceObjects.clear();
   primitiveObjects.clear();
+  pickableObjects = [];
+  explodableGroupCount.value = 0;
   modelRoot = gltf.scene;
   modelRoot.traverse(object => {
     if (!(object instanceof THREE.Mesh)) return;
-    const faceId = String(object.geometry.userData.face_id ?? object.userData.face_id ?? '');
-    const primitiveId = String(object.geometry.userData.mesh_primitive_id ?? object.userData.mesh_primitive_id ?? '');
-    if (faceId) {
-      object.userData.face_id = faceId;
-      (faceObjects.get(faceId) ?? faceObjects.set(faceId, []).get(faceId))?.push(object);
-    }
-    if (primitiveId) {
-      object.userData.mesh_primitive_id = primitiveId;
-      (primitiveObjects.get(primitiveId) ?? primitiveObjects.set(primitiveId, []).get(primitiveId))?.push(object);
-    }
+    if (!object.geometry.getAttribute('normal')) object.geometry.computeVertexNormals();
     const original = object.material;
     object.material = Array.isArray(original) ? original.map(item => item.clone()) : original.clone();
+    object.userData.cad_original_visible = object.visible;
+    object.userData.cad_original_position = object.position.clone();
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    materials.forEach(material => rememberMaterial(material));
   });
+  const registration = registerCadPickables(modelRoot, faceMeshMap.value);
+  pickableObjects = registration.pickables;
+  registration.faceObjects.forEach((objects, id) => faceObjects.set(id, objects));
+  registration.primitiveObjects.forEach((objects, id) => primitiveObjects.set(id, objects));
+  explodableGroupCount.value = countExplodableGroups();
   scene.add(modelRoot);
+  applyToolMode();
   fitCamera();
 }
 
@@ -395,6 +418,8 @@ function clearSelection() {
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
   faceFeatureIds.value = [];
+  selectionTarget.value = null;
+  if (isolated.value) isolated.value = false;
   applyVisualState();
 }
 
@@ -405,6 +430,14 @@ function selectFeature(featureId: string) {
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
   selectedFaceId.value = '';
+  selectionTarget.value = {
+    source: 'catia',
+    kind: 'feature',
+    stableId: featureId,
+    featureId,
+    partId: contract.value?.part_id,
+    displayName: selectedFeature.value?.subtype
+  };
   applyVisualState();
 }
 
@@ -416,6 +449,16 @@ function selectNativeFeature(feature: NativeFeatureRecord) {
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
   selectedFaceId.value = '';
+  selectionTarget.value = {
+    source: 'catia',
+    kind: 'feature',
+    stableId: feature.feature_id,
+    featureId: feature.feature_id,
+    partId: contract.value?.part_id,
+    displayName: feature.display_name,
+    sourceRef: feature.tree_path,
+    raw: feature
+  };
   applyVisualState();
 }
 
@@ -428,6 +471,7 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
   selectedNativeFeatureId.value = '';
   selectedFeatureId.value = '';
   selectedFaceId.value = '';
+  selectionTarget.value = null;
   applyVisualState();
 }
 
@@ -438,6 +482,17 @@ function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
   selectedFeatureId.value = '';
   selectedNativeFeatureId.value = '';
   selectedFaceId.value = '';
+  selectionTarget.value = {
+    source: 'catia',
+    kind: node.node_type === 'assembly' || node.node_type === 'subassembly' ? 'assembly' : 'part',
+    stableId: node.node_id,
+    assemblyId: node.node_type === 'assembly' || node.node_type === 'subassembly' ? node.node_id : undefined,
+    instanceId: node.instance_name || undefined,
+    partId: node.node_type === 'part' ? node.node_id : contract.value?.part_id,
+    displayName: node.name,
+    sourceRef: node.assembly_path,
+    raw: node
+  };
   applyVisualState();
 }
 
@@ -446,33 +501,98 @@ function selectFace(faceId: string) {
   selectedFaceId.value = faceId;
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
-  faceFeatureIds.value = featureMeshMap.value ? buildFaceToFeatureIndex(featureMeshMap.value)[faceId] ?? [] : [];
+  faceFeatureIds.value = featureMeshMap.value ? (buildFaceToFeatureIndex(featureMeshMap.value)[faceId] ?? []) : [];
   selectedFeatureId.value = faceFeatureIds.value[0] ?? '';
   const linkedFeature = canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value);
   selectedNativeFeatureId.value = linkedFeature?.native_feature_ids[0] ?? '';
-  if (selectedNativeFeatureId.value) featureSubTab.value = 'native';
+  if (selectedNativeFeatureId.value) {
+    activeTab.value = 'recognized';
+    featureSubTab.value = 'native';
+    if (!bomVisible.value) toggleBom();
+  }
+  selectionTarget.value = {
+    source: 'catia',
+    kind: 'face',
+    stableId: faceId,
+    faceId,
+    featureId: selectedNativeFeatureId.value || selectedFeatureId.value || undefined,
+    partId: contract.value?.part_id,
+    raw: selectedFace.value
+  };
   applyVisualState();
+}
+
+interface MaterialSnapshot {
+  color?: number;
+  emissive?: number;
+  emissiveIntensity?: number;
+  transparent: boolean;
+  opacity: number;
+  depthWrite: boolean;
+}
+
+// 用途：保存每个克隆材质的原始外观，关闭透明或高亮后能够完整恢复而不污染共享材质。
+function rememberMaterial(material: THREE.Material) {
+  const standard = material as THREE.MeshStandardMaterial;
+  const snapshot: MaterialSnapshot = {
+    color: standard.color?.getHex(),
+    emissive: standard.emissive?.getHex(),
+    emissiveIntensity: standard.emissiveIntensity,
+    transparent: material.transparent,
+    opacity: material.opacity,
+    depthWrite: material.depthWrite
+  };
+  material.userData.cad_original_material = snapshot;
+}
+
+// 用途：恢复材质的颜色、发光、透明度和深度写入，避免多次切换模式后累积视觉误差。
+function restoreMaterial(material: THREE.Material) {
+  const snapshot = material.userData.cad_original_material as MaterialSnapshot | undefined;
+  if (!snapshot) return;
+  const standard = material as THREE.MeshStandardMaterial;
+  if (snapshot.color != null && standard.color) standard.color.setHex(snapshot.color);
+  if (snapshot.emissive != null && standard.emissive) standard.emissive.setHex(snapshot.emissive);
+  if (snapshot.emissiveIntensity != null) standard.emissiveIntensity = snapshot.emissiveIntensity;
+  material.transparent = snapshot.transparent;
+  material.opacity = snapshot.opacity;
+  material.depthWrite = snapshot.depthWrite;
 }
 
 // 用途：统一计算选中、高亮、隔离、透明和剖切，不因侧栏响应式变化重置模型状态。
 function applyVisualState() {
-  const featureFaces = new Set(featureMeshMap.value ? facesForFeature(featureMeshMap.value, selectedFeatureId.value) : []);
+  const featureFaces = new Set(
+    featureMeshMap.value ? facesForFeature(featureMeshMap.value, selectedFeatureId.value) : []
+  );
   const bomPrimitives = new Set(selectedBomPrimitiveIds.value);
   const wholeSinglePart = Boolean(selectedBomNode.value && contract.value?.bom.assembly_mode === 'single_part');
-  const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0 || wholeSinglePart || Boolean(selectedFaceId.value);
+  const hasSelection =
+    featureFaces.size > 0 || bomPrimitives.size > 0 || wholeSinglePart || Boolean(selectedFaceId.value);
   for (const [faceId, objects] of faceObjects.entries()) {
     for (const object of objects) {
-      const primitiveId = String(object.userData.mesh_primitive_id ?? faceMeshMap.value?.faces[faceId]?.mesh_primitive_id ?? '');
-      const active = wholeSinglePart || featureFaces.has(faceId) || faceId === selectedFaceId.value || bomPrimitives.has(primitiveId);
-      object.visible = !isolated.value || !hasSelection || active;
+      const primitiveId = String(
+        object.userData.mesh_primitive_id ?? faceMeshMap.value?.faces[faceId]?.mesh_primitive_id ?? ''
+      );
+      const active =
+        wholeSinglePart ||
+        featureFaces.has(faceId) ||
+        faceId === selectedFaceId.value ||
+        bomPrimitives.has(primitiveId);
+      const originalVisible = object.userData.cad_original_visible !== false;
+      object.visible = originalVisible && (!isolated.value || !hasSelection || active);
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of materials) {
         const standard = material as THREE.MeshStandardMaterial;
-        standard.color.set(active ? '#4f46e5' : '#bcc4cf');
-        standard.emissive?.set(active ? '#312e81' : '#000000');
-        standard.emissiveIntensity = active ? 0.28 : 0;
-        standard.transparent = transparent.value;
-        standard.opacity = transparent.value ? (active ? 0.92 : 0.2) : 1;
+        restoreMaterial(material);
+        if (hasSelection && active) {
+          standard.color?.set('#4f46e5');
+          standard.emissive?.set('#312e81');
+          standard.emissiveIntensity = 0.28;
+        }
+        if (transparent.value) {
+          standard.transparent = true;
+          standard.opacity = hasSelection && active ? 0.92 : 0.24;
+          standard.depthWrite = Boolean(hasSelection && active);
+        }
         standard.clippingPlanes = sectionEnabled.value ? [clippingPlane] : [];
         standard.needsUpdate = true;
       }
@@ -481,15 +601,40 @@ function applyVisualState() {
   clippingPlane.constant = sectionOffset.value;
 }
 
-// 用途：点击 GLB Primitive 后反选 Face 和关联 Feature；无映射时只显示真实 Face。
-function handlePointer(event: PointerEvent) {
-  if (!renderer || !camera) return;
+// 用途：记录按下位置，供抬起时区分真实单击与旋转、平移拖动。
+function handlePointerDown(event: PointerEvent) {
+  pointerDownPosition = { x: event.clientX, y: event.clientY };
+}
+
+// 用途：选择模式下从真实 GLB extras/映射表解析 Face；没有 Face 元数据时只降级选择零件。
+function handlePointerUp(event: PointerEvent) {
+  if (!renderer || !camera || toolMode.value !== 'select') return;
+  const down = pointerDownPosition;
+  pointerDownPosition = null;
+  if (!down || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4) return;
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects([...faceObjects.values()].flat(), false)[0];
-  const faceId = String(hit?.object.userData.face_id ?? '');
-  if (faceId) selectFace(faceId);
+  const hit = raycaster
+    .intersectObjects(pickableObjects, false)
+    .find(item => item.object.visible && item.object.userData.pickable !== false);
+  if (!hit) {
+    clearSelection();
+    return;
+  }
+  const target = resolveCadSelection(hit, 'catia', faceMeshMap.value, {
+    partId: contract.value?.part_id || 'CATPART',
+    displayName: contract.value?.summary.model_name,
+    sourceRef: contract.value?.summary.source_file_name || undefined
+  });
+  if (target.kind === 'face' && target.faceId) {
+    selectFace(target.faceId);
+    selectionTarget.value = target;
+    return;
+  }
+  const root = contract.value?.bom.nodes[0];
+  if (root) selectBom(root);
+  else selectionTarget.value = target;
 }
 
 // 用途：建立共享渲染环境；STEP 和 CATPart 只更换数据适配器，不创建第二套 Viewer。
@@ -501,19 +646,49 @@ function initViewer() {
   camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1_000_000);
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.localClippingEnabled = true;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.95;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  scene.add(new THREE.HemisphereLight('#ffffff', '#64748b', 2.4));
-  const light = new THREE.DirectionalLight('#ffffff', 2.6);
+  controls.addEventListener('change', updateOrientationAxes);
+  scene.add(new THREE.HemisphereLight('#ffffff', '#64748b', 1.25));
+  const light = new THREE.DirectionalLight('#ffffff', 1.8);
   light.position.set(1, 1, 2);
   scene.add(light);
-  renderer.domElement.addEventListener('pointerdown', handlePointer);
+  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+  renderer.domElement.addEventListener('pointerup', handlePointerUp);
   resizeObserver = new ResizeObserver(resizeViewer);
   resizeObserver.observe(container);
   resizeViewer();
   animate();
+}
+
+// 用途：同步选择、旋转和平移三种鼠标语义，三个模式均保留滚轮缩放。
+function applyToolMode() {
+  if (!controls || !renderer) return;
+  controls.enableRotate = toolMode.value === 'orbit';
+  controls.enablePan = toolMode.value === 'pan';
+  controls.mouseButtons.LEFT =
+    toolMode.value === 'orbit' ? THREE.MOUSE.ROTATE : toolMode.value === 'pan' ? THREE.MOUSE.PAN : null;
+  renderer.domElement.style.cursor = toolMode.value === 'select' ? 'default' : 'grab';
+}
+
+// 用途：把相机四元数投影到屏幕坐标，坐标轴固定在左下角但随相机方向实时转动。
+function updateOrientationAxes() {
+  if (!camera) return;
+  const inverse = camera.quaternion.clone().invert();
+  const project = (axis: THREE.Vector3): GizmoAxisPoint => {
+    const view = axis.applyQuaternion(inverse);
+    return { x: 42 + view.x * 24, y: 45 - view.y * 24, depth: view.z };
+  };
+  orientationAxes.value = {
+    x: project(new THREE.Vector3(1, 0, 0)),
+    y: project(new THREE.Vector3(0, 1, 0)),
+    z: project(new THREE.Vector3(0, 0, 1))
+  };
 }
 
 // 用途：按真实模型包围盒适应窗口，不写死参考图尺寸或相机位置。
@@ -529,6 +704,117 @@ function fitCamera() {
   camera.updateProjectionMatrix();
   controls.target.copy(center);
   controls.update();
+  updateOrientationAxes();
+}
+
+// 用途：点击坐标轴后保持当前观察距离并切换到正 X/Y/Z 标准视图。
+function snapCamera(axis: 'x' | 'y' | 'z') {
+  if (!camera || !controls) return;
+  const distance = Math.max(camera.position.distanceTo(controls.target), 1);
+  const direction =
+    axis === 'x' ? new THREE.Vector3(1, 0, 0) : axis === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+  camera.position.copy(controls.target.clone().add(direction.multiplyScalar(distance)));
+  camera.up.set(0, axis === 'y' ? 0 : 1, axis === 'y' ? 1 : 0);
+  camera.lookAt(controls.target);
+  controls.update();
+  updateOrientationAxes();
+}
+
+// 用途：统计具有真实 Primitive 归属的装配实例；不足两个实例时禁用爆炸，避免单零件伪动画。
+function countExplodableGroups() {
+  if (contract.value?.bom.assembly_mode !== 'assembly') return 0;
+  const groups = new Set<string>();
+  const visit = (node: Api.ComponentBuild.ViewerBomNode) => {
+    if (node.mesh_primitive_ids.some(id => primitiveObjects.has(id))) groups.add(node.node_id);
+    node.children.forEach(visit);
+  };
+  contract.value.bom.nodes.forEach(visit);
+  return groups.size;
+}
+
+// 用途：从原始坐标计算装配爆炸位移，始终基于备份位置写入，因此重复切换不会累计漂移。
+function applyExplodedState(enabled: boolean) {
+  if (!modelRoot) return;
+  const wholeBox = new THREE.Box3().setFromObject(modelRoot);
+  const wholeCenter = wholeBox.getCenter(new THREE.Vector3());
+  const scale = Math.max(wholeBox.getSize(new THREE.Vector3()).length() * 0.12, 1);
+  const moved = new Set<THREE.Mesh>();
+  const visit = (node: Api.ComponentBuild.ViewerBomNode) => {
+    const objects = [...new Set(node.mesh_primitive_ids.flatMap(id => primitiveObjects.get(id) || []))].filter(
+      item => !moved.has(item)
+    );
+    if (objects.length) {
+      const center = new THREE.Box3().setFromObject(objects[0]);
+      objects.slice(1).forEach(object => center.expandByObject(object));
+      const direction = center.getCenter(new THREE.Vector3()).sub(wholeCenter);
+      if (direction.lengthSq() > 1e-9) direction.normalize();
+      objects.forEach(object => {
+        const original = object.userData.cad_original_position as THREE.Vector3 | undefined;
+        if (original)
+          object.position.copy(original).add(enabled ? direction.clone().multiplyScalar(scale) : new THREE.Vector3());
+        moved.add(object);
+      });
+    }
+    node.children.forEach(visit);
+  };
+  contract.value?.bom.nodes.forEach(visit);
+  if (!enabled) {
+    modelRoot.traverse(object => {
+      if (!(object instanceof THREE.Mesh) || moved.has(object)) return;
+      const original = object.userData.cad_original_position as THREE.Vector3 | undefined;
+      if (original) object.position.copy(original);
+    });
+  }
+}
+
+// 用途：场景分段控制统一修改真实 Viewer 状态；“整体”恢复可见性、材质、剖切和相机。
+function setSceneMode(mode: SceneMode) {
+  if (mode === 'explode' && !canExplode.value) return;
+  sceneMode.value = mode;
+  if (mode === 'whole') {
+    transparent.value = false;
+    isolated.value = false;
+    sectionEnabled.value = false;
+    applyExplodedState(false);
+    fitCamera();
+  } else if (mode === 'explode') {
+    applyExplodedState(true);
+  } else if (mode === 'transparent') {
+    applyExplodedState(false);
+    transparent.value = true;
+  } else {
+    applyExplodedState(false);
+    sectionEnabled.value = true;
+  }
+  applyVisualState();
+}
+
+// 用途：透明开关直接控制材质，同时让分段模式与真实场景状态一致。
+function setTransparent(value: boolean) {
+  transparent.value = value;
+  if (value) sceneMode.value = 'transparent';
+  else if (sceneMode.value === 'transparent') sceneMode.value = 'whole';
+  applyVisualState();
+}
+
+// 用途：隔离开关只在存在可定位选择时生效，关闭后按每个 Mesh 的原始可见性恢复。
+function setIsolated(value: boolean) {
+  isolated.value = value && canIsolate.value;
+  applyVisualState();
+}
+
+// 用途：剖切开关控制真实 clipping plane，并同步场景分段状态。
+function setSectionEnabled(value: boolean) {
+  sectionEnabled.value = value;
+  if (value) sceneMode.value = 'section';
+  else if (sceneMode.value === 'section') sceneMode.value = 'whole';
+  applyVisualState();
+}
+
+// 用途：图层按钮打开现有 BOM/可见性入口，不创建没有功能的空面板。
+function openLayers() {
+  activeTab.value = 'bom';
+  if (!bomVisible.value) toggleBom();
 }
 
 // 用途：侧栏显隐和断点变化后立即更新 WebGL 像素尺寸与相机宽高比。
@@ -573,9 +859,24 @@ function tabLabel(tab: ViewerTab) {
 }
 
 function faceTypeLabel(type: string | undefined) {
-  return ({ plane: '平面', cylinder: '圆柱面', cone: '圆锥面', sphere: '球面', torus: '圆环面', bspline: 'B 样条面', bezier: 'Bezier 面' } as Record<string, string>)[type ?? ''] ?? type ?? '其他曲面';
+  return (
+    (
+      {
+        plane: '平面',
+        cylinder: '圆柱面',
+        cone: '圆锥面',
+        sphere: '球面',
+        torus: '圆环面',
+        bspline: 'B 样条面',
+        bezier: 'Bezier 面'
+      } as Record<string, string>
+    )[type ?? ''] ??
+    type ??
+    '其他曲面'
+  );
 }
 
+watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
 onMounted(async () => {
   const savedWidth = Number(window.localStorage.getItem('feature-center:navigation-width'));
@@ -594,7 +895,11 @@ onBeforeUnmount(() => {
   assetRequestController.abort();
   if (animationId) cancelAnimationFrame(animationId);
   resizeObserver?.disconnect();
-  if (renderer) renderer.domElement.removeEventListener('pointerdown', handlePointer);
+  if (renderer) {
+    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
+  }
+  controls?.removeEventListener('change', updateOrientationAxes);
   disposeModel(modelRoot);
   controls?.dispose();
   renderer?.dispose();
@@ -612,12 +917,23 @@ onBeforeUnmount(() => {
         <span v-if="contract?.summary.solid_count">{{ contract.summary.solid_count }} 个 Solid</span>
         <span v-if="sourceFormat === 'CATPART'">{{ contract?.summary.native_feature_count ?? 0 }} 个原生特征</span>
         <span v-if="contract">{{ contract.summary.recognized_feature_count }} 个识别特征</span>
-        <span v-if="contract" :class="mappingAvailable ? 'available' : 'muted'">Feature–Face {{ mappingAvailable ? '映射可用' : '映射不可用' }}</span>
-        <span v-if="contract" class="stage-badge" :class="contract.status">{{ workerStageLabel(contract.current_stage) }}</span>
+        <span v-if="contract" :class="mappingAvailable ? 'available' : 'muted'">
+          Feature–Face {{ mappingAvailable ? '映射可用' : '映射不可用' }}
+        </span>
+        <span v-if="contract" class="stage-badge" :class="contract.status">
+          {{ workerStageLabel(contract.current_stage) }}
+        </span>
       </div>
       <div class="summary-actions">
         <button type="button" :disabled="!contract" @click="fitCamera">适应窗口</button>
-        <button type="button" :disabled="!contract" :class="{ active: sectionEnabled }" @click="sectionEnabled = !sectionEnabled">剖切</button>
+        <button
+          type="button"
+          :disabled="!contract"
+          :class="{ active: sectionEnabled }"
+          @click="sectionEnabled = !sectionEnabled"
+        >
+          剖切
+        </button>
         <button type="button" disabled title="测量工作流尚未接入当前 Viewer">测量</button>
         <button type="button" class="details-trigger" @click="toggleDetails">详情</button>
       </div>
@@ -629,7 +945,9 @@ onBeforeUnmount(() => {
       <span v-if="contract?.error_code">错误码：{{ contract.error_code }}</span>
       <p>{{ errorText }}</p>
       <button v-if="route.query.build_id" type="button" @click="retryBuild">重试</button>
-      <button v-if="route.query.build_id" type="button" @click="loadBuildBundle(String(route.query.build_id))">重新检查</button>
+      <button v-if="route.query.build_id" type="button" @click="loadBuildBundle(String(route.query.build_id))">
+        重新检查
+      </button>
     </div>
 
     <main
@@ -666,15 +984,26 @@ onBeforeUnmount(() => {
               @node-click="selectBom"
             >
               <template #default="{ data }">
-                <span class="tree-node"><span>{{ data.name }}</span><small v-if="data.quantity > 1">×{{ data.quantity }}</small></span>
+                <span class="tree-node">
+                  <span>{{ data.name }}</span>
+                  <small v-if="data.quantity > 1">×{{ data.quantity }}</small>
+                </span>
               </template>
             </ElTree>
             <ElEmpty v-else-if="activeTab === 'bom'" description="当前文件没有装配 BOM" />
 
             <div v-show="activeTab === 'recognized'" class="feature-tab-content">
               <div class="feature-source-tabs">
-                <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">原生特征</button>
-                <button type="button" :class="{ active: featureSubTab === 'recognized' }" @click="featureSubTab = 'recognized'">识别特征</button>
+                <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">
+                  原生特征
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: featureSubTab === 'recognized' }"
+                  @click="featureSubTab = 'recognized'"
+                >
+                  识别特征
+                </button>
               </div>
               <NativeFeatureTree
                 v-show="featureSubTab === 'native'"
@@ -713,7 +1042,14 @@ onBeforeUnmount(() => {
                 <strong>{{ geometryDisplayId('face', index) }} · {{ faceTypeLabel(face.surface_type) }}</strong>
                 <span>面积 {{ face.area == null ? '—' : `${face.area.toFixed(3)} mm²` }}</span>
               </button>
-              <button v-if="filteredFaces.length < topologyFaces.length" type="button" class="load-more" @click="geometryLimit += 160">继续加载</button>
+              <button
+                v-if="filteredFaces.length < topologyFaces.length"
+                type="button"
+                class="load-more"
+                @click="geometryLimit += 160"
+              >
+                继续加载
+              </button>
               <ElEmpty v-if="!topologyFaces.length" description="没有可用的 B-Rep Face 索引" />
             </template>
           </div>
@@ -721,17 +1057,47 @@ onBeforeUnmount(() => {
           <div class="navigation-resizer" title="拖动调整侧栏宽度" @pointerdown="startNavigationResize" />
         </template>
         <template v-else>
-          <button type="button" class="rail-button" :class="{ 'active-icon': activeTab === 'bom' }" title="BOM 树" aria-label="BOM 树" @click="activeTab = 'bom'; toggleBom()">
+          <button
+            type="button"
+            class="rail-button"
+            :class="{ 'active-icon': activeTab === 'bom' }"
+            title="BOM 树"
+            aria-label="BOM 树"
+            @click="
+              activeTab = 'bom';
+              toggleBom();
+            "
+          >
             <SvgIcon icon="lucide:network" />
           </button>
-          <button type="button" class="rail-button" :class="{ 'active-icon': activeTab === 'recognized' }" title="特征" aria-label="特征" @click="activeTab = 'recognized'; toggleBom()">
+          <button
+            type="button"
+            class="rail-button"
+            :class="{ 'active-icon': activeTab === 'recognized' }"
+            title="特征"
+            aria-label="特征"
+            @click="
+              activeTab = 'recognized';
+              toggleBom();
+            "
+          >
             <SvgIcon icon="lucide:tags" />
           </button>
-          <button type="button" class="rail-button" :class="{ 'active-icon': activeTab === 'geometry' }" title="几何拓扑" aria-label="几何拓扑" @click="activeTab = 'geometry'; toggleBom()">
+          <button
+            type="button"
+            class="rail-button"
+            :class="{ 'active-icon': activeTab === 'geometry' }"
+            title="几何拓扑"
+            aria-label="几何拓扑"
+            @click="
+              activeTab = 'geometry';
+              toggleBom();
+            "
+          >
             <SvgIcon icon="lucide:waypoints" />
           </button>
           <button type="button" class="rail-button primary" title="显示 BOM" aria-label="显示 BOM" @click="toggleBom">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
           </button>
         </template>
       </aside>
@@ -740,7 +1106,9 @@ onBeforeUnmount(() => {
         <div v-if="contract" class="breadcrumb">
           <span>{{ contract.summary.model_name }}</span>
           <span v-if="selectedBomNode">/ {{ selectedBomNode.name }}</span>
-          <span v-else-if="selectedNativeFeature">/ {{ selectedNativeFeature.display_name || selectedNativeFeature.feature_id }}</span>
+          <span v-else-if="selectedNativeFeature">
+            / {{ selectedNativeFeature.display_name || selectedNativeFeature.feature_id }}
+          </span>
           <span v-else-if="selectedFeature">/ {{ selectedFeature.subtype }}</span>
           <span v-else-if="selectedFace">/ {{ selectedFace.face_id }}</span>
         </div>
@@ -750,14 +1118,30 @@ onBeforeUnmount(() => {
           class="viewer-empty"
           description="暂无 CATPart 解析结果，请从图元建库打开已完成的 CATPart"
         />
-        <div v-if="contract" class="viewer-tools">
-          <button type="button" @click="clearSelection">选择</button>
-          <button type="button" @click="fitCamera">适应</button>
-          <button type="button" :class="{ active: isolated }" @click="isolated = !isolated">隔离</button>
-          <button type="button" :class="{ active: transparent }" @click="transparent = !transparent">透明</button>
-          <button type="button" :class="{ active: sectionEnabled }" @click="sectionEnabled = !sectionEnabled">剖切</button>
-        </div>
-        <ElSlider v-if="contract && sectionEnabled" v-model="sectionOffset" class="section-slider" :min="-200" :max="200" />
+        <CadViewerControls
+          v-if="contract"
+          :tool-mode="toolMode"
+          :scene-mode="sceneMode"
+          :transparent="transparent"
+          :isolated="isolated"
+          :section-enabled="sectionEnabled"
+          :can-explode="canExplode"
+          :can-isolate="canIsolate"
+          @tool-change="toolMode = $event"
+          @scene-mode-change="setSceneMode"
+          @transparent-change="setTransparent"
+          @isolated-change="setIsolated"
+          @section-change="setSectionEnabled"
+          @command="$event === 'fit' ? fitCamera() : openLayers()"
+        />
+        <OrientationGizmo v-if="contract" :axes="orientationAxes" @snap="snapCamera" />
+        <ElSlider
+          v-if="contract && sectionEnabled"
+          v-model="sectionOffset"
+          class="section-slider"
+          :min="-200"
+          :max="200"
+        />
       </section>
 
       <aside class="details" :class="{ open: detailsOpen }">
@@ -768,106 +1152,150 @@ onBeforeUnmount(() => {
         <div class="details-scroll">
           <div v-if="contract" class="object-card">
             <span class="object-icon">◇</span>
-            <div><strong>{{ selectedTitle }}</strong><small>CATPart</small></div>
+            <div>
+              <strong>{{ selectedTitle }}</strong>
+              <small>CATPart</small>
+            </div>
           </div>
           <section v-if="hasDetailGroup('part')" class="detail-section">
             <h4>零件属性</h4>
             <dl>
-              <dt>零件号</dt><dd>{{ contract?.summary.part_number || detailNode?.part_number || '—' }}</dd>
-              <dt>零件名称</dt><dd>{{ contract?.summary.part_name || detailNode?.name || '—' }}</dd>
-              <dt>文件类型</dt><dd>{{ sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</dd>
-              <dt>版本</dt><dd>{{ detailNode?.version || contract?.summary.version || '—' }}</dd>
+              <dt>零件号</dt>
+              <dd>{{ contract?.summary.part_number || detailNode?.part_number || '—' }}</dd>
+              <dt>零件名称</dt>
+              <dd>{{ contract?.summary.part_name || detailNode?.name || '—' }}</dd>
+              <dt>文件类型</dt>
+              <dd>{{ sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</dd>
+              <dt>版本</dt>
+              <dd>{{ detailNode?.version || contract?.summary.version || '—' }}</dd>
               <template v-if="detailNode?.material || contract?.summary.material">
-                <dt>材料</dt><dd>{{ detailNode?.material || contract?.summary.material }}</dd>
+                <dt>材料</dt>
+                <dd>{{ detailNode?.material || contract?.summary.material }}</dd>
               </template>
             </dl>
           </section>
           <section v-if="hasDetailGroup('assembly_instance') && detailNode" class="detail-section">
             <h4>装配实例属性</h4>
             <dl>
-              <dt>实例标识</dt><dd>{{ detailNode.instance_name || '—' }}</dd>
-              <dt>所属组件</dt><dd>{{ detailParentNode?.name || '—' }}</dd>
-              <dt>数量</dt><dd>{{ detailNode.quantity }}</dd>
-              <dt>装配层级</dt><dd>{{ detailNode.level }}</dd>
-              <dt>装配路径</dt><dd>{{ detailNode.assembly_path || '—' }}</dd>
+              <dt>实例标识</dt>
+              <dd>{{ detailNode.instance_name || '—' }}</dd>
+              <dt>所属组件</dt>
+              <dd>{{ detailParentNode?.name || '—' }}</dd>
+              <dt>数量</dt>
+              <dd>{{ detailNode.quantity }}</dd>
+              <dt>装配层级</dt>
+              <dd>{{ detailNode.level }}</dd>
+              <dt>装配路径</dt>
+              <dd>{{ detailNode.assembly_path || '—' }}</dd>
             </dl>
           </section>
           <section v-if="hasDetailGroup('assembly') && detailNode" class="detail-section">
             <h4>装配属性</h4>
             <dl>
-              <dt>装配号</dt><dd>{{ detailNode.part_number || '—' }}</dd>
-              <dt>装配名称</dt><dd>{{ detailNode.name }}</dd>
-              <dt>类型</dt><dd>{{ detailNode.node_type === 'subassembly' ? '子装配' : '总装' }}</dd>
-              <dt>子项数量</dt><dd>{{ detailNode.children.length }}</dd>
-              <dt>装配层级</dt><dd>{{ detailNode.level }}</dd>
+              <dt>装配号</dt>
+              <dd>{{ detailNode.part_number || '—' }}</dd>
+              <dt>装配名称</dt>
+              <dd>{{ detailNode.name }}</dd>
+              <dt>类型</dt>
+              <dd>{{ detailNode.node_type === 'subassembly' ? '子装配' : '总装' }}</dd>
+              <dt>子项数量</dt>
+              <dd>{{ detailNode.children.length }}</dd>
+              <dt>装配层级</dt>
+              <dd>{{ detailNode.level }}</dd>
             </dl>
           </section>
           <section v-if="hasDetailGroup('assembly_statistics') && detailNode" class="detail-section">
             <h4>装配统计</h4>
             <dl>
-              <dt>直接子项</dt><dd>{{ detailNode.children.length }}</dd>
-              <dt>Solid</dt><dd>{{ detailNode.solid_count || '—' }}</dd>
-              <dt>体积</dt><dd>{{ detailNode.volume == null ? '—' : `${detailNode.volume} mm³` }}</dd>
+              <dt>直接子项</dt>
+              <dd>{{ detailNode.children.length }}</dd>
+              <dt>Solid</dt>
+              <dd>{{ detailNode.solid_count || '—' }}</dd>
+              <dt>体积</dt>
+              <dd>{{ detailNode.volume == null ? '—' : `${detailNode.volume} mm³` }}</dd>
             </dl>
           </section>
           <section v-if="hasDetailGroup('source')" class="detail-section">
             <h4>{{ sourceFormat === 'CATPART' ? '来源与特征' : '来源与识别结果' }}</h4>
             <dl>
-              <dt>源文件</dt><dd>{{ contract?.summary.source_file_name || '—' }}</dd>
+              <dt>源文件</dt>
+              <dd>{{ contract?.summary.source_file_name || '—' }}</dd>
               <template v-if="sourceFormat === 'CATPART'">
-                <dt>原生特征</dt><dd>{{ contract?.native_semantics?.available ? contract.summary.native_feature_count : '不可用' }}</dd>
+                <dt>原生特征</dt>
+                <dd>{{ contract?.native_semantics?.available ? contract.summary.native_feature_count : '不可用' }}</dd>
               </template>
-              <dt>识别特征</dt><dd>{{ contract?.summary.recognized_feature_count ?? 0 }}</dd>
-              <dt>Feature–Face 映射</dt><dd :class="mappingAvailable ? 'available' : 'muted'">{{ mappingAvailable ? '可用' : '不可用' }}</dd>
+              <dt>识别特征</dt>
+              <dd>{{ contract?.summary.recognized_feature_count ?? 0 }}</dd>
+              <dt>Feature–Face 映射</dt>
+              <dd :class="mappingAvailable ? 'available' : 'muted'">{{ mappingAvailable ? '可用' : '不可用' }}</dd>
             </dl>
           </section>
           <section v-if="hasDetailGroup('positioning') && detailNode" class="detail-section">
             <h4>装配定位</h4>
             <dl v-if="detailNode.instance_name || detailNode.constraint_status || detailNode.constraint_count != null">
-              <dt>实例标识</dt><dd>{{ detailNode.instance_name || '—' }}</dd>
-              <dt>约束状态</dt><dd>{{ detailNode.constraint_status || '未知' }}</dd>
-              <dt v-if="detailNode.constraint_count != null">装配约束</dt><dd v-if="detailNode.constraint_count != null">{{ detailNode.constraint_count }}</dd>
+              <dt>实例标识</dt>
+              <dd>{{ detailNode.instance_name || '—' }}</dd>
+              <dt>约束状态</dt>
+              <dd>{{ detailNode.constraint_status || '未知' }}</dd>
+              <dt v-if="detailNode.constraint_count != null">装配约束</dt>
+              <dd v-if="detailNode.constraint_count != null">{{ detailNode.constraint_count }}</dd>
             </dl>
             <p v-else class="muted">当前实例未提供定位数据</p>
           </section>
           <section v-if="hasDetailGroup('feature') && selectedNativeFeature" class="detail-section">
             <h4>特征详情</h4>
             <dl>
-              <dt>名称</dt><dd>{{ selectedNativeTreeNode?.displayName || selectedNativeFeature.feature_id }}</dd>
-              <dt>原生类型</dt><dd>{{ selectedNativeTreeNode?.nativeType || '未提供' }}</dd>
-              <dt>所属容器</dt><dd>{{ selectedNativeTreeParent?.displayName || '未提供' }}</dd>
-              <dt>建模顺序</dt><dd>{{ selectedNativeFeature.traversal_index ?? '未提供' }}</dd>
-              <dt>更新状态</dt><dd>{{ selectedNativeFeature.update_status || '未提供' }}</dd>
+              <dt>名称</dt>
+              <dd>{{ selectedNativeTreeNode?.displayName || selectedNativeFeature.feature_id }}</dd>
+              <dt>原生类型</dt>
+              <dd>{{ selectedNativeTreeNode?.nativeType || '未提供' }}</dd>
+              <dt>所属容器</dt>
+              <dd>{{ selectedNativeTreeParent?.displayName || '未提供' }}</dd>
+              <dt>建模顺序</dt>
+              <dd>{{ selectedNativeFeature.traversal_index ?? '未提供' }}</dd>
+              <dt>更新状态</dt>
+              <dd>{{ selectedNativeFeature.update_status || '未提供' }}</dd>
             </dl>
             <h5>特征参数</h5>
             <dl v-if="selectedNativeParameters.length" class="parameter-list">
               <template v-for="entry in selectedNativeParameters" :key="entry[0]">
-                <dt>{{ entry[0] }}</dt><dd>{{ formatNativeAttribute(entry[1]) }}</dd>
+                <dt>{{ entry[0] }}</dt>
+                <dd>{{ formatNativeAttribute(entry[1]) }}</dd>
               </template>
             </dl>
             <p v-else class="muted">暂无可用参数</p>
             <h5>关联几何</h5>
             <div v-if="selectedNativeFaces.length" class="face-links">
-              <button v-for="faceId in selectedNativeFaces" :key="faceId" type="button" @click="openNativeFace(faceId)">{{ faceId }}</button>
+              <button v-for="faceId in selectedNativeFaces" :key="faceId" type="button" @click="openNativeFace(faceId)">
+                {{ faceId }}
+              </button>
             </div>
             <p v-else class="muted">未建立关联面</p>
           </section>
           <section v-if="hasDetailGroup('feature') && selectedFeature" class="detail-section">
             <h4>特征属性</h4>
             <dl>
-              <dt>识别类型</dt><dd>{{ selectedFeature.family }} / {{ selectedFeature.subtype }}</dd>
-              <dt>复核状态</dt><dd>{{ selectedFeature.review_state }}</dd>
-              <dt>关联面</dt><dd>{{ selectedFeature.geometry_refs.face_ids.join(', ') || '—' }}</dd>
-              <dt>原生来源</dt><dd>{{ selectedFeature.native_feature_ids.join(', ') || '—' }}</dd>
+              <dt>识别类型</dt>
+              <dd>{{ selectedFeature.family }} / {{ selectedFeature.subtype }}</dd>
+              <dt>复核状态</dt>
+              <dd>{{ selectedFeature.review_state }}</dd>
+              <dt>关联面</dt>
+              <dd>{{ selectedFeature.geometry_refs.face_ids.join(', ') || '—' }}</dd>
+              <dt>原生来源</dt>
+              <dd>{{ selectedFeature.native_feature_ids.join(', ') || '—' }}</dd>
             </dl>
           </section>
           <section v-if="hasDetailGroup('geometry') && selectedFace" class="detail-section">
             <h4>几何属性</h4>
             <dl>
-              <dt>Face ID</dt><dd>{{ selectedFace.face_id }}</dd>
-              <dt>曲面类型</dt><dd>{{ faceTypeLabel(selectedFace.surface_type) }}</dd>
-              <dt>面积</dt><dd>{{ selectedFace.area == null ? '—' : `${selectedFace.area} mm²` }}</dd>
-              <dt>关联特征</dt><dd>{{ faceFeatureIds.join(', ') || '无' }}</dd>
+              <dt>Face ID</dt>
+              <dd>{{ selectedFace.face_id }}</dd>
+              <dt>曲面类型</dt>
+              <dd>{{ faceTypeLabel(selectedFace.surface_type) }}</dd>
+              <dt>面积</dt>
+              <dd>{{ selectedFace.area == null ? '—' : `${selectedFace.area} mm²` }}</dd>
+              <dt>关联特征</dt>
+              <dd>{{ faceFeatureIds.join(', ') || '无' }}</dd>
             </dl>
           </section>
           <section v-if="hasDetailGroup('operations')" class="detail-section actions">
@@ -898,97 +1326,478 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.feature-center-page { display: flex; height: calc(100vh - 112px); min-height: 620px; flex-direction: column; gap: 10px; color: var(--el-text-color-primary); }
-button { border: 1px solid var(--el-border-color-light); border-radius: 7px; background: white; color: inherit; cursor: pointer; padding: 7px 11px; }
-button:hover, button.active { border-color: var(--el-color-primary); color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-button:disabled { cursor: not-allowed; opacity: .45; }
-.model-summary { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--el-border-color-lighter); background: var(--el-bg-color); padding: 4px 14px; }
-.summary-main, .summary-actions { display: flex; min-width: 0; align-items: center; gap: 14px; flex-wrap: wrap; }
-.summary-main strong { font-size: 17px; }
-.summary-main span { font-size: 13px; white-space: nowrap; }
-.format-badge, .stage-badge { border: 1px solid var(--el-color-primary-light-7); border-radius: 6px; color: var(--el-color-primary); padding: 4px 10px; }
-.stage-badge.ready, .available { color: var(--el-color-success); }
-.muted { color: var(--el-text-color-secondary); }
-.error-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--el-color-danger-light-5); border-radius: 8px; background: var(--el-color-danger-light-9); padding: 10px 14px; }
-.error-card p { min-width: 0; flex: 1; margin: 0; overflow-wrap: anywhere; }
-.workspace { position: relative; display: grid; min-height: 0; flex: 1; grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 330px; gap: 10px; transition: grid-template-columns .2s ease; }
-.workspace.bom-collapsed { grid-template-columns: 56px minmax(0, 1fr) 330px; }
-.workspace.details-collapsed { grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 0; }
-.workspace.bom-collapsed.details-collapsed { grid-template-columns: 56px minmax(0, 1fr) 0; }
-.navigation, .viewer-shell, .details { min-width: 0; min-height: 0; border: 1px solid var(--el-border-color-light); border-radius: 9px; background: var(--el-bg-color); overflow: hidden; }
-.navigation { position: relative; display: flex; flex-direction: column; }
-.navigation.collapsed { align-items: center; padding: 10px 5px; gap: 10px; }
-.panel-heading { display: flex; min-height: 48px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--el-border-color-lighter); padding: 0 14px; }
-.panel-heading button { border: 0; font-size: 20px; padding: 4px 8px; }
-.semantic-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--el-border-color-lighter); }
-.semantic-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 11px 4px; }
-.semantic-tabs button.active { border-bottom-color: var(--el-color-primary); color: var(--el-color-primary); }
-.panel-scroll, .details-scroll { min-height: 0; flex: 1; overflow: auto; padding: 10px; }
-.panel-scroll.feature-tree-panel { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
-.feature-tab-content { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-.feature-source-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--el-border-color-lighter); padding: 0 10px; }
-.feature-source-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 12px; padding: 8px 4px; }
-.feature-source-tabs button.active { border-bottom-color: var(--el-color-primary); color: var(--el-color-primary); }
-.recognized-feature-list { min-height: 0; flex: 1; overflow: auto; padding: 10px; }
-.panel-hint { border-top: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-secondary); font-size: 12px; padding: 11px; }
-.navigation-resizer { position: absolute; z-index: 3; top: 0; right: -2px; bottom: 0; width: 5px; cursor: col-resize; }
-.navigation-resizer:hover { background: var(--el-color-primary-light-7); }
-.tree-node { display: flex; width: 100%; justify-content: space-between; gap: 8px; }
-.rail-button { display: grid; width: 42px; height: 42px; place-items: center; padding: 0; }
-.rail-button svg { width: 22px; height: 22px; fill: none; stroke: currentcolor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.rail-button :deep(.svg-icon) { font-size: 21px; }
-.rail-button.active-icon { border-color: var(--el-color-primary-light-7); color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.rail-button.primary { margin-top: 12px; }
-.list-card { display: flex; width: 100%; flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 7px; text-align: left; }
-.list-card span { max-width: 100%; color: var(--el-text-color-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feature-group-title { margin: 5px 2px 9px; color: var(--el-text-color-secondary); font-size: 12px; font-weight: 600; }
-.geometry-search { margin-bottom: 10px; }
-.load-more { width: 100%; }
-.viewer-shell { position: relative; background: #f7f8fb; }
-.viewer { position: absolute; inset: 0; }
-.viewer-empty { position: absolute; z-index: 1; inset: 0; }
-.breadcrumb { position: absolute; z-index: 2; top: 14px; left: 18px; display: flex; gap: 8px; border-radius: 7px; background: rgb(255 255 255 / 82%); padding: 7px 11px; backdrop-filter: blur(6px); }
-.viewer-tools { position: absolute; z-index: 2; bottom: 58px; left: 50%; display: flex; gap: 4px; border: 1px solid var(--el-border-color-light); border-radius: 10px; background: rgb(255 255 255 / 92%); box-shadow: var(--el-box-shadow-light); padding: 7px; transform: translateX(-50%); }
-.section-slider { position: absolute; z-index: 2; bottom: 18px; left: 50%; width: min(380px, 60%); transform: translateX(-50%); }
-.details { display: flex; flex-direction: column; transition: opacity .15s ease; }
-.details-collapsed .details { pointer-events: none; opacity: 0; }
-.object-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px; }
-.object-icon { color: var(--el-color-primary); font-size: 30px; }
-.object-card div { display: flex; min-width: 0; flex-direction: column; }
-.object-card small { color: var(--el-text-color-secondary); }
-.detail-section { border-bottom: 1px solid var(--el-border-color-lighter); padding: 8px 0 12px; }
-.detail-section h4 { margin: 7px 0 10px; }
-.detail-section h5 { margin: 13px 0 8px; font-size: 13px; }
-.detail-section dl { display: grid; grid-template-columns: 95px 1fr; gap: 8px; margin: 0; font-size: 13px; }
-.detail-section dt { color: var(--el-text-color-secondary); }
-.detail-section dd { margin: 0; overflow-wrap: anywhere; }
-.parameter-list dd { white-space: pre-wrap; }
-.face-links { display: flex; flex-wrap: wrap; gap: 5px; }
-.face-links button { font-size: 12px; padding: 4px 7px; }
-.actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.actions h4 { width: 100%; }
-.actions .feature-link { width: 100%; margin-top: 2px; text-align: left; }
-.advanced pre { max-height: 230px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
-.details-trigger { display: none; }
+.feature-center-page {
+  display: flex;
+  height: calc(100vh - 112px);
+  min-height: 620px;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--el-text-color-primary);
+}
+button {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 7px;
+  background: white;
+  color: inherit;
+  cursor: pointer;
+  padding: 7px 11px;
+}
+button:hover,
+button.active {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.model-summary {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+  padding: 4px 14px;
+}
+.summary-main,
+.summary-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.summary-main strong {
+  font-size: 17px;
+}
+.summary-main span {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.format-badge,
+.stage-badge {
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 6px;
+  color: var(--el-color-primary);
+  padding: 4px 10px;
+}
+.stage-badge.ready,
+.available {
+  color: var(--el-color-success);
+}
+.muted {
+  color: var(--el-text-color-secondary);
+}
+.error-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--el-color-danger-light-5);
+  border-radius: 8px;
+  background: var(--el-color-danger-light-9);
+  padding: 10px 14px;
+}
+.error-card p {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.workspace {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 330px;
+  gap: 10px;
+  transition: grid-template-columns 0.2s ease;
+}
+.workspace.bom-collapsed {
+  grid-template-columns: 56px minmax(0, 1fr) 330px;
+}
+.workspace.details-collapsed {
+  grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 0;
+}
+.workspace.bom-collapsed.details-collapsed {
+  grid-template-columns: 56px minmax(0, 1fr) 0;
+}
+.navigation,
+.viewer-shell,
+.details {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 9px;
+  background: var(--el-bg-color);
+  overflow: hidden;
+}
+.navigation {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.navigation.collapsed {
+  align-items: center;
+  padding: 10px 5px;
+  gap: 10px;
+}
+.panel-heading {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 0 14px;
+}
+.panel-heading button {
+  border: 0;
+  font-size: 20px;
+  padding: 4px 8px;
+}
+.semantic-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.semantic-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 4px;
+}
+.semantic-tabs button.active {
+  border-bottom-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+.panel-scroll,
+.details-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+.panel-scroll.feature-tree-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.feature-tab-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.feature-source-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 0 10px;
+}
+.feature-source-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+  padding: 8px 4px;
+}
+.feature-source-tabs button.active {
+  border-bottom-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+.recognized-feature-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+.panel-hint {
+  border-top: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  padding: 11px;
+}
+.navigation-resizer {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+}
+.navigation-resizer:hover {
+  background: var(--el-color-primary-light-7);
+}
+.tree-node {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rail-button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  padding: 0;
+}
+.rail-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.rail-button :deep(.svg-icon) {
+  font-size: 21px;
+}
+.rail-button.active-icon {
+  border-color: var(--el-color-primary-light-7);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.rail-button.primary {
+  margin-top: 12px;
+}
+.list-card {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 7px;
+  text-align: left;
+}
+.list-card span {
+  max-width: 100%;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feature-group-title {
+  margin: 5px 2px 9px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.geometry-search {
+  margin-bottom: 10px;
+}
+.load-more {
+  width: 100%;
+}
+.viewer-shell {
+  position: relative;
+  background: #f7f8fb;
+}
+.viewer {
+  position: absolute;
+  inset: 0;
+}
+.viewer :deep(canvas) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.viewer-empty {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+}
+.breadcrumb {
+  position: absolute;
+  z-index: 2;
+  top: 14px;
+  left: 18px;
+  display: flex;
+  gap: 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--el-bg-color) 82%, transparent);
+  padding: 7px 11px;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.section-slider {
+  position: absolute;
+  z-index: 6;
+  bottom: 142px;
+  left: 50%;
+  width: min(420px, 62%);
+  transform: translateX(-50%);
+}
+.details {
+  display: flex;
+  flex-direction: column;
+  transition: opacity 0.15s ease;
+}
+.details-collapsed .details {
+  pointer-events: none;
+  opacity: 0;
+}
+.object-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 12px;
+}
+.object-icon {
+  color: var(--el-color-primary);
+  font-size: 30px;
+}
+.object-card div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.object-card small {
+  color: var(--el-text-color-secondary);
+}
+.detail-section {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 8px 0 12px;
+}
+.detail-section h4 {
+  margin: 7px 0 10px;
+}
+.detail-section h5 {
+  margin: 13px 0 8px;
+  font-size: 13px;
+}
+.detail-section dl {
+  display: grid;
+  grid-template-columns: 95px 1fr;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+}
+.detail-section dt {
+  color: var(--el-text-color-secondary);
+}
+.detail-section dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.parameter-list dd {
+  white-space: pre-wrap;
+}
+.face-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.face-links button {
+  font-size: 12px;
+  padding: 4px 7px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.actions h4 {
+  width: 100%;
+}
+.actions .feature-link {
+  width: 100%;
+  margin-top: 2px;
+  text-align: left;
+}
+.advanced pre {
+  max-height: 230px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+.details-trigger {
+  display: none;
+}
 @media (max-width: 1439px) {
-  .workspace { grid-template-columns: min(var(--navigation-width, 300px), 300px) minmax(0, 1fr) 290px; }
-  .workspace.bom-collapsed { grid-template-columns: 54px minmax(0, 1fr) 290px; }
-  .summary-main { gap: 9px; }
+  .workspace {
+    grid-template-columns: min(var(--navigation-width, 300px), 300px) minmax(0, 1fr) 290px;
+  }
+  .workspace.bom-collapsed {
+    grid-template-columns: 54px minmax(0, 1fr) 290px;
+  }
+  .summary-main {
+    gap: 9px;
+  }
 }
 @media (max-width: 1179px) {
-  .workspace, .workspace.bom-collapsed, .workspace.details-collapsed, .workspace.bom-collapsed.details-collapsed { grid-template-columns: 250px minmax(0, 1fr); }
-  .workspace.bom-collapsed, .workspace.bom-collapsed.details-collapsed { grid-template-columns: 54px minmax(0, 1fr); }
-  .details { position: absolute; z-index: 12; top: 70px; right: 10px; bottom: 10px; width: min(340px, calc(100vw - 40px)); box-shadow: var(--el-box-shadow-dark); transform: translateX(calc(100% + 24px)); transition: transform .2s ease; }
-  .details.open { transform: translateX(0); }
-  .details-trigger { display: inline-block; }
+  .workspace,
+  .workspace.bom-collapsed,
+  .workspace.details-collapsed,
+  .workspace.bom-collapsed.details-collapsed {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+  .workspace.bom-collapsed,
+  .workspace.bom-collapsed.details-collapsed {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+  .details {
+    position: absolute;
+    z-index: 12;
+    top: 70px;
+    right: 10px;
+    bottom: 10px;
+    width: min(340px, calc(100vw - 40px));
+    box-shadow: var(--el-box-shadow-dark);
+    transform: translateX(calc(100% + 24px));
+    transition: transform 0.2s ease;
+  }
+  .details.open {
+    transform: translateX(0);
+  }
+  .details-trigger {
+    display: inline-block;
+  }
 }
 @media (max-width: 899px) {
-  .feature-center-page { height: calc(100vh - 96px); min-height: 520px; }
-  .model-summary { align-items: flex-start; flex-direction: column; padding: 8px 10px; }
-  .summary-main span:not(.format-badge):not(.stage-badge) { display: none; }
-  .workspace, .workspace.bom-collapsed, .workspace.details-collapsed, .workspace.bom-collapsed.details-collapsed { grid-template-columns: 54px minmax(0, 1fr); }
-  .navigation:not(.collapsed) { position: absolute; z-index: 11; top: 118px; bottom: 10px; left: 10px; width: min(300px, calc(100vw - 40px)); box-shadow: var(--el-box-shadow-dark); }
-  .viewer-tools { bottom: 20px; max-width: calc(100% - 24px); }
-  .viewer-tools button { padding: 6px; }
+  .feature-center-page {
+    height: calc(100vh - 96px);
+    min-height: 520px;
+  }
+  .model-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 8px 10px;
+  }
+  .summary-main span:not(.format-badge):not(.stage-badge) {
+    display: none;
+  }
+  .workspace,
+  .workspace.bom-collapsed,
+  .workspace.details-collapsed,
+  .workspace.bom-collapsed.details-collapsed {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+  .navigation:not(.collapsed) {
+    position: absolute;
+    z-index: 11;
+    top: 118px;
+    bottom: 10px;
+    left: 10px;
+    width: min(300px, calc(100vw - 40px));
+    box-shadow: var(--el-box-shadow-dark);
+  }
+  .viewer-tools {
+    bottom: 20px;
+    max-width: calc(100% - 24px);
+  }
+  .viewer-tools button {
+    padding: 6px;
+  }
 }
 </style>
