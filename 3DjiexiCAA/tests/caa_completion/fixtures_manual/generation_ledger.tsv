@@ -61,3 +61,15 @@ pd_shaft_groove.CATPart	generated	V5R21SP0	standalone repair; close/reopen verif
 pd_shell_thickness.CATPart	generated	V5R21SP0	standalone repair; close/reopen verified; expected history: Pad_Shell_Base,Shell_3mm,Thickness_Local1mm
 pressure_pad_pocket_fillet_chamfer.CATPart	blocked	V5R21SP0	standalone repair failed 0x233C Missing expected native history object in-memory final update: Fillet_Pressure
 pressure_pad_pocket_fillet_chamfer.CATPart	generated	V5R21SP0	standalone repair; close/reopen verified; expected history: Pad_Pressure,Pocket_Pressure,Fillet_Pressure,Chamfer_Pressure
+product_same_reference_instances.CATProduct	generated	V5R21SP0	same CATPart reference, two instances, translation plus rotation
+product_nested.CATProduct	generated	V5R21SP0	three-level nested product with parent/child transforms
+version_product_v1.CATProduct	generated	V5R21SP0	version pair v1 base BOM
+version_product_v2.CATProduct	generated	V5R21SP0	version pair v2 BOM add and transform change
+fta_all_semantic_types_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_all_semantic_types_scaffold.CATPart
+fta_geometry_references_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+fta_geometry_references.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_geometry_references_scaffold.CATPart
+fta_orphan_invalid_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_orphan_invalid_scaffold.CATPart
+version_fta_v1_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+version_fta_v1.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=version_fta_v1_scaffold.CATPart
