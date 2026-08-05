@@ -59,12 +59,11 @@
   "payload_expectations": {
     "HOLE-REUSE-01": ["hole", "pad", "pocket"],
     "PD-PAD-01": ["pad"],
-    "PD-POCKET-01": ["pad", "pocket"]
-  },
-  "type_only_expected": {
+    "PD-POCKET-01": ["pad", "pocket"],
     "PD-FILLET-01": ["fillet"],
     "PD-BOOLEAN-01": ["add", "remove", "assemble", "intersect"]
   },
+  "type_only_expected": {},
   "product_numeric_truth": {
     "PRODUCT-01": "validator_builtin",
     "PRODUCT-02": "validator_builtin"
@@ -75,7 +74,7 @@
     "absolute instance transform extraction",
     "PRODUCT-01 and PRODUCT-02 known point numeric validation",
     "native startup_type recognition",
-    "Hole, Pad and Pocket parameter payload extraction through implemented Public CAA decoders",
+    "Hole, Pad, Pocket, constant edge Fillet and Boolean operation payload extraction through implemented Public CAA decoders",
     "basic B-Rep topology output",
     "current mesh to B-Rep face range evidence",
     "ResultOUT to final Cell runtime survival evidence",
@@ -86,7 +85,7 @@
     "generated/modified/consumed/split/merged history semantics",
     "cross-session persistent naming",
     "complete reverse history mapping",
-    "Fillet/Chamfer/Pattern/Boolean/GSD full parameter decoders",
+    "complete optional-reference coverage for every Part Design family and GSD parameter decoders",
     "complete FTA-Topology mapping",
     "complete surface parameters, UV domains, material side, curvature and full geometry semantics"
   ]

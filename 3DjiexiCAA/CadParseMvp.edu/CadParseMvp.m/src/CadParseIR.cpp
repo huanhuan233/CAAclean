@@ -217,6 +217,66 @@ void WriteNativePrism(std::ostream& output, const NativePrismData& prism)
   output << '}';
 }
 
+void WriteNativeFeatureParameterField(std::ostream& output,
+                                      const NativeFeatureParameterField& field)
+{
+  output << "{\"name\":\"" << JsonEscape(field.name)
+         << "\",\"value_type\":\"" << JsonEscape(field.value_type)
+         << "\",\"availability\":\"" << JsonEscape(field.availability)
+         << "\",\"source_api\":\"" << JsonEscape(field.source_api)
+         << "\",\"reason_code\":\"" << JsonEscape(field.reason_code)
+         << "\",\"raw_value\":\"" << JsonEscape(field.raw_value)
+         << "\",\"raw_unit\":\"" << JsonEscape(field.raw_unit)
+         << "\",\"normalized_value\":";
+  WriteOptionalNumber(output, field.has_numeric_value, field.numeric_value);
+  output << ",\"normalized_unit\":\"" << JsonEscape(field.normalized_unit) << "\"}";
+}
+
+void WriteNativeFeatureReferenceField(std::ostream& output,
+                                      const NativeFeatureReferenceField& field)
+{
+  output << "{\"name\":\"" << JsonEscape(field.name)
+         << "\",\"availability\":\"" << JsonEscape(field.availability)
+         << "\",\"source_api\":\"" << JsonEscape(field.source_api)
+         << "\",\"reason_code\":\"" << JsonEscape(field.reason_code)
+         << "\",\"count\":" << field.count
+         << ",\"display_names\":";
+  WriteStringArray(output, field.display_names);
+  output << '}';
+}
+
+void WriteNativeFeatureParameters(std::ostream& output,
+                                  const NativeFeatureParameterData& data)
+{
+  output << "{\"family\":\"" << JsonEscape(data.family)
+         << "\",\"semantic_kind\":\"" << JsonEscape(data.semantic_kind)
+         << "\",\"value_source\":\"" << JsonEscape(data.value_source)
+         << "\",\"interface_key\":\"" << JsonEscape(data.interface_key)
+         << "\",\"decode_status\":\"" << JsonEscape(data.decode_status)
+         << "\",\"reason_code\":\"" << JsonEscape(data.reason_code)
+         << "\",\"parameters\":{";
+  std::vector<NativeFeatureParameterField>::const_iterator parameter =
+    data.parameters.begin();
+  for (; parameter != data.parameters.end(); ++parameter)
+  {
+    if (parameter != data.parameters.begin()) output << ',';
+    output << '"' << JsonEscape(parameter->name) << "\":";
+    WriteNativeFeatureParameterField(output, *parameter);
+  }
+  output << "},\"references\":{";
+  std::vector<NativeFeatureReferenceField>::const_iterator reference =
+    data.references.begin();
+  for (; reference != data.references.end(); ++reference)
+  {
+    if (reference != data.references.begin()) output << ',';
+    output << '"' << JsonEscape(reference->name) << "\":";
+    WriteNativeFeatureReferenceField(output, *reference);
+  }
+  output << "},\"evidence\":";
+  WriteStringMap(output, data.evidence);
+  output << '}';
+}
+
 // 用途：写出 Feature 内嵌的 String 参数结果；该字段仍属于原始 CAA 对象。
 void WriteParameterValue(std::ostream& output, const ParameterValueData& parameter)
 {
@@ -429,11 +489,17 @@ static CapabilityEvaluation EvaluateNativeFeatureParameterExtraction(
   for (; feature != features.end(); ++feature)
   {
     const ITypedPayload* payload = feature->GetTypedPayload();
-    if (payload)
+    const std::string payload_type = payload ? payload->GetPayloadTypeId() : "";
+    const bool parameter_payload = payload_type == "native_hole" ||
+      payload_type == "native_prism" || payload_type == "native_feature_parameters";
+    if (parameter_payload)
     {
       ++item.counts.required_feature_count;
       ++item.counts.supported_feature_count;
-      ++item.counts.fully_decoded_feature_count;
+      if (feature->decode_status == "success")
+        ++item.counts.fully_decoded_feature_count;
+      else
+        ++item.counts.partially_decoded_feature_count;
     }
     else if (feature->decode_level == "type_only")
     {
@@ -444,7 +510,8 @@ static CapabilityEvaluation EvaluateNativeFeatureParameterExtraction(
   }
   item.counts.required_count = item.counts.required_feature_count;
   item.counts.evidence_count = item.counts.required_count;
-  item.counts.recognized_feature_count += item.counts.fully_decoded_feature_count;
+  item.counts.recognized_feature_count +=
+    item.counts.fully_decoded_feature_count + item.counts.partially_decoded_feature_count;
   item.counts.resolved_count = item.counts.fully_decoded_feature_count;
   item.counts.feature_coverage_ratio =
     Ratio(item.counts.recognized_feature_count, item.counts.required_feature_count);
@@ -454,6 +521,7 @@ static CapabilityEvaluation EvaluateNativeFeatureParameterExtraction(
   if (item.counts.required_feature_count > 0 &&
       item.counts.fully_decoded_feature_count == item.counts.required_feature_count &&
       item.counts.unsupported_feature_count == 0 &&
+      item.counts.partially_decoded_feature_count == 0 &&
       item.counts.failed_count == 0)
   {
     item.status = "complete";
@@ -471,6 +539,7 @@ static CapabilityEvaluation MakeNativeFeatureFamilyCapability(
   const char* family_name,
   long required,
   long decoded,
+  long partial,
   long type_only)
 {
   CapabilityEvaluation item;
@@ -480,15 +549,17 @@ static CapabilityEvaluation MakeNativeFeatureFamilyCapability(
   item.counts.required_feature_count = required;
   item.counts.required_count = required;
   item.counts.fully_decoded_feature_count = decoded;
-  item.counts.recognized_feature_count = decoded + type_only;
-  item.counts.supported_feature_count = decoded;
-  item.counts.unsupported_feature_count = required > decoded ? required - decoded : 0;
+  item.counts.partially_decoded_feature_count = partial;
+  item.counts.recognized_feature_count = decoded + partial + type_only;
+  item.counts.supported_feature_count = decoded + partial;
+  item.counts.unsupported_feature_count =
+    required > decoded + partial ? required - decoded - partial : 0;
   item.counts.resolved_count = decoded;
   item.counts.evidence_count = required;
   item.counts.feature_coverage_ratio = Ratio(item.counts.recognized_feature_count, required);
   item.counts.mandatory_parameter_coverage_ratio = Ratio(decoded, required);
   item.counts.coverage_ratio = item.counts.mandatory_parameter_coverage_ratio;
-  if (required > 0 && decoded == required)
+  if (required > 0 && decoded == required && partial == 0)
   {
     item.status = "complete";
     item.reason_code = "FAMILY_PAYLOAD_COMPLETE";
@@ -501,17 +572,25 @@ static void AddNativeFeatureFamilyCapabilities(const std::vector<FeatureRecord>&
 {
   std::map<std::string, long> required;
   std::map<std::string, long> decoded;
+  std::map<std::string, long> partial;
   std::map<std::string, long> type_only;
   std::vector<FeatureRecord>::const_iterator feature = features.begin();
   for (; feature != features.end(); ++feature)
   {
     std::string family;
     const ITypedPayload* payload = feature->GetTypedPayload();
-    if (payload && std::string(payload->GetPayloadTypeId()) == "native_hole") family = "hole";
-    else if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism" &&
+    const std::string payload_type = payload ? payload->GetPayloadTypeId() : "";
+    if (payload_type == "native_hole") family = "hole";
+    else if (payload_type == "native_prism" &&
              feature->decoder_id == "NativePadDecoder") family = "pad";
-    else if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism" &&
+    else if (payload_type == "native_prism" &&
              feature->decoder_id == "NativePocketDecoder") family = "pocket";
+    else if (payload_type == "native_feature_parameters")
+    {
+      const NativeFeatureParameterPayload* native_payload =
+        static_cast<const NativeFeatureParameterPayload*>(payload);
+      family = native_payload->GetData().family;
+    }
     else
     {
       std::map<std::string, std::string>::const_iterator canonical =
@@ -520,13 +599,18 @@ static void AddNativeFeatureFamilyCapabilities(const std::vector<FeatureRecord>&
     }
     if (family.empty()) continue;
     ++required[family];
-    if (payload) ++decoded[family];
+    if ((payload_type == "native_hole" || payload_type == "native_prism" ||
+         payload_type == "native_feature_parameters") && feature->decode_status == "success")
+      ++decoded[family];
+    else if (payload_type == "native_feature_parameters" && feature->decode_status == "partial")
+      ++partial[family];
     else if (feature->decode_level == "type_only") ++type_only[family];
   }
   std::map<std::string, long>::const_iterator it = required.begin();
   for (; it != required.end(); ++it)
     items.push_back(MakeNativeFeatureFamilyCapability(it->first.c_str(), it->second,
-                                                      decoded[it->first], type_only[it->first]));
+                                                      decoded[it->first], partial[it->first],
+                                                      type_only[it->first]));
 }
 
 static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& context)
@@ -1110,26 +1194,35 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
   const ITypedPayload* payload = record.GetTypedPayload();
   const bool is_native_hole = payload && std::string(payload->GetPayloadTypeId()) == "native_hole";
   const bool is_native_prism = payload && std::string(payload->GetPayloadTypeId()) == "native_prism";
+  const bool is_native_parameters = payload &&
+    std::string(payload->GetPayloadTypeId()) == "native_feature_parameters";
   std::string canonical_native_type;
   if (is_native_hole) canonical_native_type = "hole";
   else if (is_native_prism && record.decoder_id == "NativePadDecoder") canonical_native_type = "pad";
   else if (is_native_prism && record.decoder_id == "NativePocketDecoder") canonical_native_type = "pocket";
+  else if (is_native_parameters)
+    canonical_native_type =
+      static_cast<const NativeFeatureParameterPayload*>(payload)->GetData().family;
   else
   {
     std::map<std::string, std::string>::const_iterator canonical =
       record.attributes.find("canonical_native_type");
     if (canonical != record.attributes.end()) canonical_native_type = canonical->second;
   }
-  const bool payload_complete = is_native_hole || is_native_prism;
+  const bool payload_complete = is_native_hole || is_native_prism ||
+    (is_native_parameters && record.decode_status == "success");
+  const bool payload_partial = is_native_parameters && record.decode_status == "partial";
   const bool type_only = record.decode_level == "type_only";
   const char* decoder_status = payload_complete ? "decoded" :
+    (payload_partial ? "partial" :
     (type_only ? "type_only" :
     (record.decode_level == "generic" ? "generic" :
-     (record.decode_level == "opaque" ? "unsupported" : "failed")));
-  const char* type_resolution_status = (payload_complete || type_only) ? "resolved" :
+     (record.decode_level == "opaque" ? "unsupported" : "failed"))));
+  const char* type_resolution_status = (payload_complete || payload_partial || type_only) ? "resolved" :
     (canonical_native_type.empty() ? "unresolved" : "resolved");
   const char* payload_extraction_status = payload_complete ? "complete" :
-    (type_only ? "not_implemented" : "not_available");
+    (payload_partial ? "partial" :
+    (type_only ? "not_implemented" : "not_available"));
   output << "{\"native_feature_id\":\"" << JsonEscape(record.feature_id)
          << "\",\"source_object_id\":\"" << JsonEscape(record.feature_id)
          << "\",\"part_id\":\"\",\"instance_id\":null,\"body_id\":\"\""
@@ -1151,7 +1244,7 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
          << ",\"update_status\":\"" << JsonEscape(record.update_status)
          << "\",\"diagnostic_ids\":";
   WriteStringArray(output, record.diagnostic_ids);
-  if (is_native_hole || is_native_prism)
+  if (is_native_hole || is_native_prism || is_native_parameters)
   {
     output << ',';
     payload->WriteJsonProperty(output);
@@ -1607,6 +1700,12 @@ void NativePrismPayload::WriteJsonProperty(std::ostream& output) const
   WriteNativePrism(output, _data);
 }
 
+void NativeFeatureParameterPayload::WriteJsonProperty(std::ostream& output) const
+{
+  output << "\"native_feature_parameters\":";
+  WriteNativeFeatureParameters(output, _data);
+}
+
 // 用途：创建 JSON Writer 并保存普通 JSON 是否采用易读空白。
 JsonArtifactWriter::JsonArtifactWriter(bool pretty) : _pretty(pretty) {}
 
@@ -1661,6 +1760,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << "{\"decoder_id\":\"native_hole_decoder\",\"capability\":\"CATIAHole\",\"status\":\"registered\"},"
          << "{\"decoder_id\":\"native_pad_decoder\",\"capability\":\"CATIAPad\",\"status\":\"registered\"},"
          << "{\"decoder_id\":\"native_pocket_decoder\",\"capability\":\"CATIAPocket\",\"status\":\"registered\"},"
+         << "{\"decoder_id\":\"native_feature_parameter_decoder\",\"capability\":\"NativeFeatureParameters\",\"status\":\"registered\"},"
          << "{\"decoder_id\":\"knowledgeware_string_parameter_decoder\",\"capability\":\"CATIAStrParam\",\"status\":\"registered\"}"
          << "]}\n";
   if (!FinishOutput(output, "decoder_registry.json", error)) return false;

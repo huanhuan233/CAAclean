@@ -67,7 +67,7 @@ def evaluate_fixture(contract: Dict[str, Any], catalog: Dict[str, Any], results_
         "target_jsonl_fields": {},
         "authoritative_feature_mapping": {"require_forward_and_reverse": True},
     }
-    validator = RunValidator("baseline", completion_contract, fixture, run_dir)
+    validator = RunValidator("completion", completion_contract, fixture, run_dir)
     validator.load_artifacts()
     validator.validate_manifest()
     validator.validate_capability_consistency()

@@ -227,6 +227,58 @@ private:
   NativePrismData _data;
 };
 
+struct NativeFeatureParameterField
+{
+  NativeFeatureParameterField() : has_numeric_value(false), numeric_value(0.0) {}
+  std::string name;
+  std::string value_type;
+  std::string availability;
+  std::string source_api;
+  std::string reason_code;
+  std::string raw_value;
+  std::string raw_unit;
+  bool has_numeric_value;
+  double numeric_value;
+  std::string normalized_unit;
+};
+
+struct NativeFeatureReferenceField
+{
+  NativeFeatureReferenceField() : count(-1) {}
+  std::string name;
+  std::string availability;
+  std::string source_api;
+  std::string reason_code;
+  long count;
+  std::vector<std::string> display_names;
+};
+
+struct NativeFeatureParameterData
+{
+  std::string family;
+  std::string semantic_kind;
+  std::string value_source;
+  std::string interface_key;
+  std::string decode_status;
+  std::string reason_code;
+  std::vector<NativeFeatureParameterField> parameters;
+  std::vector<NativeFeatureReferenceField> references;
+  std::map<std::string, std::string> evidence;
+};
+
+class NativeFeatureParameterPayload : public ITypedPayload
+{
+public:
+  explicit NativeFeatureParameterPayload(const NativeFeatureParameterData& data) : _data(data) {}
+  const char* GetPayloadTypeId() const { return "native_feature_parameters"; }
+  ITypedPayload* Clone() const { return new NativeFeatureParameterPayload(*this); }
+  void WriteJsonProperty(std::ostream& output) const;
+  const NativeFeatureParameterData& GetData() const { return _data; }
+
+private:
+  NativeFeatureParameterData _data;
+};
+
 // 单个被枚举对象在 features.jsonl 中对应一条特征记录。
 // 记录只包含纯数据，因此离开 CATIA 会话后仍然有效。
 struct FeatureRecord
@@ -826,6 +878,14 @@ enum NativePrismReadStatus
   NativePrismRequiredValueReadException = 3
 };
 
+enum NativeFeatureParameterReadStatus
+{
+  NativeFeatureParameterReadSuccess = 0,
+  NativeFeatureParameterInterfaceUnsupported = 1,
+  NativeFeatureParameterInterfaceQueryException = 2,
+  NativeFeatureParameterReadPartial = 3
+};
+
 // 解码器的候选判断只是预筛选，不等价于专用接口已经确认成功。
 enum DecoderMatchStatus
 {
@@ -890,6 +950,19 @@ public:
   virtual NativePrismReadStatus ReadNativePrism(const char* requested_capability,
                                                 NativePrismData& output,
                                                 std::string& error) const = 0;
+};
+
+class INativeFeatureParameterView : public INativeCapabilityView
+{
+public:
+  virtual ~INativeFeatureParameterView() {}
+  const char* GetCapabilityId() const { return "NativeFeatureParameters"; }
+  static const void* TypeToken();
+  const void* GetCapabilityTypeToken() const { return TypeToken(); }
+  virtual NativeFeatureParameterReadStatus ReadNativeFeatureParameters(
+    const char* canonical_family,
+    NativeFeatureParameterData& output,
+    std::string& error) const = 0;
 };
 
 // 原生对象的最小 API 无关视图。
@@ -995,6 +1068,19 @@ public:
 
 // 使用 R21 公开 CATIAPocket/CATIAPrism 接口确认并读取 Part Design Pocket。
 class NativePocketDecoder : public INativeFeatureDecoder
+{
+public:
+  const char* GetDecoderId() const;
+  int GetPriority() const;
+  const char* GetFeatureFamily() const;
+  DecoderMatchStatus GetMatchStatus(const TypeFingerprint&,
+                                    const INativeObjectView&) const;
+  bool Match(const TypeFingerprint&, const INativeObjectView&) const;
+  DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
+  bool ContinueTypedAfterFailure() const { return true; }
+};
+
+class NativeFeatureParameterDecoder : public INativeFeatureDecoder
 {
 public:
   const char* GetDecoderId() const;

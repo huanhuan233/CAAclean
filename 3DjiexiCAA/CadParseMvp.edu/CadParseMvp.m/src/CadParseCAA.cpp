@@ -36,6 +36,25 @@
 #include "CATIAPad.h"
 #include "CATIAPocket.h"
 #include "CATIAPrism.h"
+#include "CATIAChamfer.h"
+#include "CATIAConstRadEdgeFillet.h"
+#include "CATIAEdgeFillet.h"
+#include "CATIAFillet.h"
+#include "CATIAShell.h"
+#include "CATIAThickness.h"
+#include "CATIARevolution.h"
+#include "CATIASweep.h"
+#include "CATIAPattern.h"
+#include "CATIARectPattern.h"
+#include "CATIACircPattern.h"
+#include "CATIAUserPattern.h"
+#include "CATIABooleanShape.h"
+#include "CATIABody.h"
+#include "CATIAReferences.h"
+#include "CATIAReference.h"
+#include "CATIAIntParam.h"
+#include "CATIALinearRepartition.h"
+#include "CATIAAngularRepartition.h"
 #include "CATIALimit.h"
 #include "CATIALength.h"
 #include "CATIAAngle.h"
@@ -1424,6 +1443,174 @@ static bool ReadAngleValue(CATIAAngle* angle, double& value)
   return angle && SUCCEEDED(angle->get_Value(value));
 }
 
+static void AddNativeParameterField(NativeFeatureParameterData& data,
+                                    const char* name,
+                                    const char* value_type,
+                                    const char* availability,
+                                    const char* source_api,
+                                    const char* reason_code,
+                                    const std::string& raw_value,
+                                    const char* raw_unit,
+                                    bool has_numeric_value,
+                                    double numeric_value,
+                                    const char* normalized_unit)
+{
+  NativeFeatureParameterField field;
+  field.name = name ? name : "";
+  field.value_type = value_type ? value_type : "";
+  field.availability = availability ? availability : "";
+  field.source_api = source_api ? source_api : "";
+  field.reason_code = reason_code ? reason_code : "";
+  field.raw_value = raw_value;
+  field.raw_unit = raw_unit ? raw_unit : "";
+  field.has_numeric_value = has_numeric_value;
+  field.numeric_value = numeric_value;
+  field.normalized_unit = normalized_unit ? normalized_unit : "";
+  data.parameters.push_back(field);
+}
+
+static void AddUnavailableParameter(NativeFeatureParameterData& data,
+                                    const char* name,
+                                    const char* value_type,
+                                    const char* source_api,
+                                    const char* reason_code)
+{
+  AddNativeParameterField(data, name, value_type, "not_available", source_api,
+                          reason_code, "", "", false, 0.0, "");
+}
+
+static void AddBoolParameter(NativeFeatureParameterData& data, const char* name,
+                             bool value, const char* source_api)
+{
+  AddNativeParameterField(data, name, "boolean", "available", source_api, "OK",
+                          value ? "true" : "false", "", false, value ? 1.0 : 0.0, "");
+}
+
+static void AddLongParameter(NativeFeatureParameterData& data, const char* name,
+                             long value, const char* source_api)
+{
+  std::ostringstream text;
+  text << value;
+  AddNativeParameterField(data, name, "integer", "available", source_api, "OK",
+                          text.str(), "", true, static_cast<double>(value), "count");
+}
+
+static void AddEnumParameter(NativeFeatureParameterData& data, const char* name,
+                             int value, const char* source_api)
+{
+  std::ostringstream text;
+  text << value;
+  AddNativeParameterField(data, name, "enum_raw", "available", source_api, "OK",
+                          text.str(), "", true, static_cast<double>(value), "");
+}
+
+static void AddLengthParameter(NativeFeatureParameterData& data, const char* name,
+                               CATIALength* length, const char* source_api,
+                               bool& ok)
+{
+  double value = 0.0;
+  if (ReadLengthValue(length, value))
+  {
+    std::ostringstream text;
+    text << value;
+    AddNativeParameterField(data, name, "length", "available", source_api, "OK",
+                            text.str(), "mm", true, value, "mm");
+  }
+  else
+  {
+    ok = false;
+    AddUnavailableParameter(data, name, "length", source_api, "VALUE_READ_FAILED");
+  }
+}
+
+static void AddAngleParameter(NativeFeatureParameterData& data, const char* name,
+                              CATIAAngle* angle, const char* source_api,
+                              bool& ok)
+{
+  double value = 0.0;
+  if (ReadAngleValue(angle, value))
+  {
+    std::ostringstream text;
+    text << value;
+    AddNativeParameterField(data, name, "angle", "available", source_api, "OK",
+                            text.str(), "deg", true, value, "deg");
+  }
+  else
+  {
+    ok = false;
+    AddUnavailableParameter(data, name, "angle", source_api, "VALUE_READ_FAILED");
+  }
+}
+
+static long ReferenceCollectionCount(CATIAReferences* references)
+{
+  if (!references) return -1;
+  CATLONG count = 0;
+  if (FAILED(references->get_Count(count))) return -1;
+  return static_cast<long>(count);
+}
+
+static void AddReferenceCollectionField(NativeFeatureParameterData& data,
+                                        const char* name,
+                                        CATIAReferences* references,
+                                        const char* source_api,
+                                        bool required,
+                                        bool& ok)
+{
+  NativeFeatureReferenceField field;
+  field.name = name ? name : "";
+  field.source_api = source_api ? source_api : "";
+  field.count = ReferenceCollectionCount(references);
+  if (field.count >= 0)
+  {
+    field.availability = "available";
+    field.reason_code = "OK";
+  }
+  else
+  {
+    if (required) ok = false;
+    field.availability = "not_available";
+    field.reason_code = references ? "COUNT_READ_FAILED" : "REFERENCE_COLLECTION_NULL";
+  }
+  data.references.push_back(field);
+}
+
+static void AddSingleReferenceField(NativeFeatureParameterData& data,
+                                    const char* name,
+                                    CATIAReference* reference,
+                                    const char* source_api,
+                                    bool required,
+                                    bool& ok)
+{
+  NativeFeatureReferenceField field;
+  field.name = name ? name : "";
+  field.source_api = source_api ? source_api : "";
+  field.count = reference ? 1 : 0;
+  if (reference)
+  {
+    field.availability = "available";
+    field.reason_code = "OK";
+    CaaBstrGuard display_name;
+    if (SUCCEEDED(reference->get_DisplayName(display_name.Out())) && display_name.Get())
+      field.display_names.push_back(BstrToUtf8(display_name.Get()));
+  }
+  else
+  {
+    if (required) ok = false;
+    field.availability = "not_available";
+    field.reason_code = "REFERENCE_NULL";
+  }
+  data.references.push_back(field);
+}
+
+static bool ReadIntParamValue(CATIAIntParam* param, long& value)
+{
+  CATLONG raw_value = 0;
+  if (!param || FAILED(param->get_Value(raw_value))) return false;
+  value = static_cast<long>(raw_value);
+  return true;
+}
+
 // 用途：把 SAFEARRAY(VARIANT) 的常见数值类型无损转换为 double。
 static bool VariantToDouble(const CATVariant& value, double& output)
 {
@@ -1929,7 +2116,8 @@ private:
 };
 
 // CATISpecObject 的只读适配器；借用原生指针，只把可验证字段复制到 TypeFingerprint/IR。
-class SpecObjectView : public INativeObjectView, public IStringParameterView, public INativeHoleView
+class SpecObjectView : public INativeObjectView, public IStringParameterView,
+                       public INativeHoleView, public INativeFeatureParameterView
 {
 private:
   // Pad/Pocket 使用独立能力代理，避免同一个 SpecObjectView 同时返回多个互斥 CapabilityId。
@@ -1985,9 +2173,12 @@ public:
   const INativeCapabilityView* FindCapability(const char* capability_id) const
   {
     if (!capability_id) return 0;
-    if (std::string(capability_id) == "NativeHole") return this;
+    if (std::string(capability_id) == "NativeHole")
+      return static_cast<const INativeHoleView*>(this);
     if (std::string(capability_id) == "NativePad") return &_pad_capability;
     if (std::string(capability_id) == "NativePocket") return &_pocket_capability;
+    if (std::string(capability_id) == "NativeFeatureParameters")
+      return static_cast<const INativeFeatureParameterView*>(this);
     return 0;
   }
 
@@ -2520,6 +2711,415 @@ public:
     return NativePrismReadSuccess;
   }
 
+  NativeFeatureParameterReadStatus ReadNativeFeatureParameters(const char* canonical_family,
+                                                               NativeFeatureParameterData& output,
+                                                               std::string& error) const
+  {
+    if (!_spec)
+    {
+      error = "null CATISpecObject";
+      return NativeFeatureParameterInterfaceUnsupported;
+    }
+    const std::string family = canonical_family ? canonical_family : "";
+    output.family = family;
+    output.semantic_kind = "part_design_native_feature_parameters";
+    output.value_source = "typed_caa_value";
+    output.decode_status = "partial";
+    output.reason_code = "PARTIAL_PUBLIC_API_PAYLOAD";
+    bool ok = true;
+    bool interface_supported = false;
+
+    try
+    {
+      if (family == "chamfer")
+      {
+        CaaInterfaceGuard<CATIAChamfer> chamfer_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIAChamfer,
+            reinterpret_cast<void**>(&chamfer_guard.Out()))) || !chamfer_guard.Get())
+        {
+          error = "CATIAChamfer is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIAChamfer";
+        CatChamferMode mode;
+        CatChamferPropagation propagation;
+        CatChamferOrientation orientation;
+        if (SUCCEEDED(chamfer_guard.Get()->get_Mode(mode)))
+          AddEnumParameter(output, "mode", static_cast<int>(mode), "CATIAChamfer.get_Mode");
+        else { ok = false; AddUnavailableParameter(output, "mode", "enum_raw", "CATIAChamfer.get_Mode", "VALUE_READ_FAILED"); }
+        if (SUCCEEDED(chamfer_guard.Get()->get_Propagation(propagation)))
+          AddEnumParameter(output, "propagation", static_cast<int>(propagation), "CATIAChamfer.get_Propagation");
+        else { ok = false; AddUnavailableParameter(output, "propagation", "enum_raw", "CATIAChamfer.get_Propagation", "VALUE_READ_FAILED"); }
+        if (SUCCEEDED(chamfer_guard.Get()->get_Orientation(orientation)))
+          AddEnumParameter(output, "orientation", static_cast<int>(orientation), "CATIAChamfer.get_Orientation");
+        else { ok = false; AddUnavailableParameter(output, "orientation", "enum_raw", "CATIAChamfer.get_Orientation", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIALength> length1_guard;
+        CaaInterfaceGuard<CATIALength> length2_guard;
+        CaaInterfaceGuard<CATIAAngle> angle_guard;
+        if (SUCCEEDED(chamfer_guard.Get()->get_Length1(length1_guard.Out())))
+          AddLengthParameter(output, "length1", length1_guard.Get(), "CATIAChamfer.get_Length1.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "length1", "length", "CATIAChamfer.get_Length1", "VALUE_READ_FAILED"); }
+        if (SUCCEEDED(chamfer_guard.Get()->get_Length2(length2_guard.Out())))
+          AddLengthParameter(output, "length2", length2_guard.Get(), "CATIAChamfer.get_Length2.Value", ok);
+        else AddUnavailableParameter(output, "length2", "length", "CATIAChamfer.get_Length2", "VALUE_READ_FAILED");
+        if (SUCCEEDED(chamfer_guard.Get()->get_Angle(angle_guard.Out())))
+          AddAngleParameter(output, "angle", angle_guard.Get(), "CATIAChamfer.get_Angle.Value", ok);
+        else AddUnavailableParameter(output, "angle", "angle", "CATIAChamfer.get_Angle", "VALUE_READ_FAILED");
+        CaaInterfaceGuard<CATIAReferences> refs_guard;
+        if (SUCCEEDED(chamfer_guard.Get()->get_ElementsToChamfer(refs_guard.Out())))
+          AddReferenceCollectionField(output, "elements_to_chamfer", refs_guard.Get(),
+                                      "CATIAChamfer.get_ElementsToChamfer", true, ok);
+        else { ok = false; AddReferenceCollectionField(output, "elements_to_chamfer", 0,
+                                                       "CATIAChamfer.get_ElementsToChamfer", true, ok); }
+      }
+      else if (family == "fillet")
+      {
+        CaaInterfaceGuard<CATIAConstRadEdgeFillet> const_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIAConstRadEdgeFillet,
+            reinterpret_cast<void**>(&const_guard.Out()))) || !const_guard.Get())
+        {
+          error = "CATIAConstRadEdgeFillet is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIAConstRadEdgeFillet";
+        AddNativeParameterField(output, "radius_mode", "enum_text", "available",
+                                "CATIAConstRadEdgeFillet", "OK", "constant", "",
+                                false, 0.0, "");
+        CaaInterfaceGuard<CATIALength> radius_guard;
+        if (SUCCEEDED(const_guard.Get()->get_Radius(radius_guard.Out())))
+          AddLengthParameter(output, "radius", radius_guard.Get(),
+                             "CATIAConstRadEdgeFillet.get_Radius.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "radius", "length",
+                                                   "CATIAConstRadEdgeFillet.get_Radius", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIAReferences> objects_guard;
+        if (SUCCEEDED(const_guard.Get()->get_ObjectsToFillet(objects_guard.Out())))
+          AddReferenceCollectionField(output, "objects_to_fillet", objects_guard.Get(),
+                                      "CATIAConstRadEdgeFillet.get_ObjectsToFillet", true, ok);
+        else { ok = false; AddReferenceCollectionField(output, "objects_to_fillet", 0,
+                                                       "CATIAConstRadEdgeFillet.get_ObjectsToFillet", true, ok); }
+        CATIAEdgeFillet* edge = const_guard.Get();
+        CatFilletEdgePropagation edge_propagation;
+        if (SUCCEEDED(edge->get_EdgePropagation(edge_propagation)))
+          AddEnumParameter(output, "edge_propagation", static_cast<int>(edge_propagation),
+                           "CATIAEdgeFillet.get_EdgePropagation");
+        else AddUnavailableParameter(output, "edge_propagation", "enum_raw",
+                                     "CATIAEdgeFillet.get_EdgePropagation", "VALUE_READ_FAILED");
+        CATIAFillet* fillet = const_guard.Get();
+        CatFilletBoundaryRelimitation boundary;
+        CatFilletTrimSupport trim;
+        if (SUCCEEDED(fillet->get_FilletBoundaryRelimitation(boundary)))
+          AddEnumParameter(output, "boundary_relimitation", static_cast<int>(boundary),
+                           "CATIAFillet.get_FilletBoundaryRelimitation");
+        else AddUnavailableParameter(output, "boundary_relimitation", "enum_raw",
+                                     "CATIAFillet.get_FilletBoundaryRelimitation", "VALUE_READ_FAILED");
+        if (SUCCEEDED(fillet->get_FilletTrimSupport(trim)))
+          AddEnumParameter(output, "trim_support", static_cast<int>(trim),
+                           "CATIAFillet.get_FilletTrimSupport");
+        else AddUnavailableParameter(output, "trim_support", "enum_raw",
+                                     "CATIAFillet.get_FilletTrimSupport", "VALUE_READ_FAILED");
+      }
+      else if (family == "shell")
+      {
+        CaaInterfaceGuard<CATIAShell> shell_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIAShell,
+            reinterpret_cast<void**>(&shell_guard.Out()))) || !shell_guard.Get())
+        {
+          error = "CATIAShell is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIAShell";
+        CaaInterfaceGuard<CATIALength> internal_guard;
+        CaaInterfaceGuard<CATIALength> external_guard;
+        if (SUCCEEDED(shell_guard.Get()->get_InternalThickness(internal_guard.Out())))
+          AddLengthParameter(output, "internal_thickness", internal_guard.Get(),
+                             "CATIAShell.get_InternalThickness.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "internal_thickness", "length",
+                                                   "CATIAShell.get_InternalThickness", "VALUE_READ_FAILED"); }
+        if (SUCCEEDED(shell_guard.Get()->get_ExternalThickness(external_guard.Out())))
+          AddLengthParameter(output, "external_thickness", external_guard.Get(),
+                             "CATIAShell.get_ExternalThickness.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "external_thickness", "length",
+                                                   "CATIAShell.get_ExternalThickness", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIAReferences> faces_guard;
+        if (SUCCEEDED(shell_guard.Get()->get_FacesToRemove(faces_guard.Out())))
+          AddReferenceCollectionField(output, "faces_to_remove", faces_guard.Get(),
+                                      "CATIAShell.get_FacesToRemove", true, ok);
+        else AddReferenceCollectionField(output, "faces_to_remove", 0,
+                                         "CATIAShell.get_FacesToRemove", false, ok);
+      }
+      else if (family == "thickness")
+      {
+        CaaInterfaceGuard<CATIAThickness> thickness_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIAThickness,
+            reinterpret_cast<void**>(&thickness_guard.Out()))) || !thickness_guard.Get())
+        {
+          error = "CATIAThickness is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIAThickness";
+        CaaInterfaceGuard<CATIALength> offset_guard;
+        if (SUCCEEDED(thickness_guard.Get()->get_Offset(offset_guard.Out())))
+          AddLengthParameter(output, "offset", offset_guard.Get(),
+                             "CATIAThickness.get_Offset.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "offset", "length",
+                                                   "CATIAThickness.get_Offset", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIAReferences> faces_guard;
+        if (SUCCEEDED(thickness_guard.Get()->get_FacesToThicken(faces_guard.Out())))
+          AddReferenceCollectionField(output, "faces_to_thicken", faces_guard.Get(),
+                                      "CATIAThickness.get_FacesToThicken", true, ok);
+        else { ok = false; AddReferenceCollectionField(output, "faces_to_thicken", 0,
+                                                       "CATIAThickness.get_FacesToThicken", true, ok); }
+      }
+      else if (family == "shaft" || family == "groove")
+      {
+        CaaInterfaceGuard<CATIARevolution> revolution_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIARevolution,
+            reinterpret_cast<void**>(&revolution_guard.Out()))) || !revolution_guard.Get())
+        {
+          error = "CATIARevolution is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIARevolution";
+        CaaInterfaceGuard<CATIAAngle> first_guard;
+        CaaInterfaceGuard<CATIAAngle> second_guard;
+        if (SUCCEEDED(revolution_guard.Get()->get_FirstAngle(first_guard.Out())))
+          AddAngleParameter(output, "first_angle", first_guard.Get(),
+                            "CATIARevolution.get_FirstAngle.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "first_angle", "angle",
+                                                   "CATIARevolution.get_FirstAngle", "VALUE_READ_FAILED"); }
+        if (SUCCEEDED(revolution_guard.Get()->get_SecondAngle(second_guard.Out())))
+          AddAngleParameter(output, "second_angle", second_guard.Get(),
+                            "CATIARevolution.get_SecondAngle.Value", ok);
+        else { ok = false; AddUnavailableParameter(output, "second_angle", "angle",
+                                                   "CATIARevolution.get_SecondAngle", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIAReference> axis_guard;
+        if (SUCCEEDED(revolution_guard.Get()->get_RevoluteAxis(axis_guard.Out())))
+          AddSingleReferenceField(output, "revolute_axis", axis_guard.Get(),
+                                  "CATIARevolution.get_RevoluteAxis", true, ok);
+        else { ok = false; AddSingleReferenceField(output, "revolute_axis", 0,
+                                                   "CATIARevolution.get_RevoluteAxis", true, ok); }
+        CAT_VARIANT_BOOL value = FALSE;
+        if (SUCCEEDED(revolution_guard.Get()->get_IsThin(value)))
+          AddBoolParameter(output, "is_thin", value != FALSE, "CATIARevolution.get_IsThin");
+        if (SUCCEEDED(revolution_guard.Get()->get_NeutralFiber(value)))
+          AddBoolParameter(output, "neutral_fiber", value != FALSE, "CATIARevolution.get_NeutralFiber");
+        if (SUCCEEDED(revolution_guard.Get()->get_MergeEnd(value)))
+          AddBoolParameter(output, "merge_end", value != FALSE, "CATIARevolution.get_MergeEnd");
+      }
+      else if (family == "rib" || family == "slot")
+      {
+        CaaInterfaceGuard<CATIASweep> sweep_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIASweep,
+            reinterpret_cast<void**>(&sweep_guard.Out()))) || !sweep_guard.Get())
+        {
+          error = "CATIASweep is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIASweep";
+        CaaInterfaceGuard<CATIAReference> center_guard;
+        if (SUCCEEDED(sweep_guard.Get()->get_CenterCurveElement(center_guard.Out())))
+          AddSingleReferenceField(output, "center_curve_element", center_guard.Get(),
+                                  "CATIASweep.get_CenterCurveElement", true, ok);
+        else { ok = false; AddSingleReferenceField(output, "center_curve_element", 0,
+                                                   "CATIASweep.get_CenterCurveElement", true, ok); }
+        CaaInterfaceGuard<CATIAReference> surface_guard;
+        if (SUCCEEDED(sweep_guard.Get()->get_ReferenceSurfaceElement(surface_guard.Out())))
+          AddSingleReferenceField(output, "reference_surface_element", surface_guard.Get(),
+                                  "CATIASweep.get_ReferenceSurfaceElement", false, ok);
+        CaaInterfaceGuard<CATIAReference> pulling_guard;
+        if (SUCCEEDED(sweep_guard.Get()->get_PullingDirElement(pulling_guard.Out())))
+          AddSingleReferenceField(output, "pulling_direction_element", pulling_guard.Get(),
+                                  "CATIASweep.get_PullingDirElement", false, ok);
+        CatMergeMode merge_mode;
+        if (SUCCEEDED(sweep_guard.Get()->get_MergeMode(merge_mode)))
+          AddEnumParameter(output, "merge_mode", static_cast<int>(merge_mode),
+                           "CATIASweep.get_MergeMode");
+        CAT_VARIANT_BOOL value = FALSE;
+        if (SUCCEEDED(sweep_guard.Get()->get_IsThin(value)))
+          AddBoolParameter(output, "is_thin", value != FALSE, "CATIASweep.get_IsThin");
+        if (SUCCEEDED(sweep_guard.Get()->get_NeutralFiber(value)))
+          AddBoolParameter(output, "neutral_fiber", value != FALSE, "CATIASweep.get_NeutralFiber");
+        if (SUCCEEDED(sweep_guard.Get()->get_MergeEnd(value)))
+          AddBoolParameter(output, "merge_end", value != FALSE, "CATIASweep.get_MergeEnd");
+        if (SUCCEEDED(sweep_guard.Get()->get_MoveProfileToPath(value)))
+          AddBoolParameter(output, "move_profile_to_path", value != FALSE,
+                           "CATIASweep.get_MoveProfileToPath");
+        if (SUCCEEDED(sweep_guard.Get()->get_NormalAxisDirReverse(value)))
+          AddBoolParameter(output, "normal_axis_dir_reverse", value != FALSE,
+                           "CATIASweep.get_NormalAxisDirReverse");
+        if (SUCCEEDED(sweep_guard.Get()->get_AnchorDirReverse(value)))
+          AddBoolParameter(output, "anchor_dir_reverse", value != FALSE,
+                           "CATIASweep.get_AnchorDirReverse");
+      }
+      else if (family == "rectangular_pattern" || family == "circular_pattern" ||
+               family == "user_pattern")
+      {
+        CaaInterfaceGuard<CATIAPattern> pattern_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIAPattern,
+            reinterpret_cast<void**>(&pattern_guard.Out()))) || !pattern_guard.Get())
+        {
+          error = "CATIAPattern is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIAPattern";
+        CaaInterfaceGuard<CATIABase> item_guard;
+        if (SUCCEEDED(pattern_guard.Get()->get_ItemToCopy(item_guard.Out())) && item_guard.Get())
+          AddNativeParameterField(output, "item_to_copy", "reference", "available",
+                                  "CATIAPattern.get_ItemToCopy", "OK", "present", "",
+                                  false, 0.0, "");
+        else { ok = false; AddUnavailableParameter(output, "item_to_copy", "reference",
+                                                   "CATIAPattern.get_ItemToCopy", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIAAngle> rotation_guard;
+        if (SUCCEEDED(pattern_guard.Get()->get_RotationAngle(rotation_guard.Out())))
+          AddAngleParameter(output, "rotation_angle", rotation_guard.Get(),
+                            "CATIAPattern.get_RotationAngle.Value", ok);
+
+        if (family == "rectangular_pattern")
+        {
+          CaaInterfaceGuard<CATIARectPattern> rect_guard;
+          if (SUCCEEDED(_spec->QueryInterface(IID_CATIARectPattern,
+              reinterpret_cast<void**>(&rect_guard.Out()))) && rect_guard.Get())
+          {
+            output.interface_key = "CATIARectPattern";
+            CaaInterfaceGuard<CATIAIntParam> first_row_guard;
+            long row = 0;
+            if (SUCCEEDED(rect_guard.Get()->get_FirstDirectionRow(first_row_guard.Out())) &&
+                ReadIntParamValue(first_row_guard.Get(), row))
+              AddLongParameter(output, "first_direction_row_count", row,
+                               "CATIARectPattern.get_FirstDirectionRow.Value");
+            else { ok = false; AddUnavailableParameter(output, "first_direction_row_count", "integer",
+                                                       "CATIARectPattern.get_FirstDirectionRow", "VALUE_READ_FAILED"); }
+            CaaInterfaceGuard<CATIAIntParam> second_row_guard;
+            if (SUCCEEDED(rect_guard.Get()->get_SecondDirectionRow(second_row_guard.Out())) &&
+                ReadIntParamValue(second_row_guard.Get(), row))
+              AddLongParameter(output, "second_direction_row_count", row,
+                               "CATIARectPattern.get_SecondDirectionRow.Value");
+            CAT_VARIANT_BOOL aligned = FALSE;
+            if (SUCCEEDED(rect_guard.Get()->get_FirstOrientation(aligned)))
+              AddBoolParameter(output, "first_orientation_aligned", aligned != FALSE,
+                               "CATIARectPattern.get_FirstOrientation");
+            if (SUCCEEDED(rect_guard.Get()->get_SecondOrientation(aligned)))
+              AddBoolParameter(output, "second_orientation_aligned", aligned != FALSE,
+                               "CATIARectPattern.get_SecondOrientation");
+            CatRectangularPatternParameters params;
+            if (SUCCEEDED(rect_guard.Get()->get_FirstRectangularPatternParameters(params)))
+              AddEnumParameter(output, "first_rectangular_parameters", static_cast<int>(params),
+                               "CATIARectPattern.get_FirstRectangularPatternParameters");
+            if (SUCCEEDED(rect_guard.Get()->get_SecondRectangularPatternParameters(params)))
+              AddEnumParameter(output, "second_rectangular_parameters", static_cast<int>(params),
+                               "CATIARectPattern.get_SecondRectangularPatternParameters");
+          }
+          else ok = false;
+        }
+        else if (family == "circular_pattern")
+        {
+          CaaInterfaceGuard<CATIACircPattern> circ_guard;
+          if (SUCCEEDED(_spec->QueryInterface(IID_CATIACircPattern,
+              reinterpret_cast<void**>(&circ_guard.Out()))) && circ_guard.Get())
+          {
+            output.interface_key = "CATIACircPattern";
+            CaaInterfaceGuard<CATIAIntParam> radial_row_guard;
+            long row = 0;
+            if (SUCCEEDED(circ_guard.Get()->get_RadialDirectionRow(radial_row_guard.Out())) &&
+                ReadIntParamValue(radial_row_guard.Get(), row))
+              AddLongParameter(output, "radial_direction_row_count", row,
+                               "CATIACircPattern.get_RadialDirectionRow.Value");
+            CaaInterfaceGuard<CATIAIntParam> angular_row_guard;
+            if (SUCCEEDED(circ_guard.Get()->get_AngularDirectionRow(angular_row_guard.Out())) &&
+                ReadIntParamValue(angular_row_guard.Get(), row))
+              AddLongParameter(output, "angular_direction_row_count", row,
+                               "CATIACircPattern.get_AngularDirectionRow.Value");
+            CAT_VARIANT_BOOL aligned = FALSE;
+            if (SUCCEEDED(circ_guard.Get()->get_RadialAlignment(aligned)))
+              AddBoolParameter(output, "radial_alignment", aligned != FALSE,
+                               "CATIACircPattern.get_RadialAlignment");
+            if (SUCCEEDED(circ_guard.Get()->get_RotationOrientation(aligned)))
+              AddBoolParameter(output, "rotation_orientation", aligned != FALSE,
+                               "CATIACircPattern.get_RotationOrientation");
+            CatCircularPatternParameters params;
+            if (SUCCEEDED(circ_guard.Get()->get_CircularPatternParameters(params)))
+              AddEnumParameter(output, "circular_pattern_parameters", static_cast<int>(params),
+                               "CATIACircPattern.get_CircularPatternParameters");
+          }
+          else ok = false;
+        }
+        else
+        {
+          CaaInterfaceGuard<CATIAUserPattern> user_guard;
+          if (SUCCEEDED(_spec->QueryInterface(IID_CATIAUserPattern,
+              reinterpret_cast<void**>(&user_guard.Out()))) && user_guard.Get())
+          {
+            output.interface_key = "CATIAUserPattern";
+            CaaInterfaceGuard<CATIABase> positions_guard;
+            CaaInterfaceGuard<CATIABase> anchor_guard;
+            if (SUCCEEDED(user_guard.Get()->get_FeatureToLocatePositions(positions_guard.Out())) &&
+                positions_guard.Get())
+              AddNativeParameterField(output, "feature_to_locate_positions", "reference",
+                                      "available", "CATIAUserPattern.get_FeatureToLocatePositions",
+                                      "OK", "present", "", false, 0.0, "");
+            else { ok = false; AddUnavailableParameter(output, "feature_to_locate_positions",
+                                                       "reference", "CATIAUserPattern.get_FeatureToLocatePositions",
+                                                       "VALUE_READ_FAILED"); }
+            if (SUCCEEDED(user_guard.Get()->get_AnchorPoint(anchor_guard.Out())) && anchor_guard.Get())
+              AddNativeParameterField(output, "anchor_point", "reference", "available",
+                                      "CATIAUserPattern.get_AnchorPoint", "OK", "present",
+                                      "", false, 0.0, "");
+          }
+          else ok = false;
+        }
+      }
+      else if (family == "add" || family == "remove" || family == "assemble" ||
+               family == "intersect")
+      {
+        CaaInterfaceGuard<CATIABooleanShape> boolean_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIABooleanShape,
+            reinterpret_cast<void**>(&boolean_guard.Out()))) || !boolean_guard.Get())
+        {
+          error = "CATIABooleanShape is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIABooleanShape";
+        AddNativeParameterField(output, "boolean_operation", "enum_text", "available",
+                                "CATISpecObject.GetType", "OK", family, "", false, 0.0, "");
+        CaaInterfaceGuard<CATIABody> body_guard;
+        if (SUCCEEDED(boolean_guard.Get()->get_Body(body_guard.Out())) && body_guard.Get())
+          AddNativeParameterField(output, "operand_body", "reference", "available",
+                                  "CATIABooleanShape.get_Body", "OK", "present", "",
+                                  false, 0.0, "");
+        else { ok = false; AddUnavailableParameter(output, "operand_body", "reference",
+                                                   "CATIABooleanShape.get_Body", "VALUE_READ_FAILED"); }
+      }
+    }
+    catch (...)
+    {
+      error = output.interface_key.empty() ? "Native feature parameter QueryInterface raised an exception" :
+        output.interface_key + " value read raised an exception";
+      output.reason_code = "CAA_EXCEPTION";
+      return interface_supported ? NativeFeatureParameterReadPartial :
+        NativeFeatureParameterInterfaceQueryException;
+    }
+
+    if (!interface_supported)
+    {
+      error = "No supported R21 Public native feature parameter interface matched";
+      return NativeFeatureParameterInterfaceUnsupported;
+    }
+    output.decode_status = ok ? "complete" : "partial";
+    output.reason_code = ok ? "OK" : "PARTIAL_PUBLIC_API_PAYLOAD";
+    output.evidence["api_source"] = output.interface_key;
+    output.evidence["decoder_version"] = "1.0.0";
+    output.evidence["reason_code"] = output.reason_code;
+    return ok ? NativeFeatureParameterReadSuccess : NativeFeatureParameterReadPartial;
+  }
+
 private:
   // R21 的受控接口探测器，只接受代码中显式列出的已验证接口键。
   class R21InterfaceProbeService : public InterfaceProbeService
@@ -2711,10 +3311,11 @@ void RegisterCoreDecoders(FeatureTypeRegistry& registry,
                           std::vector<IFeatureDecoder*>& owned_decoders)
 {
   owned_decoders.push_back(new KnowledgewareStringParameterDecoder());
-  owned_decoders.push_back(new NativeHoleDecoder());
-  owned_decoders.push_back(new NativePadDecoder());
-  owned_decoders.push_back(new NativePocketDecoder());
-  owned_decoders.push_back(new StartupTypeCanonicalDecoder());
+    owned_decoders.push_back(new NativeHoleDecoder());
+    owned_decoders.push_back(new NativePadDecoder());
+    owned_decoders.push_back(new NativePocketDecoder());
+    owned_decoders.push_back(new NativeFeatureParameterDecoder());
+    owned_decoders.push_back(new StartupTypeCanonicalDecoder());
   owned_decoders.push_back(new DocumentDecoder());
   owned_decoders.push_back(new PartDecoder());
   owned_decoders.push_back(new ContainerDecoder());

@@ -77,6 +77,13 @@ const void* INativePrismView::TypeToken()
   return &token;
 }
 
+// 用途：返回唯一静态地址作为高级原生 Feature 参数能力类型令牌，不依赖 RTTI。
+const void* INativeFeatureParameterView::TypeToken()
+{
+  static const char token = 0;
+  return &token;
+}
+
 // 用途：接管新载荷并释放旧载荷；相同指针不会重复释放。
 void FeatureRecord::SetTypedPayload(ITypedPayload* payload)
 {
@@ -656,6 +663,7 @@ DecodeResult NativePocketDecoder::Decode(const INativeObjectView& view, ParseCon
 static const char* CanonicalFromStartupType(const std::string& startup_type)
 {
   if (startup_type == "EdgeFillet") return "fillet";
+  if (startup_type == "Draft") return "draft";
   if (startup_type == "Chamfer") return "chamfer";
   if (startup_type == "Shaft") return "shaft";
   if (startup_type == "Groove") return "groove";
@@ -678,6 +686,142 @@ static const char* CanonicalFromStartupType(const std::string& startup_type)
   if (startup_type == "GSMRevol") return "gsd_revolve";
   if (startup_type == "GSMOffset") return "gsd_offset";
   return "";
+}
+
+static bool IsAdvancedNativeParameterFamily(const std::string& family)
+{
+  return family == "fillet" || family == "chamfer" || family == "shaft" ||
+         family == "groove" || family == "rib" || family == "slot" ||
+         family == "shell" || family == "thickness" || family == "draft" ||
+         family == "rectangular_pattern" || family == "circular_pattern" ||
+         family == "user_pattern" || family == "add" || family == "remove" ||
+         family == "assemble" || family == "intersect";
+}
+
+const char* NativeFeatureParameterDecoder::GetDecoderId() const
+{
+  return "NativeFeatureParameterDecoder";
+}
+
+int NativeFeatureParameterDecoder::GetPriority() const { return 860; }
+
+const char* NativeFeatureParameterDecoder::GetFeatureFamily() const
+{
+  return "part_design_advanced";
+}
+
+DecoderMatchStatus NativeFeatureParameterDecoder::GetMatchStatus(
+  const TypeFingerprint& fingerprint,
+  const INativeObjectView&) const
+{
+  const char* canonical = CanonicalFromStartupType(fingerprint.startup_type);
+  if (!canonical[0]) return DecoderNotCandidate;
+  return IsAdvancedNativeParameterFamily(canonical) ? DecoderCandidate : DecoderNotCandidate;
+}
+
+bool NativeFeatureParameterDecoder::Match(const TypeFingerprint& fingerprint,
+                                          const INativeObjectView& view) const
+{
+  return GetMatchStatus(fingerprint, view) == DecoderCandidate;
+}
+
+DecodeResult NativeFeatureParameterDecoder::Decode(const INativeObjectView& view,
+                                                   ParseContext& context,
+                                                   FeatureRecord& output)
+{
+  std::string basic_error;
+  bool basic_read = false;
+  try { basic_read = view.ReadBasicAttributes(output, basic_error); }
+  catch (...) { basic_error = "basic state view raised an exception"; }
+  if (!basic_read)
+  {
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_feature_parameters", "NATIVE_FEATURE_PARAMETER_BASIC_STATE_READ_FAILED",
+      basic_error.c_str(), output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+  }
+
+  const char* canonical = CanonicalFromStartupType(output.fingerprint.startup_type);
+  if (!canonical[0] || !IsAdvancedNativeParameterFamily(canonical))
+    return DecodeResult(false, "failed", "NATIVE_FEATURE_PARAMETER_NOT_CANDIDATE",
+                        DecoderOutcomeUnsupported);
+
+  const INativeCapabilityView* capability = 0;
+  try { capability = view.FindCapability("NativeFeatureParameters"); }
+  catch (...)
+  {
+    context.statistics.RecordProbe("NativeFeatureParameters", output.fingerprint.native_type,
+                                   GetDecoderId(), "exception");
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_feature_parameters", "NATIVE_FEATURE_PARAMETER_INTERFACE_QUERY_EXCEPTION",
+      "FindCapability(NativeFeatureParameters) raised an exception", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_FEATURE_PARAMETER_INTERFACE_QUERY_EXCEPTION",
+                        DecoderOutcomeException);
+  }
+  if (!capability || std::string(capability->GetCapabilityId()) != "NativeFeatureParameters")
+  {
+    context.statistics.RecordProbe("NativeFeatureParameters", output.fingerprint.native_type,
+                                   GetDecoderId(), "unsupported");
+    return DecodeResult(false, "failed", "NATIVE_FEATURE_PARAMETER_INTERFACE_UNSUPPORTED",
+                        DecoderOutcomeUnsupported);
+  }
+  if (capability->GetCapabilityTypeToken() != INativeFeatureParameterView::TypeToken())
+  {
+    context.statistics.RecordProbe("NativeFeatureParameters", output.fingerprint.native_type,
+                                   GetDecoderId(), "exception");
+    const std::string diagnostic_id = context.AddDiagnostic(
+      "warning", "native_feature_parameters", "NATIVE_FEATURE_PARAMETER_CAPABILITY_TYPE_MISMATCH",
+      "NativeFeatureParameters capability type token mismatch", output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", "NATIVE_FEATURE_PARAMETER_CAPABILITY_TYPE_MISMATCH",
+                        DecoderOutcomeException);
+  }
+
+  const INativeFeatureParameterView* parameter_view =
+    static_cast<const INativeFeatureParameterView*>(capability);
+  NativeFeatureParameterData data;
+  std::string error;
+  NativeFeatureParameterReadStatus status = NativeFeatureParameterInterfaceQueryException;
+  try { status = parameter_view->ReadNativeFeatureParameters(canonical, data, error); }
+  catch (...) { error = "Native feature parameter view read raised an exception"; }
+  if (status != NativeFeatureParameterReadSuccess &&
+      status != NativeFeatureParameterReadPartial)
+  {
+    const char* code = status == NativeFeatureParameterInterfaceUnsupported ?
+      "NATIVE_FEATURE_PARAMETER_INTERFACE_UNSUPPORTED" :
+      "NATIVE_FEATURE_PARAMETER_INTERFACE_QUERY_EXCEPTION";
+    context.statistics.RecordProbe(data.interface_key.empty() ? "NativeFeatureParameters" : data.interface_key,
+                                   output.fingerprint.native_type, GetDecoderId(),
+                                   status == NativeFeatureParameterInterfaceUnsupported ?
+                                   "unsupported" : "exception");
+    const std::string diagnostic_id = context.AddDiagnostic(
+      status == NativeFeatureParameterInterfaceUnsupported ? "info" : "warning",
+      "native_feature_parameters", code, error.empty() ? code : error.c_str(),
+      output.feature_id);
+    output.diagnostic_ids.push_back(diagnostic_id);
+    return DecodeResult(false, "failed", code,
+                        status == NativeFeatureParameterInterfaceUnsupported ?
+                        DecoderOutcomeUnsupported : DecoderOutcomeException);
+  }
+
+  context.statistics.RecordProbe(data.interface_key.empty() ? "NativeFeatureParameters" : data.interface_key,
+                                 output.fingerprint.native_type, GetDecoderId(),
+                                 status == NativeFeatureParameterReadSuccess ? "supported" : "partial");
+  output.attributes["canonical_native_type"] = canonical;
+  output.attributes["type_resolution_status"] = "resolved";
+  output.attributes["payload_extraction_status"] =
+    status == NativeFeatureParameterReadSuccess ? "complete" : "partial";
+  output.attributes["decoder_status"] =
+    status == NativeFeatureParameterReadSuccess ? "decoded" : "partial";
+  output.SetTypedPayload(new NativeFeatureParameterPayload(data));
+  output.decoder_id = GetDecoderId();
+  output.decoder_version = "1.0.0";
+  output.decode_level = status == NativeFeatureParameterReadSuccess ? "typed" : "partial";
+  output.decode_status = status == NativeFeatureParameterReadSuccess ? "success" : "partial";
+  return DecodeResult(true, output.decode_level.c_str(), error.c_str(),
+                      status == NativeFeatureParameterReadSuccess ?
+                      DecoderOutcomeSuccess : DecoderOutcomePartial);
 }
 
 const char* StartupTypeCanonicalDecoder::GetDecoderId() const
