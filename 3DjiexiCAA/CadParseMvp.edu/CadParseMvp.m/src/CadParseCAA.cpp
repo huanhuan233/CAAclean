@@ -1133,7 +1133,7 @@ static void AppendFtaSemanticRecord(CATITPSComponent* component,
     return;
   }
 
-  CATITPS* tps = 0;
+  CATITPS * tps = 0;
   if (SUCCEEDED(component->QueryInterface(IID_CATITPS, reinterpret_cast<void**>(&tps))) && tps)
   {
     TpsInterfaceGuard<CATITPS> tps_guard(tps);
