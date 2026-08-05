@@ -96,3 +96,18 @@
 | `CATIGeometricalElement::GetBodyResult()` | `MecModInterfaces/PublicInterfaces/CATIGeometricalElement.h` | `MecModInterfaces` | Public L1/U3 | 取得 ResultOUT 对应 `CATBody` | `kuang.CATPart` 实测成功 |
 
 该出口只证明设计特征中间结果体可读取；尚未把 ResultOUT 的 cell 与最终主实体 cell 做稳定匹配，因此 `native_feature_topology_mapping` 仍为 `not_available`。
+
+# 2026-08-05：CAA v9 Result cell、候选映射和 TPS 语义观测
+
+| 接口/类 | 头文件 | Framework | Public/Protected | 项目使用位置 | 当前验证状态 |
+| --- | --- | --- | --- | --- | --- |
+| `CATCell::EstimateCenter()` | `GMModelInterfaces/PublicInterfaces/CATCell.h` | `GMModelInterfaces` | Public L1/U3 | `CadParseCAA.cpp::FillNativeFeatureResultCellGeometry` / `AppendTopologyCell` | R21 mkmk 通过；Hole/kuang 样件运行成功 |
+| `CATFace::CalcArea()` | `GMModelInterfaces/PublicInterfaces/CATFace.h` | `GMModelInterfaces` | Public L1/U3 | 输出最终 Face 和 ResultOUT Face 的 `area_mm2` | R21 mkmk 通过 |
+| `CATEdge::CalcLength()` | `GMModelInterfaces/PublicInterfaces/CATEdge.h` | `GMModelInterfaces` | Public L1/U3 | 输出最终 Edge 和 ResultOUT Edge 的 `length_mm` | R21 mkmk 通过 |
+| `CATBoundaryIterator` | `GMModelInterfaces/PublicInterfaces/CATBoundaryIterator.h` | `GMModelInterfaces` | Public L1/U3 | 输出最终 Face Loop/Wire 与 ResultOUT cell 边界 | R21 mkmk 通过 |
+| `CATCell::CellNeighbours()` | `GMModelInterfaces/PublicInterfaces/CATCell.h` | `GMModelInterfaces` | Public L1/U3 | 输出最终 cell 邻接关系 | R21 mkmk 通过 |
+| `CATICGMBodyTessellator` / `CATCGMTess*Iter` | `GMModelInterfaces/PublicInterfaces/CATICGMBodyTessellator.h` 等 | `GMModelInterfaces` | Public L1/U3 | 输出 `native_mesh_face_map.jsonl` 的 Face→Triangle range 前置数据 | R21 mkmk 通过；Hole/kuang 样件运行成功 |
+| `CATITPSSemanticValidity` | `CATTPSInterfaces/PublicInterfaces/CATITPSSemanticValidity.h` | `CATTPSInterfaces` | Public L1/U3 | `CadParseCAA.cpp::AppendFtaSemanticRecord` | R21 mkmk 通过；当前验证样件无 TPS Set，因此未产生记录 |
+| `CATITPSTextContent` | `CATTPSInterfaces/PublicInterfaces/CATITPSTextContent.h` | `CATTPSInterfaces` | Public L0/U3 | 尝试读取 TPS 文本校验串 | R21 mkmk 通过；当前验证样件无 TPS Set，因此未产生记录 |
+
+本轮新增 `native_feature_result_cells.jsonl`、`native_feature_topology_links.jsonl` 和 `fta_semantics.jsonl`。其中 `native_feature_topology_links.jsonl` 只表示几何指纹候选映射，不能等同于 CATIA Generic Naming 权威 Feature–Face 映射完成；`fta_semantics.jsonl` 只表示 TPS 组件级公开接口观测，不等同于 FTA–Topology 映射完成。

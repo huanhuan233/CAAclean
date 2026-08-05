@@ -12,10 +12,14 @@
 #include "CATISpecObject.h"
 #include "CATIShapeFeatureBody.h"
 #include "CATITPSComponent.h"
+#include "CATITPS.h"
 #include "CATITPSDocument.h"
 #include "CATITPSGeometryList.h"
 #include "CATITPSList.h"
+#include "CATITPSSemanticValidity.h"
 #include "CATITPSSet.h"
+#include "CATITPSText.h"
+#include "CATITPSTextContent.h"
 #include "CATIGeometricalElement.h"
 #include "CATLISTV_CATISpecObject.h"
 #include "CATICkeInst.h"
@@ -34,6 +38,19 @@
 #include "CATIAStrParam.h"
 #include "CATBody.h"
 #include "CATCell.h"
+#include "CATBoundaryIterator.h"
+#include "CATBoundedCellsIterator.h"
+#include "CATFace.h"
+#include "CATEdge.h"
+#include "CATVertex.h"
+#include "CATDomain.h"
+#include "CATICGMBodyTessellator.h"
+#include "CATCGMTessPointIter.h"
+#include "CATCGMTessStripeIter.h"
+#include "CATCGMTessFanIter.h"
+#include "CATCGMTessPolyIter.h"
+#include "CATCGMTessTrianIter.h"
+#include "CATMathPoint.h"
 #include "CATHoleDefs.h"
 #include "CATLimitDefs.h"
 #include "ListPOfCATCell.h"
@@ -41,7 +58,10 @@
 #include "CATSafeArray.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <map>
+#include <set>
 #include <sstream>
 #include <sys/stat.h>
 #include <vector>
@@ -161,12 +181,9 @@ static const char* TopologyCellKind(short dimension)
   return "unknown";
 }
 
-// 用途：将 R21 Public CATTopology 枚举出来的单元写成纯数据记录。
-// cell 指针只在当前函数内读取维度和 domain 数，不写入 IR，也不作为 ID 决胜依据。
-static void AppendTopologyCell(ParseContext& context, const std::string& body_id,
-                               const char* prefix, long index, CATCell* cell)
+// 用途：按统一规则生成拓扑单元编号；编号只依赖 body_id、维度前缀和原生枚举顺序。
+static std::string MakeTopologyCellId(const std::string& body_id, const char* prefix, long index)
 {
-  NativeTopologyCellRecord record;
   std::ostringstream id;
   id << body_id << "_" << prefix;
   if (index < 10) id << "00000";
@@ -175,7 +192,188 @@ static void AppendTopologyCell(ParseContext& context, const std::string& body_id
   else if (index < 10000) id << "00";
   else if (index < 100000) id << "0";
   id << index;
-  record.cell_id = id.str();
+  return id.str();
+}
+
+// 用途：在当前运行内把 CATCell 指针转换成已经分配好的稳定 IR 编号。
+// 指针只用于内存索引，绝不写入 JSON。
+static std::string LookupCellId(CATCell* cell, const std::map<CATCell*, std::string>& ids)
+{
+  if (!cell) return "";
+  std::map<CATCell*, std::string>::const_iterator it = ids.find(cell);
+  return it == ids.end() ? "" : it->second;
+}
+
+// 用途：删除 CGM 边界迭代器并把指针清空，匹配 CATBoundaryIterator 头文件契约。
+class BoundaryIteratorGuard
+{
+public:
+  explicit BoundaryIteratorGuard(CATBoundaryIterator* iterator) : _iterator(iterator) {}
+  ~BoundaryIteratorGuard() { if (_iterator) CATRemove(_iterator); }
+  CATBoundaryIterator* Get() const { return _iterator; }
+
+private:
+  BoundaryIteratorGuard(const BoundaryIteratorGuard&);
+  BoundaryIteratorGuard& operator=(const BoundaryIteratorGuard&);
+  CATBoundaryIterator* _iterator;
+};
+
+// 用途：释放 CGM Tessellator；它继承 IUnknown，构造函数注释要求调用 Release。
+class CgmTessellatorGuard
+{
+public:
+  explicit CgmTessellatorGuard(CATICGMBodyTessellator* tessellator)
+    : _tessellator(tessellator) {}
+  ~CgmTessellatorGuard() { if (_tessellator) _tessellator->Release(); }
+  CATICGMBodyTessellator* Get() const { return _tessellator; }
+
+private:
+  CgmTessellatorGuard(const CgmTessellatorGuard&);
+  CgmTessellatorGuard& operator=(const CgmTessellatorGuard&);
+  CATICGMBodyTessellator* _tessellator;
+};
+
+// 用途：把一个拓扑单元的直接边界单元编号收集到记录中。
+static void FillBoundaryCellIds(CATCell* cell, const std::map<CATCell*, std::string>& ids,
+                                NativeTopologyCellRecord& record)
+{
+  if (!cell) return;
+  CATBoundaryIterator* raw_iterator = 0;
+  try { raw_iterator = cell->CreateBoundaryIterator(); }
+  catch (...) { raw_iterator = 0; }
+  BoundaryIteratorGuard iterator_guard(raw_iterator);
+  CATBoundaryIterator* iterator = iterator_guard.Get();
+  if (!iterator) return;
+  try
+  {
+    CATSide side = CATSideUnknown;
+    CATDomain* domain = 0;
+    short new_domain = 0;
+    CATCell* boundary = 0;
+    while ((boundary = iterator->Next(&side, &domain, &new_domain)) != 0)
+    {
+      const std::string id = LookupCellId(boundary, ids);
+      if (!id.empty() &&
+          std::find(record.boundary_cell_ids.begin(),
+                    record.boundary_cell_ids.end(), id) == record.boundary_cell_ids.end())
+        record.boundary_cell_ids.push_back(id);
+    }
+  }
+  catch (...)
+  {
+    record.geometry_status = "boundary_partial";
+  }
+}
+
+// 用途：把当前 Body 内与 cell 相邻的单元编号收集到记录中；异常只影响该字段。
+static void FillAdjacentCellIds(CATBody* body, CATCell* cell,
+                                const std::map<CATCell*, std::string>& ids,
+                                NativeTopologyCellRecord& record)
+{
+  if (!body || !cell) return;
+  try
+  {
+    ListPOfCATCell neighbours;
+    if (SUCCEEDED(cell->CellNeighbours(body, neighbours)))
+    {
+      int index = 1;
+      for (index = 1; index <= neighbours.Size(); ++index)
+      {
+        const std::string id = LookupCellId(neighbours[index], ids);
+        if (!id.empty() &&
+            std::find(record.adjacent_cell_ids.begin(),
+                      record.adjacent_cell_ids.end(), id) == record.adjacent_cell_ids.end())
+          record.adjacent_cell_ids.push_back(id);
+      }
+    }
+  }
+  catch (...) {}
+}
+
+// 用途：把 strip/fan/polygon 这类多点图元转换成等价三角数量。
+static long EstimateTrianglesFromPointGroups(CATLONG32 group_count, CATLONG32 point_count)
+{
+  if (group_count <= 0 || point_count <= 0) return 0;
+  return point_count > 2 * group_count ?
+    static_cast<long>(point_count - 2 * group_count) : 0;
+}
+
+// 用途：读取单个 Face 的 CGM 三角化统计，并生成 Face→Triangle Range 映射记录。
+static void AppendMeshFaceMap(ParseContext& context, CATICGMBodyTessellator* tessellator,
+                              CATFace* face, const std::string& body_id,
+                              const std::string& face_id, long primitive_index,
+                              long& next_triangle)
+{
+  NativeMeshFaceMapRecord record;
+  record.mesh_map_id = MakeTopologyCellId(body_id, "M", primitive_index);
+  record.body_id = body_id;
+  record.face_cell_id = face_id;
+  record.primitive_index = primitive_index;
+  record.triangle_start = next_triangle;
+  record.value_source = "typed_caa_public_body_tessellator";
+  if (!tessellator || !face)
+  {
+    record.tessellation_status = "unavailable";
+    context.mesh_face_maps.push_back(record);
+    return;
+  }
+
+  try
+  {
+    CATBoolean planar = FALSE;
+    CATCGMTessPointIter* points = 0;
+    CATCGMTessStripeIter* strips = 0;
+    CATCGMTessFanIter* fans = 0;
+    CATCGMTessPolyIter* polygons = 0;
+    CATCGMTessTrianIter* triangles = 0;
+    short side = 0;
+    tessellator->GetFace(face, planar, &points, &strips, &fans, &polygons, &triangles, &side);
+    record.planar = planar ? true : false;
+    record.face_orientation_side = side;
+    if (points) record.point_count = static_cast<long>(points->GetNbPoint());
+    if (triangles) record.isolated_triangle_count = static_cast<long>(triangles->GetNbTrian());
+    CATLONG32 strip_points = 0;
+    if (strips)
+    {
+      record.strip_count = static_cast<long>(strips->GetNbStri(strip_points));
+      record.estimated_triangle_count += EstimateTrianglesFromPointGroups(record.strip_count, strip_points);
+    }
+    CATLONG32 fan_points = 0;
+    if (fans)
+    {
+      record.fan_count = static_cast<long>(fans->GetNbFan(fan_points));
+      record.estimated_triangle_count += EstimateTrianglesFromPointGroups(record.fan_count, fan_points);
+    }
+    CATLONG32 polygon_points = 0;
+    if (polygons)
+    {
+      record.polygon_count = static_cast<long>(polygons->GetNbPoly(polygon_points));
+      record.estimated_triangle_count += EstimateTrianglesFromPointGroups(record.polygon_count, polygon_points);
+    }
+    record.estimated_triangle_count += record.isolated_triangle_count;
+    record.triangle_count = record.estimated_triangle_count;
+    next_triangle += record.triangle_count;
+    record.tessellation_status = "success";
+  }
+  catch (...)
+  {
+    record.tessellation_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "mesh_face_mapping", "FACE_TESSELLATION_FAILED",
+                            "CATICGMBodyTessellator::GetFace failed for a face", ""));
+  }
+  context.mesh_face_maps.push_back(record);
+}
+
+// 用途：将 R21 Public CATTopology 枚举出来的单元写成纯数据记录。
+// cell 指针只在当前函数内读取维度和 domain 数，不写入 IR，也不作为 ID 决胜依据。
+static void AppendTopologyCell(ParseContext& context, const std::string& body_id,
+                               const char* prefix, long index, CATCell* cell,
+                               CATBody* body,
+                               const std::map<CATCell*, std::string>& cell_ids)
+{
+  NativeTopologyCellRecord record;
+  record.cell_id = MakeTopologyCellId(body_id, prefix, index);
   record.body_id = body_id;
   record.topology_index = index;
   record.stable_id_method = "cat_topology_dimension_order_revision_local";
@@ -215,15 +413,346 @@ static void AppendTopologyCell(ParseContext& context, const std::string& body_id
       context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_INTERNAL_DOMAIN_COUNT_FAILED",
                             "CATCell::GetNbInternalDomains raised an exception", ""));
   }
+  try
+  {
+    CATMathPoint center;
+    cell->EstimateCenter(center);
+    center.GetCoord(record.center_mm);
+    record.has_center = true;
+  }
+  catch (...)
+  {
+    record.geometry_status = "center_unavailable";
+  }
+  try
+  {
+    if (record.dimension == 2)
+    {
+      CATFace* face = static_cast<CATFace*>(cell);
+      record.area_mm2 = face->CalcArea();
+      record.area_mm2_available = true;
+      record.measure_status = "success";
+    }
+    else if (record.dimension == 1)
+    {
+      CATEdge* edge = static_cast<CATEdge*>(cell);
+      record.length_mm = edge->CalcLength();
+      record.length_mm_available = true;
+      record.measure_status = "success";
+    }
+    else
+      record.measure_status = "not_applicable";
+  }
+  catch (...)
+  {
+    record.measure_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_MEASURE_FAILED",
+                            "CATFace::CalcArea or CATEdge::CalcLength failed", ""));
+  }
+  if (record.geometry_status.empty()) record.geometry_status = record.has_center ? "success" : "partial";
+  FillBoundaryCellIds(cell, cell_ids, record);
+  FillAdjacentCellIds(body, cell, cell_ids, record);
   context.topology_cells.push_back(record);
 }
 
-// 用途：按 CATTopology::GetAllCells 的原生顺序枚举指定维度拓扑单元。
-// 该顺序只承诺同一文件、同一 R21/解析器版本内稳定，不承诺跨版本稳定。
-static void AppendTopologyCellsByDimension(ParseContext& context, CATBody* body,
-                                           const std::string& body_id,
-                                           short dimension,
-                                           const char* prefix)
+// 用途：读取 ResultOUT cell 的中心、面积或长度；该函数只写 Result cell 明细，不写最终 Face 映射。
+static void FillNativeFeatureResultCellGeometry(CATCell* cell,
+                                                NativeFeatureResultCellRecord& record,
+                                                ParseContext& context)
+{
+  if (!cell)
+  {
+    record.read_status = "unavailable";
+    return;
+  }
+  try
+  {
+    const short dimension = cell->GetDimension();
+    record.dimension = static_cast<long>(dimension);
+    record.cell_kind = TopologyCellKind(dimension);
+  }
+  catch (...)
+  {
+    record.dimension = -1;
+    record.cell_kind = "unknown";
+    record.read_status = "partial";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_CELL_DIMENSION_FAILED",
+                            "CATCell::GetDimension failed for ResultOUT cell", record.source_feature_id));
+  }
+  try
+  {
+    CATMathPoint center;
+    cell->EstimateCenter(center);
+    center.GetCoord(record.center_mm);
+    record.has_center = true;
+  }
+  catch (...)
+  {
+    record.read_status = "partial";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_CELL_CENTER_FAILED",
+                            "CATCell::EstimateCenter failed for ResultOUT cell", record.source_feature_id));
+  }
+  try
+  {
+    if (record.dimension == 2)
+    {
+      CATFace* face = static_cast<CATFace*>(cell);
+      record.area_mm2 = face->CalcArea();
+      record.area_mm2_available = true;
+    }
+    else if (record.dimension == 1)
+    {
+      CATEdge* edge = static_cast<CATEdge*>(cell);
+      record.length_mm = edge->CalcLength();
+      record.length_mm_available = true;
+    }
+  }
+  catch (...)
+  {
+    record.read_status = "partial";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_CELL_MEASURE_FAILED",
+                            "CATFace::CalcArea or CATEdge::CalcLength failed for ResultOUT cell",
+                            record.source_feature_id));
+  }
+  if (record.read_status.empty()) record.read_status = "success";
+}
+
+// 用途：将 ResultOUT body 中的 cell 指针转为 Result cell 稳定编号，指针只用于本轮内存索引。
+static void BuildResultCellIdMap(const std::string& result_id,
+                                 const std::vector<CATCell*>& faces,
+                                 const std::vector<CATCell*>& edges,
+                                 const std::vector<CATCell*>& vertices,
+                                 const std::vector<CATCell*>& volumes,
+                                 std::map<CATCell*, std::string>& ids)
+{
+  long index = 1;
+  std::vector<CATCell*>::const_iterator it = faces.begin();
+  for (; it != faces.end(); ++it, ++index)
+    ids[*it] = MakeTopologyCellId(result_id, "RF", index);
+  index = 1;
+  it = edges.begin();
+  for (; it != edges.end(); ++it, ++index)
+    ids[*it] = MakeTopologyCellId(result_id, "RE", index);
+  index = 1;
+  it = vertices.begin();
+  for (; it != vertices.end(); ++it, ++index)
+    ids[*it] = MakeTopologyCellId(result_id, "RV", index);
+  index = 1;
+  it = volumes.begin();
+  for (; it != volumes.end(); ++it, ++index)
+    ids[*it] = MakeTopologyCellId(result_id, "RS", index);
+}
+
+// 用途：输出一条 ResultOUT cell 明细，并记录该 cell 在 ResultOUT 内的直接边界关系。
+static void AppendNativeFeatureResultCell(ParseContext& context,
+                                          const NativeFeatureResultRecord& result_record,
+                                          const char* prefix,
+                                          long index,
+                                          CATCell* cell,
+                                          const std::map<CATCell*, std::string>& result_cell_ids)
+{
+  NativeFeatureResultCellRecord record;
+  record.result_cell_id = MakeTopologyCellId(result_record.result_id, prefix, index);
+  record.result_id = result_record.result_id;
+  record.source_feature_id = result_record.source_feature_id;
+  record.source_kind = result_record.source_kind;
+  record.result_cell_index = index;
+  record.stable_id_method = "cat_feature_result_dimension_order_revision_local";
+  record.value_source = "typed_caa_public_shape_feature_body_resultout";
+  FillNativeFeatureResultCellGeometry(cell, record, context);
+  if (cell)
+  {
+    CATBoundaryIterator* raw_iterator = 0;
+    try { raw_iterator = cell->CreateBoundaryIterator(); }
+    catch (...) { raw_iterator = 0; }
+    BoundaryIteratorGuard iterator_guard(raw_iterator);
+    CATBoundaryIterator* iterator = iterator_guard.Get();
+    if (iterator)
+    {
+      try
+      {
+        CATSide side = CATSideUnknown;
+        CATDomain* domain = 0;
+        short new_domain = 0;
+        CATCell* boundary = 0;
+        while ((boundary = iterator->Next(&side, &domain, &new_domain)) != 0)
+        {
+          const std::string boundary_id = LookupCellId(boundary, result_cell_ids);
+          if (!boundary_id.empty() &&
+              std::find(record.boundary_result_cell_ids.begin(),
+                        record.boundary_result_cell_ids.end(), boundary_id) ==
+              record.boundary_result_cell_ids.end())
+            record.boundary_result_cell_ids.push_back(boundary_id);
+        }
+      }
+      catch (...)
+      {
+        record.read_status = "partial";
+        record.diagnostic_ids.push_back(
+          context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_CELL_BOUNDARY_FAILED",
+                                "CATBoundaryIterator failed for ResultOUT cell",
+                                record.source_feature_id));
+      }
+    }
+  }
+  if (record.read_status.empty()) record.read_status = "success";
+  context.native_feature_result_cells.push_back(record);
+}
+
+// 用途：计算两个三维点之间的距离；调用方保证两个记录都已经有中心点。
+static double Distance3(const double a[3], const double b[3])
+{
+  const double dx = a[0] - b[0];
+  const double dy = a[1] - b[1];
+  const double dz = a[2] - b[2];
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// 用途：给 ResultOUT Face 查找最终主实体 Face 的几何指纹候选；这是候选映射，不冒充 Generic Naming 权威结果。
+static void AppendNativeFeatureTopologyLink(ParseContext& context,
+                                            const NativeFeatureResultCellRecord& result_cell)
+{
+  if (result_cell.dimension != 2)
+    return;
+
+  NativeFeatureTopologyLinkRecord link;
+  std::ostringstream id;
+  id << "NFTL";
+  const long index = static_cast<long>(context.native_feature_topology_links.size() + 1);
+  if (index < 10) id << "00000";
+  else if (index < 100) id << "0000";
+  else if (index < 1000) id << "000";
+  else if (index < 10000) id << "00";
+  else if (index < 100000) id << "0";
+  id << index;
+  link.link_id = id.str();
+  link.source_feature_id = result_cell.source_feature_id;
+  link.result_id = result_cell.result_id;
+  link.result_cell_id = result_cell.result_cell_id;
+  link.mapping_direction = "result_cell_to_final_face";
+  link.mapping_method = "caa_resultout_to_final_face_geometry_fingerprint_candidate";
+  link.mapping_status = "unmatched";
+
+  if (!result_cell.has_center || !result_cell.area_mm2_available)
+  {
+    link.mapping_status = "insufficient_result_fingerprint";
+    context.native_feature_topology_links.push_back(link);
+    return;
+  }
+
+  double best_center = 0.0;
+  double best_area = 0.0;
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension != 2 || !cell->has_center || !cell->area_mm2_available)
+      continue;
+    const double center_residual = Distance3(result_cell.center_mm, cell->center_mm);
+    const double area_residual = std::fabs(result_cell.area_mm2 - cell->area_mm2);
+    const double area_tolerance = std::max(0.001, std::fabs(result_cell.area_mm2) * 0.000001);
+    if (center_residual <= 0.001 && area_residual <= area_tolerance)
+    {
+      if (link.candidate_count == 0 || center_residual < best_center ||
+          (center_residual == best_center && area_residual < best_area))
+      {
+        best_center = center_residual;
+        best_area = area_residual;
+        link.final_cell_id = cell->cell_id;
+        link.final_body_id = cell->body_id;
+        link.center_residual_mm = center_residual;
+        link.measure_residual = area_residual;
+      }
+      link.candidate_final_cell_ids.push_back(cell->cell_id);
+      ++link.candidate_count;
+    }
+  }
+
+  if (link.candidate_count == 1)
+  {
+    link.mapping_status = "candidate";
+    link.confidence = 0.75;
+  }
+  else if (link.candidate_count > 1)
+  {
+    link.mapping_status = "ambiguous";
+    link.confidence = 0.35;
+    link.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "feature_topology_mapping",
+                            "FEATURE_RESULT_FINAL_FACE_AMBIGUOUS",
+                            "ResultOUT face matched multiple final faces by geometry fingerprint",
+                            result_cell.source_feature_id));
+  }
+  context.native_feature_topology_links.push_back(link);
+}
+
+// 用途：把 Face 边界中的每个 Loop/Wire 作为独立记录输出，便于后续区分开口环、内环和边界拓扑。
+static void AppendFaceWires(ParseContext& context, CATFace* face,
+                            const std::string& body_id, const std::string& face_id,
+                            long face_index, const std::map<CATCell*, std::string>& cell_ids,
+                            long& next_wire_index)
+{
+  if (!face) return;
+  CATBoundaryIterator* raw_iterator = 0;
+  try { raw_iterator = face->CreateBoundaryIterator(); }
+  catch (...) { raw_iterator = 0; }
+  BoundaryIteratorGuard iterator_guard(raw_iterator);
+  CATBoundaryIterator* iterator = iterator_guard.Get();
+  if (!iterator) return;
+
+  NativeTopologyWireRecord current;
+  bool has_current = false;
+  try
+  {
+    CATSide side = CATSideUnknown;
+    CATDomain* domain = 0;
+    short new_domain = 0;
+    CATCell* boundary = 0;
+    while ((boundary = iterator->Next(&side, &domain, &new_domain)) != 0)
+    {
+      if (!has_current || new_domain)
+      {
+        if (has_current)
+        {
+          current.edge_count = static_cast<long>(current.edge_cell_ids.size());
+          context.topology_wires.push_back(current);
+        }
+        current = NativeTopologyWireRecord();
+        ++next_wire_index;
+        current.wire_id = MakeTopologyCellId(body_id, "W", next_wire_index);
+        current.body_id = body_id;
+        current.wire_index = next_wire_index;
+        current.wire_kind = "face_loop";
+        current.owning_face_id = face_id;
+        current.owning_face_topology_index = face_index;
+        current.closed_status = "unknown";
+        current.value_source = "typed_caa_public_boundary_iterator";
+        has_current = true;
+      }
+      const std::string edge_id = LookupCellId(boundary, cell_ids);
+      if (!edge_id.empty()) current.edge_cell_ids.push_back(edge_id);
+    }
+    if (has_current)
+    {
+      current.edge_count = static_cast<long>(current.edge_cell_ids.size());
+      context.topology_wires.push_back(current);
+    }
+  }
+  catch (...)
+  {
+    context.AddDiagnostic("warning", "topology", "FACE_WIRE_ENUMERATION_FAILED",
+                          "CATBoundaryIterator failed while grouping face loops", "");
+  }
+}
+
+// 用途：按 CATTopology::GetAllCells 的原生顺序枚举指定维度拓扑单元，并预先建立指针到稳定 ID 的运行期索引。
+static void LoadCellsByDimension(ParseContext& context, CATBody* body, short dimension,
+                                 const char* prefix, const std::string& body_id,
+                                 std::vector<CATCell*>& output,
+                                 std::map<CATCell*, std::string>& cell_ids)
 {
   if (!body) return;
   CATLISTP(CATCell) cells;
@@ -240,7 +769,9 @@ static void AppendTopologyCellsByDimension(ParseContext& context, CATBody* body,
   int index = 0;
   for (index = 1; index <= cells.Size(); ++index)
   {
-    AppendTopologyCell(context, body_id, prefix, static_cast<long>(index), cells[index]);
+    CATCell* cell = cells[index];
+    output.push_back(cell);
+    if (cell) cell_ids[cell] = MakeTopologyCellId(body_id, prefix, static_cast<long>(index));
   }
 }
 
@@ -313,10 +844,57 @@ static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
                             "CATTopology::GetCellNumbers raised an exception", part_feature_id));
   }
   context.topology_bodies.push_back(body_record);
-  AppendTopologyCellsByDimension(context, body, body_record.body_id, 2, "F");
-  AppendTopologyCellsByDimension(context, body, body_record.body_id, 1, "E");
-  AppendTopologyCellsByDimension(context, body, body_record.body_id, 0, "V");
-  AppendTopologyCellsByDimension(context, body, body_record.body_id, 3, "S");
+
+  std::vector<CATCell*> faces;
+  std::vector<CATCell*> edges;
+  std::vector<CATCell*> vertices;
+  std::vector<CATCell*> volumes;
+  std::map<CATCell*, std::string> cell_ids;
+  LoadCellsByDimension(context, body, 2, "F", body_record.body_id, faces, cell_ids);
+  LoadCellsByDimension(context, body, 1, "E", body_record.body_id, edges, cell_ids);
+  LoadCellsByDimension(context, body, 0, "V", body_record.body_id, vertices, cell_ids);
+  LoadCellsByDimension(context, body, 3, "S", body_record.body_id, volumes, cell_ids);
+
+  CATICGMBodyTessellator* tessellator = 0;
+  try
+  {
+    // 用途：0.1mm sag 只用于输出轻量化三角证据，不参与几何识别或尺寸测量。
+    tessellator = CATCGMCreateBodyTessellator(body, 0.1);
+    if (tessellator) tessellator->Run();
+  }
+  catch (...)
+  {
+    if (tessellator) { tessellator->Release(); tessellator = 0; }
+    context.AddDiagnostic("warning", "mesh_face_mapping", "BODY_TESSELLATION_FAILED",
+                          "CATCGMCreateBodyTessellator or Run failed", part_feature_id);
+  }
+  CgmTessellatorGuard tessellator_guard(tessellator);
+
+  long next_wire_index = 0;
+  long next_triangle = 0;
+  std::vector<CATCell*>::iterator it = faces.begin();
+  long index = 1;
+  for (; it != faces.end(); ++it, ++index)
+  {
+    AppendTopologyCell(context, body_record.body_id, "F", index, *it, body, cell_ids);
+    CATFace* face = static_cast<CATFace*>(*it);
+    AppendFaceWires(context, face, body_record.body_id,
+                    LookupCellId(*it, cell_ids), index, cell_ids, next_wire_index);
+    AppendMeshFaceMap(context, tessellator_guard.Get(), face, body_record.body_id,
+                      LookupCellId(*it, cell_ids), index, next_triangle);
+  }
+  it = edges.begin();
+  index = 1;
+  for (; it != edges.end(); ++it, ++index)
+    AppendTopologyCell(context, body_record.body_id, "E", index, *it, body, cell_ids);
+  it = vertices.begin();
+  index = 1;
+  for (; it != vertices.end(); ++it, ++index)
+    AppendTopologyCell(context, body_record.body_id, "V", index, *it, body, cell_ids);
+  it = volumes.begin();
+  index = 1;
+  for (; it != volumes.end(); ++it, ++index)
+    AppendTopologyCell(context, body_record.body_id, "S", index, *it, body, cell_ids);
 }
 
 // 用途：从 CATBody 安全读取拓扑数量，并写入特征 ResultOUT 摘要。
@@ -350,6 +928,50 @@ static void FillNativeFeatureResultCounts(CATBody* body,
       context.AddDiagnostic("warning", "result_topology", "FEATURE_RESULT_CELL_COUNT_FAILED",
                             "CATTopology::GetCellNumbers failed for feature ResultOUT", record.source_feature_id));
   }
+}
+
+// 用途：把形状特征 ResultOUT 的 Face/Edge/Vertex/Volume 明细写入独立 JSONL 上下文。
+// 这些 cell 属于该特征的结果体；只有后续 link 记录能表达它是否疑似对应最终主实体 Face。
+static void CollectNativeFeatureResultCells(CATBody* body,
+                                            const NativeFeatureResultRecord& result_record,
+                                            ParseContext& context)
+{
+  if (!body || result_record.read_status != "success")
+    return;
+
+  std::vector<CATCell*> faces;
+  std::vector<CATCell*> edges;
+  std::vector<CATCell*> vertices;
+  std::vector<CATCell*> volumes;
+  std::map<CATCell*, std::string> result_cell_ids;
+  LoadCellsByDimension(context, body, 2, "RF", result_record.result_id, faces, result_cell_ids);
+  LoadCellsByDimension(context, body, 1, "RE", result_record.result_id, edges, result_cell_ids);
+  LoadCellsByDimension(context, body, 0, "RV", result_record.result_id, vertices, result_cell_ids);
+  LoadCellsByDimension(context, body, 3, "RS", result_record.result_id, volumes, result_cell_ids);
+
+  BuildResultCellIdMap(result_record.result_id, faces, edges, vertices, volumes, result_cell_ids);
+
+  std::vector<CATCell*>::iterator it = faces.begin();
+  long index = 1;
+  for (; it != faces.end(); ++it, ++index)
+  {
+    const size_t before = context.native_feature_result_cells.size();
+    AppendNativeFeatureResultCell(context, result_record, "RF", index, *it, result_cell_ids);
+    if (context.native_feature_result_cells.size() > before)
+      AppendNativeFeatureTopologyLink(context, context.native_feature_result_cells.back());
+  }
+  it = edges.begin();
+  index = 1;
+  for (; it != edges.end(); ++it, ++index)
+    AppendNativeFeatureResultCell(context, result_record, "RE", index, *it, result_cell_ids);
+  it = vertices.begin();
+  index = 1;
+  for (; it != vertices.end(); ++it, ++index)
+    AppendNativeFeatureResultCell(context, result_record, "RV", index, *it, result_cell_ids);
+  it = volumes.begin();
+  index = 1;
+  for (; it != volumes.end(); ++it, ++index)
+    AppendNativeFeatureResultCell(context, result_record, "RS", index, *it, result_cell_ids);
 }
 
 // 用途：读取单个形状特征的 ResultOUT 拓扑摘要。
@@ -459,6 +1081,7 @@ static void CollectNativeFeatureResultTopology(CATISpecObject* spec,
   {
     CATBody* body = result_body;
     FillNativeFeatureResultCounts(body, record, context);
+    CollectNativeFeatureResultCells(body, record, context);
   }
   context.native_feature_results.push_back(record);
 }
@@ -479,7 +1102,108 @@ private:
   T* _pointer;
 };
 
-// 用途：读取一个 TPS Set 中已验证可访问的数量信息；不解析具体公差语义，也不建立拓扑映射。
+// 用途：读取单个 TPS 组件的公开语义观测；仅记录已验证接口，不按未覆盖类型猜测公差含义。
+static void AppendFtaSemanticRecord(CATITPSComponent* component,
+                                    const FtaSetRecord& set_record,
+                                    unsigned int component_index,
+                                    ParseContext& context)
+{
+  FtaSemanticRecord record;
+  std::ostringstream id;
+  id << set_record.fta_set_id << "_TPS";
+  const long one_based_index = static_cast<long>(component_index + 1);
+  if (one_based_index < 10) id << "00000";
+  else if (one_based_index < 100) id << "0000";
+  else if (one_based_index < 1000) id << "000";
+  else if (one_based_index < 10000) id << "00";
+  else if (one_based_index < 100000) id << "0";
+  id << one_based_index;
+  record.fta_semantic_id = id.str();
+  record.fta_set_id = set_record.fta_set_id;
+  record.component_index = one_based_index;
+  record.read_status = component ? "partial" : "unavailable";
+  record.component_kind = "unknown_tps_component";
+  record.validation_text_status = "unavailable";
+  record.topology_mapping_status = "not_available";
+  record.value_source = "typed_caa_public_tps_component";
+
+  if (!component)
+  {
+    context.fta_semantics.push_back(record);
+    return;
+  }
+
+  CATITPS* tps = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPS, reinterpret_cast<void**>(&tps))) && tps)
+  {
+    TpsInterfaceGuard<CATITPS> tps_guard(tps);
+    record.supported_interface_keys.push_back("CATITPS");
+    record.component_kind = "tps";
+  }
+
+  CATITPSSemanticValidity* semantic = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPSSemanticValidity,
+                                          reinterpret_cast<void**>(&semantic))) && semantic)
+  {
+    TpsInterfaceGuard<CATITPSSemanticValidity> semantic_guard(semantic);
+    record.supported_interface_keys.push_back("CATITPSSemanticValidity");
+    int count = 0;
+    IID** iid_list = 0;
+    if (SUCCEEDED(semantic->GetUnderstandingSemanticsItf(&count, &iid_list)))
+    {
+      record.semantic_interface_count = static_cast<long>(count);
+      delete [] iid_list;
+    }
+    count = 0;
+    iid_list = 0;
+    if (SUCCEEDED(semantic->GetAllSemanticsItf(&count, &iid_list)))
+    {
+      record.all_semantic_interface_count = static_cast<long>(count);
+      delete [] iid_list;
+    }
+    wchar_t* diagnostic = 0;
+    CATTPSStatus status = CATTPSStatusUnknown;
+    if (SUCCEEDED(semantic->Check(&diagnostic, &status)))
+    {
+      record.semantic_check_status_raw = static_cast<long>(status);
+      if (diagnostic)
+      {
+        record.semantic_check_diagnostic = "available_but_not_converted";
+        delete [] diagnostic;
+      }
+    }
+  }
+
+  CATITPSText* text = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPSText, reinterpret_cast<void**>(&text))) && text)
+  {
+    TpsInterfaceGuard<CATITPSText> text_guard(text);
+    record.supported_interface_keys.push_back("CATITPSText");
+  }
+
+  CATITPSTextContent* text_content = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPSTextContent,
+                                          reinterpret_cast<void**>(&text_content))) && text_content)
+  {
+    TpsInterfaceGuard<CATITPSTextContent> text_content_guard(text_content);
+    record.supported_interface_keys.push_back("CATITPSTextContent");
+    CATUnicodeString validation_text;
+    if (SUCCEEDED(text_content->GetValidationString(validation_text)))
+    {
+      record.validation_text = UnicodeToUtf8(validation_text);
+      record.validation_text_status = "success";
+    }
+    else
+      record.validation_text_status = "failed";
+  }
+
+  if (!record.supported_interface_keys.empty())
+    record.read_status = "success";
+  context.fta_semantics.push_back(record);
+}
+
+// 用途：读取一个 TPS Set 中已验证可访问的数量信息，并枚举每个 TPS 组件的第一层语义观测。
+// 逐类 GD&T 参数和 TPS->拓扑映射仍需对应专用接口和样件验证，不能在这里猜。
 static void FillFtaSetCounts(CATITPSSet* set_interface, FtaSetRecord& record,
                              ParseContext& context)
 {
@@ -490,7 +1214,7 @@ static void FillFtaSetCounts(CATITPSSet* set_interface, FtaSetRecord& record,
   }
   record.read_status = "success";
   record.value_source = "typed_caa_public_tps";
-  record.semantic_detail_status = "not_implemented";
+  record.semantic_detail_status = "partial";
   record.topology_mapping_status = "not_available";
 
   CATITPSList* tps_list = 0;
@@ -503,6 +1227,22 @@ static void FillFtaSetCounts(CATITPSSet* set_interface, FtaSetRecord& record,
       record.diagnostic_ids.push_back(
         context.AddDiagnostic("warning", "fta", "TPS_SET_TPS_COUNT_FAILED",
                               "CATITPSList::Count failed for TPS list", ""));
+    unsigned int item_index = 0;
+    for (; item_index < count; ++item_index)
+    {
+      CATITPSComponent* component = 0;
+      if (SUCCEEDED(tps_list->Item(item_index, &component)) && component)
+      {
+        TpsInterfaceGuard<CATITPSComponent> component_guard(component);
+        AppendFtaSemanticRecord(component, record, item_index, context);
+      }
+      else
+      {
+        record.diagnostic_ids.push_back(
+          context.AddDiagnostic("warning", "fta", "TPS_COMPONENT_ITEM_FAILED",
+                                "CATITPSList::Item failed for a TPS component", ""));
+      }
+    }
   }
   else
   {

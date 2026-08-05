@@ -134,6 +134,49 @@ NFR000002 source_feature_id=F000018 face_count=217 edge_count=575 vertex_count=3
 
 这一步只是为后续 Feature→Face 对齐提供真实 CAA 输入，不得把它描述为 Feature–Face 映射完成。
 
+## Schema v9：Result cell 明细、候选映射和 TPS 语义观测
+
+本轮新增三个 CAA 端输出：
+
+```text
+native_feature_result_cells.jsonl
+native_feature_topology_links.jsonl
+fta_semantics.jsonl
+```
+
+`native_feature_result_cells.jsonl` 来自：
+
+```text
+CATISpecObject
+→ CATIShapeFeatureBody::GetResultOUT()
+→ CATIGeometricalElement::GetBodyResult()
+→ CATTopology::GetAllCells()
+→ CATCell / CATFace / CATEdge / CATBoundaryIterator
+```
+
+它逐条输出 ResultOUT 内部 Face/Edge/Vertex/Volume 的中心、面积/长度和边界 Result cell。它不是最终主实体 Face，也不参与 `enumerated_total`。
+
+`native_feature_topology_links.jsonl` 当前采用几何指纹候选匹配：
+
+```text
+ResultOUT Face 中心 + 面积
+→ 与最终主实体 Face 中心 + 面积比较
+→ 输出 candidate / ambiguous / unmatched / insufficient_result_fingerprint
+```
+
+这只是可审计候选，不是 CATIA Generic Naming 的权威映射。只有候选存在时，`capabilities.json` 中的 `native_feature_topology_mapping` 才写为 `partial`，绝不写成 `complete`。
+
+`fta_semantics.jsonl` 来自 R21 Public `CATITPSList::Item` 后对每个 `CATITPSComponent` 进行接口探测：
+
+```text
+CATITPS
+CATITPSSemanticValidity
+CATITPSText
+CATITPSTextContent
+```
+
+当前 Hole 和 kuang 验证样件没有 TPS Set，因此 `fta_semantics.jsonl` 为空文件；这表示样件中没有可枚举 TPS 组件，不表示代码路径编译失败。
+
 ## R21 实测结果
 
 命令：

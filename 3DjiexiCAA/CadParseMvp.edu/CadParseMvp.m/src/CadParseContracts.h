@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v6"
-#define CAD_PARSE_PARSER_VERSION "1.6.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.6.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.6.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v9"
+#define CAD_PARSE_PARSER_VERSION "1.9.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.9.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.9.0"
 
 namespace cadparse
 {
@@ -388,7 +388,9 @@ struct NativeTopologyCellRecord
 {
   // 用途：提供明确初值，避免读取失败路径出现伪造的维度或顺序。
   NativeTopologyCellRecord()
-    : topology_index(0), dimension(-1), domain_count(0), internal_domain_count(0) {}
+    : topology_index(0), dimension(-1), domain_count(0), internal_domain_count(0),
+      has_center(false), area_mm2_available(false), area_mm2(0.0),
+      length_mm_available(false), length_mm(0.0) {}
 
   std::string cell_id;
   std::string body_id;
@@ -397,7 +399,67 @@ struct NativeTopologyCellRecord
   long dimension;
   long domain_count;
   long internal_domain_count;
+  bool has_center;
+  double center_mm[3];
+  bool area_mm2_available;
+  double area_mm2;
+  bool length_mm_available;
+  double length_mm;
+  std::string geometry_status;
+  std::string measure_status;
+  std::vector<std::string> boundary_cell_ids;
+  std::vector<std::string> adjacent_cell_ids;
   std::string stable_id_method;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// CAA 原生 Wire/Loop 摘要；用于把 Face 边界环和独立 Wire 从单纯 cell 数量中拆出来。
+// wire_id 是本次解析内稳定编号，不代表 CATIA 跨版本持久名称。
+struct NativeTopologyWireRecord
+{
+  // 用途：初始化为未知状态，只有通过 CATBoundaryIterator/CATDomain 读取后才写入完整信息。
+  NativeTopologyWireRecord()
+    : wire_index(0), owning_face_topology_index(0), edge_count(0), closed_status("unknown") {}
+
+  std::string wire_id;
+  std::string body_id;
+  long wire_index;
+  std::string wire_kind;
+  std::string owning_face_id;
+  long owning_face_topology_index;
+  long edge_count;
+  std::string closed_status;
+  std::vector<std::string> edge_cell_ids;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// CAA 三角化到 Face 的映射摘要；这是给 GLB/轻量化阶段使用的 Face→Triangle Range 契约。
+// 当前只记录每个 Face 的三角数量和范围，不把三角顶点坐标写进 CAA IR。
+struct NativeMeshFaceMapRecord
+{
+  // 用途：给三角范围和迭代器计数提供明确零值。
+  NativeMeshFaceMapRecord()
+    : primitive_index(0), triangle_start(0), triangle_count(0), point_count(0),
+      isolated_triangle_count(0), strip_count(0), fan_count(0), polygon_count(0),
+      estimated_triangle_count(0), face_orientation_side(0), planar(false) {}
+
+  std::string mesh_map_id;
+  std::string body_id;
+  std::string face_cell_id;
+  long primitive_index;
+  long triangle_start;
+  long triangle_count;
+  long point_count;
+  long isolated_triangle_count;
+  long strip_count;
+  long fan_count;
+  long polygon_count;
+  long estimated_triangle_count;
+  short face_orientation_side;
+  bool planar;
+  std::string tessellation_status;
   std::string value_source;
   std::vector<std::string> diagnostic_ids;
 };
@@ -420,6 +482,31 @@ struct FtaSetRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// FTA/TPS 组件级语义摘要；比 Set 数量更细，但仍不声称已完成全部 GD&T 逐类参数解析。
+struct FtaSemanticRecord
+{
+  // 用途：初始化为未读取；每个 TPS 组件按所在 Set 和组件顺序生成本轮稳定编号。
+  FtaSemanticRecord()
+    : component_index(0), semantic_interface_count(0), all_semantic_interface_count(0),
+      semantic_check_status_raw(-1) {}
+
+  std::string fta_semantic_id;
+  std::string fta_set_id;
+  long component_index;
+  std::string read_status;
+  std::string component_kind;
+  std::vector<std::string> supported_interface_keys;
+  long semantic_interface_count;
+  long all_semantic_interface_count;
+  std::string validation_text;
+  std::string validation_text_status;
+  long semantic_check_status_raw;
+  std::string semantic_check_diagnostic;
+  std::string topology_mapping_status;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
 // 原生设计特征 ResultOUT 拓扑摘要；用于区分“特征有结果体”和“已映射到最终 Face”。
 // 当前只读取 ResultOUT 对应 CATBody 的数量，不把这些面伪装成最终主实体面。
 struct NativeFeatureResultRecord
@@ -438,6 +525,59 @@ struct NativeFeatureResultRecord
   long face_count;
   long volume_count;
   std::string final_body_mapping_status;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// 原生设计特征 ResultOUT 内部 cell 明细；它是特征结果体的真实拓扑，不等同于最终主实体 Face。
+// result_cell_id 只在本次解析内稳定，用于后续和最终拓扑候选匹配。
+struct NativeFeatureResultCellRecord
+{
+  // 用途：初始化 Result cell 的数值状态，读取失败时不输出伪造测量。
+  NativeFeatureResultCellRecord()
+    : result_cell_index(0), dimension(-1), has_center(false),
+      area_mm2_available(false), area_mm2(0.0), length_mm_available(false), length_mm(0.0) {}
+
+  std::string result_cell_id;
+  std::string result_id;
+  std::string source_feature_id;
+  std::string source_kind;
+  long result_cell_index;
+  long dimension;
+  std::string cell_kind;
+  bool has_center;
+  double center_mm[3];
+  bool area_mm2_available;
+  double area_mm2;
+  bool length_mm_available;
+  double length_mm;
+  std::vector<std::string> boundary_result_cell_ids;
+  std::string read_status;
+  std::string stable_id_method;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// ResultOUT cell 到最终主实体 cell 的映射尝试记录；当前只记录可审计候选，不冒充 CATIA Generic Naming 权威映射。
+struct NativeFeatureTopologyLinkRecord
+{
+  // 用途：初始化为未匹配；只有满足明确几何指纹条件时才写入候选 final_cell_id。
+  NativeFeatureTopologyLinkRecord()
+    : confidence(0.0), center_residual_mm(0.0), measure_residual(0.0), candidate_count(0) {}
+
+  std::string link_id;
+  std::string source_feature_id;
+  std::string result_id;
+  std::string result_cell_id;
+  std::string final_cell_id;
+  std::string final_body_id;
+  std::string mapping_direction;
+  std::string mapping_status;
+  std::string mapping_method;
+  double confidence;
+  double center_residual_mm;
+  double measure_residual;
+  long candidate_count;
+  std::vector<std::string> candidate_final_cell_ids;
   std::vector<std::string> diagnostic_ids;
 };
 
@@ -581,8 +721,13 @@ public:
   std::vector<DiagnosticRecord> diagnostics;
   std::vector<NativeTopologyBodyRecord> topology_bodies;
   std::vector<NativeTopologyCellRecord> topology_cells;
+  std::vector<NativeTopologyWireRecord> topology_wires;
+  std::vector<NativeMeshFaceMapRecord> mesh_face_maps;
   std::vector<FtaSetRecord> fta_sets;
+  std::vector<FtaSemanticRecord> fta_semantics;
   std::vector<NativeFeatureResultRecord> native_feature_results;
+  std::vector<NativeFeatureResultCellRecord> native_feature_result_cells;
+  std::vector<NativeFeatureTopologyLinkRecord> native_feature_topology_links;
   std::map<std::string, std::string> runtime_info;
   ParseMetadata metadata;
 };

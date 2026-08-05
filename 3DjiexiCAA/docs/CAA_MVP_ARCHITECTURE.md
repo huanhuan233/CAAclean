@@ -83,3 +83,18 @@ fta_sets.jsonl = empty
 这表示文档没有 TPS Set，不表示解析器伪造了 FTA，也不表示 FTA 语义和关联面已经完成。
 
 Schema `cad_parse_mvp_v6` 继续新增 `native_feature_results.jsonl`。它保存原生形状特征 ResultOUT 的拓扑数量，用于后续映射算法输入。该文件仍不是正式 Feature–Face 映射，不能驱动前端“关联面可用”的判断。
+
+Schema `cad_parse_mvp_v9` 在 CAA 端继续增加：
+
+```text
+native_feature_result_cells.jsonl
+native_feature_topology_links.jsonl
+fta_semantics.jsonl
+```
+
+设计边界如下：
+
+- `native_feature_result_cells.jsonl` 是 ResultOUT body 的真实 cell 明细，解决“只有数量摘要”的问题。
+- `native_feature_topology_links.jsonl` 是 ResultOUT Face 到最终主实体 Face 的几何指纹候选映射，状态只能作为 `partial` 证据，不能冒充 CATIA Generic Naming 权威映射。
+- `fta_semantics.jsonl` 是 TPS 组件级公开接口观测，不是完整 FTA 语义参数解析，也不是 FTA–Topology 映射。
+- CAA 端仍不执行 Python 制造特征识别，不生成制造特征，不修改声明式业务特征语义。

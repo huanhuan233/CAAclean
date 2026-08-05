@@ -10,6 +10,7 @@ LINK_WITH = \
   CATObjectModelerBase \
   CATObjectSpecsModeler \
   CATMecModInterfaces \
+  CATMathematics \
   CATGMModelInterfaces \
   CATTPSItf \
   CATTPSUUID \

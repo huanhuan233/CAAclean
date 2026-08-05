@@ -333,7 +333,67 @@ void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecor
          << ",\"dimension\":" << record.dimension
          << ",\"domain_count\":" << record.domain_count
          << ",\"internal_domain_count\":" << record.internal_domain_count
+         << ",\"center_mm\":";
+  if (record.has_center)
+    output << '[' << std::setprecision(15) << record.center_mm[0] << ','
+           << record.center_mm[1] << ',' << record.center_mm[2] << ']';
+  else
+    output << "null";
+  output << ",\"area_mm2\":";
+  WriteOptionalNumber(output, record.area_mm2_available, record.area_mm2);
+  output << ",\"length_mm\":";
+  WriteOptionalNumber(output, record.length_mm_available, record.length_mm);
+  output << ",\"geometry_status\":\"" << JsonEscape(record.geometry_status)
+         << "\",\"measure_status\":\"" << JsonEscape(record.measure_status)
+         << "\",\"boundary_cell_ids\":";
+  WriteStringArray(output, record.boundary_cell_ids);
+  output << ",\"adjacent_cell_ids\":";
+  WriteStringArray(output, record.adjacent_cell_ids);
+  output
          << ",\"stable_id_method\":\"" << JsonEscape(record.stable_id_method)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+// 用途：写出 Face 边界 Loop/Wire 摘要，保留其所属 Face 和边集合。
+void WriteNativeTopologyWire(std::ostream& output, const NativeTopologyWireRecord& record)
+{
+  output << "{\"wire_id\":\"" << JsonEscape(record.wire_id)
+         << "\",\"body_id\":\"" << JsonEscape(record.body_id)
+         << "\",\"wire_index\":" << record.wire_index
+         << ",\"wire_kind\":\"" << JsonEscape(record.wire_kind)
+         << "\",\"owning_face_id\":\"" << JsonEscape(record.owning_face_id)
+         << "\",\"owning_face_topology_index\":" << record.owning_face_topology_index
+         << ",\"edge_count\":" << record.edge_count
+         << ",\"closed_status\":\"" << JsonEscape(record.closed_status)
+         << "\",\"edge_cell_ids\":";
+  WriteStringArray(output, record.edge_cell_ids);
+  output << ",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+// 用途：写出 CAA Face 到轻量化三角范围的映射摘要，供后续 GLB Writer 或 Sidecar 对齐使用。
+void WriteNativeMeshFaceMap(std::ostream& output, const NativeMeshFaceMapRecord& record)
+{
+  output << "{\"mesh_map_id\":\"" << JsonEscape(record.mesh_map_id)
+         << "\",\"body_id\":\"" << JsonEscape(record.body_id)
+         << "\",\"face_cell_id\":\"" << JsonEscape(record.face_cell_id)
+         << "\",\"primitive_index\":" << record.primitive_index
+         << ",\"triangle_start\":" << record.triangle_start
+         << ",\"triangle_count\":" << record.triangle_count
+         << ",\"point_count\":" << record.point_count
+         << ",\"isolated_triangle_count\":" << record.isolated_triangle_count
+         << ",\"strip_count\":" << record.strip_count
+         << ",\"fan_count\":" << record.fan_count
+         << ",\"polygon_count\":" << record.polygon_count
+         << ",\"estimated_triangle_count\":" << record.estimated_triangle_count
+         << ",\"face_orientation_side\":" << record.face_orientation_side
+         << ",\"planar\":" << (record.planar ? "true" : "false")
+         << ",\"tessellation_status\":\"" << JsonEscape(record.tessellation_status)
          << "\",\"value_source\":\"" << JsonEscape(record.value_source)
          << "\",\"diagnostic_ids\":";
   WriteStringArray(output, record.diagnostic_ids);
@@ -356,6 +416,29 @@ void WriteFtaSet(std::ostream& output, const FtaSetRecord& record)
   output << '}';
 }
 
+// 用途：写出一个 TPS 组件级语义观测；该记录不包含未验证的逐类 GD&T 参数。
+void WriteFtaSemantic(std::ostream& output, const FtaSemanticRecord& record)
+{
+  output << "{\"fta_semantic_id\":\"" << JsonEscape(record.fta_semantic_id)
+         << "\",\"fta_set_id\":\"" << JsonEscape(record.fta_set_id)
+         << "\",\"component_index\":" << record.component_index
+         << ",\"read_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"component_kind\":\"" << JsonEscape(record.component_kind)
+         << "\",\"supported_interface_keys\":";
+  WriteStringArray(output, record.supported_interface_keys);
+  output << ",\"semantic_interface_count\":" << record.semantic_interface_count
+         << ",\"all_semantic_interface_count\":" << record.all_semantic_interface_count
+         << ",\"validation_text\":\"" << JsonEscape(record.validation_text)
+         << "\",\"validation_text_status\":\"" << JsonEscape(record.validation_text_status)
+         << "\",\"semantic_check_status_raw\":" << record.semantic_check_status_raw
+         << ",\"semantic_check_diagnostic\":\"" << JsonEscape(record.semantic_check_diagnostic)
+         << "\",\"topology_mapping_status\":\"" << JsonEscape(record.topology_mapping_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
 // 用途：写出一个原生设计特征 ResultOUT 拓扑摘要；它不等同于最终主实体 Face 映射。
 void WriteNativeFeatureResult(std::ostream& output, const NativeFeatureResultRecord& record)
 {
@@ -370,6 +453,59 @@ void WriteNativeFeatureResult(std::ostream& output, const NativeFeatureResultRec
          << ",\"volume_count\":" << record.volume_count
          << ",\"final_body_mapping_status\":\"" << JsonEscape(record.final_body_mapping_status)
          << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+// 用途：写出一个 ResultOUT cell 明细；它是原生特征结果体拓扑，不是最终主实体 Face 的替代品。
+void WriteNativeFeatureResultCell(std::ostream& output, const NativeFeatureResultCellRecord& record)
+{
+  output << "{\"result_cell_id\":\"" << JsonEscape(record.result_cell_id)
+         << "\",\"result_id\":\"" << JsonEscape(record.result_id)
+         << "\",\"source_feature_id\":\"" << JsonEscape(record.source_feature_id)
+         << "\",\"source_kind\":\"" << JsonEscape(record.source_kind)
+         << "\",\"result_cell_index\":" << record.result_cell_index
+         << ",\"dimension\":" << record.dimension
+         << ",\"cell_kind\":\"" << JsonEscape(record.cell_kind)
+         << "\",\"center_mm\":";
+  if (record.has_center)
+    output << '[' << std::setprecision(15) << record.center_mm[0] << ','
+           << record.center_mm[1] << ',' << record.center_mm[2] << ']';
+  else
+    output << "null";
+  output << ",\"area_mm2\":";
+  WriteOptionalNumber(output, record.area_mm2_available, record.area_mm2);
+  output << ",\"length_mm\":";
+  WriteOptionalNumber(output, record.length_mm_available, record.length_mm);
+  output << ",\"boundary_result_cell_ids\":";
+  WriteStringArray(output, record.boundary_result_cell_ids);
+  output << ",\"read_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"stable_id_method\":\"" << JsonEscape(record.stable_id_method)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+// 用途：写出 ResultOUT cell 到最终 Face 的候选映射尝试；candidate 不等于已完成权威映射。
+void WriteNativeFeatureTopologyLink(std::ostream& output, const NativeFeatureTopologyLinkRecord& record)
+{
+  output << "{\"link_id\":\"" << JsonEscape(record.link_id)
+         << "\",\"source_feature_id\":\"" << JsonEscape(record.source_feature_id)
+         << "\",\"result_id\":\"" << JsonEscape(record.result_id)
+         << "\",\"result_cell_id\":\"" << JsonEscape(record.result_cell_id)
+         << "\",\"final_cell_id\":\"" << JsonEscape(record.final_cell_id)
+         << "\",\"final_body_id\":\"" << JsonEscape(record.final_body_id)
+         << "\",\"mapping_direction\":\"" << JsonEscape(record.mapping_direction)
+         << "\",\"mapping_status\":\"" << JsonEscape(record.mapping_status)
+         << "\",\"mapping_method\":\"" << JsonEscape(record.mapping_method)
+         << "\",\"confidence\":" << std::setprecision(15) << record.confidence
+         << ",\"center_residual_mm\":" << record.center_residual_mm
+         << ",\"measure_residual\":" << record.measure_residual
+         << ",\"candidate_count\":" << record.candidate_count
+         << ",\"candidate_final_cell_ids\":";
+  WriteStringArray(output, record.candidate_final_cell_ids);
+  output << ",\"diagnostic_ids\":";
   WriteStringArray(output, record.diagnostic_ids);
   output << '}';
 }
@@ -577,11 +713,31 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteNativeTopologyCell(output, *topology_cell); output << '\n'; }
   if (!FinishOutput(output, "native_topology_cells.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "native_topology_wires.jsonl"), error)) return false;
+  std::vector<NativeTopologyWireRecord>::const_iterator topology_wire =
+    context.topology_wires.begin();
+  for (; topology_wire != context.topology_wires.end(); ++topology_wire)
+  { WriteNativeTopologyWire(output, *topology_wire); output << '\n'; }
+  if (!FinishOutput(output, "native_topology_wires.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "native_mesh_face_map.jsonl"), error)) return false;
+  std::vector<NativeMeshFaceMapRecord>::const_iterator mesh_face =
+    context.mesh_face_maps.begin();
+  for (; mesh_face != context.mesh_face_maps.end(); ++mesh_face)
+  { WriteNativeMeshFaceMap(output, *mesh_face); output << '\n'; }
+  if (!FinishOutput(output, "native_mesh_face_map.jsonl", error)) return false;
+
   if (!OpenOutput(output, JoinPath(staging, "fta_sets.jsonl"), error)) return false;
   std::vector<FtaSetRecord>::const_iterator fta_set = context.fta_sets.begin();
   for (; fta_set != context.fta_sets.end(); ++fta_set)
   { WriteFtaSet(output, *fta_set); output << '\n'; }
   if (!FinishOutput(output, "fta_sets.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "fta_semantics.jsonl"), error)) return false;
+  std::vector<FtaSemanticRecord>::const_iterator fta_semantic = context.fta_semantics.begin();
+  for (; fta_semantic != context.fta_semantics.end(); ++fta_semantic)
+  { WriteFtaSemantic(output, *fta_semantic); output << '\n'; }
+  if (!FinishOutput(output, "fta_semantics.jsonl", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "native_feature_results.jsonl"), error)) return false;
   std::vector<NativeFeatureResultRecord>::const_iterator feature_result =
@@ -589,6 +745,20 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   for (; feature_result != context.native_feature_results.end(); ++feature_result)
   { WriteNativeFeatureResult(output, *feature_result); output << '\n'; }
   if (!FinishOutput(output, "native_feature_results.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "native_feature_result_cells.jsonl"), error)) return false;
+  std::vector<NativeFeatureResultCellRecord>::const_iterator result_cell =
+    context.native_feature_result_cells.begin();
+  for (; result_cell != context.native_feature_result_cells.end(); ++result_cell)
+  { WriteNativeFeatureResultCell(output, *result_cell); output << '\n'; }
+  if (!FinishOutput(output, "native_feature_result_cells.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "native_feature_topology_links.jsonl"), error)) return false;
+  std::vector<NativeFeatureTopologyLinkRecord>::const_iterator topology_link =
+    context.native_feature_topology_links.begin();
+  for (; topology_link != context.native_feature_topology_links.end(); ++topology_link)
+  { WriteNativeFeatureTopologyLink(output, *topology_link); output << '\n'; }
+  if (!FinishOutput(output, "native_feature_topology_links.jsonl", error)) return false;
 
   // 用途：能力状态从本轮真实 CAA 出口推导；未实现或未验证的拓扑、FTA、映射绝不标记为完成。
   if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
@@ -607,13 +777,22 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
     context.runtime_info.find("fta_extraction_status");
   const std::string fta_status = fta_status_it == context.runtime_info.end() ?
     "not_available" : fta_status_it->second;
+  long feature_topology_candidate_links = 0;
+  std::vector<NativeFeatureTopologyLinkRecord>::const_iterator link =
+    context.native_feature_topology_links.begin();
+  for (; link != context.native_feature_topology_links.end(); ++link)
+  {
+    if (link->mapping_status == "candidate" || link->mapping_status == "ambiguous")
+      ++feature_topology_candidate_links;
+  }
   output << "{\"spec_tree_extraction\":\"partial\""
          << ",\"native_feature_extraction\":\"partial\""
          << ",\"topology_extraction\":\"" << (has_native_topology ? "partial" : "not_available") << "\""
-         << ",\"native_feature_topology_mapping\":\"not_available\""
+         << ",\"native_feature_topology_mapping\":\""
+         << (feature_topology_candidate_links > 0 ? "partial" : "not_available") << "\""
          << ",\"fta_extraction\":\"" << JsonEscape(fta_status) << "\""
          << ",\"fta_topology_mapping\":\"not_available\""
-         << ",\"mesh_face_mapping\":\"not_available\""
+         << ",\"mesh_face_mapping\":\"" << (context.mesh_face_maps.empty() ? "not_available" : "partial") << "\""
          << ",\"manufacturing_feature_recognition\":\"not_performed\""
          << ",\"native_feature_record_count\":" << features.size()
          << ",\"native_hole_decoded_count\":" << native_hole_decoded
@@ -621,9 +800,15 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_generic_count\":" << native_generic
          << ",\"native_topology_body_count\":" << context.topology_bodies.size()
          << ",\"native_topology_cell_count\":" << context.topology_cells.size()
+         << ",\"native_topology_wire_count\":" << context.topology_wires.size()
+         << ",\"native_mesh_face_map_count\":" << context.mesh_face_maps.size()
          << ",\"fta_set_count\":" << context.fta_sets.size()
+         << ",\"fta_semantic_count\":" << context.fta_semantics.size()
          << ",\"native_feature_result_count\":" << context.native_feature_results.size()
-         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"Feature-to-topology, FTA-to-topology and manufacturing recognition are not emitted by this CAA revision\"]}\n";
+         << ",\"native_feature_result_cell_count\":" << context.native_feature_result_cells.size()
+         << ",\"native_feature_topology_link_count\":" << context.native_feature_topology_links.size()
+         << ",\"native_feature_topology_candidate_link_count\":" << feature_topology_candidate_links
+         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"R21 Public CATIShapeFeatureBody ResultOUT now emits per-cell topology evidence; final-face links are geometry-fingerprint candidates, not authoritative Generic Naming mapping\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "relations.jsonl"), error)) return false;
@@ -726,11 +911,11 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_feature_results.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "fta_sets.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_mesh_face_map.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;
-  for (; artifact < 9; ++artifact)
+  for (; artifact < 14; ++artifact)
   {
     const std::string path = JoinPath(staging, names[artifact]);
     std::string hash_error;
@@ -771,7 +956,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << spacing << "\"model_contains_stale_objects\":" << (context.statistics.not_up_to_date_count ? "true" : "false")
          << ',' << spacing << "\"artifacts\":{";
   artifact = 0;
-  for (; artifact < 9; ++artifact)
+  for (; artifact < 11; ++artifact)
   {
     if (artifact) output << ',';
     output << '"' << names[artifact] << "\":{\"size_bytes\":" << artifact_sizes[names[artifact]]
