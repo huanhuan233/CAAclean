@@ -218,12 +218,14 @@ class ValidatorTests(unittest.TestCase):
         validator.rows["native_features.jsonl"] = [
             {
                 "decoder": "NativeHoleDecoder",
+                "canonical_native_type": "hole",
                 "decoder_status": "decoded",
                 "payload_extraction_status": "complete",
                 "payload_type": "native_hole",
             },
             {
                 "decoder": "StartupTypeCanonicalDecoder",
+                "canonical_native_type": "pad",
                 "decoder_status": "type_only",
                 "payload_extraction_status": "not_implemented",
                 "payload_type": "",

@@ -24,6 +24,7 @@
 #include "CATITPSText.h"
 #include "CATITPSTextContent.h"
 #include "CATIGeometricalElement.h"
+#include "CATIMechanicalFeature.h"
 #include "CATLISTV_CATBaseUnknown.h"
 #include "CATLISTV_CATISpecObject.h"
 #include "CATICkeInst.h"
@@ -73,7 +74,25 @@
 #include "CATCGMTessFanIter.h"
 #include "CATCGMTessPolyIter.h"
 #include "CATCGMTessTrianIter.h"
+#include "CATGeometry.h"
+#include "CATSurface.h"
+#include "CATCurve.h"
+#include "CATPlane.h"
+#include "CATElementarySurface.h"
+#include "CATCylinder.h"
+#include "CATCone.h"
+#include "CATSphere.h"
+#include "CATTorus.h"
+#include "CATNurbsSurface.h"
+#include "CATLine.h"
+#include "CATConic.h"
+#include "CATCircle.h"
+#include "CATNurbsCurve.h"
 #include "CATMathPoint.h"
+#include "CATMathVector.h"
+#include "CATMathDirection.h"
+#include "CATMathBox.h"
+#include "CATMathPlane.h"
 #include "CATMathTransformation.h"
 #include "CATHoleDefs.h"
 #include "CATLimitDefs.h"
@@ -84,6 +103,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
 #include <map>
 #include <set>
 #include <sstream>
@@ -322,6 +342,482 @@ static long EstimateTrianglesFromPointGroups(CATLONG32 group_count, CATLONG32 po
     static_cast<long>(point_count - 2 * group_count) : 0;
 }
 
+struct TessPointData
+{
+  TessPointData()
+  {
+    xyz[0] = xyz[1] = xyz[2] = 0.0;
+  }
+  double xyz[3];
+};
+
+static void BuildTessPointMap(CATCGMTessPointIter* points, std::map<int, TessPointData>& out_points)
+{
+  if (!points) return;
+  try
+  {
+    points->Reset();
+    while (!points->IsExhausted())
+    {
+      TessPointData data;
+      const double* xyz = points->GetPointXyz();
+      if (xyz)
+      {
+        data.xyz[0] = xyz[0];
+        data.xyz[1] = xyz[1];
+        data.xyz[2] = xyz[2];
+      }
+      out_points[static_cast<int>(points->GetPointNu())] = data;
+      points->GoToNext();
+    }
+  }
+  catch (...) {}
+}
+
+static bool LookupTessPoint(const std::map<int, TessPointData>& points, int rank,
+                            double* out_xyz)
+{
+  std::map<int, TessPointData>::const_iterator found = points.find(rank);
+  if (found == points.end()) return false;
+  out_xyz[0] = found->second.xyz[0];
+  out_xyz[1] = found->second.xyz[1];
+  out_xyz[2] = found->second.xyz[2];
+  return true;
+}
+
+static void ComputeTriangleNormal(const double* vertices, NativeMeshTriangleRecord& record)
+{
+  const double ux = vertices[3] - vertices[0];
+  const double uy = vertices[4] - vertices[1];
+  const double uz = vertices[5] - vertices[2];
+  const double vx = vertices[6] - vertices[0];
+  const double vy = vertices[7] - vertices[1];
+  const double vz = vertices[8] - vertices[2];
+  double nx = uy * vz - uz * vy;
+  double ny = uz * vx - ux * vz;
+  double nz = ux * vy - uy * vx;
+  const double norm = std::sqrt(nx * nx + ny * ny + nz * nz);
+  if (norm <= 1.0e-12) return;
+  record.normal[0] = nx / norm;
+  record.normal[1] = ny / norm;
+  record.normal[2] = nz / norm;
+  record.normal_available = true;
+}
+
+static bool AppendMeshTriangle(ParseContext& context,
+                               const NativeMeshFaceMapRecord& map_record,
+                               const std::map<int, TessPointData>& points,
+                               int a, int b, int c,
+                               const char* source_primitive,
+                               long& next_triangle,
+                               long& triangle_in_face)
+{
+  double p0[3] = { 0.0, 0.0, 0.0 };
+  double p1[3] = { 0.0, 0.0, 0.0 };
+  double p2[3] = { 0.0, 0.0, 0.0 };
+  if (!LookupTessPoint(points, a, p0) ||
+      !LookupTessPoint(points, b, p1) ||
+      !LookupTessPoint(points, c, p2))
+    return false;
+
+  NativeMeshTriangleRecord triangle;
+  ++next_triangle;
+  ++triangle_in_face;
+  triangle.triangle_id = MakeTopologyCellId(map_record.body_id, "T", next_triangle);
+  triangle.mesh_map_id = map_record.mesh_map_id;
+  triangle.body_id = map_record.body_id;
+  triangle.face_cell_id = map_record.face_cell_id;
+  triangle.triangle_index = next_triangle;
+  triangle.triangle_index_in_face = triangle_in_face;
+  triangle.vertex_ranks[0] = a;
+  triangle.vertex_ranks[1] = b;
+  triangle.vertex_ranks[2] = c;
+  int i = 0;
+  for (; i < 3; ++i)
+  {
+    triangle.vertices_mm[i] = p0[i];
+    triangle.vertices_mm[3 + i] = p1[i];
+    triangle.vertices_mm[6 + i] = p2[i];
+  }
+  ComputeTriangleNormal(triangle.vertices_mm, triangle);
+  triangle.source_primitive = source_primitive ? source_primitive : "unknown";
+  triangle.value_source = "typed_caa_public_body_tessellator_triangle_payload";
+  context.mesh_triangles.push_back(triangle);
+  return true;
+}
+
+static void WriteJsonPoint(std::ostream& out, const CATMathPoint& point)
+{
+  double xyz[3] = { 0.0, 0.0, 0.0 };
+  point.GetCoord(xyz);
+  out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
+}
+
+static void WriteJsonVector(std::ostream& out, const CATMathVector& vector)
+{
+  double xyz[3] = { 0.0, 0.0, 0.0 };
+  vector.GetCoord(xyz);
+  out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
+}
+
+static void WriteJsonDirection(std::ostream& out, const CATMathDirection& direction)
+{
+  double xyz[3] = { 0.0, 0.0, 0.0 };
+  direction.GetCoord(xyz);
+  out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
+}
+
+static std::string GeometryBoundingBoxJson(CATGeometry* geometry)
+{
+  if (!geometry) return "";
+  try
+  {
+    CATMathBox box;
+    geometry->GetBoundingBox(box);
+    CATMathPoint low;
+    CATMathPoint high;
+    box.GetLow(low);
+    box.GetHigh(high);
+    std::ostringstream out;
+    out << "{\"min\":";
+    WriteJsonPoint(out, low);
+    out << ",\"max\":";
+    WriteJsonPoint(out, high);
+    out << '}';
+    return out.str();
+  }
+  catch (...) {}
+  return "";
+}
+
+template <class InterfaceT>
+static InterfaceT* QueryGeometryInterface(CATGeometry* geometry, const IID& iid)
+{
+  if (!geometry) return 0;
+  InterfaceT* typed = 0;
+  try
+  {
+    if (SUCCEEDED(geometry->QueryInterface(iid, reinterpret_cast<void**>(&typed))) && typed)
+      return typed;
+  }
+  catch (...) {}
+  return 0;
+}
+
+template <class InterfaceT>
+static void ReleaseGeometryInterface(InterfaceT*& pointer)
+{
+  if (pointer)
+  {
+    pointer->Release();
+    pointer = 0;
+  }
+}
+
+static std::string ElementaryAxisJson(CATElementarySurface* surface)
+{
+  if (!surface) return "";
+  CATMathPoint origin;
+  CATMathVector first;
+  CATMathVector second;
+  CATMathVector third;
+  surface->GetAxis(origin, first, second, third);
+  std::ostringstream out;
+  out << "\"origin\":";
+  WriteJsonPoint(out, origin);
+  out << ",\"x_direction\":";
+  WriteJsonVector(out, first);
+  out << ",\"y_direction\":";
+  WriteJsonVector(out, second);
+  out << ",\"axis_direction\":";
+  WriteJsonVector(out, third);
+  return out.str();
+}
+
+static void DecodeExactCellGeometry(ParseContext& context, CATCell* cell,
+                                    NativeTopologyCellRecord& record)
+{
+  if (!cell || (record.dimension != 2 && record.dimension != 1 && record.dimension != 0))
+    return;
+  CATOrientation orientation = CATOrientationUnknown;
+  CATGeometry* geometry = 0;
+  try { geometry = cell->GetGeometry(&orientation); }
+  catch (...)
+  {
+    record.geometry_status = "failed";
+    record.diagnostic_ids.push_back(
+      context.AddDiagnostic("warning", "brep_geometry", "CELL_GEOMETRY_GET_FAILED",
+                            "CATCell::GetGeometry raised an exception", record.cell_id));
+    return;
+  }
+  if (!geometry)
+  {
+    record.geometry_status = "unavailable";
+    return;
+  }
+
+  record.geometry_orientation = orientation == CATOrientationPositive ? "positive" :
+    (orientation == CATOrientationNegative ? "negative" : "unknown");
+  record.bounding_box_json = GeometryBoundingBoxJson(geometry);
+
+  if (record.dimension == 2)
+  {
+    CATPlane* plane = QueryGeometryInterface<CATPlane>(geometry, IID_CATPlane);
+    if (plane)
+    {
+      CATMathPoint origin;
+      CATMathDirection first;
+      CATMathDirection second;
+      plane->GetAxis(origin, first, second);
+      std::ostringstream out;
+      out << "{\"origin\":";
+      WriteJsonPoint(out, origin);
+      out << ",\"u_direction\":";
+      WriteJsonDirection(out, first);
+      out << ",\"v_direction\":";
+      WriteJsonDirection(out, second);
+      out << ",\"normal\":";
+      CATMathPoint normal_origin;
+      CATMathVector normal;
+      plane->GetNormal(normal_origin, normal);
+      WriteJsonVector(out, normal);
+      out << '}';
+      record.exact_geometry_type = "plane";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(plane);
+      return;
+    }
+    CATCylinder* cylinder = QueryGeometryInterface<CATCylinder>(geometry, IID_CATCylinder);
+    if (cylinder)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"radius_mm\":" << std::setprecision(15) << cylinder->GetRadius()
+          << ",\"start_length_mm\":" << cylinder->GetStartLength()
+          << ",\"end_length_mm\":" << cylinder->GetEndLength()
+          << ",\"start_angle_rad\":" << cylinder->GetStartAngle()
+          << ",\"end_angle_rad\":" << cylinder->GetEndAngle() << '}';
+      record.exact_geometry_type = "cylinder";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(cylinder);
+      return;
+    }
+    CATCone* cone = QueryGeometryInterface<CATCone>(geometry, IID_CATCone);
+    if (cone)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"start_radius_mm\":" << std::setprecision(15) << cone->GetStartRadius()
+          << ",\"cone_angle_rad\":" << cone->GetConeAngle()
+          << ",\"start_angle_rad\":" << cone->GetStartAngle()
+          << ",\"end_angle_rad\":" << cone->GetEndAngle()
+          << ",\"start_rule_length_mm\":" << cone->GetStartRuleLength()
+          << ",\"end_rule_length_mm\":" << cone->GetEndRuleLength() << '}';
+      record.exact_geometry_type = "cone";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(cone);
+      return;
+    }
+    CATSphere* sphere = QueryGeometryInterface<CATSphere>(geometry, IID_CATSphere);
+    if (sphere)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"radius_mm\":" << std::setprecision(15) << sphere->GetRadius()
+          << ",\"meridian_start_angle_rad\":" << sphere->GetMeridianStartAngle()
+          << ",\"meridian_end_angle_rad\":" << sphere->GetMeridianEndAngle()
+          << ",\"parallel_start_angle_rad\":" << sphere->GetParallelStartAngle()
+          << ",\"parallel_end_angle_rad\":" << sphere->GetParallelEndAngle() << '}';
+      record.exact_geometry_type = "sphere";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(sphere);
+      return;
+    }
+    CATTorus* torus = QueryGeometryInterface<CATTorus>(geometry, IID_CATTorus);
+    if (torus)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"major_radius_mm\":" << std::setprecision(15) << torus->GetMajorRadius()
+          << ",\"minor_radius_mm\":" << torus->GetMinorRadius()
+          << ",\"major_start_angle_rad\":" << torus->GetMajorStartAngle()
+          << ",\"major_end_angle_rad\":" << torus->GetMajorEndAngle()
+          << ",\"minor_start_angle_rad\":" << torus->GetMinorStartAngle()
+          << ",\"minor_end_angle_rad\":" << torus->GetMinorEndAngle() << '}';
+      record.exact_geometry_type = "torus";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(torus);
+      return;
+    }
+    CATNurbsSurface* nurbs = QueryGeometryInterface<CATNurbsSurface>(geometry, IID_CATNurbsSurface);
+    if (nurbs)
+    {
+      record.exact_geometry_type = "nurbs_surface";
+      record.geometry_parameters_json = std::string("{\"rational\":") + (nurbs->IsRational() ? "true}" : "false}");
+      record.geometry_status = "partial";
+      ReleaseGeometryInterface(nurbs);
+      return;
+    }
+    CATSurface* surface = QueryGeometryInterface<CATSurface>(geometry, IID_CATSurface);
+    if (surface)
+    {
+      const CATSurface* geometric_rep = 0;
+      try { geometric_rep = surface->GetGeometricRep(); } catch (...) { geometric_rep = 0; }
+      CATGeometry* rep_geometry = const_cast<CATSurface*>(geometric_rep);
+      if (rep_geometry && rep_geometry != surface)
+      {
+        CATCylinder* rep_cylinder = QueryGeometryInterface<CATCylinder>(rep_geometry, IID_CATCylinder);
+        if (rep_cylinder)
+        {
+          CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(rep_geometry, IID_CATElementarySurface);
+          std::ostringstream out;
+          out << '{';
+          const std::string axis_json = ElementaryAxisJson(elementary);
+          if (!axis_json.empty()) out << axis_json << ',';
+          out << "\"radius_mm\":" << std::setprecision(15) << rep_cylinder->GetRadius()
+              << ",\"start_length_mm\":" << rep_cylinder->GetStartLength()
+              << ",\"end_length_mm\":" << rep_cylinder->GetEndLength()
+              << ",\"start_angle_rad\":" << rep_cylinder->GetStartAngle()
+              << ",\"end_angle_rad\":" << rep_cylinder->GetEndAngle()
+              << ",\"surface_representation\":\"CATSurface.GetGeometricRep\"}";
+          record.exact_geometry_type = "cylinder";
+          record.geometry_parameters_json = out.str();
+          record.geometry_status = "exact";
+          ReleaseGeometryInterface(elementary);
+          ReleaseGeometryInterface(rep_cylinder);
+          ReleaseGeometryInterface(surface);
+          return;
+        }
+        CATTorus* rep_torus = QueryGeometryInterface<CATTorus>(rep_geometry, IID_CATTorus);
+        if (rep_torus)
+        {
+          CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(rep_geometry, IID_CATElementarySurface);
+          std::ostringstream out;
+          out << '{';
+          const std::string axis_json = ElementaryAxisJson(elementary);
+          if (!axis_json.empty()) out << axis_json << ',';
+          out << "\"major_radius_mm\":" << std::setprecision(15) << rep_torus->GetMajorRadius()
+              << ",\"minor_radius_mm\":" << rep_torus->GetMinorRadius()
+              << ",\"major_start_angle_rad\":" << rep_torus->GetMajorStartAngle()
+              << ",\"major_end_angle_rad\":" << rep_torus->GetMajorEndAngle()
+              << ",\"minor_start_angle_rad\":" << rep_torus->GetMinorStartAngle()
+              << ",\"minor_end_angle_rad\":" << rep_torus->GetMinorEndAngle()
+              << ",\"surface_representation\":\"CATSurface.GetGeometricRep\"}";
+          record.exact_geometry_type = "torus";
+          record.geometry_parameters_json = out.str();
+          record.geometry_status = "exact";
+          ReleaseGeometryInterface(elementary);
+          ReleaseGeometryInterface(rep_torus);
+          ReleaseGeometryInterface(surface);
+          return;
+        }
+      }
+      record.exact_geometry_type = "other_surface";
+      record.geometry_status = "partial";
+      ReleaseGeometryInterface(surface);
+      return;
+    }
+  }
+  else if (record.dimension == 1)
+  {
+    CATLine* line = QueryGeometryInterface<CATLine>(geometry, IID_CATLine);
+    if (line)
+    {
+      CATMathPoint origin;
+      CATMathDirection direction;
+      line->GetOrigin(origin);
+      line->GetDirection(direction);
+      std::ostringstream out;
+      out << "{\"origin\":";
+      WriteJsonPoint(out, origin);
+      out << ",\"direction\":";
+      WriteJsonDirection(out, direction);
+      out << '}';
+      record.exact_geometry_type = "line";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(line);
+      return;
+    }
+    CATCircle* circle = QueryGeometryInterface<CATCircle>(geometry, IID_CATCircle);
+    if (circle)
+    {
+      CATConic* conic = QueryGeometryInterface<CATConic>(geometry, IID_CATConic);
+      CATMathPoint center;
+      CATMathPlane support;
+      CATMathVector u;
+      CATMathVector v;
+      CATMathVector normal;
+      if (conic)
+      {
+        conic->GetOrigin(center);
+        conic->GetSupport(support);
+        support.GetFirstDirection(u);
+        support.GetSecondDirection(v);
+        support.GetNormal(normal);
+      }
+      std::ostringstream out;
+      out << "{\"center\":";
+      WriteJsonPoint(out, center);
+      out << ",\"u_direction\":";
+      WriteJsonVector(out, u);
+      out << ",\"v_direction\":";
+      WriteJsonVector(out, v);
+      out << ",\"normal\":";
+      WriteJsonVector(out, normal);
+      out << ",\"radius_mm\":" << std::setprecision(15) << circle->GetRadius()
+          << ",\"start_angle_rad\":" << circle->GetStartAngle()
+          << ",\"end_angle_rad\":" << circle->GetEndAngle() << '}';
+      record.exact_geometry_type = "circle";
+      record.geometry_parameters_json = out.str();
+      record.geometry_status = "exact";
+      ReleaseGeometryInterface(conic);
+      ReleaseGeometryInterface(circle);
+      return;
+    }
+    CATNurbsCurve* nurbs = QueryGeometryInterface<CATNurbsCurve>(geometry, IID_CATNurbsCurve);
+    if (nurbs)
+    {
+      record.exact_geometry_type = "nurbs_curve";
+      record.geometry_parameters_json = std::string("{\"rational\":") + (nurbs->IsRational() ? "true}" : "false}");
+      record.geometry_status = "partial";
+      ReleaseGeometryInterface(nurbs);
+      return;
+    }
+    CATCurve* curve = QueryGeometryInterface<CATCurve>(geometry, IID_CATCurve);
+    if (curve)
+    {
+      record.exact_geometry_type = "other_curve";
+      record.geometry_status = "partial";
+      ReleaseGeometryInterface(curve);
+      return;
+    }
+  }
+  record.exact_geometry_type = record.dimension == 0 ? "point" : "unknown";
+  if (record.geometry_status.empty()) record.geometry_status = record.dimension == 0 ? "partial" : "unknown";
+}
+
 // 用途：读取单个 Face 的 CGM 三角化统计，并生成 Face→Triangle Range 映射记录。
 static void AppendMeshFaceMap(ParseContext& context, CATICGMBodyTessellator* tessellator,
                               CATFace* face, const std::string& body_id,
@@ -375,9 +871,95 @@ static void AppendMeshFaceMap(ParseContext& context, CATICGMBodyTessellator* tes
       record.estimated_triangle_count += EstimateTrianglesFromPointGroups(record.polygon_count, polygon_points);
     }
     record.estimated_triangle_count += record.isolated_triangle_count;
-    record.triangle_count = record.estimated_triangle_count;
-    next_triangle += record.triangle_count;
-    record.tessellation_status = "success";
+    std::map<int, TessPointData> point_map;
+    BuildTessPointMap(points, point_map);
+    long triangle_in_face = 0;
+    long failed_triangle_count = 0;
+    if (triangles)
+    {
+      triangles->Reset();
+      while (!triangles->IsExhausted())
+      {
+        int ranks[3] = { 0, 0, 0 };
+        triangles->GetTrianNuPts(ranks);
+        if (!AppendMeshTriangle(context, record, point_map, ranks[0], ranks[1], ranks[2],
+                                "triangle", next_triangle, triangle_in_face))
+          ++failed_triangle_count;
+        triangles->GoToNext();
+      }
+    }
+    if (strips)
+    {
+      strips->Reset();
+      while (!strips->IsExhausted())
+      {
+        const CATLONG32 count = strips->GetStriNbPts();
+        if (count >= 3)
+        {
+          std::vector<int> ranks(static_cast<size_t>(count), 0);
+          strips->GetStriNuPts(&ranks[0]);
+          CATLONG32 i = 0;
+          for (i = 0; i < count - 2; ++i)
+          {
+            const int a = (i % 2 == 0) ? ranks[static_cast<size_t>(i)] : ranks[static_cast<size_t>(i + 1)];
+            const int b = (i % 2 == 0) ? ranks[static_cast<size_t>(i + 1)] : ranks[static_cast<size_t>(i)];
+            const int c = ranks[static_cast<size_t>(i + 2)];
+            if (!AppendMeshTriangle(context, record, point_map, a, b, c,
+                                    "strip", next_triangle, triangle_in_face))
+              ++failed_triangle_count;
+          }
+        }
+        strips->GoToNext();
+      }
+    }
+    if (fans)
+    {
+      fans->Reset();
+      while (!fans->IsExhausted())
+      {
+        const CATLONG32 count = fans->GetFanNbPts();
+        if (count >= 3)
+        {
+          std::vector<int> ranks(static_cast<size_t>(count), 0);
+          fans->GetFanNuPts(&ranks[0]);
+          CATLONG32 i = 1;
+          for (; i < count - 1; ++i)
+            if (!AppendMeshTriangle(context, record, point_map, ranks[0],
+                                    ranks[static_cast<size_t>(i)],
+                                    ranks[static_cast<size_t>(i + 1)],
+                                    "fan", next_triangle, triangle_in_face))
+              ++failed_triangle_count;
+        }
+        fans->GoToNext();
+      }
+    }
+    if (polygons)
+    {
+      polygons->Reset();
+      while (!polygons->IsExhausted())
+      {
+        const CATLONG32 count = polygons->GetPolyNbPts();
+        if (count >= 3)
+        {
+          std::vector<int> ranks(static_cast<size_t>(count), 0);
+          polygons->GetPolyNuPts(&ranks[0]);
+          CATLONG32 i = 1;
+          for (; i < count - 1; ++i)
+            if (!AppendMeshTriangle(context, record, point_map, ranks[0],
+                                    ranks[static_cast<size_t>(i)],
+                                    ranks[static_cast<size_t>(i + 1)],
+                                    "polygon", next_triangle, triangle_in_face))
+              ++failed_triangle_count;
+        }
+        polygons->GoToNext();
+      }
+    }
+    record.triangle_count = triangle_in_face;
+    record.tessellation_status = failed_triangle_count == 0 ? "success" : "partial";
+    if (failed_triangle_count != 0)
+      record.diagnostic_ids.push_back(
+        context.AddDiagnostic("warning", "mesh_face_mapping", "FACE_TRIANGLE_PAYLOAD_PARTIAL",
+                              "Some tessellated triangle point ranks could not be resolved", face_id));
   }
   catch (...)
   {
@@ -475,6 +1057,7 @@ static void AppendTopologyCell(ParseContext& context, const std::string& body_id
       context.AddDiagnostic("warning", "topology", "TOPOLOGY_CELL_MEASURE_FAILED",
                             "CATFace::CalcArea or CATEdge::CalcLength failed", ""));
   }
+  DecodeExactCellGeometry(context, cell, record);
   if (record.geometry_status.empty()) record.geometry_status = record.has_center ? "success" : "partial";
   FillBoundaryCellIds(cell, cell_ids, record);
   FillAdjacentCellIds(body, cell, cell_ids, record);
@@ -742,7 +1325,7 @@ static void AppendNativeFeatureTopologyLink(ParseContext& context,
 static void AppendFaceWires(ParseContext& context, CATFace* face,
                             const std::string& body_id, const std::string& face_id,
                             long face_index, const std::map<CATCell*, std::string>& cell_ids,
-                            long& next_wire_index)
+                            long& next_wire_index, long& next_coedge_index)
 {
   if (!face) return;
   CATBoundaryIterator* raw_iterator = 0;
@@ -754,6 +1337,7 @@ static void AppendFaceWires(ParseContext& context, CATFace* face,
 
   NativeTopologyWireRecord current;
   bool has_current = false;
+  long coedge_index_in_wire = 0;
   try
   {
     CATSide side = CATSideUnknown;
@@ -780,9 +1364,27 @@ static void AppendFaceWires(ParseContext& context, CATFace* face,
         current.closed_status = "unknown";
         current.value_source = "typed_caa_public_boundary_iterator";
         has_current = true;
+        coedge_index_in_wire = 0;
       }
       const std::string edge_id = LookupCellId(boundary, cell_ids);
-      if (!edge_id.empty()) current.edge_cell_ids.push_back(edge_id);
+      if (!edge_id.empty())
+      {
+        current.edge_cell_ids.push_back(edge_id);
+        NativeTopologyCoedgeRecord coedge;
+        ++next_coedge_index;
+        ++coedge_index_in_wire;
+        coedge.coedge_id = MakeTopologyCellId(body_id, "C", next_coedge_index);
+        coedge.body_id = body_id;
+        coedge.wire_id = current.wire_id;
+        coedge.owning_face_id = face_id;
+        coedge.edge_cell_id = edge_id;
+        coedge.coedge_index = next_coedge_index;
+        coedge.coedge_index_in_wire = coedge_index_in_wire;
+        coedge.edge_orientation_side = static_cast<short>(side);
+        coedge.orientation_status = side == CATSideUnknown ? "unknown" : "from_cat_boundary_iterator_side";
+        coedge.value_source = "typed_caa_public_boundary_iterator";
+        context.topology_coedges.push_back(coedge);
+      }
     }
     if (has_current)
     {
@@ -794,6 +1396,28 @@ static void AppendFaceWires(ParseContext& context, CATFace* face,
   {
     context.AddDiagnostic("warning", "topology", "FACE_WIRE_ENUMERATION_FAILED",
                           "CATBoundaryIterator failed while grouping face loops", "");
+  }
+}
+
+static void UpdateFaceWireIds(ParseContext& context, const std::string& face_id)
+{
+  if (face_id.empty()) return;
+  std::vector<std::string> wire_ids;
+  std::vector<NativeTopologyWireRecord>::const_iterator wire = context.topology_wires.begin();
+  for (; wire != context.topology_wires.end(); ++wire)
+    if (wire->owning_face_id == face_id) wire_ids.push_back(wire->wire_id);
+  if (wire_ids.empty()) return;
+  std::vector<NativeTopologyCellRecord>::iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->cell_id == face_id)
+    {
+      cell->outer_wire_id = wire_ids[0];
+      cell->inner_wire_ids.clear();
+      size_t index = 1;
+      for (; index < wire_ids.size(); ++index) cell->inner_wire_ids.push_back(wire_ids[index]);
+      return;
+    }
   }
 }
 
@@ -920,6 +1544,7 @@ static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
   CgmTessellatorGuard tessellator_guard(tessellator);
 
   long next_wire_index = 0;
+  long next_coedge_index = 0;
   long next_triangle = 0;
   std::vector<CATCell*>::iterator it = faces.begin();
   long index = 1;
@@ -927,10 +1552,12 @@ static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
   {
     AppendTopologyCell(context, body_record.body_id, "F", index, *it, body, cell_ids);
     CATFace* face = static_cast<CATFace*>(*it);
+    const std::string face_id = LookupCellId(*it, cell_ids);
     AppendFaceWires(context, face, body_record.body_id,
-                    LookupCellId(*it, cell_ids), index, cell_ids, next_wire_index);
+                    face_id, index, cell_ids, next_wire_index, next_coedge_index);
+    UpdateFaceWireIds(context, face_id);
     AppendMeshFaceMap(context, tessellator_guard.Get(), face, body_record.body_id,
-                      LookupCellId(*it, cell_ids), index, next_triangle);
+                      face_id, index, next_triangle);
   }
   it = edges.begin();
   index = 1;
@@ -1493,6 +2120,17 @@ static void AddLongParameter(NativeFeatureParameterData& data, const char* name,
   text << value;
   AddNativeParameterField(data, name, "integer", "available", source_api, "OK",
                           text.str(), "", true, static_cast<double>(value), "count");
+}
+
+static void AddDoubleParameter(NativeFeatureParameterData& data, const char* name,
+                               double value, const char* value_type,
+                               const char* normalized_unit,
+                               const char* source_api)
+{
+  std::ostringstream text;
+  text << std::setprecision(15) << value;
+  AddNativeParameterField(data, name, value_type, "available", source_api, "OK",
+                          text.str(), normalized_unit, true, value, normalized_unit);
 }
 
 static void AddEnumParameter(NativeFeatureParameterData& data, const char* name,
@@ -2731,7 +3369,87 @@ public:
 
     try
     {
-      if (family == "chamfer")
+      if (family == "plane")
+      {
+        CaaInterfaceGuard<CATIMechanicalFeature> mechanical_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIMechanicalFeature,
+            reinterpret_cast<void**>(&mechanical_guard.Out()))) || !mechanical_guard.Get())
+        {
+          error = "CATIMechanicalFeature is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        CATISpecObject_var part_spec = NULL_var;
+        try { part_spec = mechanical_guard.Get()->GetPart(); }
+        catch (...)
+        {
+          error = "CATIMechanicalFeature.GetPart raised an exception";
+          return NativeFeatureParameterInterfaceQueryException;
+        }
+        if (part_spec == NULL_var)
+        {
+          error = "CATIMechanicalFeature.GetPart returned null";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        CaaInterfaceGuard<CATIPrtPart> part_guard;
+        if (FAILED(part_spec->QueryInterface(IID_CATIPrtPart,
+            reinterpret_cast<void**>(&part_guard.Out()))) || !part_guard.Get())
+        {
+          error = "Feature part does not expose CATIPrtPart";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        CATListValCATISpecObject_var reference_planes = part_guard.Get()->GetReferencePlanes();
+        int reference_index = 0;
+        int plane_index = 1;
+        for (; plane_index <= reference_planes.Size(); ++plane_index)
+        {
+          CATISpecObject_var candidate = reference_planes[plane_index];
+          CATBaseUnknown* candidate_base = candidate;
+          if (candidate_base && _spec->IsEqual(candidate_base))
+          {
+            reference_index = plane_index;
+            break;
+          }
+        }
+        if (reference_index < 1 || reference_index > 3)
+        {
+          error = "GSMPlane is not one of CATIPrtPart.GetReferencePlanes";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIMechanicalFeature+CATIPrtPart.GetReferencePlanes";
+        output.semantic_kind = "reference_plane";
+        double origin_xyz[3] = { 0.0, 0.0, 0.0 };
+        double u_xyz[3] = { 1.0, 0.0, 0.0 };
+        double v_xyz[3] = { 0.0, 1.0, 0.0 };
+        double normal_xyz[3] = { 0.0, 0.0, 1.0 };
+        if (reference_index == 2)
+        {
+          u_xyz[0] = 0.0; u_xyz[1] = 1.0; u_xyz[2] = 0.0;
+          v_xyz[0] = 0.0; v_xyz[1] = 0.0; v_xyz[2] = 1.0;
+          normal_xyz[0] = 1.0; normal_xyz[1] = 0.0; normal_xyz[2] = 0.0;
+        }
+        else if (reference_index == 3)
+        {
+          u_xyz[0] = 0.0; u_xyz[1] = 0.0; u_xyz[2] = 1.0;
+          v_xyz[0] = 1.0; v_xyz[1] = 0.0; v_xyz[2] = 0.0;
+          normal_xyz[0] = 0.0; normal_xyz[1] = 1.0; normal_xyz[2] = 0.0;
+        }
+        AddEnumParameter(output, "reference_plane_index", reference_index,
+                         "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "origin_x", origin_xyz[0], "length", "mm", "CATIPrtPart.GetReferencePlanes");
+        AddDoubleParameter(output, "origin_y", origin_xyz[1], "length", "mm", "CATIPrtPart.GetReferencePlanes");
+        AddDoubleParameter(output, "origin_z", origin_xyz[2], "length", "mm", "CATIPrtPart.GetReferencePlanes");
+        AddDoubleParameter(output, "u_direction_x", u_xyz[0], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "u_direction_y", u_xyz[1], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "u_direction_z", u_xyz[2], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "v_direction_x", v_xyz[0], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "v_direction_y", v_xyz[1], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "v_direction_z", v_xyz[2], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "normal_x", normal_xyz[0], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "normal_y", normal_xyz[1], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+        AddDoubleParameter(output, "normal_z", normal_xyz[2], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
+      }
+      else if (family == "chamfer")
       {
         CaaInterfaceGuard<CATIAChamfer> chamfer_guard;
         if (FAILED(_spec->QueryInterface(IID_CATIAChamfer,

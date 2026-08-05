@@ -20,7 +20,9 @@
     "native_topology_bodies.jsonl",
     "native_topology_cells.jsonl",
     "native_topology_wires.jsonl",
+    "native_topology_coedges.jsonl",
     "native_mesh_face_map.jsonl",
+    "native_mesh_triangles.jsonl",
     "fta_sets.jsonl",
     "fta_semantics.jsonl",
     "fta_topology_links.jsonl",
@@ -127,8 +129,8 @@
     "features.jsonl", "native_features.jsonl", "decoder_registry.json",
     "native_feature_results.jsonl", "native_feature_result_cells.jsonl",
     "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl",
-    "native_topology_cells.jsonl", "native_topology_wires.jsonl",
-    "native_mesh_face_map.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl",
+    "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_topology_coedges.jsonl",
+    "native_mesh_face_map.jsonl", "native_mesh_triangles.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl",
     "fta_topology_links.jsonl", "product_references.jsonl", "product_instances.jsonl",
     "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capability_matrix.json"
   ]

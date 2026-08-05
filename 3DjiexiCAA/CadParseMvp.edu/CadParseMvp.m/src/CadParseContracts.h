@@ -458,9 +458,16 @@ struct NativeTopologyCellRecord
   bool length_mm_available;
   double length_mm;
   std::string geometry_status;
+  std::string exact_geometry_type;
+  std::string geometry_parameters_json;
+  std::string parameter_domain_json;
+  std::string bounding_box_json;
+  std::string geometry_orientation;
   std::string measure_status;
   std::vector<std::string> boundary_cell_ids;
   std::vector<std::string> adjacent_cell_ids;
+  std::string outer_wire_id;
+  std::vector<std::string> inner_wire_ids;
   std::string stable_id_method;
   std::string value_source;
   const void* runtime_cell_pointer;
@@ -488,8 +495,27 @@ struct NativeTopologyWireRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// CAA 原生 Coedge 摘要；每条记录表示一个 Face Loop 中对 Edge 的一次有向使用。
+// R21 Public CATBoundaryIterator 暴露 CATSide，但不提供跨会话持久 coedge identity。
+struct NativeTopologyCoedgeRecord
+{
+  NativeTopologyCoedgeRecord()
+    : coedge_index(0), coedge_index_in_wire(0), edge_orientation_side(0) {}
+
+  std::string coedge_id;
+  std::string body_id;
+  std::string wire_id;
+  std::string owning_face_id;
+  std::string edge_cell_id;
+  long coedge_index;
+  long coedge_index_in_wire;
+  short edge_orientation_side;
+  std::string orientation_status;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
 // CAA 三角化到 Face 的映射摘要；这是给 GLB/轻量化阶段使用的 Face→Triangle Range 契约。
-// 当前只记录每个 Face 的三角数量和范围，不把三角顶点坐标写进 CAA IR。
 struct NativeMeshFaceMapRecord
 {
   // 用途：给三角范围和迭代器计数提供明确零值。
@@ -513,6 +539,33 @@ struct NativeMeshFaceMapRecord
   short face_orientation_side;
   bool planar;
   std::string tessellation_status;
+  std::string value_source;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// CAA 原生三角形 Sidecar；每条三角形直接继承 B-Rep Face ID，避免后续按距离猜测。
+struct NativeMeshTriangleRecord
+{
+  NativeMeshTriangleRecord()
+    : triangle_index(0), triangle_index_in_face(0), normal_available(false)
+  {
+    vertex_ranks[0] = vertex_ranks[1] = vertex_ranks[2] = 0;
+    int i = 0;
+    for (; i < 9; ++i) vertices_mm[i] = 0.0;
+    normal[0] = normal[1] = normal[2] = 0.0;
+  }
+
+  std::string triangle_id;
+  std::string mesh_map_id;
+  std::string body_id;
+  std::string face_cell_id;
+  long triangle_index;
+  long triangle_index_in_face;
+  int vertex_ranks[3];
+  double vertices_mm[9];
+  bool normal_available;
+  double normal[3];
+  std::string source_primitive;
   std::string value_source;
   std::vector<std::string> diagnostic_ids;
 };
@@ -838,7 +891,9 @@ public:
   std::vector<NativeTopologyBodyRecord> topology_bodies;
   std::vector<NativeTopologyCellRecord> topology_cells;
   std::vector<NativeTopologyWireRecord> topology_wires;
+  std::vector<NativeTopologyCoedgeRecord> topology_coedges;
   std::vector<NativeMeshFaceMapRecord> mesh_face_maps;
+  std::vector<NativeMeshTriangleRecord> mesh_triangles;
   std::vector<FtaSetRecord> fta_sets;
   std::vector<FtaSemanticRecord> fta_semantics;
   std::vector<FtaTopologyLinkRecord> fta_topology_links;

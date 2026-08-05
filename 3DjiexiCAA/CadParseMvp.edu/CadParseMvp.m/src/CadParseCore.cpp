@@ -695,7 +695,7 @@ static bool IsAdvancedNativeParameterFamily(const std::string& family)
          family == "shell" || family == "thickness" || family == "draft" ||
          family == "rectangular_pattern" || family == "circular_pattern" ||
          family == "user_pattern" || family == "add" || family == "remove" ||
-         family == "assemble" || family == "intersect";
+         family == "assemble" || family == "intersect" || family == "plane";
 }
 
 const char* NativeFeatureParameterDecoder::GetDecoderId() const

@@ -622,9 +622,14 @@ static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& contex
     "LOOP_COEDGE_IR_INCOMPLETE";
   item.counts.solid_count = static_cast<long>(context.topology_bodies.size());
   item.counts.loop_count = static_cast<long>(context.topology_wires.size());
+  item.counts.coedge_count = static_cast<long>(context.topology_coedges.size());
   item.counts.required_count = static_cast<long>(context.topology_cells.size());
-  item.counts.evidence_count = item.counts.required_count + item.counts.loop_count;
+  item.counts.evidence_count =
+    item.counts.required_count + item.counts.loop_count + item.counts.coedge_count;
   std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  std::set<std::string> cell_ids;
+  std::set<std::string> face_ids;
+  std::set<std::string> edge_ids;
   for (; cell != context.topology_cells.end(); ++cell)
   {
     if (cell->dimension == 2) ++item.counts.face_count;
@@ -632,10 +637,52 @@ static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& contex
     else if (cell->dimension == 0) ++item.counts.vertex_count;
     else if (cell->dimension == 3) ++item.counts.shell_count;
     if (cell->cell_id.empty()) ++item.counts.invalid_reference_count;
+    else
+    {
+      cell_ids.insert(cell->cell_id);
+      if (cell->dimension == 2) face_ids.insert(cell->cell_id);
+      else if (cell->dimension == 1) edge_ids.insert(cell->cell_id);
+    }
   }
-  item.counts.resolved_count = item.counts.required_count - item.counts.invalid_reference_count;
-  item.counts.coedge_count = 0;
+  std::set<std::string> wire_ids;
+  std::set<std::string> faces_with_wires;
+  std::vector<NativeTopologyWireRecord>::const_iterator wire = context.topology_wires.begin();
+  for (; wire != context.topology_wires.end(); ++wire)
+  {
+    if (wire->wire_id.empty()) ++item.counts.invalid_reference_count;
+    else wire_ids.insert(wire->wire_id);
+    if (face_ids.find(wire->owning_face_id) == face_ids.end())
+      ++item.counts.invalid_reference_count;
+    else
+      faces_with_wires.insert(wire->owning_face_id);
+    if (wire->edge_cell_ids.empty()) ++item.counts.invalid_reference_count;
+    std::vector<std::string>::const_iterator edge = wire->edge_cell_ids.begin();
+    for (; edge != wire->edge_cell_ids.end(); ++edge)
+      if (edge_ids.find(*edge) == edge_ids.end()) ++item.counts.invalid_reference_count;
+  }
+  std::vector<NativeTopologyCoedgeRecord>::const_iterator coedge =
+    context.topology_coedges.begin();
+  for (; coedge != context.topology_coedges.end(); ++coedge)
+  {
+    if (coedge->coedge_id.empty() ||
+        wire_ids.find(coedge->wire_id) == wire_ids.end() ||
+        face_ids.find(coedge->owning_face_id) == face_ids.end() ||
+        edge_ids.find(coedge->edge_cell_id) == edge_ids.end())
+      ++item.counts.invalid_reference_count;
+  }
+  item.counts.resolved_count =
+    item.counts.required_count > item.counts.invalid_reference_count ?
+    item.counts.required_count - item.counts.invalid_reference_count : 0;
   item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  if (item.counts.required_count > 0 &&
+      item.counts.invalid_reference_count == 0 &&
+      item.counts.face_count == static_cast<long>(faces_with_wires.size()) &&
+      item.counts.loop_count > 0 &&
+      item.counts.coedge_count > 0)
+  {
+    item.status = "complete";
+    item.reason_code = "TOPOLOGY_LOOP_COEDGE_GRAPH_COMPLETE";
+  }
   return item;
 }
 
@@ -645,25 +692,51 @@ static CapabilityEvaluation EvaluateFinalBrepGeometry(const ParseContext& contex
   item.name = "final_brep_geometry_extraction";
   item.status = context.topology_cells.empty() ? "not_available" : "partial";
   item.reason_code = context.topology_cells.empty() ? "NO_PUBLIC_TOPOLOGY_CELLS" :
-    "EXACT_SURFACE_CURVE_PARAMETERS_NOT_EMITTED";
+    "EXACT_GEOMETRY_PARTIAL";
   std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
   for (; cell != context.topology_cells.end(); ++cell)
   {
     if (cell->dimension == 2)
     {
       ++item.counts.required_count;
-      ++item.counts.unknown_surface_count;
+      if (cell->geometry_status == "exact")
+      {
+        ++item.counts.resolved_count;
+        if (cell->exact_geometry_type == "nurbs_surface") ++item.counts.nurbs_surface_count;
+        else ++item.counts.analytic_surface_count;
+      }
+      else if (cell->exact_geometry_type == "nurbs_surface")
+        ++item.counts.nurbs_surface_count;
+      else
+        ++item.counts.unknown_surface_count;
     }
     else if (cell->dimension == 1)
     {
       ++item.counts.required_count;
-      ++item.counts.unknown_curve_count;
+      if (cell->geometry_status == "exact")
+      {
+        ++item.counts.resolved_count;
+        if (cell->exact_geometry_type == "nurbs_curve") ++item.counts.nurbs_curve_count;
+        else ++item.counts.analytic_curve_count;
+      }
+      else if (cell->exact_geometry_type == "nurbs_curve")
+        ++item.counts.nurbs_curve_count;
+      else
+        ++item.counts.unknown_curve_count;
     }
   }
   item.counts.evidence_count = item.counts.required_count;
-  item.counts.geometry_decode_failure_count = item.counts.required_count;
-  item.counts.resolved_count = 0;
+  item.counts.geometry_decode_failure_count = item.counts.required_count > item.counts.resolved_count ?
+    item.counts.required_count - item.counts.resolved_count : 0;
   item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  if (item.counts.required_count > 0 &&
+      item.counts.geometry_decode_failure_count == 0 &&
+      item.counts.unknown_surface_count == 0 &&
+      item.counts.unknown_curve_count == 0)
+  {
+    item.status = "complete";
+    item.reason_code = "EXACT_SURFACE_CURVE_PARAMETERS_COMPLETE";
+  }
   return item;
 }
 
@@ -673,7 +746,7 @@ static CapabilityEvaluation EvaluateMeshBrepFaceMapping(const ParseContext& cont
   item.name = "mesh_brep_face_mapping";
   item.status = context.mesh_face_maps.empty() ? "not_available" : "partial";
   item.reason_code = context.mesh_face_maps.empty() ? "NO_MESH_FACE_MAP" :
-    "FACE_RANGE_MAP_PRESENT_TRIANGLE_PAYLOAD_NOT_EMITTED";
+    "MESH_FACE_MAPPING_PARTIAL";
   std::set<std::string> face_ids;
   std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
   for (; cell != context.topology_cells.end(); ++cell)
@@ -701,6 +774,45 @@ static CapabilityEvaluation EvaluateMeshBrepFaceMapping(const ParseContext& cont
   item.counts.mesh_mapping_coverage_ratio =
     Ratio(item.counts.mapped_face_count, item.counts.required_renderable_face_count);
   item.counts.coverage_ratio = item.counts.mesh_mapping_coverage_ratio;
+  if (item.counts.required_renderable_face_count > 0 &&
+      item.counts.unmapped_face_count == 0 &&
+      item.counts.ambiguous_face_count == 0 &&
+      item.counts.triangle_count > 0 &&
+      item.counts.triangle_count == static_cast<long>(context.mesh_triangles.size()) &&
+      item.counts.mapped_triangle_count == item.counts.triangle_count)
+  {
+    item.status = "complete";
+    item.reason_code = "TRIANGLE_PAYLOAD_FACE_MAPPING_COMPLETE";
+  }
+  return item;
+}
+
+static CapabilityEvaluation EvaluateMeshGeneration(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "mesh_generation";
+  item.status = context.mesh_face_maps.empty() ? "not_available" : "partial";
+  item.reason_code = context.mesh_face_maps.empty() ? "NO_TESSELLATION_OUTPUT" :
+    "TRIANGLE_PAYLOAD_PARTIAL";
+  item.counts.required_count = static_cast<long>(context.mesh_face_maps.size());
+  item.counts.evidence_count = static_cast<long>(context.mesh_triangles.size());
+  std::vector<NativeMeshFaceMapRecord>::const_iterator map = context.mesh_face_maps.begin();
+  for (; map != context.mesh_face_maps.end(); ++map)
+  {
+    item.counts.triangle_count += map->triangle_count;
+    if (map->tessellation_status == "success" && map->triangle_count > 0)
+      ++item.counts.resolved_count;
+  }
+  item.counts.mapped_triangle_count = static_cast<long>(context.mesh_triangles.size());
+  item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  if (item.counts.required_count > 0 &&
+      item.counts.resolved_count == item.counts.required_count &&
+      item.counts.triangle_count > 0 &&
+      item.counts.triangle_count == static_cast<long>(context.mesh_triangles.size()))
+  {
+    item.status = "complete";
+    item.reason_code = "TRIANGLE_PAYLOAD_GENERATION_COMPLETE";
+  }
   return item;
 }
 
@@ -716,6 +828,103 @@ static CapabilityEvaluation MakeCapability(const char* name, const char* status,
   item.counts.resolved_count = resolved;
   item.counts.evidence_count = evidence;
   FinishGenericCounts(item.counts);
+  return item;
+}
+
+static CapabilityEvaluation EvaluateAnalyticSurfaceParameters(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "analytic_surface_parameter_extraction";
+  item.status = "not_available";
+  item.reason_code = "NO_ANALYTIC_SURFACES";
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension != 2) continue;
+    if (cell->exact_geometry_type == "nurbs_surface") continue;
+    ++item.counts.required_count;
+    if (cell->geometry_status == "exact")
+    {
+      ++item.counts.resolved_count;
+      ++item.counts.analytic_surface_count;
+    }
+    else
+    {
+      ++item.counts.geometry_decode_failure_count;
+      ++item.counts.unknown_surface_count;
+    }
+  }
+  item.counts.evidence_count = item.counts.required_count;
+  item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  if (item.counts.required_count > 0)
+  {
+    item.status = item.counts.geometry_decode_failure_count == 0 ? "complete" : "partial";
+    item.reason_code = item.status == "complete" ?
+      "ANALYTIC_SURFACE_PARAMETERS_COMPLETE" : "ANALYTIC_SURFACE_PARAMETERS_PARTIAL";
+  }
+  return item;
+}
+
+static CapabilityEvaluation EvaluateNurbsSurfaceParameters(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "nurbs_surface_parameter_extraction";
+  item.status = "not_available";
+  item.reason_code = "NO_NURBS_SURFACES_IN_SCOPE";
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension == 2 && cell->exact_geometry_type == "nurbs_surface")
+    {
+      ++item.counts.required_count;
+      ++item.counts.nurbs_surface_count;
+      if (cell->geometry_status == "exact") ++item.counts.resolved_count;
+      else ++item.counts.geometry_decode_failure_count;
+    }
+  }
+  item.counts.evidence_count = item.counts.required_count;
+  item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  if (item.counts.required_count > 0)
+  {
+    item.status = item.counts.geometry_decode_failure_count == 0 ? "complete" : "partial";
+    item.reason_code = item.status == "complete" ?
+      "NURBS_SURFACE_PARAMETERS_COMPLETE" : "NURBS_SURFACE_PARAMETERS_PARTIAL";
+  }
+  return item;
+}
+
+static CapabilityEvaluation EvaluateCurveParameters(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "curve_parameter_extraction";
+  item.status = "not_available";
+  item.reason_code = "NO_CURVES";
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension != 1) continue;
+    ++item.counts.required_count;
+    if (cell->geometry_status == "exact")
+    {
+      ++item.counts.resolved_count;
+      if (cell->exact_geometry_type == "nurbs_curve") ++item.counts.nurbs_curve_count;
+      else ++item.counts.analytic_curve_count;
+    }
+    else
+    {
+      ++item.counts.geometry_decode_failure_count;
+      if (cell->exact_geometry_type == "nurbs_curve") ++item.counts.nurbs_curve_count;
+      else ++item.counts.unknown_curve_count;
+    }
+  }
+  item.counts.evidence_count = item.counts.required_count;
+  item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  if (item.counts.required_count > 0)
+  {
+    item.status = item.counts.geometry_decode_failure_count == 0 ? "complete" : "partial";
+    item.reason_code = item.status == "complete" ?
+      "CURVE_PARAMETERS_COMPLETE" : "CURVE_PARAMETERS_PARTIAL";
+  }
   return item;
 }
 
@@ -1069,24 +1278,9 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
                                  features.empty() ? "NO_NATIVE_FEATURES" : "TYPE_AND_PARTIAL_PAYLOAD_EXTRACTION"));
   items.push_back(EvaluateFinalBrepTopology(context));
   items.push_back(EvaluateFinalBrepGeometry(context));
-  items.push_back(MakeCapability("analytic_surface_parameter_extraction",
-                                 context.topology_cells.empty() ? "not_available" : "partial",
-                                 static_cast<long>(context.topology_cells.size()),
-                                 0,
-                                 static_cast<long>(context.topology_cells.size()),
-                                 context.topology_cells.empty() ? "NO_TOPOLOGY_CELLS" : "EXACT_ANALYTIC_SURFACE_PARAMETERS_NOT_EMITTED"));
-  items.push_back(MakeCapability("nurbs_surface_parameter_extraction",
-                                 context.topology_cells.empty() ? "not_available" : "partial",
-                                 static_cast<long>(context.topology_cells.size()),
-                                 0,
-                                 static_cast<long>(context.topology_cells.size()),
-                                 context.topology_cells.empty() ? "NO_TOPOLOGY_CELLS" : "NURBS_SURFACE_PARAMETERS_NOT_EMITTED"));
-  items.push_back(MakeCapability("curve_parameter_extraction",
-                                 context.topology_cells.empty() ? "not_available" : "partial",
-                                 static_cast<long>(context.topology_cells.size()),
-                                 0,
-                                 static_cast<long>(context.topology_cells.size()),
-                                 context.topology_cells.empty() ? "NO_TOPOLOGY_CELLS" : "EXACT_CURVE_PARAMETERS_NOT_EMITTED"));
+  items.push_back(EvaluateAnalyticSurfaceParameters(context));
+  items.push_back(EvaluateNurbsSurfaceParameters(context));
+  items.push_back(EvaluateCurveParameters(context));
   items.push_back(MakeCapability("topology_extraction",
                                  context.topology_bodies.empty() ? "not_available" : "partial",
                                  static_cast<long>(context.topology_bodies.size()),
@@ -1112,19 +1306,12 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
                                  static_cast<long>(context.fta_topology_links.size()), 0,
                                  static_cast<long>(context.fta_topology_links.size()),
                                  "NOT_IMPLEMENTED"));
-  items.push_back(MakeCapability("mesh_face_mapping",
-                                 context.mesh_face_maps.empty() ? "not_available" : "partial",
-                                 static_cast<long>(context.mesh_face_maps.size()),
-                                 static_cast<long>(context.mesh_face_maps.size()),
-                                 static_cast<long>(context.mesh_face_maps.size()),
-                                 context.mesh_face_maps.empty() ? "NO_MESH_FACE_MAP" : "MESH_TO_BREP_PARTIAL"));
-  items.push_back(MakeCapability("mesh_generation",
-                                 context.mesh_face_maps.empty() ? "not_available" : "partial",
-                                 static_cast<long>(context.mesh_face_maps.size()),
-                                 static_cast<long>(context.mesh_face_maps.size()),
-                                 static_cast<long>(context.mesh_face_maps.size()),
-                                 context.mesh_face_maps.empty() ? "NO_TESSELLATION_OUTPUT" : "FACE_TESSELLATION_SUMMARY_ONLY"));
-  items.push_back(EvaluateMeshBrepFaceMapping(context));
+  CapabilityEvaluation mesh_brep = EvaluateMeshBrepFaceMapping(context);
+  CapabilityEvaluation legacy_mesh = mesh_brep;
+  legacy_mesh.name = "mesh_face_mapping";
+  items.push_back(legacy_mesh);
+  items.push_back(EvaluateMeshGeneration(context));
+  items.push_back(mesh_brep);
   items.push_back(MakeCapability("manufacturing_feature_recognition", "not_performed", 0, 0, 0,
                                  "OUT_OF_SCOPE_PHASE1"));
   const CapabilityEvaluation product_structure = EvaluateProductStructure(context);
@@ -1290,11 +1477,16 @@ void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecor
   WriteOptionalNumber(output, record.area_mm2_available, record.area_mm2);
   output << ",\"length_mm\":";
   WriteOptionalNumber(output, record.length_mm_available, record.length_mm);
-  output << ",\"orientation\":\"unknown\""
+  output << ",\"orientation\":\"" << JsonEscape(record.geometry_orientation.empty() ? "unknown" : record.geometry_orientation) << "\""
          << ",\"material_side\":\"unknown\""
-         << ",\"geometry_type\":\"" << JsonEscape(record.geometry_status)
-         << "\",\"geometry_parameters\":{}"
-         << ",\"parameter_domain\":null"
+         << ",\"geometry_type\":\"" << JsonEscape(record.exact_geometry_type.empty() ? record.geometry_status : record.exact_geometry_type)
+         << "\",\"geometry_parameters\":";
+  if (record.geometry_parameters_json.empty()) output << "{}";
+  else output << record.geometry_parameters_json;
+  output << ",\"parameter_domain\":";
+  if (record.parameter_domain_json.empty()) output << "null";
+  else output << record.parameter_domain_json;
+  output
          << ",\"periodic\":\"unknown\""
          << ",\"closed\":\"unknown\""
          << ",\"centroid_mm\":";
@@ -1303,9 +1495,16 @@ void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecor
            << record.center_mm[1] << ',' << record.center_mm[2] << ']';
   else
     output << "null";
-  output << ",\"bounding_box_mm\":null"
-         << ",\"outer_wire_id\":null"
-         << ",\"inner_wire_ids\":[]"
+  output << ",\"bounding_box_mm\":";
+  if (record.bounding_box_json.empty()) output << "null";
+  else output << record.bounding_box_json;
+  output
+         << ",\"outer_wire_id\":";
+  if (record.outer_wire_id.empty()) output << "null";
+  else output << '"' << JsonEscape(record.outer_wire_id) << '"';
+  output << ",\"inner_wire_ids\":";
+  WriteStringArray(output, record.inner_wire_ids);
+  output
          << ",\"adjacencies\":[]"
          << ",\"normal_samples\":[]"
          << ",\"curvature_samples\":[]"
@@ -1343,6 +1542,23 @@ void WriteNativeTopologyWire(std::ostream& output, const NativeTopologyWireRecor
   output << '}';
 }
 
+void WriteNativeTopologyCoedge(std::ostream& output, const NativeTopologyCoedgeRecord& record)
+{
+  output << "{\"coedge_id\":\"" << JsonEscape(record.coedge_id)
+         << "\",\"body_id\":\"" << JsonEscape(record.body_id)
+         << "\",\"wire_id\":\"" << JsonEscape(record.wire_id)
+         << "\",\"owning_face_id\":\"" << JsonEscape(record.owning_face_id)
+         << "\",\"edge_cell_id\":\"" << JsonEscape(record.edge_cell_id)
+         << "\",\"coedge_index\":" << record.coedge_index
+         << ",\"coedge_index_in_wire\":" << record.coedge_index_in_wire
+         << ",\"edge_orientation_side\":" << record.edge_orientation_side
+         << ",\"orientation_status\":\"" << JsonEscape(record.orientation_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
 // 用途：写出 CAA Face 到轻量化三角范围的映射摘要，供后续 GLB Writer 或 Sidecar 对齐使用。
 void WriteNativeMeshFaceMap(std::ostream& output, const NativeMeshFaceMapRecord& record)
 {
@@ -1361,6 +1577,36 @@ void WriteNativeMeshFaceMap(std::ostream& output, const NativeMeshFaceMapRecord&
          << ",\"face_orientation_side\":" << record.face_orientation_side
          << ",\"planar\":" << (record.planar ? "true" : "false")
          << ",\"tessellation_status\":\"" << JsonEscape(record.tessellation_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+void WriteNativeMeshTriangle(std::ostream& output, const NativeMeshTriangleRecord& record)
+{
+  output << "{\"triangle_id\":\"" << JsonEscape(record.triangle_id)
+         << "\",\"mesh_map_id\":\"" << JsonEscape(record.mesh_map_id)
+         << "\",\"body_id\":\"" << JsonEscape(record.body_id)
+         << "\",\"face_cell_id\":\"" << JsonEscape(record.face_cell_id)
+         << "\",\"triangle_index\":" << record.triangle_index
+         << ",\"triangle_index_in_face\":" << record.triangle_index_in_face
+         << ",\"vertex_ranks\":[" << record.vertex_ranks[0] << ','
+         << record.vertex_ranks[1] << ',' << record.vertex_ranks[2]
+         << "],\"vertices_mm\":[";
+  int i = 0;
+  for (; i < 9; ++i)
+  {
+    if (i != 0) output << ',';
+    output << std::setprecision(15) << record.vertices_mm[i];
+  }
+  output << "],\"normal\":";
+  if (record.normal_available)
+    output << '[' << std::setprecision(15) << record.normal[0] << ','
+           << record.normal[1] << ',' << record.normal[2] << ']';
+  else
+    output << "null";
+  output << ",\"source_primitive\":\"" << JsonEscape(record.source_primitive)
          << "\",\"value_source\":\"" << JsonEscape(record.value_source)
          << "\",\"diagnostic_ids\":";
   WriteStringArray(output, record.diagnostic_ids);
@@ -1786,12 +2032,26 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteNativeTopologyWire(output, *topology_wire); output << '\n'; }
   if (!FinishOutput(output, "native_topology_wires.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "native_topology_coedges.jsonl"), error)) return false;
+  std::vector<NativeTopologyCoedgeRecord>::const_iterator topology_coedge =
+    context.topology_coedges.begin();
+  for (; topology_coedge != context.topology_coedges.end(); ++topology_coedge)
+  { WriteNativeTopologyCoedge(output, *topology_coedge); output << '\n'; }
+  if (!FinishOutput(output, "native_topology_coedges.jsonl", error)) return false;
+
   if (!OpenOutput(output, JoinPath(staging, "native_mesh_face_map.jsonl"), error)) return false;
   std::vector<NativeMeshFaceMapRecord>::const_iterator mesh_face =
     context.mesh_face_maps.begin();
   for (; mesh_face != context.mesh_face_maps.end(); ++mesh_face)
   { WriteNativeMeshFaceMap(output, *mesh_face); output << '\n'; }
   if (!FinishOutput(output, "native_mesh_face_map.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "native_mesh_triangles.jsonl"), error)) return false;
+  std::vector<NativeMeshTriangleRecord>::const_iterator mesh_triangle =
+    context.mesh_triangles.begin();
+  for (; mesh_triangle != context.mesh_triangles.end(); ++mesh_triangle)
+  { WriteNativeMeshTriangle(output, *mesh_triangle); output << '\n'; }
+  if (!FinishOutput(output, "native_mesh_triangles.jsonl", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "fta_sets.jsonl"), error)) return false;
   std::vector<FtaSetRecord>::const_iterator fta_set = context.fta_sets.begin();
@@ -1871,7 +2131,9 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_topology_body_count\":" << context.topology_bodies.size()
          << ",\"native_topology_cell_count\":" << context.topology_cells.size()
          << ",\"native_topology_wire_count\":" << context.topology_wires.size()
+         << ",\"native_topology_coedge_count\":" << context.topology_coedges.size()
          << ",\"native_mesh_face_map_count\":" << context.mesh_face_maps.size()
+         << ",\"native_mesh_triangle_count\":" << context.mesh_triangles.size()
          << ",\"fta_set_count\":" << context.fta_sets.size()
          << ",\"fta_semantic_count\":" << context.fta_semantics.size()
          << ",\"fta_topology_link_count\":" << context.fta_topology_links.size()
@@ -2008,7 +2270,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "decoder_registry.json", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_mesh_face_map.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "fta_topology_links.jsonl", "product_references.jsonl", "product_instances.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "capability_matrix.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "decoder_registry.json", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_topology_coedges.jsonl", "native_mesh_face_map.jsonl", "native_mesh_triangles.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "fta_topology_links.jsonl", "product_references.jsonl", "product_instances.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "capability_matrix.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;

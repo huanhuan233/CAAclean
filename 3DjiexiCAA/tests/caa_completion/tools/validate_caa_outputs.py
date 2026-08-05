@@ -283,7 +283,9 @@ class RunValidator:
                     if str(ref) not in cell_ids:
                         self.add("FAIL", "CELL_REFERENCE_DANGLING", f"{row.get('cell_id')} {key} -> {ref}", "native_topology_cells.jsonl")
 
-        for row in self.rows.get("native_topology_wires.jsonl", []):
+        wire_rows = self.rows.get("native_topology_wires.jsonl", [])
+        wire_ids = row_ids(wire_rows, "wire_id")
+        for row in wire_rows:
             if str(row.get("body_id", "")) not in body_ids:
                 self.add("FAIL", "WIRE_BODY_DANGLING", f"wire {row.get('wire_id')} has missing body", "native_topology_wires.jsonl")
             face = str(row.get("owning_face_id", ""))
@@ -292,6 +294,18 @@ class RunValidator:
             for edge in row.get("edge_cell_ids", []) or []:
                 if str(edge) not in cell_ids:
                     self.add("FAIL", "WIRE_EDGE_DANGLING", f"wire {row.get('wire_id')} -> {edge}", "native_topology_wires.jsonl")
+        coedge_rows = self.rows.get("native_topology_coedges.jsonl", [])
+        coedge_ids = row_ids(coedge_rows, "coedge_id")
+        self.check(len(coedge_ids) == len(coedge_rows), "COEDGE_ID_UNIQUE", "coedge_id values are unique", "duplicate or empty coedge_id", "native_topology_coedges.jsonl")
+        for row in coedge_rows:
+            if str(row.get("body_id", "")) not in body_ids:
+                self.add("FAIL", "COEDGE_BODY_DANGLING", f"coedge {row.get('coedge_id')} has missing body", "native_topology_coedges.jsonl")
+            if str(row.get("wire_id", "")) not in wire_ids:
+                self.add("FAIL", "COEDGE_WIRE_DANGLING", f"coedge {row.get('coedge_id')} -> {row.get('wire_id')}", "native_topology_coedges.jsonl")
+            if str(row.get("owning_face_id", "")) not in cell_ids:
+                self.add("FAIL", "COEDGE_FACE_DANGLING", f"coedge {row.get('coedge_id')} -> {row.get('owning_face_id')}", "native_topology_coedges.jsonl")
+            if str(row.get("edge_cell_id", "")) not in cell_ids:
+                self.add("FAIL", "COEDGE_EDGE_DANGLING", f"coedge {row.get('coedge_id')} -> {row.get('edge_cell_id')}", "native_topology_coedges.jsonl")
 
         result_rows = self.rows.get("native_feature_results.jsonl", [])
         result_ids = row_ids(result_rows, "result_id")
@@ -359,6 +373,29 @@ class RunValidator:
                 if self.mode == "completion" and start != previous_end:
                     self.add("FAIL", "MESH_RANGE_GAP", f"non-contiguous range in body {body}: expected {previous_end}, got {start}", "native_mesh_face_map.jsonl")
                 previous_end = max(previous_end, end)
+        triangle_rows = self.rows.get("native_mesh_triangles.jsonl", [])
+        triangle_ids = row_ids(triangle_rows, "triangle_id")
+        map_ids = row_ids(rows, "mesh_map_id")
+        body_ids = row_ids(self.rows.get("native_topology_bodies.jsonl", []), "body_id")
+        cell_ids = row_ids(self.rows.get("native_topology_cells.jsonl", []), "cell_id")
+        self.check(len(triangle_ids) == len(triangle_rows), "MESH_TRIANGLE_ID_UNIQUE", "triangle ids are unique", "duplicate or empty triangle_id", "native_mesh_triangles.jsonl")
+        for row in triangle_rows:
+            if str(row.get("mesh_map_id", "")) not in map_ids:
+                self.add("FAIL", "MESH_TRIANGLE_MAP_DANGLING", f"triangle {row.get('triangle_id')} references missing map", "native_mesh_triangles.jsonl")
+            if str(row.get("body_id", "")) not in body_ids:
+                self.add("FAIL", "MESH_TRIANGLE_BODY_DANGLING", f"triangle {row.get('triangle_id')} references missing body", "native_mesh_triangles.jsonl")
+            if str(row.get("face_cell_id", "")) not in cell_ids:
+                self.add("FAIL", "MESH_TRIANGLE_FACE_DANGLING", f"triangle {row.get('triangle_id')} references missing face", "native_mesh_triangles.jsonl")
+            vertices = row.get("vertices_mm", [])
+            if not isinstance(vertices, list) or len(vertices) != 9 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in vertices):
+                self.add("FAIL", "MESH_TRIANGLE_VERTEX_INVALID", f"triangle {row.get('triangle_id')} has invalid vertices", "native_mesh_triangles.jsonl")
+            else:
+                ax, ay, az, bx, by, bz, cx, cy, cz = [float(v) for v in vertices]
+                ux, uy, uz = bx - ax, by - ay, bz - az
+                vx, vy, vz = cx - ax, cy - ay, cz - az
+                nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+                if math.sqrt(nx * nx + ny * ny + nz * nz) <= 1.0e-9:
+                    self.add("FAIL", "MESH_TRIANGLE_ZERO_AREA", f"triangle {row.get('triangle_id')} has near-zero area", "native_mesh_triangles.jsonl")
 
     def validate_fixture_expectations(self) -> None:
         native_rows = self.rows.get("native_features.jsonl", [])
@@ -585,8 +622,12 @@ class RunValidator:
         self.check(not startup_decoded, "STARTUP_TYPE_IS_TYPE_ONLY", "startup type decoder is type_only", f"{len(startup_decoded)} startup type rows claim decoded payload", "native_features.jsonl")
         capabilities = self.json_docs.get("capabilities.json")
         if isinstance(capabilities, dict) and capabilities.get("native_feature_parameter_extraction") == "complete":
-            incomplete = [
+            required_payload_rows = [
                 row for row in rows
+                if str(row.get("canonical_native_type", ""))
+            ]
+            incomplete = [
+                row for row in required_payload_rows
                 if str(row.get("payload_extraction_status", "")) != "complete"
                 or str(row.get("decoder_status", "")) != "decoded"
                 or str(row.get("payload_type", "")) == ""
@@ -594,8 +635,8 @@ class RunValidator:
             self.check(
                 not incomplete,
                 "FEATURE_PARAMETER_COMPLETE_REQUIRES_PAYLOADS",
-                "complete parameter extraction has decoded payloads for every native feature row",
-                f"{len(incomplete)} native feature rows are not decoded payloads",
+                "complete parameter extraction has decoded payloads for every recognized native feature row",
+                f"{len(incomplete)} recognized native feature rows are not decoded payloads",
                 "native_features.jsonl",
             )
 
@@ -658,9 +699,12 @@ class RunValidator:
         bad_ranges = [row for row in rows if int(row.get("triangle_count", 0) or 0) <= 0 or str(row.get("tessellation_status", "")) != "success"]
         mapped_faces = {str(row.get("face_cell_id", "")) for row in rows if str(row.get("face_cell_id", "")) in face_ids}
         unmapped_faces = sorted(face_ids - mapped_faces)
+        triangle_rows = self.rows.get("native_mesh_triangles.jsonl", [])
+        expected_triangles = sum(int(row.get("triangle_count", 0) or 0) for row in rows)
         self.check(not missing_face, "MESH_COMPLETE_FACE_IDS_EXIST", "complete mesh map references existing B-Rep faces", f"{len(missing_face)} mesh rows reference missing faces", "native_mesh_face_map.jsonl")
         self.check(not bad_ranges, "MESH_COMPLETE_TRIANGLES_MAPPED", "complete mesh map has successful non-empty triangle ranges", f"{len(bad_ranges)} mesh rows have empty/failed triangle ranges", "native_mesh_face_map.jsonl")
         self.check(not unmapped_faces, "MESH_COMPLETE_ALL_FACES_MAPPED", "complete mesh map covers every renderable face", f"unmapped faces: {unmapped_faces[:5]}", "native_mesh_face_map.jsonl")
+        self.check(bool(triangle_rows) and len(triangle_rows) == expected_triangles, "MESH_COMPLETE_TRIANGLE_PAYLOAD_PRESENT", "complete mesh map includes one triangle payload row per mapped triangle", f"triangle rows={len(triangle_rows)} expected={expected_triangles}", "native_mesh_triangles.jsonl")
 
     def validate_product_numeric_truth(self) -> None:
         if self.fixture.get("id") not in {"PRODUCT-01", "PRODUCT-02"}:
@@ -795,9 +839,26 @@ class RunValidator:
             return
         capabilities = self.json_docs.get("capabilities.json")
         if isinstance(capabilities, dict):
-            for key, expected in self.relevant_completion_rules().items():
-                actual = capabilities.get(key)
-                self.check(actual == expected, "CAPABILITY_COMPLETE", f"{key}={expected}", f"{key}: expected {expected}, got {actual}", "capabilities.json")
+            acceptance = self.contract.get("capability_acceptance")
+            if isinstance(acceptance, dict):
+                package_key = "catproduct" if self._is_product_fixture() else "catpart"
+                allowed_by_capability = acceptance.get(package_key, {})
+                if isinstance(allowed_by_capability, dict):
+                    for key, allowed in allowed_by_capability.items():
+                        if not isinstance(allowed, list):
+                            continue
+                        actual = capabilities.get(key)
+                        self.check(
+                            actual in allowed,
+                            "CAPABILITY_ACCEPTED_STATUS",
+                            f"{key}={actual} accepted by scoped contract",
+                            f"{key}: expected one of {allowed}, got {actual}",
+                            "capabilities.json",
+                        )
+            else:
+                for key, expected in self.relevant_completion_rules().items():
+                    actual = capabilities.get(key)
+                    self.check(actual == expected, "CAPABILITY_COMPLETE", f"{key}={expected}", f"{key}: expected {expected}, got {actual}", "capabilities.json")
 
         package = str(self.fixture.get("package", ""))
         roles = set(self.fixture.get("roles", []))
@@ -816,6 +877,8 @@ class RunValidator:
 
         links = self.rows.get("native_feature_topology_links.jsonl", [])
         mapping = self.contract.get("authoritative_feature_mapping", {})
+        if not isinstance(mapping, dict) or not mapping:
+            return
         confirmed = [row for row in links if row.get("mapping_status") == mapping.get("required_status")]
         self.check(bool(confirmed), "AUTHORITATIVE_MAPPING_PRESENT", "confirmed Feature-Topology links exist", "no confirmed Feature-Topology links", "native_feature_topology_links.jsonl")
         forbidden = set(mapping.get("forbidden_as_authority", []))

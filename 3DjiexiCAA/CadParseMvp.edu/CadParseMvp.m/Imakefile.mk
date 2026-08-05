@@ -12,6 +12,8 @@ LINK_WITH = \
   CATMecModInterfaces \
   CATMathematics \
   CATGMModelInterfaces \
+  CATGeometricObjects \
+  GeometricObjectsUUID \
   CATTPSItf \
   CATTPSUUID \
   KnowledgeItf \
