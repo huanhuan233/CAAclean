@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v9"
-#define CAD_PARSE_PARSER_VERSION "1.9.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.9.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.9.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v10"
+#define CAD_PARSE_PARSER_VERSION "1.10.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.10.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.10.0"
 
 namespace cadparse
 {
@@ -390,7 +390,7 @@ struct NativeTopologyCellRecord
   NativeTopologyCellRecord()
     : topology_index(0), dimension(-1), domain_count(0), internal_domain_count(0),
       has_center(false), area_mm2_available(false), area_mm2(0.0),
-      length_mm_available(false), length_mm(0.0) {}
+      length_mm_available(false), length_mm(0.0), runtime_cell_pointer(0) {}
 
   std::string cell_id;
   std::string body_id;
@@ -411,6 +411,7 @@ struct NativeTopologyCellRecord
   std::vector<std::string> adjacent_cell_ids;
   std::string stable_id_method;
   std::string value_source;
+  const void* runtime_cell_pointer;
   std::vector<std::string> diagnostic_ids;
 };
 
@@ -535,7 +536,8 @@ struct NativeFeatureResultCellRecord
   // 用途：初始化 Result cell 的数值状态，读取失败时不输出伪造测量。
   NativeFeatureResultCellRecord()
     : result_cell_index(0), dimension(-1), has_center(false),
-      area_mm2_available(false), area_mm2(0.0), length_mm_available(false), length_mm(0.0) {}
+      area_mm2_available(false), area_mm2(0.0), length_mm_available(false), length_mm(0.0),
+      runtime_cell_pointer(0) {}
 
   std::string result_cell_id;
   std::string result_id;
@@ -554,6 +556,7 @@ struct NativeFeatureResultCellRecord
   std::string read_status;
   std::string stable_id_method;
   std::string value_source;
+  const void* runtime_cell_pointer;
   std::vector<std::string> diagnostic_ids;
 };
 
@@ -573,11 +576,72 @@ struct NativeFeatureTopologyLinkRecord
   std::string mapping_direction;
   std::string mapping_status;
   std::string mapping_method;
+  std::string authority;
+  std::string persistent_reference;
+  std::string relation_kind;
   double confidence;
   double center_residual_mm;
   double measure_residual;
   long candidate_count;
   std::vector<std::string> candidate_final_cell_ids;
+  std::vector<std::string> diagnostic_ids;
+};
+
+struct FtaTopologyLinkRecord
+{
+  FtaTopologyLinkRecord() : confidence(0.0) {}
+
+  std::string fta_link_id;
+  std::string fta_semantic_id;
+  std::string final_cell_id;
+  std::string final_body_id;
+  std::string geometry_reference_kind;
+  std::string mapping_status;
+  std::string mapping_method;
+  std::string authority;
+  double confidence;
+  std::vector<std::string> diagnostic_ids;
+};
+
+struct ProductReferenceRecord
+{
+  ProductReferenceRecord() : child_count(0), representation_count(0) {}
+
+  std::string reference_id;
+  std::string part_number;
+  std::string display_name;
+  std::string source_document;
+  std::string default_representation;
+  std::string read_status;
+  std::string value_source;
+  long child_count;
+  long representation_count;
+  std::vector<std::string> diagnostic_ids;
+};
+
+struct ProductInstanceRecord
+{
+  ProductInstanceRecord() : depth(0), child_index(0), child_count(0), transform_4x4(16, 0.0)
+  {
+    transform_4x4[0] = 1.0;
+    transform_4x4[5] = 1.0;
+    transform_4x4[10] = 1.0;
+    transform_4x4[15] = 1.0;
+  }
+
+  std::string instance_id;
+  std::string parent_instance_id;
+  std::string reference_id;
+  std::string instance_name;
+  std::string tree_path;
+  long depth;
+  long child_index;
+  long child_count;
+  std::vector<double> transform_4x4;
+  std::string transform_status;
+  std::string transform_value_source;
+  std::string read_status;
+  std::string value_source;
   std::vector<std::string> diagnostic_ids;
 };
 
@@ -725,6 +789,9 @@ public:
   std::vector<NativeMeshFaceMapRecord> mesh_face_maps;
   std::vector<FtaSetRecord> fta_sets;
   std::vector<FtaSemanticRecord> fta_semantics;
+  std::vector<FtaTopologyLinkRecord> fta_topology_links;
+  std::vector<ProductReferenceRecord> product_references;
+  std::vector<ProductInstanceRecord> product_instances;
   std::vector<NativeFeatureResultRecord> native_feature_results;
   std::vector<NativeFeatureResultCellRecord> native_feature_result_cells;
   std::vector<NativeFeatureTopologyLinkRecord> native_feature_topology_links;
@@ -953,6 +1020,17 @@ public:
   // 用途：调用字符串参数视图读取真实值；失败后由注册中心统一回退。
   DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
   // 用途：当前字符串接口不可用时允许其他类型化能力继续尝试。
+  bool ContinueTypedAfterFailure() const { return true; }
+};
+
+// 基于 CATIA StartUp 类型指纹识别尚无参数级适配器的原生特征身份。
+class StartupTypeCanonicalDecoder : public IFeatureDecoder
+{
+public:
+  const char* GetDecoderId() const;
+  int GetPriority() const;
+  bool Match(const TypeFingerprint&, const INativeObjectView&) const;
+  DecodeResult Decode(const INativeObjectView&, ParseContext&, FeatureRecord&);
   bool ContinueTypedAfterFailure() const { return true; }
 };
 

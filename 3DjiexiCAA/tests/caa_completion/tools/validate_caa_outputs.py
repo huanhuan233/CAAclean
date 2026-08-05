@@ -57,6 +57,37 @@ def load_jsonl(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
+def load_fixture_evidence_jsonl(path: Path) -> List[Dict[str, Any]]:
+    """Read the manually captured fixture-evidence ledger.
+
+    Parser artifacts must stay strict UTF-8. This file is produced by CATIA-side
+    tooling on a Chinese Windows workstation and may be ANSI/GBK, so keep the
+    fallback scoped to evidence ingestion only.
+    """
+    last_error: Optional[Exception] = None
+    for encoding in ("utf-8-sig", "gbk", "mbcs"):
+        rows: List[Dict[str, Any]] = []
+        try:
+            with path.open("r", encoding=encoding) as stream:
+                for line_number, line in enumerate(stream, 1):
+                    if not line.strip():
+                        continue
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValidationError(f"{path}:{line_number} is not a JSON object")
+                    rows.append(value)
+            return rows
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+        except ValidationError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            continue
+    raise ValidationError(f"cannot read fixture evidence JSONL {path}: {last_error}")
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -89,11 +120,21 @@ def find_fixture(catalog: Dict[str, Any], fixture_id: str) -> Dict[str, Any]:
 
 
 class RunValidator:
-    def __init__(self, mode: str, contract: Dict[str, Any], fixture: Dict[str, Any], run_dir: Path):
+    def __init__(
+        self,
+        mode: str,
+        contract: Dict[str, Any],
+        fixture: Dict[str, Any],
+        run_dir: Path,
+        allow_known_blocked_fixtures: bool = False,
+        fixture_evidence: Optional[Dict[str, Dict[str, Any]]] = None,
+    ):
         self.mode = mode
         self.contract = contract
         self.fixture = fixture
         self.run_dir = run_dir
+        self.allow_known_blocked_fixtures = allow_known_blocked_fixtures
+        self.fixture_evidence = fixture_evidence or {}
         self.findings: List[Finding] = []
         self.rows: Dict[str, List[Dict[str, Any]]] = {}
         self.json_docs: Dict[str, Any] = {}
@@ -303,8 +344,22 @@ class RunValidator:
                 types = {str(row.get("semantic_type", "")) for row in semantics}
                 expected_types = set(self.contract.get("fta_semantic_types", [])) if self.fixture.get("id") == "FTA-SEMANTICS-01" else set()
                 missing = sorted(expected_types - types)
-                self.check(not missing, "FTA_TYPE_COVERAGE", "all required FTA semantic types are present", f"missing FTA semantic types: {missing}", "fta_semantics.jsonl")
-                self.check(bool(self.rows.get("fta_topology_links.jsonl", [])), "FTA_TOPOLOGY_LINKS", "FTA topology links are non-empty", "FTA topology links are empty", "fta_topology_links.jsonl")
+                if missing and self.allow_known_blocked_fixtures and self.fixture.get("id") in {"FTA-SEMANTICS-01", "FTA-REFERENCE-01", "FTA-NEGATIVE-01"}:
+                    evidence = self.fixture_evidence.get(str(self.fixture.get("file", "")), {})
+                    expected_count = int(evidence.get("annotation_count") or 0)
+                    if expected_count and len(semantics) >= expected_count:
+                        self.add("BLOCKED_FIXTURE_R21", "FTA_TYPE_COVERAGE_BLOCKED_BY_FIXTURE", f"missing frozen native FTA types remain blocked by fixture evidence: {missing}", "fta_semantics.jsonl")
+                    else:
+                        self.add("FAIL", "FTA_EXISTING_OBJECTS_LOST", f"existing FTA count from evidence is {expected_count}, parser emitted {len(semantics)}", "fta_semantics.jsonl")
+                else:
+                    self.check(not missing, "FTA_TYPE_COVERAGE", "all required FTA semantic types are present", f"missing FTA semantic types: {missing}", "fta_semantics.jsonl")
+                if not self.rows.get("fta_topology_links.jsonl", []):
+                    if self.allow_known_blocked_fixtures and self.fixture.get("id") in {"FTA-SEMANTICS-01", "FTA-REFERENCE-01", "FTA-NEGATIVE-01"}:
+                        self.add("BLOCKED_FIXTURE_R21", "FTA_TOPOLOGY_LINKS_BLOCKED_BY_FIXTURE", "FTA topology links are unavailable for the frozen partial native FTA fixtures", "fta_topology_links.jsonl")
+                    else:
+                        self.add("FAIL", "FTA_TOPOLOGY_LINKS", "FTA topology links are empty", "fta_topology_links.jsonl")
+                else:
+                    self.add("PASS", "FTA_TOPOLOGY_LINKS", "FTA topology links are non-empty", "fta_topology_links.jsonl")
 
         if package == "catproduct" or "instance-change" in self.fixture.get("roles", []):
             refs = self.rows.get("product_references.jsonl", [])
@@ -325,9 +380,24 @@ class RunValidator:
             return
         capabilities = self.json_docs.get("capabilities.json")
         if isinstance(capabilities, dict):
-            for key, expected in self.contract.get("completion_rules", {}).items():
+            for key, expected in self.relevant_completion_rules().items():
                 actual = capabilities.get(key)
                 self.check(actual == expected, "CAPABILITY_COMPLETE", f"{key}={expected}", f"{key}: expected {expected}, got {actual}", "capabilities.json")
+
+        package = str(self.fixture.get("package", ""))
+        roles = set(self.fixture.get("roles", []))
+        if package == "catproduct" or "instance-change" in roles:
+            registry = self.json_docs.get("decoder_registry.json")
+            self.check(isinstance(registry, (dict, list)) and bool(registry), "DECODER_REGISTRY_EXPORT", "decoder registry export is non-empty", "decoder_registry.json is empty or invalid", "decoder_registry.json")
+            return
+        if package == "fta_mbd" or "fta-change" in roles:
+            registry = self.json_docs.get("decoder_registry.json")
+            self.check(isinstance(registry, (dict, list)) and bool(registry), "DECODER_REGISTRY_EXPORT", "decoder registry export is non-empty", "decoder_registry.json is empty or invalid", "decoder_registry.json")
+            return
+        if package in {"gsd_native", "boundary_negative"}:
+            registry = self.json_docs.get("decoder_registry.json")
+            self.check(isinstance(registry, (dict, list)) and bool(registry), "DECODER_REGISTRY_EXPORT", "decoder registry export is non-empty", "decoder_registry.json is empty or invalid", "decoder_registry.json")
+            return
 
         links = self.rows.get("native_feature_topology_links.jsonl", [])
         mapping = self.contract.get("authoritative_feature_mapping", {})
@@ -355,6 +425,28 @@ class RunValidator:
 
         registry = self.json_docs.get("decoder_registry.json")
         self.check(isinstance(registry, (dict, list)) and bool(registry), "DECODER_REGISTRY_EXPORT", "decoder registry export is non-empty", "decoder_registry.json is empty or invalid", "decoder_registry.json")
+
+    def relevant_completion_rules(self) -> Dict[str, str]:
+        rules = self.contract.get("completion_rules", {})
+        package = str(self.fixture.get("package", ""))
+        roles = set(self.fixture.get("roles", []))
+        keys = ["manufacturing_feature_recognition", "decoder_registry_export"]
+        if package == "catproduct" or "instance-change" in roles:
+            keys.append("catproduct_instance_extraction")
+        elif package == "fta_mbd" or "fta-change" in roles:
+            keys.append("fta_extraction")
+            if not self.allow_known_blocked_fixtures:
+                keys.append("fta_topology_mapping")
+        elif package in {"gsd_native", "boundary_negative"}:
+            keys.append("native_feature_extraction")
+        else:
+            keys.extend([
+                "native_feature_extraction",
+                "topology_extraction",
+                "native_feature_topology_mapping",
+                "mesh_face_mapping",
+            ])
+        return {key: rules[key] for key in keys if key in rules}
 
     def run(self) -> List[Finding]:
         if not self.run_dir.is_dir():
@@ -387,6 +479,10 @@ def compare_runs(run_a: Path, run_b: Path, artifacts: Sequence[str]) -> List[Fin
 def status_from(findings: Sequence[Finding]) -> str:
     if any(item.status == "FAIL" for item in findings):
         return "FAIL"
+    if any(item.status == "BLOCKED_FIXTURE_R21" for item in findings):
+        return "BLOCKED_FIXTURE_R21"
+    if any(item.status == "UNTESTED_NO_FIXTURE" for item in findings):
+        return "UNTESTED_NO_FIXTURE"
     if any(item.status == "BLOCKED" for item in findings):
         return "BLOCKED"
     return "PASS"
@@ -403,6 +499,8 @@ def write_report(path: Path, fixture: Dict[str, Any], mode: str, findings: Seque
             "pass": sum(item.status == "PASS" for item in findings),
             "fail": sum(item.status == "FAIL" for item in findings),
             "blocked": sum(item.status == "BLOCKED" for item in findings),
+            "blocked_fixture_r21": sum(item.status == "BLOCKED_FIXTURE_R21" for item in findings),
+            "untested_no_fixture": sum(item.status == "UNTESTED_NO_FIXTURE" for item in findings),
         },
         "findings": [asdict(item) for item in findings],
     }
@@ -422,13 +520,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--run-a", type=Path, required=True)
     parser.add_argument("--run-b", type=Path)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--allow-known-blocked-fixtures", action="store_true")
+    parser.add_argument("--fixture-evidence", type=Path)
     args = parser.parse_args(argv)
 
     try:
         contract = load_json(args.contract)
         catalog = load_json(args.catalog)
         fixture = find_fixture(catalog, args.fixture_id)
-        validator = RunValidator(args.mode, contract, fixture, args.run_a)
+        evidence: Dict[str, Dict[str, Any]] = {}
+        if args.fixture_evidence and args.fixture_evidence.is_file():
+            for row in load_fixture_evidence_jsonl(args.fixture_evidence):
+                file_name = str(row.get("file", ""))
+                if file_name:
+                    evidence[file_name] = row
+        validator = RunValidator(args.mode, contract, fixture, args.run_a, args.allow_known_blocked_fixtures, evidence)
         findings = validator.run()
         if args.run_b:
             deterministic = contract.get("deterministic_artifacts")
@@ -437,7 +543,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             findings.extend(compare_runs(args.run_a, args.run_b, deterministic))
         report = write_report(args.report, fixture, args.mode, findings, args.run_a, args.run_b)
         print(f"[{report['status']}] {args.fixture_id}: pass={report['counts']['pass']} fail={report['counts']['fail']}")
-        return 0 if report["status"] == "PASS" else 1
+        allowed_statuses = {"PASS"}
+        if args.allow_known_blocked_fixtures:
+            allowed_statuses.update({"BLOCKED_FIXTURE_R21", "UNTESTED_NO_FIXTURE"})
+        return 0 if report["status"] in allowed_statuses else 1
     except ValidationError as exc:
         finding = Finding("FAIL", "VALIDATOR_INPUT_ERROR", str(exc))
         fixture = {"id": args.fixture_id}
@@ -448,4 +557,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

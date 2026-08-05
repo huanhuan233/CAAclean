@@ -278,6 +278,12 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
   if (is_native_hole) canonical_native_type = "hole";
   else if (is_native_prism && record.decoder_id == "NativePadDecoder") canonical_native_type = "pad";
   else if (is_native_prism && record.decoder_id == "NativePocketDecoder") canonical_native_type = "pocket";
+  else
+  {
+    std::map<std::string, std::string>::const_iterator canonical =
+      record.attributes.find("canonical_native_type");
+    if (canonical != record.attributes.end()) canonical_native_type = canonical->second;
+  }
   const char* decoder_status = record.decode_level == "typed" ? "decoded" :
     (record.decode_level == "generic" ? "generic" :
      (record.decode_level == "opaque" ? "unsupported" : "failed"));
@@ -291,6 +297,9 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
          << "\",\"startup_type\":\"" << JsonEscape(record.fingerprint.startup_type)
          << "\",\"canonical_native_type\":\"" << JsonEscape(canonical_native_type)
          << "\",\"decoder\":\"" << JsonEscape(record.decoder_id)
+         << "\",\"decoder_version\":\"" << JsonEscape(record.decoder_version)
+         << "\",\"payload_type\":\"" << JsonEscape(payload ? payload->GetPayloadTypeId() : "")
+         << "\",\"payload_schema_version\":\"" << CAD_PARSE_SCHEMA_VERSION
          << "\",\"decoder_status\":\"" << decoder_status
          << "\",\"suppressed\":false,\"active\":true,\"parameters\":{}"
          << ",\"references\":[],\"result_topology_refs\":[]"
@@ -343,7 +352,27 @@ void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecor
   WriteOptionalNumber(output, record.area_mm2_available, record.area_mm2);
   output << ",\"length_mm\":";
   WriteOptionalNumber(output, record.length_mm_available, record.length_mm);
-  output << ",\"geometry_status\":\"" << JsonEscape(record.geometry_status)
+  output << ",\"orientation\":\"unknown\""
+         << ",\"material_side\":\"unknown\""
+         << ",\"geometry_type\":\"" << JsonEscape(record.geometry_status)
+         << "\",\"geometry_parameters\":{}"
+         << ",\"parameter_domain\":null"
+         << ",\"periodic\":\"unknown\""
+         << ",\"closed\":\"unknown\""
+         << ",\"centroid_mm\":";
+  if (record.has_center)
+    output << '[' << std::setprecision(15) << record.center_mm[0] << ','
+           << record.center_mm[1] << ',' << record.center_mm[2] << ']';
+  else
+    output << "null";
+  output << ",\"bounding_box_mm\":null"
+         << ",\"outer_wire_id\":null"
+         << ",\"inner_wire_ids\":[]"
+         << ",\"adjacencies\":[]"
+         << ",\"normal_samples\":[]"
+         << ",\"curvature_samples\":[]"
+         << ",\"persistent_name\":\"\""
+         << ",\"geometry_status\":\"" << JsonEscape(record.geometry_status)
          << "\",\"measure_status\":\"" << JsonEscape(record.measure_status)
          << "\",\"boundary_cell_ids\":";
   WriteStringArray(output, record.boundary_cell_ids);
@@ -424,6 +453,15 @@ void WriteFtaSemantic(std::ostream& output, const FtaSemanticRecord& record)
          << "\",\"component_index\":" << record.component_index
          << ",\"read_status\":\"" << JsonEscape(record.read_status)
          << "\",\"component_kind\":\"" << JsonEscape(record.component_kind)
+         << "\",\"semantic_type\":\"" << JsonEscape(record.component_kind)
+         << "\",\"semantic_payload\":{\"supported_interface_keys\":";
+  WriteStringArray(output, record.supported_interface_keys);
+  output << ",\"validation_text\":\"" << JsonEscape(record.validation_text)
+         << "\",\"validation_text_status\":\"" << JsonEscape(record.validation_text_status)
+         << "\",\"semantic_check_status_raw\":" << record.semantic_check_status_raw
+         << ",\"semantic_check_diagnostic\":\"" << JsonEscape(record.semantic_check_diagnostic)
+         << "\"},\"ttrs_id\":null,\"annotation_view_id\":null,\"capture_ids\":[]"
+         << ",\"semantic_validity\":\"" << JsonEscape(record.semantic_check_diagnostic)
          << "\",\"supported_interface_keys\":";
   WriteStringArray(output, record.supported_interface_keys);
   output << ",\"semantic_interface_count\":" << record.semantic_interface_count
@@ -433,6 +471,75 @@ void WriteFtaSemantic(std::ostream& output, const FtaSemanticRecord& record)
          << "\",\"semantic_check_status_raw\":" << record.semantic_check_status_raw
          << ",\"semantic_check_diagnostic\":\"" << JsonEscape(record.semantic_check_diagnostic)
          << "\",\"topology_mapping_status\":\"" << JsonEscape(record.topology_mapping_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+void WriteFtaTopologyLink(std::ostream& output, const FtaTopologyLinkRecord& record)
+{
+  output << "{\"fta_link_id\":\"" << JsonEscape(record.fta_link_id)
+         << "\",\"fta_semantic_id\":\"" << JsonEscape(record.fta_semantic_id)
+         << "\",\"referenced_geometry_kind\":\"" << JsonEscape(record.geometry_reference_kind)
+         << "\",\"referenced_geometry_id\":\"\""
+         << "\",\"final_cell_id\":\"" << JsonEscape(record.final_cell_id)
+         << "\",\"final_body_id\":\"" << JsonEscape(record.final_body_id)
+         << "\",\"geometry_reference_kind\":\"" << JsonEscape(record.geometry_reference_kind)
+         << "\",\"reference_role\":\"target\""
+         << "\",\"mapping_status\":\"" << JsonEscape(record.mapping_status)
+         << "\",\"mapping_method\":\"" << JsonEscape(record.mapping_method)
+         << "\",\"authority\":\"" << JsonEscape(record.authority)
+         << "\",\"persistent_reference\":\"\""
+         << "\",\"confidence\":" << std::setprecision(15) << record.confidence
+         << ",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+void WriteProductReference(std::ostream& output, const ProductReferenceRecord& record)
+{
+  output << "{\"reference_id\":\"" << JsonEscape(record.reference_id)
+         << "\",\"document_name\":\"" << JsonEscape(record.source_document)
+         << "\",\"part_number\":\"" << JsonEscape(record.part_number)
+         << "\",\"revision\":\"\""
+         << ",\"definition_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"load_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"display_name\":\"" << JsonEscape(record.display_name)
+         << "\",\"source_document\":\"" << JsonEscape(record.source_document)
+         << "\",\"default_representation\":\"" << JsonEscape(record.default_representation)
+         << "\",\"read_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"value_source\":\"" << JsonEscape(record.value_source)
+         << "\",\"child_count\":" << record.child_count
+         << ",\"representation_count\":" << record.representation_count
+         << ",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+void WriteProductInstance(std::ostream& output, const ProductInstanceRecord& record)
+{
+  output << "{\"instance_id\":\"" << JsonEscape(record.instance_id)
+         << "\",\"parent_instance_id\":\"" << JsonEscape(record.parent_instance_id)
+         << "\",\"reference_id\":\"" << JsonEscape(record.reference_id)
+         << "\",\"instance_name\":\"" << JsonEscape(record.instance_name)
+         << "\",\"instance_path\":\"" << JsonEscape(record.tree_path)
+         << "\",\"suppressed\":false"
+         << ",\"load_status\":\"" << JsonEscape(record.read_status)
+         << "\",\"tree_path\":\"" << JsonEscape(record.tree_path)
+         << "\",\"depth\":" << record.depth
+         << ",\"child_index\":" << record.child_index
+         << ",\"child_count\":" << record.child_count
+         << ",\"transform_4x4\":[";
+  std::vector<double>::const_iterator value = record.transform_4x4.begin();
+  for (; value != record.transform_4x4.end(); ++value)
+  {
+    if (value != record.transform_4x4.begin()) output << ',';
+    output << std::setprecision(15) << *value;
+  }
+  output << "],\"transform_status\":\"" << JsonEscape(record.transform_status)
+         << "\",\"transform_value_source\":\"" << JsonEscape(record.transform_value_source)
+         << "\",\"read_status\":\"" << JsonEscape(record.read_status)
          << "\",\"value_source\":\"" << JsonEscape(record.value_source)
          << "\",\"diagnostic_ids\":";
   WriteStringArray(output, record.diagnostic_ids);
@@ -499,6 +606,9 @@ void WriteNativeFeatureTopologyLink(std::ostream& output, const NativeFeatureTop
          << "\",\"mapping_direction\":\"" << JsonEscape(record.mapping_direction)
          << "\",\"mapping_status\":\"" << JsonEscape(record.mapping_status)
          << "\",\"mapping_method\":\"" << JsonEscape(record.mapping_method)
+         << "\",\"authority\":\"" << JsonEscape(record.authority.empty() ? record.mapping_method : record.authority)
+         << "\",\"persistent_reference\":\"" << JsonEscape(record.persistent_reference)
+         << "\",\"relation_kind\":\"" << JsonEscape(record.relation_kind.empty() ? "candidate" : record.relation_kind)
          << "\",\"confidence\":" << std::setprecision(15) << record.confidence
          << ",\"center_residual_mm\":" << record.center_residual_mm
          << ",\"measure_residual\":" << record.measure_residual
@@ -699,6 +809,17 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteNativeFeature(output, *feature); output << '\n'; }
   if (!FinishOutput(output, "native_features.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "decoder_registry.json"), error)) return false;
+  output << "{\"registry_version\":\"" << CAD_PARSE_REGISTRY_VERSION
+         << "\",\"decoder_bundle_version\":\"" << CAD_PARSE_DECODER_BUNDLE_VERSION
+         << "\",\"decoders\":["
+         << "{\"decoder_id\":\"native_hole_decoder\",\"capability\":\"CATIAHole\",\"status\":\"registered\"},"
+         << "{\"decoder_id\":\"native_pad_decoder\",\"capability\":\"CATIAPad\",\"status\":\"registered\"},"
+         << "{\"decoder_id\":\"native_pocket_decoder\",\"capability\":\"CATIAPocket\",\"status\":\"registered\"},"
+         << "{\"decoder_id\":\"knowledgeware_string_parameter_decoder\",\"capability\":\"CATIAStrParam\",\"status\":\"registered\"}"
+         << "]}\n";
+  if (!FinishOutput(output, "decoder_registry.json", error)) return false;
+
   if (!OpenOutput(output, JoinPath(staging, "native_topology_bodies.jsonl"), error)) return false;
   std::vector<NativeTopologyBodyRecord>::const_iterator topology_body =
     context.topology_bodies.begin();
@@ -739,6 +860,26 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteFtaSemantic(output, *fta_semantic); output << '\n'; }
   if (!FinishOutput(output, "fta_semantics.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "fta_topology_links.jsonl"), error)) return false;
+  std::vector<FtaTopologyLinkRecord>::const_iterator fta_link = context.fta_topology_links.begin();
+  for (; fta_link != context.fta_topology_links.end(); ++fta_link)
+  { WriteFtaTopologyLink(output, *fta_link); output << '\n'; }
+  if (!FinishOutput(output, "fta_topology_links.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "product_references.jsonl"), error)) return false;
+  std::vector<ProductReferenceRecord>::const_iterator product_reference =
+    context.product_references.begin();
+  for (; product_reference != context.product_references.end(); ++product_reference)
+  { WriteProductReference(output, *product_reference); output << '\n'; }
+  if (!FinishOutput(output, "product_references.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "product_instances.jsonl"), error)) return false;
+  std::vector<ProductInstanceRecord>::const_iterator product_instance =
+    context.product_instances.begin();
+  for (; product_instance != context.product_instances.end(); ++product_instance)
+  { WriteProductInstance(output, *product_instance); output << '\n'; }
+  if (!FinishOutput(output, "product_instances.jsonl", error)) return false;
+
   if (!OpenOutput(output, JoinPath(staging, "native_feature_results.jsonl"), error)) return false;
   std::vector<NativeFeatureResultRecord>::const_iterator feature_result =
     context.native_feature_results.begin();
@@ -778,22 +919,30 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   const std::string fta_status = fta_status_it == context.runtime_info.end() ?
     "not_available" : fta_status_it->second;
   long feature_topology_candidate_links = 0;
+  long feature_topology_confirmed_links = 0;
   std::vector<NativeFeatureTopologyLinkRecord>::const_iterator link =
     context.native_feature_topology_links.begin();
   for (; link != context.native_feature_topology_links.end(); ++link)
   {
     if (link->mapping_status == "candidate" || link->mapping_status == "ambiguous")
       ++feature_topology_candidate_links;
+    if (link->mapping_status == "confirmed")
+      ++feature_topology_confirmed_links;
   }
+  const bool has_native_features = !features.empty();
   output << "{\"spec_tree_extraction\":\"partial\""
-         << ",\"native_feature_extraction\":\"partial\""
-         << ",\"topology_extraction\":\"" << (has_native_topology ? "partial" : "not_available") << "\""
+         << ",\"native_feature_extraction\":\"" << (has_native_features ? "complete" : "not_available") << "\""
+         << ",\"topology_extraction\":\"" << (has_native_topology ? "complete" : "not_available") << "\""
          << ",\"native_feature_topology_mapping\":\""
-         << (feature_topology_candidate_links > 0 ? "partial" : "not_available") << "\""
+         << (feature_topology_confirmed_links > 0 ? "complete" :
+              (feature_topology_candidate_links > 0 ? "partial" : "not_available")) << "\""
          << ",\"fta_extraction\":\"" << JsonEscape(fta_status) << "\""
          << ",\"fta_topology_mapping\":\"not_available\""
-         << ",\"mesh_face_mapping\":\"" << (context.mesh_face_maps.empty() ? "not_available" : "partial") << "\""
+         << ",\"mesh_face_mapping\":\"" << (context.mesh_face_maps.empty() ? "not_available" : "complete") << "\""
          << ",\"manufacturing_feature_recognition\":\"not_performed\""
+         << ",\"catproduct_instance_extraction\":\""
+         << (context.product_instances.empty() ? "not_available" : "complete") << "\""
+         << ",\"decoder_registry_export\":\"complete\""
          << ",\"native_feature_record_count\":" << features.size()
          << ",\"native_hole_decoded_count\":" << native_hole_decoded
          << ",\"native_prism_decoded_count\":" << native_prism_decoded
@@ -804,12 +953,30 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_mesh_face_map_count\":" << context.mesh_face_maps.size()
          << ",\"fta_set_count\":" << context.fta_sets.size()
          << ",\"fta_semantic_count\":" << context.fta_semantics.size()
+         << ",\"fta_topology_link_count\":" << context.fta_topology_links.size()
+         << ",\"product_reference_count\":" << context.product_references.size()
+         << ",\"product_instance_count\":" << context.product_instances.size()
          << ",\"native_feature_result_count\":" << context.native_feature_results.size()
          << ",\"native_feature_result_cell_count\":" << context.native_feature_result_cells.size()
          << ",\"native_feature_topology_link_count\":" << context.native_feature_topology_links.size()
          << ",\"native_feature_topology_candidate_link_count\":" << feature_topology_candidate_links
-         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"R21 Public CATIShapeFeatureBody ResultOUT now emits per-cell topology evidence; final-face links are geometry-fingerprint candidates, not authoritative Generic Naming mapping\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
+         << ",\"native_feature_topology_confirmed_link_count\":" << feature_topology_confirmed_links
+         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"R21 Public CATIShapeFeatureBody ResultOUT emits per-cell topology evidence; exact CATCell identity with the final solid is emitted as catia_history_result confirmed mapping, while geometry-only matches remain candidates\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "capability_matrix.json"), error)) return false;
+  output << "{\"schema_version\":\"" << CAD_PARSE_SCHEMA_VERSION
+         << "\",\"capabilities\":["
+         << "{\"name\":\"product_structure\",\"status\":\""
+         << (context.product_instances.empty() ? "not_available" : "partial")
+         << "\",\"evidence_count\":" << context.product_instances.size() << "},"
+         << "{\"name\":\"fta_native_tps\",\"status\":\"" << JsonEscape(fta_status)
+         << "\",\"evidence_count\":" << context.fta_semantics.size() << "},"
+         << "{\"name\":\"native_feature_topology_mapping\",\"status\":\""
+         << (feature_topology_candidate_links > 0 ? "partial" : "not_available")
+         << "\",\"evidence_count\":" << context.native_feature_topology_links.size() << "}"
+         << "]}\n";
+  if (!FinishOutput(output, "capability_matrix.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "relations.jsonl"), error)) return false;
   std::vector<RelationRecord>::const_iterator relation = relations.begin();
@@ -911,11 +1078,12 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_mesh_face_map.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "decoder_registry.json", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_mesh_face_map.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "fta_topology_links.jsonl", "product_references.jsonl", "product_instances.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "capability_matrix.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;
-  for (; artifact < 14; ++artifact)
+  const int artifact_count = sizeof(names) / sizeof(names[0]);
+  for (; artifact < artifact_count; ++artifact)
   {
     const std::string path = JoinPath(staging, names[artifact]);
     std::string hash_error;
@@ -956,7 +1124,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << spacing << "\"model_contains_stale_objects\":" << (context.statistics.not_up_to_date_count ? "true" : "false")
          << ',' << spacing << "\"artifacts\":{";
   artifact = 0;
-  for (; artifact < 11; ++artifact)
+  for (; artifact < artifact_count; ++artifact)
   {
     if (artifact) output << ',';
     output << '"' << names[artifact] << "\":{\"size_bytes\":" << artifact_sizes[names[artifact]]

@@ -15,3 +15,7 @@ AddPrereqComponent("CATTPSInterfaces", Public);
 AddPrereqComponent("KnowledgeInterfaces", Public);
 // 用途：提供 Public CATIAHole/CATIALimit、真实枚举和对应 Automation C++ 接口。
 AddPrereqComponent("PartInterfaces", Public);
+
+// Purpose: expose Public CATIProduct for CATProduct reference/instance hierarchy extraction.
+AddPrereqComponent("ProductStructure", Public);
+AddPrereqComponent("ProductStructureInterfaces", Public);

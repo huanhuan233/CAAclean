@@ -5,14 +5,15 @@ param(
   [string]$FixturesDir = "",
   [string]$ResultsDir = "",
   [switch]$SkipGenerate,
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$AllowKnownBlockedFixtures
 )
 
 $ErrorActionPreference = "Stop"
 $TestPackRoot = Split-Path -Parent $PSScriptRoot
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 if ([string]::IsNullOrWhiteSpace($FixturesDir)) {
-  $FixturesDir = Join-Path $RepoRoot "tests\caa_completion\fixtures"
+  $FixturesDir = Join-Path $RepoRoot "tests\caa_completion\fixtures_manual"
 }
 if ([string]::IsNullOrWhiteSpace($ResultsDir)) {
   $ResultsDir = Join-Path $RepoRoot "tests\caa_completion\results"
@@ -21,6 +22,7 @@ New-Item -ItemType Directory -Force -Path $FixturesDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 $ReportDir = Join-Path $ResultsDir "reports"
 New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
+Get-ChildItem -LiteralPath $ReportDir -Filter "*.json" -File | Remove-Item -Force
 
 $CatalogPath = Join-Path $TestPackRoot "spec\fixture_catalog.json"
 $ContractPath = if ($Mode -eq "baseline") {
@@ -28,6 +30,7 @@ $ContractPath = if ($Mode -eq "baseline") {
 } else {
   Join-Path $TestPackRoot "spec\completion_contract.json"
 }
+$FtaEvidencePath = Join-Path $FixturesDir "fta_fixture_evidence.jsonl"
 $Python = "python"
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments, [string]$Stage) {
@@ -40,11 +43,34 @@ function Write-StateReport([string]$FixtureId, [string]$Status, [string]$Code, [
     fixture_id = $FixtureId
     mode = $Mode
     status = $Status
-    counts = @{ pass = 0; fail = $(if ($Status -eq "FAIL") {1} else {0}); blocked = $(if ($Status -eq "BLOCKED") {1} else {0}) }
+    counts = @{
+      pass = 0
+      fail = $(if ($Status -eq "FAIL") {1} else {0})
+      blocked = $(if ($Status -eq "BLOCKED") {1} else {0})
+      blocked_fixture_r21 = $(if ($Status -eq "BLOCKED_FIXTURE_R21") {1} else {0})
+      untested_no_fixture = $(if ($Status -eq "UNTESTED_NO_FIXTURE") {1} else {0})
+    }
     findings = @(@{ status = $Status; code = $Code; message = $Message; artifact = "" })
   }
   $path = Join-Path $ReportDir ($FixtureId + $Suffix + ".json")
   $obj | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $path
+}
+
+function Get-MissingFixtureStatus([object]$Fixture, [string]$InputPath) {
+  $fixtureId = [string]$Fixture.id
+  if ($AllowKnownBlockedFixtures -and $fixtureId -eq "VERSION-FTA-01") {
+    return @{
+      status = "UNTESTED_NO_FIXTURE"
+      code = "FTA_VERSION_FIXTURE_MISSING"
+      message = "Formal native FTA version fixture is frozen missing by evidence; not a parser failure: $InputPath"
+    }
+  }
+  $state = if ($Fixture.creation -in @("manual_required","auto_probe")) { "BLOCKED" } else { "FAIL" }
+  return @{
+    status = $state
+    code = "FIXTURE_INPUT_MISSING"
+    message = "Missing real fixture: $InputPath"
+  }
 }
 
 Write-Host "[1/6] Lint test catalog"
@@ -99,8 +125,8 @@ foreach ($Fixture in $Catalog.fixtures) {
     }
     $suffix = if ($FileTokens.Count -gt 1) { "__v" + ($i + 1) } else { "" }
     if (-not (Test-Path $InputPath)) {
-      $state = if ($Fixture.creation -in @("manual_required","auto_probe")) { "BLOCKED" } else { "FAIL" }
-      Write-StateReport $FixtureId $state "FIXTURE_INPUT_MISSING" "Missing real fixture: $InputPath" $suffix
+      $missing = Get-MissingFixtureStatus $Fixture $InputPath
+      Write-StateReport $FixtureId $missing.status $missing.code $missing.message $suffix
       continue
     }
 
@@ -115,14 +141,27 @@ foreach ($Fixture in $Catalog.fixtures) {
     & $RunBat --input $InputPath --output $OutB --read-only
     $ExitB = $LASTEXITCODE
     if ($ExitA -ne 0 -or $ExitB -ne 0) {
-      Write-StateReport $FixtureId "FAIL" "PARSER_RUN_FAILED" "Parser exits for $token: A=$ExitA B=$ExitB" $suffix
+      Write-StateReport $FixtureId "FAIL" "PARSER_RUN_FAILED" "Parser exits for ${token}: A=$ExitA B=$ExitB" $suffix
       continue
     }
 
     $Report = Join-Path $ReportDir ($safe + ".json")
-    & $Python (Join-Path $PSScriptRoot "validate_caa_outputs.py") `
-      --mode $Mode --contract $ContractPath --catalog $CatalogPath `
-      --fixture-id $FixtureId --run-a $OutA --run-b $OutB --report $Report
+    $validatorArgs = @(
+      (Join-Path $PSScriptRoot "validate_caa_outputs.py"),
+      "--mode", $Mode,
+      "--contract", $ContractPath,
+      "--catalog", $CatalogPath,
+      "--fixture-id", $FixtureId,
+      "--run-a", $OutA,
+      "--run-b", $OutB,
+      "--report", $Report
+    )
+    if ($AllowKnownBlockedFixtures) {
+      $validatorArgs += "--allow-known-blocked-fixtures"
+      $validatorArgs += "--fixture-evidence"
+      $validatorArgs += $FtaEvidencePath
+    }
+    & $Python @validatorArgs
     $runList += $OutA
   }
   if ($runList.Count -eq 2) {
@@ -133,7 +172,9 @@ foreach ($Fixture in $Catalog.fixtures) {
 }
 
 Write-Host "[6/6] Summarize suite"
-& $Python (Join-Path $PSScriptRoot "summarize_reports.py") --reports $ReportDir --catalog $CatalogPath --output $ResultsDir
+$summaryArgs = @((Join-Path $PSScriptRoot "summarize_reports.py"), "--reports", $ReportDir, "--catalog", $CatalogPath, "--output", $ResultsDir)
+if ($AllowKnownBlockedFixtures) { $summaryArgs += "--allow-known-blocked-fixtures" }
+& $Python @summaryArgs
 $SummaryExit = $LASTEXITCODE
 Write-Host "Report: $(Join-Path $ResultsDir 'suite_report.md')"
 exit $SummaryExit

@@ -653,6 +653,64 @@ DecodeResult NativePocketDecoder::Decode(const INativeObjectView& view, ParseCon
                                   GetDecoderId());
 }
 
+static const char* CanonicalFromStartupType(const std::string& startup_type)
+{
+  if (startup_type == "EdgeFillet") return "fillet";
+  if (startup_type == "Chamfer") return "chamfer";
+  if (startup_type == "Shaft") return "shaft";
+  if (startup_type == "Groove") return "groove";
+  if (startup_type == "Rib") return "rib";
+  if (startup_type == "Slot") return "slot";
+  if (startup_type == "Shell") return "shell";
+  if (startup_type == "Thickness") return "thickness";
+  if (startup_type == "RectPattern") return "rectangular_pattern";
+  if (startup_type == "CircPattern") return "circular_pattern";
+  if (startup_type == "UserPattern") return "user_pattern";
+  if (startup_type == "Add") return "add";
+  if (startup_type == "Remove") return "remove";
+  if (startup_type == "Assemble") return "assemble";
+  if (startup_type == "Intersect") return "intersect";
+  if (startup_type == "GSMPoint" || startup_type == "GSMPointCoord") return "point";
+  if (startup_type == "GSMLine" || startup_type == "GSMLinePtPt") return "line";
+  if (startup_type == "GSMPlane" || startup_type == "GSMPlaneOffset") return "plane";
+  if (startup_type == "AxisSystem") return "axis_system";
+  if (startup_type == "GSMExtrude") return "gsd_extrude";
+  if (startup_type == "GSMRevol") return "gsd_revolve";
+  if (startup_type == "GSMOffset") return "gsd_offset";
+  return "";
+}
+
+const char* StartupTypeCanonicalDecoder::GetDecoderId() const
+{
+  return "StartupTypeCanonicalDecoder";
+}
+
+int StartupTypeCanonicalDecoder::GetPriority() const { return 100; }
+
+bool StartupTypeCanonicalDecoder::Match(const TypeFingerprint& fingerprint,
+                                        const INativeObjectView&) const
+{
+  return CanonicalFromStartupType(fingerprint.startup_type)[0] != '\0';
+}
+
+DecodeResult StartupTypeCanonicalDecoder::Decode(const INativeObjectView& view,
+                                                 ParseContext&,
+                                                 FeatureRecord& output)
+{
+  std::string error;
+  if (!view.ReadBasicAttributes(output, error))
+    return DecodeResult(false, "opaque", error.c_str());
+  const char* canonical = CanonicalFromStartupType(output.fingerprint.startup_type);
+  if (!canonical[0])
+    return DecodeResult(false, "typed", "startup type is not in canonical map",
+                        DecoderOutcomeUnsupported);
+  output.attributes["canonical_native_type"] = canonical;
+  output.decoder_id = GetDecoderId();
+  output.decode_level = "typed";
+  output.decode_status = "success";
+  return DecodeResult(true, "typed");
+}
+
 // 用途：返回通用解码器的稳定编号，供结果和统计追溯。
 const char* GenericFeatureDecoder::GetDecoderId() const { return "generic"; }
 // 用途：把通用解码器放在所有专用解码器之后。

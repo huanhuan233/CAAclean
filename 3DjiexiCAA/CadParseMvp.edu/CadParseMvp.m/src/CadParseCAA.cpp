@@ -6,9 +6,12 @@
 #include "CATDocument.h"
 #include "CATDocumentServices.h"
 #include "CATIContainer.h"
+#include "CATIDocRoots.h"
 #include "CATInit.h"
 #include "CATIPrtContainer.h"
 #include "CATIPrtPart.h"
+#include "CATIProduct.h"
+#include "CATIMovable.h"
 #include "CATISpecObject.h"
 #include "CATIShapeFeatureBody.h"
 #include "CATITPSComponent.h"
@@ -21,6 +24,7 @@
 #include "CATITPSText.h"
 #include "CATITPSTextContent.h"
 #include "CATIGeometricalElement.h"
+#include "CATLISTV_CATBaseUnknown.h"
 #include "CATLISTV_CATISpecObject.h"
 #include "CATICkeInst.h"
 #include "CATICkeParm.h"
@@ -51,6 +55,7 @@
 #include "CATCGMTessPolyIter.h"
 #include "CATCGMTessTrianIter.h"
 #include "CATMathPoint.h"
+#include "CATMathTransformation.h"
 #include "CATHoleDefs.h"
 #include "CATLimitDefs.h"
 #include "ListPOfCATCell.h"
@@ -376,6 +381,7 @@ static void AppendTopologyCell(ParseContext& context, const std::string& body_id
   record.cell_id = MakeTopologyCellId(body_id, prefix, index);
   record.body_id = body_id;
   record.topology_index = index;
+  record.runtime_cell_pointer = cell;
   record.stable_id_method = "cat_topology_dimension_order_revision_local";
   record.value_source = "typed_caa_public_cat_topology";
   if (!cell)
@@ -561,6 +567,7 @@ static void AppendNativeFeatureResultCell(ParseContext& context,
   record.source_feature_id = result_record.source_feature_id;
   record.source_kind = result_record.source_kind;
   record.result_cell_index = index;
+  record.runtime_cell_pointer = cell;
   record.stable_id_method = "cat_feature_result_dimension_order_revision_local";
   record.value_source = "typed_caa_public_shape_feature_body_resultout";
   FillNativeFeatureResultCellGeometry(cell, record, context);
@@ -636,6 +643,29 @@ static void AppendNativeFeatureTopologyLink(ParseContext& context,
   link.mapping_direction = "result_cell_to_final_face";
   link.mapping_method = "caa_resultout_to_final_face_geometry_fingerprint_candidate";
   link.mapping_status = "unmatched";
+
+  if (result_cell.runtime_cell_pointer)
+  {
+    std::vector<NativeTopologyCellRecord>::const_iterator exact = context.topology_cells.begin();
+    for (; exact != context.topology_cells.end(); ++exact)
+    {
+      if (exact->dimension != 2) continue;
+      if (exact->runtime_cell_pointer == result_cell.runtime_cell_pointer)
+      {
+        link.final_cell_id = exact->cell_id;
+        link.final_body_id = exact->body_id;
+        link.mapping_method = "catia_resultout_final_cell_pointer_identity";
+        link.mapping_status = "confirmed";
+        link.authority = "catia_history_result";
+        link.relation_kind = "generated";
+        link.confidence = 1.0;
+        link.candidate_count = 1;
+        link.candidate_final_cell_ids.push_back(exact->cell_id);
+        context.native_feature_topology_links.push_back(link);
+        return;
+      }
+    }
+  }
 
   if (!result_cell.has_center || !result_cell.area_mm2_available)
   {
@@ -1615,7 +1645,15 @@ static bool EndsWithCatPart(const std::string& path)
   return suffix == ".catpart";
 }
 
-// 用途：先校验文件存在性和扩展名，再通过 R21 文档服务以只读标志打开 CATPart。
+static bool EndsWithCatProduct(const std::string& path)
+{
+  if (path.size() < 11) return false;
+  std::string suffix = path.substr(path.size() - 11);
+  std::transform(suffix.begin(), suffix.end(), suffix.begin(), ::tolower);
+  return suffix == ".catproduct";
+}
+
+// 用途：先校验文件存在性和扩展名，再通过 R21 文档服务以只读标志打开 CATPart/CATProduct。
 // 成功时本守卫取得 _document 的关闭责任；失败返回 false 且不会留下半打开文档。
 bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
 {
@@ -1625,9 +1663,9 @@ bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
     error = "input file does not exist";
     return false;
   }
-  if (!EndsWithCatPart(path))
+  if (!EndsWithCatPart(path) && !EndsWithCatProduct(path))
   {
-    error = "input file is not a CATPart";
+    error = "input file is not a CATPart or CATProduct";
     return false;
   }
   const CATUnicodeString storage_name(path.c_str());
@@ -1642,6 +1680,226 @@ bool DocumentGuard::OpenReadOnly(const std::string& path, std::string& error)
 
 // 用途：返回当前文档的借用指针；所有权仍属于 DocumentGuard。
 CATDocument* DocumentGuard::Get() const { return _document; }
+
+static std::string MakeProductReferenceId(const std::string& part_number)
+{
+  std::ostringstream id;
+  id << "PRDREF_";
+  if (part_number.empty()) id << "unnamed";
+  else
+  {
+    std::string::const_iterator ch = part_number.begin();
+    for (; ch != part_number.end(); ++ch)
+    {
+      if ((*ch >= 'A' && *ch <= 'Z') || (*ch >= 'a' && *ch <= 'z') ||
+          (*ch >= '0' && *ch <= '9') || *ch == '_' || *ch == '-')
+        id << *ch;
+      else
+        id << '_';
+    }
+  }
+  return id.str();
+}
+
+static bool HasProductReference(const ParseContext& context, const std::string& reference_id)
+{
+  std::vector<ProductReferenceRecord>::const_iterator record =
+    context.product_references.begin();
+  for (; record != context.product_references.end(); ++record)
+    if (record->reference_id == reference_id) return true;
+  return false;
+}
+
+static void AddProductReference(CATIProduct* product, ParseContext& context,
+                                const std::string& reference_id,
+                                const std::string& source_document)
+{
+  if (!product || HasProductReference(context, reference_id)) return;
+  ProductReferenceRecord record;
+  record.reference_id = reference_id;
+  record.source_document = source_document;
+  record.read_status = "partial";
+  record.value_source = "CATIProduct";
+  try
+  {
+    record.part_number = UnicodeToUtf8(product->GetPartNumber());
+    record.display_name = record.part_number;
+    record.child_count = product->GetChildrenCount();
+    CATUnicodeString rep_name;
+    if (SUCCEEDED(product->GetDefaultRepName(rep_name, CATPrd3D, TRUE)))
+      record.default_representation = UnicodeToUtf8(rep_name);
+    if (!record.default_representation.empty()) record.representation_count = 1;
+  }
+  catch (...)
+  {
+    record.diagnostic_ids.push_back(context.AddDiagnostic(
+      "warning", "product", "PRODUCT_REFERENCE_READ_EXCEPTION",
+      "CATIProduct reference attribute read raised an exception", reference_id));
+  }
+  context.product_references.push_back(record);
+}
+
+static bool ReadProductAbsTransform(CATIProduct* product, ProductInstanceRecord& instance,
+                                    ParseContext& context)
+{
+  if (!product) return false;
+  CATIMovable* movable = 0;
+  if (FAILED(product->QueryInterface(IID_CATIMovable, reinterpret_cast<void**>(&movable))) ||
+      !movable)
+  {
+    instance.diagnostic_ids.push_back(context.AddDiagnostic(
+      "warning", "product", "PRODUCT_MOVABLE_UNAVAILABLE",
+      "CATIProduct instance does not expose CATIMovable", instance.instance_id));
+    return false;
+  }
+  CaaInterfaceGuard<CATIMovable> movable_guard(movable);
+  CATMathTransformation position;
+  if (FAILED(movable->GetAbsPosition(position)))
+  {
+    instance.diagnostic_ids.push_back(context.AddDiagnostic(
+      "warning", "product", "PRODUCT_ABS_POSITION_FAILED",
+      "CATIMovable::GetAbsPosition failed", instance.instance_id));
+    return false;
+  }
+  double coeff[12];
+  if (FAILED(position.GetCoefficients(coeff, 12)))
+  {
+    instance.diagnostic_ids.push_back(context.AddDiagnostic(
+      "warning", "product", "PRODUCT_TRANSFORM_COEFFICIENTS_FAILED",
+      "CATMathTransformation::GetCoefficients failed", instance.instance_id));
+    return false;
+  }
+  instance.transform_4x4.clear();
+  instance.transform_4x4.push_back(coeff[0]);
+  instance.transform_4x4.push_back(coeff[3]);
+  instance.transform_4x4.push_back(coeff[6]);
+  instance.transform_4x4.push_back(coeff[9]);
+  instance.transform_4x4.push_back(coeff[1]);
+  instance.transform_4x4.push_back(coeff[4]);
+  instance.transform_4x4.push_back(coeff[7]);
+  instance.transform_4x4.push_back(coeff[10]);
+  instance.transform_4x4.push_back(coeff[2]);
+  instance.transform_4x4.push_back(coeff[5]);
+  instance.transform_4x4.push_back(coeff[8]);
+  instance.transform_4x4.push_back(coeff[11]);
+  instance.transform_4x4.push_back(0.0);
+  instance.transform_4x4.push_back(0.0);
+  instance.transform_4x4.push_back(0.0);
+  instance.transform_4x4.push_back(1.0);
+  instance.transform_status = "resolved_absolute";
+  instance.transform_value_source = "CATIMovable::GetAbsPosition";
+  return true;
+}
+
+static void CrawlProductInstance(CATIProduct* product, ParseContext& context,
+                                 const std::string& source_document,
+                                 const std::string& parent_instance_id,
+                                 const std::string& parent_path,
+                                 long depth, long child_index)
+{
+  if (!product) return;
+  std::string instance_name;
+  try
+  {
+    CATUnicodeString name;
+    if (SUCCEEDED(product->GetPrdInstanceName(name))) instance_name = UnicodeToUtf8(name);
+  }
+  catch (...) {}
+  CATIProduct_var reference = product->GetReferenceProduct();
+  CATIProduct* reference_ptr = reference;
+  if (!reference_ptr) reference_ptr = product;
+  std::string part_number;
+  try { part_number = UnicodeToUtf8(reference_ptr->GetPartNumber()); }
+  catch (...) { part_number = ""; }
+  const std::string reference_id = MakeProductReferenceId(part_number);
+  AddProductReference(reference_ptr, context, reference_id, source_document);
+
+  ProductInstanceRecord instance;
+  std::ostringstream id;
+  id << "PRDINS_";
+  if (context.product_instances.size() + 1 < 10) id << "00000";
+  else if (context.product_instances.size() + 1 < 100) id << "0000";
+  else if (context.product_instances.size() + 1 < 1000) id << "000";
+  else if (context.product_instances.size() + 1 < 10000) id << "00";
+  else if (context.product_instances.size() + 1 < 100000) id << "0";
+  id << (context.product_instances.size() + 1);
+  instance.instance_id = id.str();
+  instance.parent_instance_id = parent_instance_id;
+  instance.reference_id = reference_id;
+  instance.instance_name = instance_name.empty() ? part_number : instance_name;
+  instance.depth = depth;
+  instance.child_index = child_index;
+  instance.read_status = "partial";
+  instance.value_source = "CATIProduct";
+  instance.transform_status = depth == 0 ? "identity_root" : "not_resolved_from_public_interface";
+  instance.transform_value_source = depth == 0 ? "CATProduct_root_identity" : "not_available";
+  instance.tree_path = parent_path.empty() ? instance.instance_name : parent_path + "/" + instance.instance_name;
+  ReadProductAbsTransform(product, instance, context);
+  try { instance.child_count = product->GetChildrenCount(); }
+  catch (...) { instance.child_count = 0; }
+  context.product_instances.push_back(instance);
+  const std::string current_id = instance.instance_id;
+
+  CATListValCATBaseUnknown_var* children = 0;
+  try { children = product->GetChildren("CATIProduct"); }
+  catch (...) { children = 0; }
+  if (!children)
+  {
+    if (instance.child_count > 0)
+      context.AddDiagnostic("warning", "product", "PRODUCT_CHILD_LIST_UNAVAILABLE",
+                            "CATIProduct::GetChildren returned null", current_id);
+    return;
+  }
+  const int count = children->Size();
+  int index = 1;
+  for (; index <= count; ++index)
+  {
+    CATBaseUnknown_var child_unknown = (*children)[index];
+    CATBaseUnknown* child_base = child_unknown;
+    if (!child_base) continue;
+    CATIProduct* child_product = 0;
+    if (SUCCEEDED(child_base->QueryInterface(IID_CATIProduct,
+        reinterpret_cast<void**>(&child_product))) && child_product)
+    {
+      CaaInterfaceGuard<CATIProduct> child_guard(child_product);
+      CrawlProductInstance(child_product, context, source_document, current_id,
+                           instance.tree_path, depth + 1, index);
+    }
+  }
+  delete children;
+}
+
+static bool CollectProductStructure(CATDocument* document, ParseContext& context,
+                                    const std::string& source_document)
+{
+  if (!document) return false;
+  CATIDocRoots* doc_roots = 0;
+  if (FAILED(document->QueryInterface(IID_CATIDocRoots, reinterpret_cast<void**>(&doc_roots))) ||
+      !doc_roots)
+    return false;
+  CaaInterfaceGuard<CATIDocRoots> roots_guard(doc_roots);
+  CATListValCATBaseUnknown_var* roots = 0;
+  try { roots = doc_roots->GiveDocRoots(); }
+  catch (...) { roots = 0; }
+  if (!roots || roots->Size() == 0)
+  {
+    delete roots;
+    return false;
+  }
+  CATBaseUnknown_var root_unknown = (*roots)[1];
+  delete roots;
+  CATBaseUnknown* root_base = root_unknown;
+  if (!root_base) return false;
+  CATIProduct* product = 0;
+  if (FAILED(root_base->QueryInterface(IID_CATIProduct,
+      reinterpret_cast<void**>(&product))) || !product)
+    return false;
+  CaaInterfaceGuard<CATIProduct> product_guard(product);
+  CrawlProductInstance(product, context, source_document, "", "", 0, 0);
+  context.runtime_info["product_structure_status"] =
+    context.product_instances.empty() ? "not_available" : "partial";
+  return !context.product_instances.empty();
+}
 
 // 适配没有 CATISpecObject 的静态节点，例如文档和容器入口。
 class StaticObjectView : public INativeObjectView
@@ -2456,6 +2714,7 @@ void RegisterCoreDecoders(FeatureTypeRegistry& registry,
   owned_decoders.push_back(new NativeHoleDecoder());
   owned_decoders.push_back(new NativePadDecoder());
   owned_decoders.push_back(new NativePocketDecoder());
+  owned_decoders.push_back(new StartupTypeCanonicalDecoder());
   owned_decoders.push_back(new DocumentDecoder());
   owned_decoders.push_back(new PartDecoder());
   owned_decoders.push_back(new ContainerDecoder());
@@ -2595,6 +2854,8 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   StaticObjectView document_view("CATDocument", "document", UnicodeToUtf8(document->DisplayName()));
   const std::string document_id = AddObject(document_view, "", "/document", 0, 0);
   CollectFtaSets(document, _context, document_id);
+  const bool has_product_structure =
+    CollectProductStructure(document, _context, UnicodeToUtf8(document->DisplayName()));
 
   CATInit* init = 0;
   // QueryInterface 成功会返回持有引用；守卫必须在紧邻成功检查后接管它。
@@ -2608,6 +2869,11 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
   CATBaseUnknown* root = init->GetRootContainer("CATIPrtContainer");
   if (!root)
   {
+    if (has_product_structure)
+    {
+      _context.statistics.relation_count = static_cast<long>(_relations.size());
+      return true;
+    }
     error = "CATIPrtContainer root is unavailable";
     return false;
   }
@@ -2618,6 +2884,11 @@ bool UniversalFeatureCrawler::Crawl(CATDocument* document, std::string& error)
                                                     reinterpret_cast<void**>(&part_container));
   if (FAILED(root_result) || !part_container)
   {
+    if (has_product_structure)
+    {
+      _context.statistics.relation_count = static_cast<long>(_relations.size());
+      return true;
+    }
     error = "CATIPrtContainer query failed";
     return false;
   }

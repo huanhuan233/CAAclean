@@ -16,4 +16,7 @@ LINK_WITH = \
   CATTPSUUID \
   KnowledgeItf \
   CATPartInterfaces \
-  PartInterfacesUUID
+  PartInterfacesUUID \
+  CATProductStructure1 \
+  CATProductStructureInterfaces \
+  ProductStructureUUID
