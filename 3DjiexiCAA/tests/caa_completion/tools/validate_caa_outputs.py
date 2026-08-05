@@ -112,6 +112,40 @@ def finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
+def matrix_apply(matrix: Sequence[float], point: Sequence[float]) -> List[float]:
+    return [
+        float(matrix[0]) * point[0] + float(matrix[1]) * point[1] + float(matrix[2]) * point[2] + float(matrix[3]),
+        float(matrix[4]) * point[0] + float(matrix[5]) * point[1] + float(matrix[6]) * point[2] + float(matrix[7]),
+        float(matrix[8]) * point[0] + float(matrix[9]) * point[1] + float(matrix[10]) * point[2] + float(matrix[11]),
+    ]
+
+
+def vector_error(actual: Sequence[float], expected: Sequence[float]) -> float:
+    return max(abs(float(a) - float(e)) for a, e in zip(actual, expected))
+
+
+def determinant3(values: Sequence[float]) -> float:
+    return (
+        float(values[0]) * (float(values[5]) * float(values[10]) - float(values[6]) * float(values[9]))
+        - float(values[1]) * (float(values[4]) * float(values[10]) - float(values[6]) * float(values[8]))
+        + float(values[2]) * (float(values[4]) * float(values[9]) - float(values[5]) * float(values[8]))
+    )
+
+
+def rotation_orthogonality_error(matrix: Sequence[float]) -> float:
+    rows = [
+        [float(matrix[0]), float(matrix[1]), float(matrix[2])],
+        [float(matrix[4]), float(matrix[5]), float(matrix[6])],
+        [float(matrix[8]), float(matrix[9]), float(matrix[10])],
+    ]
+    errors: List[float] = []
+    for i in range(3):
+        for j in range(3):
+            dot = sum(rows[i][k] * rows[j][k] for k in range(3))
+            errors.append(abs(dot - (1.0 if i == j else 0.0)))
+    return max(errors)
+
+
 def find_fixture(catalog: Dict[str, Any], fixture_id: str) -> Dict[str, Any]:
     for fixture in catalog.get("fixtures", []):
         if fixture.get("id") == fixture_id:
@@ -375,6 +409,178 @@ class RunValidator:
                     counts[key] = counts.get(key, 0) + 1
                 self.check(any(count >= 2 for count in counts.values()), "PRODUCT_MULTI_INSTANCE", "same reference has multiple instances", "no shared reference across multiple instances", "product_instances.jsonl")
 
+    def validate_capability_consistency(self) -> None:
+        capabilities = self.json_docs.get("capabilities.json")
+        matrix = self.json_docs.get("capability_matrix.json")
+        if not isinstance(capabilities, dict) or not isinstance(matrix, dict):
+            return
+        matrix_rows = matrix.get("capabilities", [])
+        if not isinstance(matrix_rows, list):
+            self.add("FAIL", "CAPABILITY_MATRIX_INVALID", "capability_matrix.capabilities must be a list", "capability_matrix.json")
+            return
+        required_metrics = {
+            "required_count", "resolved_count", "history_confirmed_count", "runtime_identity_count",
+            "candidate_count", "ambiguous_count", "unmatched_count", "failed_count", "coverage_ratio",
+        }
+        metrics = capabilities.get("capability_metrics", {})
+        for item in matrix_rows:
+            if not isinstance(item, dict):
+                self.add("FAIL", "CAPABILITY_MATRIX_INVALID", "capability row is not an object", "capability_matrix.json")
+                continue
+            name = str(item.get("name", ""))
+            if not name:
+                self.add("FAIL", "CAPABILITY_MATRIX_INVALID", "capability row has empty name", "capability_matrix.json")
+                continue
+            if name in capabilities:
+                self.check(
+                    capabilities.get(name) == item.get("status"),
+                    "CAPABILITY_STATUS_CONSISTENT",
+                    f"{name} status agrees across capability files",
+                    f"{name} status mismatch: capabilities={capabilities.get(name)} matrix={item.get('status')}",
+                    "capability_matrix.json",
+                )
+            missing_matrix = sorted(required_metrics - set(item.keys()))
+            self.check(not missing_matrix, "CAPABILITY_MATRIX_METRICS", f"{name} matrix metrics present", f"{name} missing matrix metrics: {missing_matrix}", "capability_matrix.json")
+            if isinstance(metrics, dict) and isinstance(metrics.get(name), dict):
+                for key in required_metrics:
+                    if key in item and key in metrics[name]:
+                        self.check(
+                            item[key] == metrics[name][key],
+                            "CAPABILITY_METRICS_CONSISTENT",
+                            f"{name}.{key} agrees across capability files",
+                            f"{name}.{key} mismatch: capabilities={metrics[name][key]} matrix={item[key]}",
+                            "capability_matrix.json",
+                        )
+
+    def authoritative_link(self, row: Dict[str, Any]) -> bool:
+        authority = str(row.get("authority", ""))
+        if authority in {"catia_persistent_naming", "catia_selection_reference", "verified_r21_public_equivalent"}:
+            return bool(str(row.get("persistent_reference", "")))
+        if authority == "catia_history_result":
+            return bool(str(row.get("persistent_reference", "")))
+        return False
+
+    def validate_feature_topology_semantics(self) -> None:
+        links = self.rows.get("native_feature_topology_links.jsonl", [])
+        if not links:
+            return
+        bad_pointer = [
+            row for row in links
+            if str(row.get("mapping_method", "")) == "catia_resultout_final_cell_pointer_identity"
+            and (
+                str(row.get("mapping_status", "")) == "confirmed"
+                or str(row.get("authority", "")) == "catia_history_result"
+                or str(row.get("relation_kind", "")) == "generated"
+            )
+        ]
+        self.check(not bad_pointer, "POINTER_IDENTITY_NOT_AUTHORITATIVE", "pointer identity is runtime-only evidence", f"pointer identity promoted to history/generated in {len(bad_pointer)} links", "native_feature_topology_links.jsonl")
+
+        geometry_promoted = [
+            row for row in links
+            if "geometry_fingerprint" in str(row.get("mapping_method", ""))
+            and (str(row.get("mapping_status", "")) == "confirmed" or str(row.get("authority", "")) in set(self.contract.get("authoritative_feature_mapping", {}).get("allowed_authority", [])))
+        ]
+        self.check(not geometry_promoted, "GEOMETRY_CANDIDATE_NOT_AUTHORITATIVE", "geometry matching stays candidate/ambiguous", f"geometry matching promoted in {len(geometry_promoted)} links", "native_feature_topology_links.jsonl")
+
+        persistent_authorities = {"catia_persistent_naming", "catia_selection_reference", "catia_history_result", "verified_r21_public_equivalent"}
+        empty_persistent = [
+            row for row in links
+            if str(row.get("authority", "")) in persistent_authorities
+            and str(row.get("mapping_status", "")) == "confirmed"
+            and not str(row.get("persistent_reference", ""))
+        ]
+        self.check(not empty_persistent, "PERSISTENT_REFERENCE_REQUIRED", "persistent authoritative mappings carry references", f"authoritative mapping has empty persistent_reference in {len(empty_persistent)} links", "native_feature_topology_links.jsonl")
+
+        generated_by_final: Dict[str, Set[str]] = {}
+        for row in links:
+            final = str(row.get("final_cell_id", ""))
+            if final and str(row.get("relation_kind", "")) == "generated" and not self.authoritative_link(row):
+                generated_by_final.setdefault(final, set()).add(str(row.get("source_feature_id", "")))
+        duplicated = {cell: sources for cell, sources in generated_by_final.items() if len(sources) > 1}
+        self.check(not duplicated, "MULTI_GENERATED_REQUIRES_HISTORY", "shared final faces are not generated by multiple non-authoritative features", f"{len(duplicated)} final faces have multiple non-authoritative generated sources", "native_feature_topology_links.jsonl")
+
+        capabilities = self.json_docs.get("capabilities.json")
+        if isinstance(capabilities, dict) and capabilities.get("native_feature_topology_mapping") == "complete":
+            unresolved = [
+                row for row in links
+                if str(row.get("mapping_status", "")) in {"runtime_matched", "candidate", "ambiguous", "unmatched", "insufficient_result_fingerprint"}
+                or str(row.get("authority", "")) == "runtime_cell_identity"
+            ]
+            self.check(not unresolved, "MAPPING_COMPLETE_HAS_NO_UNRESOLVED", "complete mapping has no runtime/candidate/unmatched records", f"mapping declared complete with {len(unresolved)} unresolved/runtime links", "capabilities.json")
+            directions = {str(row.get("mapping_direction", "")) for row in links}
+            require_both = bool(self.contract.get("authoritative_feature_mapping", {}).get("require_forward_and_reverse"))
+            if require_both:
+                self.check({"result_cell_to_final_face", "final_face_to_source_feature"}.issubset(directions), "MAPPING_FORWARD_REVERSE", "forward and reverse mapping directions are present", f"missing required mapping direction(s): {sorted({'result_cell_to_final_face', 'final_face_to_source_feature'} - directions)}", "native_feature_topology_links.jsonl")
+
+    def validate_decoder_semantics(self) -> None:
+        rows = self.rows.get("native_features.jsonl", [])
+        decoded_without_payload = [
+            row for row in rows
+            if str(row.get("decoder_status", "")) == "decoded"
+            and str(row.get("payload_extraction_status", "")) != "complete"
+        ]
+        self.check(not decoded_without_payload, "DECODER_DECODED_REQUIRES_PAYLOAD", "decoded records have complete payload extraction", f"{len(decoded_without_payload)} decoded rows lack complete payload extraction", "native_features.jsonl")
+        startup_decoded = [
+            row for row in rows
+            if str(row.get("decoder", "")) == "StartupTypeCanonicalDecoder"
+            and str(row.get("decoder_status", "")) == "decoded"
+        ]
+        self.check(not startup_decoded, "STARTUP_TYPE_IS_TYPE_ONLY", "startup type decoder is type_only", f"{len(startup_decoded)} startup type rows claim decoded payload", "native_features.jsonl")
+
+    def validate_product_numeric_truth(self) -> None:
+        if self.fixture.get("id") not in {"PRODUCT-01", "PRODUCT-02"}:
+            return
+        rows = self.rows.get("product_instances.jsonl", [])
+        tolerance = 1.0e-6
+        local_point = [10.0, 0.0, 0.0]
+        expected: Dict[str, Tuple[List[float], List[float]]] = {}
+        if self.fixture.get("id") == "PRODUCT-01":
+            expected = {
+                "CAA_PRODUCT_MULTI_INSTANCE/PadReference_Instance_A": (
+                    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+                    [10.0, 0.0, 0.0],
+                ),
+                "CAA_PRODUCT_MULTI_INSTANCE/PadReference_Instance_B": (
+                    [0, 1, 0, 140, -1, 0, 0, 20, 0, 0, 1, 0, 0, 0, 0, 1],
+                    [140.0, 10.0, 0.0],
+                ),
+            }
+        else:
+            expected = {
+                "CAA_PRODUCT_NESTED/Assembly_Level_1_A/Part1.1": (
+                    [1, 0, 0, 45, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+                    [55.0, 0.0, 0.0],
+                ),
+                "CAA_PRODUCT_NESTED/Assembly_Level_1_A/SUBASSEMBLY_B.1": (
+                    [1, 0, 0, 0, 0, 1, 0, 80, 0, 0, 1, 0, 0, 0, 0, 1],
+                    [10.0, 80.0, 0.0],
+                ),
+                "CAA_PRODUCT_NESTED/Assembly_Level_1_A/SUBASSEMBLY_B.1/Part1.1": (
+                    [0, 1, 0, 20, -1, 0, 0, 80, 0, 0, 1, 35, 0, 0, 0, 1],
+                    [20.0, 70.0, 35.0],
+                ),
+            }
+
+        by_path = {str(row.get("instance_path", "")): row for row in rows}
+        for path, (expected_matrix, expected_world) in expected.items():
+            row = by_path.get(path)
+            if row is None:
+                self.add("FAIL", "PRODUCT_EXPECTED_INSTANCE", f"expected instance missing: {path}", "product_instances.jsonl")
+                continue
+            matrix = row.get("transform_4x4")
+            if not (isinstance(matrix, list) and len(matrix) == 16 and all(finite_number(v) for v in matrix)):
+                self.add("FAIL", "PRODUCT_TRANSFORM_NUMERIC", f"expected instance has invalid matrix: {path}", "product_instances.jsonl")
+                continue
+            matrix_error = vector_error([float(v) for v in matrix], expected_matrix)
+            world = matrix_apply(matrix, local_point)
+            point_error = vector_error(world, expected_world)
+            orth_error = rotation_orthogonality_error(matrix)
+            det_error = abs(determinant3(matrix) - 1.0)
+            last_row_error = vector_error([float(matrix[12]), float(matrix[13]), float(matrix[14]), float(matrix[15])], [0.0, 0.0, 0.0, 1.0])
+            self.check(matrix_error <= tolerance, "PRODUCT_TRANSFORM_EXPECTED_MATRIX", f"{path} absolute transform matches fixture truth", f"{path} matrix error={matrix_error}", "product_instances.jsonl")
+            self.check(point_error <= tolerance, "PRODUCT_TRANSFORM_POINT_TRUTH", f"{path} local point maps to expected world point", f"{path} point error={point_error}, world={world}, expected={expected_world}", "product_instances.jsonl")
+            self.check(orth_error <= tolerance and det_error <= tolerance and last_row_error <= tolerance, "PRODUCT_TRANSFORM_RIGID", f"{path} transform is rigid homogeneous absolute matrix", f"{path} orth={orth_error} det={det_error} last_row={last_row_error}", "product_instances.jsonl")
+
     def validate_completion(self) -> None:
         if self.mode != "completion":
             return
@@ -459,6 +665,10 @@ class RunValidator:
         self.validate_references()
         self.validate_mesh_ranges()
         self.validate_fixture_expectations()
+        self.validate_capability_consistency()
+        self.validate_feature_topology_semantics()
+        self.validate_decoder_semantics()
+        self.validate_product_numeric_truth()
         self.validate_completion()
         return self.findings
 

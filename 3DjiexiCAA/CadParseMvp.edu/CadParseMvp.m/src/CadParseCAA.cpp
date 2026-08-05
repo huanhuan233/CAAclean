@@ -655,9 +655,9 @@ static void AppendNativeFeatureTopologyLink(ParseContext& context,
         link.final_cell_id = exact->cell_id;
         link.final_body_id = exact->body_id;
         link.mapping_method = "catia_resultout_final_cell_pointer_identity";
-        link.mapping_status = "confirmed";
-        link.authority = "catia_history_result";
-        link.relation_kind = "generated";
+        link.mapping_status = "runtime_matched";
+        link.authority = "runtime_cell_identity";
+        link.relation_kind = "survives_to_final";
         link.confidence = 1.0;
         link.candidate_count = 1;
         link.candidate_final_cell_ids.push_back(exact->cell_id);

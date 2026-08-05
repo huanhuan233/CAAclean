@@ -705,10 +705,13 @@ DecodeResult StartupTypeCanonicalDecoder::Decode(const INativeObjectView& view,
     return DecodeResult(false, "typed", "startup type is not in canonical map",
                         DecoderOutcomeUnsupported);
   output.attributes["canonical_native_type"] = canonical;
+  output.attributes["type_resolution_status"] = "resolved";
+  output.attributes["payload_extraction_status"] = "not_implemented";
+  output.attributes["decoder_status"] = "type_only";
   output.decoder_id = GetDecoderId();
-  output.decode_level = "typed";
-  output.decode_status = "success";
-  return DecodeResult(true, "typed");
+  output.decode_level = "type_only";
+  output.decode_status = "type_only";
+  return DecodeResult(true, "type_only");
 }
 
 // 用途：返回通用解码器的稳定编号，供结果和统计追溯。
@@ -1000,7 +1003,7 @@ DecodeResult FeatureTypeRegistry::DecodeObject(const INativeObjectView& view, Pa
   // 根据最终解码级别只累计一次对象统计，保证对象守恒。
   ++context.statistics.enumerated_total;
   ++context.statistics.decoder_hits[output.decoder_id];
-  if (result.level == "typed")
+  if (result.level == "typed" || result.level == "type_only")
     ++context.statistics.typed_count;
   else if (result.level == "generic")
     ++context.statistics.generic_count;

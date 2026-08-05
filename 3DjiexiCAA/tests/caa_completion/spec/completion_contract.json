@@ -1,7 +1,7 @@
 {
   "contract_id": "3DjiexiCAA-caa-pre-python-completion-v1",
   "scope": "CATIA V5R21 CAA/C++ data extraction before Python manufacturing-feature recognition",
-  "minimum_schema_generation": 10,
+  "minimum_schema_generation": 11,
   "forbidden_completion_shortcuts": [
     "geometry_fingerprint_candidate_as_authoritative_mapping",
     "display_name_or_file_name_type_inference",
@@ -41,6 +41,7 @@
       "native_feature_id", "source_object_id", "part_id", "instance_id", "body_id",
       "parent_feature_id", "name", "startup_type", "canonical_native_type", "decoder",
       "decoder_version", "payload_type", "payload_schema_version", "decoder_status",
+      "type_resolution_status", "payload_extraction_status",
       "suppressed", "active", "parameters", "references", "result_topology_refs",
       "update_status", "diagnostic_ids"
     ],
@@ -120,4 +121,3 @@
     "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capability_matrix.json"
   ]
 }
-

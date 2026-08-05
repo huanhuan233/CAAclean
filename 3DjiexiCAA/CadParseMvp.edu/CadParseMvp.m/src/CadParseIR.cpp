@@ -268,6 +268,201 @@ void WriteFeature(std::ostream& output, const FeatureRecord& record)
   output << ",\"diagnostic_ids\":"; WriteStringArray(output, record.diagnostic_ids); output << '}';
 }
 
+struct CapabilityCounts
+{
+  CapabilityCounts()
+    : required_count(0), resolved_count(0), history_confirmed_count(0),
+      runtime_identity_count(0), candidate_count(0), ambiguous_count(0),
+      unmatched_count(0), failed_count(0), evidence_count(0), coverage_ratio(0.0) {}
+  long required_count;
+  long resolved_count;
+  long history_confirmed_count;
+  long runtime_identity_count;
+  long candidate_count;
+  long ambiguous_count;
+  long unmatched_count;
+  long failed_count;
+  long evidence_count;
+  double coverage_ratio;
+};
+
+struct CapabilityEvaluation
+{
+  std::string name;
+  std::string status;
+  CapabilityCounts counts;
+};
+
+static void FinishCounts(CapabilityCounts& counts)
+{
+  counts.coverage_ratio = counts.required_count > 0 ?
+    static_cast<double>(counts.resolved_count) / static_cast<double>(counts.required_count) : 0.0;
+}
+
+static CapabilityEvaluation MakeCapability(const char* name, const char* status,
+                                           long required, long resolved, long evidence)
+{
+  CapabilityEvaluation item;
+  item.name = name;
+  item.status = status;
+  item.counts.required_count = required;
+  item.counts.resolved_count = resolved;
+  item.counts.evidence_count = evidence;
+  FinishCounts(item.counts);
+  return item;
+}
+
+static bool IsPersistentHistoryAuthority(const NativeFeatureTopologyLinkRecord& link)
+{
+  return link.authority == "catia_persistent_naming" ||
+         link.authority == "catia_selection_reference" ||
+         link.authority == "verified_r21_public_equivalent" ||
+         (link.authority == "catia_history_result" && !link.persistent_reference.empty());
+}
+
+static CapabilityEvaluation EvaluateFeatureTopologyMapping(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "native_feature_topology_mapping";
+  item.status = "not_available";
+  item.counts.required_count = static_cast<long>(context.native_feature_topology_links.size());
+  item.counts.evidence_count = item.counts.required_count;
+
+  bool has_forward = false;
+  bool has_reverse = false;
+  bool all_authoritative = item.counts.required_count > 0;
+  std::vector<NativeFeatureTopologyLinkRecord>::const_iterator link =
+    context.native_feature_topology_links.begin();
+  for (; link != context.native_feature_topology_links.end(); ++link)
+  {
+    if (link->mapping_direction == "result_cell_to_final_face") has_forward = true;
+    if (link->mapping_direction == "final_face_to_source_feature") has_reverse = true;
+
+    if (link->mapping_status == "confirmed" && IsPersistentHistoryAuthority(*link))
+    {
+      ++item.counts.history_confirmed_count;
+      ++item.counts.resolved_count;
+    }
+    else if (link->mapping_status == "runtime_matched" ||
+             link->authority == "runtime_cell_identity")
+    {
+      ++item.counts.runtime_identity_count;
+      ++item.counts.resolved_count;
+      all_authoritative = false;
+    }
+    else if (link->mapping_status == "candidate")
+    {
+      ++item.counts.candidate_count;
+      all_authoritative = false;
+    }
+    else if (link->mapping_status == "ambiguous")
+    {
+      ++item.counts.ambiguous_count;
+      all_authoritative = false;
+    }
+    else if (link->mapping_status == "unmatched" ||
+             link->mapping_status == "insufficient_result_fingerprint")
+    {
+      ++item.counts.unmatched_count;
+      all_authoritative = false;
+    }
+    else
+    {
+      ++item.counts.failed_count;
+      all_authoritative = false;
+    }
+  }
+
+  const bool complete = item.counts.required_count > 0 &&
+    item.counts.candidate_count == 0 &&
+    item.counts.ambiguous_count == 0 &&
+    item.counts.unmatched_count == 0 &&
+    item.counts.failed_count == 0 &&
+    item.counts.runtime_identity_count == 0 &&
+    has_forward && has_reverse && all_authoritative;
+  if (complete) item.status = "complete";
+  else if (item.counts.required_count > 0) item.status = "partial";
+  FinishCounts(item.counts);
+  return item;
+}
+
+static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& features,
+                                       const ParseContext& context,
+                                       std::vector<CapabilityEvaluation>& items,
+                                       long& native_hole_decoded,
+                                       long& native_prism_decoded,
+                                       long& native_generic)
+{
+  native_hole_decoded = 0;
+  native_prism_decoded = 0;
+  native_generic = 0;
+  long payload_complete = 0;
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    const ITypedPayload* payload = feature->GetTypedPayload();
+    if (payload && std::string(payload->GetPayloadTypeId()) == "native_hole")
+    { ++native_hole_decoded; ++payload_complete; }
+    if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism")
+    { ++native_prism_decoded; ++payload_complete; }
+    if (feature->decode_level == "generic") ++native_generic;
+  }
+
+  items.push_back(MakeCapability("spec_tree_extraction", "partial",
+                                 static_cast<long>(features.size()),
+                                 static_cast<long>(features.size()),
+                                 static_cast<long>(features.size())));
+  items.push_back(MakeCapability("native_feature_extraction",
+                                 features.empty() ? "not_available" : "partial",
+                                 static_cast<long>(features.size()), payload_complete,
+                                 static_cast<long>(features.size())));
+  items.push_back(MakeCapability("topology_extraction",
+                                 context.topology_bodies.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.topology_bodies.size()),
+                                 static_cast<long>(context.topology_bodies.size()),
+                                 static_cast<long>(context.topology_cells.size())));
+  items.push_back(EvaluateFeatureTopologyMapping(context));
+
+  const std::map<std::string, std::string>::const_iterator fta_status_it =
+    context.runtime_info.find("fta_extraction_status");
+  std::string fta_status = fta_status_it == context.runtime_info.end() ?
+    "not_available" : fta_status_it->second;
+  if (fta_status == "complete" && context.fta_sets.empty())
+    fta_status = "not_available";
+  items.push_back(MakeCapability("fta_extraction", fta_status.c_str(),
+                                 static_cast<long>(context.fta_sets.size()),
+                                 static_cast<long>(context.fta_semantics.size()),
+                                 static_cast<long>(context.fta_semantics.size())));
+  items.push_back(MakeCapability("fta_topology_mapping", "not_available",
+                                 static_cast<long>(context.fta_topology_links.size()), 0,
+                                 static_cast<long>(context.fta_topology_links.size())));
+  items.push_back(MakeCapability("mesh_face_mapping",
+                                 context.mesh_face_maps.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.mesh_face_maps.size()),
+                                 static_cast<long>(context.mesh_face_maps.size()),
+                                 static_cast<long>(context.mesh_face_maps.size())));
+  items.push_back(MakeCapability("manufacturing_feature_recognition", "not_performed", 0, 0, 0));
+  items.push_back(MakeCapability("catproduct_instance_extraction",
+                                 context.product_instances.empty() ? "not_available" : "complete",
+                                 static_cast<long>(context.product_instances.size()),
+                                 static_cast<long>(context.product_instances.size()),
+                                 static_cast<long>(context.product_instances.size())));
+  items.push_back(MakeCapability("decoder_registry_export", "complete", 1, 1, 1));
+}
+
+static void WriteCapabilityCounts(std::ostream& output, const CapabilityCounts& counts)
+{
+  output << "\"required_count\":" << counts.required_count
+         << ",\"resolved_count\":" << counts.resolved_count
+         << ",\"history_confirmed_count\":" << counts.history_confirmed_count
+         << ",\"runtime_identity_count\":" << counts.runtime_identity_count
+         << ",\"candidate_count\":" << counts.candidate_count
+         << ",\"ambiguous_count\":" << counts.ambiguous_count
+         << ",\"unmatched_count\":" << counts.unmatched_count
+         << ",\"failed_count\":" << counts.failed_count
+         << ",\"coverage_ratio\":" << std::setprecision(15) << counts.coverage_ratio;
+}
+
 // 用途：把每个实际遍历到的 CAA 规格对象投影为原生特征出口记录；未有专用 Decoder 的对象如实标记 generic，绝不伪造拓扑结果。
 void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
 {
@@ -284,9 +479,16 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
       record.attributes.find("canonical_native_type");
     if (canonical != record.attributes.end()) canonical_native_type = canonical->second;
   }
-  const char* decoder_status = record.decode_level == "typed" ? "decoded" :
+  const bool payload_complete = is_native_hole || is_native_prism;
+  const bool type_only = record.decode_level == "type_only";
+  const char* decoder_status = payload_complete ? "decoded" :
+    (type_only ? "type_only" :
     (record.decode_level == "generic" ? "generic" :
-     (record.decode_level == "opaque" ? "unsupported" : "failed"));
+     (record.decode_level == "opaque" ? "unsupported" : "failed")));
+  const char* type_resolution_status = (payload_complete || type_only) ? "resolved" :
+    (canonical_native_type.empty() ? "unresolved" : "resolved");
+  const char* payload_extraction_status = payload_complete ? "complete" :
+    (type_only ? "not_implemented" : "not_available");
   output << "{\"native_feature_id\":\"" << JsonEscape(record.feature_id)
          << "\",\"source_object_id\":\"" << JsonEscape(record.feature_id)
          << "\",\"part_id\":\"\",\"instance_id\":null,\"body_id\":\"\""
@@ -301,6 +503,8 @@ void WriteNativeFeature(std::ostream& output, const FeatureRecord& record)
          << "\",\"payload_type\":\"" << JsonEscape(payload ? payload->GetPayloadTypeId() : "")
          << "\",\"payload_schema_version\":\"" << CAD_PARSE_SCHEMA_VERSION
          << "\",\"decoder_status\":\"" << decoder_status
+         << "\",\"type_resolution_status\":\"" << type_resolution_status
+         << "\",\"payload_extraction_status\":\"" << payload_extraction_status
          << "\",\"suppressed\":false,\"active\":true,\"parameters\":{}"
          << ",\"references\":[],\"result_topology_refs\":[]"
          << ",\"update_status\":\"" << JsonEscape(record.update_status)
@@ -901,48 +1105,24 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteNativeFeatureTopologyLink(output, *topology_link); output << '\n'; }
   if (!FinishOutput(output, "native_feature_topology_links.jsonl", error)) return false;
 
-  // 用途：能力状态从本轮真实 CAA 出口推导；未实现或未验证的拓扑、FTA、映射绝不标记为完成。
-  if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
+  // 用途：能力状态只从统一 evaluator 生成，避免 capabilities 与 matrix 各自套用不同规则。
+  std::vector<CapabilityEvaluation> capabilities;
   long native_hole_decoded = 0;
   long native_prism_decoded = 0;
   long native_generic = 0;
-  for (feature = features.begin(); feature != features.end(); ++feature)
-  {
-    const ITypedPayload* payload = feature->GetTypedPayload();
-    if (payload && std::string(payload->GetPayloadTypeId()) == "native_hole") ++native_hole_decoded;
-    if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism") ++native_prism_decoded;
-    if (feature->decode_level == "generic") ++native_generic;
-  }
-  const bool has_native_topology = !context.topology_bodies.empty();
-  const std::map<std::string, std::string>::const_iterator fta_status_it =
-    context.runtime_info.find("fta_extraction_status");
-  const std::string fta_status = fta_status_it == context.runtime_info.end() ?
-    "not_available" : fta_status_it->second;
-  long feature_topology_candidate_links = 0;
-  long feature_topology_confirmed_links = 0;
-  std::vector<NativeFeatureTopologyLinkRecord>::const_iterator link =
-    context.native_feature_topology_links.begin();
-  for (; link != context.native_feature_topology_links.end(); ++link)
-  {
-    if (link->mapping_status == "candidate" || link->mapping_status == "ambiguous")
-      ++feature_topology_candidate_links;
-    if (link->mapping_status == "confirmed")
-      ++feature_topology_confirmed_links;
-  }
-  const bool has_native_features = !features.empty();
+  BuildCapabilityEvaluations(features, context, capabilities,
+                             native_hole_decoded, native_prism_decoded, native_generic);
+
+  if (!OpenOutput(output, JoinPath(staging, "capabilities.json"), error)) return false;
   output << "{\"spec_tree_extraction\":\"partial\""
-         << ",\"native_feature_extraction\":\"" << (has_native_features ? "complete" : "not_available") << "\""
-         << ",\"topology_extraction\":\"" << (has_native_topology ? "complete" : "not_available") << "\""
-         << ",\"native_feature_topology_mapping\":\""
-         << (feature_topology_confirmed_links > 0 ? "complete" :
-              (feature_topology_candidate_links > 0 ? "partial" : "not_available")) << "\""
-         << ",\"fta_extraction\":\"" << JsonEscape(fta_status) << "\""
-         << ",\"fta_topology_mapping\":\"not_available\""
-         << ",\"mesh_face_mapping\":\"" << (context.mesh_face_maps.empty() ? "not_available" : "complete") << "\""
-         << ",\"manufacturing_feature_recognition\":\"not_performed\""
-         << ",\"catproduct_instance_extraction\":\""
-         << (context.product_instances.empty() ? "not_available" : "complete") << "\""
-         << ",\"decoder_registry_export\":\"complete\""
+         ;
+  std::vector<CapabilityEvaluation>::const_iterator cap = capabilities.begin();
+  for (; cap != capabilities.end(); ++cap)
+  {
+    if (cap->name == "spec_tree_extraction") continue;
+    output << ",\"" << JsonEscape(cap->name) << "\":\"" << JsonEscape(cap->status) << "\"";
+  }
+  output
          << ",\"native_feature_record_count\":" << features.size()
          << ",\"native_hole_decoded_count\":" << native_hole_decoded
          << ",\"native_prism_decoded_count\":" << native_prism_decoded
@@ -959,23 +1139,31 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"native_feature_result_count\":" << context.native_feature_results.size()
          << ",\"native_feature_result_cell_count\":" << context.native_feature_result_cells.size()
          << ",\"native_feature_topology_link_count\":" << context.native_feature_topology_links.size()
-         << ",\"native_feature_topology_candidate_link_count\":" << feature_topology_candidate_links
-         << ",\"native_feature_topology_confirmed_link_count\":" << feature_topology_confirmed_links
-         << ",\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"R21 Public CATIShapeFeatureBody ResultOUT emits per-cell topology evidence; exact CATCell identity with the final solid is emitted as catia_history_result confirmed mapping, while geometry-only matches remain candidates\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
+         << ",\"capability_metrics\":{";
+  for (cap = capabilities.begin(); cap != capabilities.end(); ++cap)
+  {
+    if (cap != capabilities.begin()) output << ',';
+    output << "\"" << JsonEscape(cap->name) << "\":{";
+    WriteCapabilityCounts(output, cap->counts);
+    output << '}';
+  }
+  output
+         << "},\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"CATIShapeFeatureBody ResultOUT cell identity with final solid is preserved only as runtime_cell_identity/survives_to_final evidence; it is not generated/modified/consumed history and has no persistent reference\",\"StartupTypeCanonicalDecoder performs type recognition only; payload_extraction_status remains not_implemented until a dedicated R21 Public decoder reads parameters\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "capability_matrix.json"), error)) return false;
   output << "{\"schema_version\":\"" << CAD_PARSE_SCHEMA_VERSION
-         << "\",\"capabilities\":["
-         << "{\"name\":\"product_structure\",\"status\":\""
-         << (context.product_instances.empty() ? "not_available" : "partial")
-         << "\",\"evidence_count\":" << context.product_instances.size() << "},"
-         << "{\"name\":\"fta_native_tps\",\"status\":\"" << JsonEscape(fta_status)
-         << "\",\"evidence_count\":" << context.fta_semantics.size() << "},"
-         << "{\"name\":\"native_feature_topology_mapping\",\"status\":\""
-         << (feature_topology_candidate_links > 0 ? "partial" : "not_available")
-         << "\",\"evidence_count\":" << context.native_feature_topology_links.size() << "}"
-         << "]}\n";
+         << "\",\"capabilities\":[";
+  for (cap = capabilities.begin(); cap != capabilities.end(); ++cap)
+  {
+    if (cap != capabilities.begin()) output << ',';
+    output << "{\"name\":\"" << JsonEscape(cap->name)
+           << "\",\"status\":\"" << JsonEscape(cap->status)
+           << "\",\"evidence_count\":" << cap->counts.evidence_count << ',';
+    WriteCapabilityCounts(output, cap->counts);
+    output << '}';
+  }
+  output << "]}\n";
   if (!FinishOutput(output, "capability_matrix.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "relations.jsonl"), error)) return false;

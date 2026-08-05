@@ -10,10 +10,10 @@
 #include <vector>
 
 // 所有产品和结构版本集中在一个定义点，避免清单中的版本号长期漂移。
-#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v10"
-#define CAD_PARSE_PARSER_VERSION "1.10.0"
-#define CAD_PARSE_REGISTRY_VERSION "1.10.0"
-#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.10.0"
+#define CAD_PARSE_SCHEMA_VERSION "cad_parse_mvp_v11"
+#define CAD_PARSE_PARSER_VERSION "1.11.0"
+#define CAD_PARSE_REGISTRY_VERSION "1.11.0"
+#define CAD_PARSE_DECODER_BUNDLE_VERSION "1.11.0"
 
 namespace cadparse
 {

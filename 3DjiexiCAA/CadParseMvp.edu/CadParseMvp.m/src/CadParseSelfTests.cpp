@@ -1301,8 +1301,8 @@ int SelfTestSuite::RunAll()
               hole_json.find("\"enabled\":false") != std::string::npos,
               "Native Hole JSON preserves number arrays boolean and null types");
   tests.Check(ReadWholeFile("selftest_output_native_hole\\parser.log").find(
-                "schema=cad_parse_mvp_v10") != std::string::npos,
-              "Product, FTA and completion artifact exports advance the parser schema to v10");
+                "schema=cad_parse_mvp_v11") != std::string::npos,
+              "Product, FTA and completion artifact exports advance the parser schema to v11");
 
   // 验证派生记录存在悬空来源 ID 时 Writer 拒绝生成正式结果。
   std::vector<BusinessFeatureRecord> invalid_business;
