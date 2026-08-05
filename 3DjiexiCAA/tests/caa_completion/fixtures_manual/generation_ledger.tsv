@@ -73,3 +73,112 @@ fta_orphan_invalid_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pa
 fta_orphan_invalid.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_orphan_invalid_scaffold.CATPart
 version_fta_v1_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
 version_fta_v1.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=version_fta_v1_scaffold.CATPart
+product_same_reference_instances.CATProduct	generated	V5R21SP0	same CATPart reference, two instances, translation plus rotation
+product_nested.CATProduct	generated	V5R21SP0	three-level nested product with parent/child transforms
+version_product_v1.CATProduct	generated	V5R21SP0	version pair v1 base BOM
+version_product_v2.CATProduct	generated	V5R21SP0	version pair v2 BOM add and transform change
+fta_all_semantic_types_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_all_semantic_types_scaffold.CATPart
+fta_geometry_references_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+fta_geometry_references.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_geometry_references_scaffold.CATPart
+fta_orphan_invalid_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=fta_orphan_invalid_scaffold.CATPart
+version_fta_v1_scaffold.CATPart	generated	V5R21SP0	real geometry carrier: pad, hole pocket, datum axis system
+version_fta_v1.CATPart	blocked	V5R21SP0	native FTA semantics require manual CATIA FTA/MBD operations; scaffold=version_fta_v1_scaffold.CATPart
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,GDT_FLATNESS,DATUM_A,DATUM_B,DATUM_C,ROUGHNESS_RA32,TEXT_PROCESS_NOTE,FLAG_NOTE_1,NOA_GENERAL_NOTE,VIEW_FRONT,VIEW_TOP,CAPTURE_MACHINING
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,GDT_FLATNESS,DATUM_A,DATUM_B,DATUM_C,ROUGHNESS_RA32,FLAG_NOTE_1,NOA_GENERAL_NOTE,VIEW_FRONT,VIEW_TOP,CAPTURE_MACHINING
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,GDT_FLATNESS,DATUM_B,DATUM_C,ROUGHNESS_RA32,FLAG_NOTE_1,NOA_GENERAL_NOTE,VIEW_FRONT,VIEW_TOP,CAPTURE_MACHINING
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,GDT_FLATNESS,DATUM_B,DATUM_C,ROUGHNESS_RA32,FLAG_NOTE_1,NOA_GENERAL_NOTE,VIEW_FRONT,VIEW_TOP,CAPTURE_MACHINING
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,ROUGHNESS_RA32,FLAG_NOTE_1,NOA_GENERAL_NOTE,VIEW_FRONT,VIEW_TOP,CAPTURE_MACHINING
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,ROUGHNESS_RA32,FLAG_NOTE_1,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_LINEAR_FACE_FACE,DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	missing fixed native FTA names: REF_EDGE,REF_VERTEX,REF_AXIS,REF_TTRS_MULTI
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	missing fixed native FTA names: REF_EDGE,REF_VERTEX,REF_AXIS,REF_TTRS_MULTI
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+fta_all_semantic_types.CATPart	blocked	V5R21SP0	missing fixed native FTA names: DIM_DIAMETER_CYLINDER,DIM_LIMIT_DEVIATION,GDT_POSITION_DRF_ABC,NOA_GENERAL_NOTE
+fta_geometry_references.CATPart	blocked	V5R21SP0	missing fixed native FTA names: REF_EDGE,REF_VERTEX,REF_AXIS,REF_TTRS_MULTI
+fta_orphan_invalid.CATPart	blocked	V5R21SP0	missing fixed native FTA names: ORPHAN_SUPPRESSED_FEATURE,INVALID_GDT,INVALID_VIEW_CAPTURE
+version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
+version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing

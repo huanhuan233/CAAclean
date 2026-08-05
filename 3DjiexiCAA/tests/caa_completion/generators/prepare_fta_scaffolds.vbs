@@ -39,9 +39,22 @@ WScript.Echo "[DONE] FTA geometry scaffolds completed; native semantic FTA still
 WScript.Quit 0
 
 Sub BuildFtaCarrier(ByVal baseName)
-  Dim scaffoldPath, tmpPath, doc, part, body, planeRef, sk, f2d, pad, skHole, pocket, axisSystems, axisSystem, ok
+  Dim finalPath, scaffoldPath, tmpPath, doc, part, body, planeRef, sk, f2d, pad, skHole, pocket, axisSystems, axisSystem, ok
+  finalPath = fso.BuildPath(fixtureDir, baseName & ".CATPart")
   scaffoldPath = fso.BuildPath(fixtureDir, baseName & "_scaffold.CATPart")
   tmpPath = TempPath(baseName & "_scaffold.CATPart")
+
+  If fso.FileExists(finalPath) Then
+    WScript.Echo "[PRESERVE] " & fso.GetFileName(finalPath) & " already exists; not creating or replacing scaffold/final FTA"
+    ledger.WriteLine fso.GetFileName(finalPath) & vbTab & "preserved" & vbTab & RuntimeText() & vbTab & "existing formal FTA file was not touched"
+    Exit Sub
+  End If
+  If fso.FileExists(scaffoldPath) Then
+    WScript.Echo "[PRESERVE] " & fso.GetFileName(scaffoldPath) & " already exists; scaffold not regenerated"
+    ledger.WriteLine fso.GetFileName(scaffoldPath) & vbTab & "preserved" & vbTab & RuntimeText() & vbTab & "existing FTA scaffold was not touched"
+    ledger.WriteLine baseName & ".CATPart" & vbTab & "blocked" & vbTab & RuntimeText() & vbTab & "formal native FTA file missing; existing scaffold preserved=" & fso.GetFileName(scaffoldPath)
+    Exit Sub
+  End If
 
   Set doc = catia.Documents.Add("Part")
   Set part = doc.Part
