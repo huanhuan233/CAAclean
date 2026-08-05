@@ -75,7 +75,7 @@
     ],
     "product_instances.jsonl": [
       "instance_id", "reference_id", "parent_instance_id", "instance_name", "instance_path",
-      "suppressed", "load_status", "transform_4x4", "diagnostic_ids"
+      "suppressed", "load_status", "depth", "transform_status", "transform_4x4", "diagnostic_ids"
     ]
   },
   "authoritative_feature_mapping": {
@@ -99,7 +99,7 @@
     "gsd_fill", "gsd_multi_section_surface", "gsd_join", "gsd_heal", "gsd_projection",
     "gsd_intersection", "point", "line", "plane", "axis_system"
   ],
-  "capability_states": ["complete", "partial", "not_available", "failed", "not_performed"],
+  "capability_states": ["complete", "partial", "not_available", "not_applicable", "failed", "not_performed", "blocked_public_api_r21"],
   "completion_rules": {
     "manufacturing_feature_recognition": "not_performed",
     "native_feature_extraction": "complete",
@@ -108,6 +108,8 @@
     "fta_extraction": "complete",
     "fta_topology_mapping": "complete",
     "mesh_face_mapping": "complete",
+    "product_structure_extraction": "complete",
+    "instance_transform_extraction": "complete",
     "catproduct_instance_extraction": "complete",
     "decoder_registry_export": "complete"
   },

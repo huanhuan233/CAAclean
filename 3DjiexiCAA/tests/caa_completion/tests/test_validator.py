@@ -77,6 +77,25 @@ class ValidatorTests(unittest.TestCase):
             base_contract.update(contract)
         return RunValidator("completion", base_contract, fixture or {"id": "X", "native_expected": [], "roles": []}, Path("."))
 
+    def _cap_metrics(self, **overrides):
+        metrics = {
+            "required_count": 1,
+            "resolved_count": 0,
+            "history_confirmed_count": 0,
+            "authoritative_history_count": 0,
+            "runtime_identity_count": 0,
+            "candidate_count": 0,
+            "ambiguous_count": 0,
+            "unmatched_count": 0,
+            "failed_count": 0,
+            "coverage_ratio": 0.0,
+            "runtime_coverage_ratio": 0.0,
+            "authoritative_coverage_ratio": 0.0,
+            "reason_code": "TEST",
+        }
+        metrics.update(overrides)
+        return metrics
+
     def test_pointer_identity_cannot_claim_history_generated(self):
         validator = self._semantic_validator()
         validator.rows["native_feature_topology_links.jsonl"] = [{
@@ -98,14 +117,60 @@ class ValidatorTests(unittest.TestCase):
     def test_capability_status_mismatch_is_rejected(self):
         validator = self._semantic_validator()
         metrics = {
-            "required_count": 1, "resolved_count": 1, "history_confirmed_count": 0,
+            "required_count": 1, "resolved_count": 0, "history_confirmed_count": 0,
+            "authoritative_history_count": 0,
             "runtime_identity_count": 1, "candidate_count": 0, "ambiguous_count": 0,
-            "unmatched_count": 0, "failed_count": 0, "coverage_ratio": 1.0,
+            "unmatched_count": 0, "failed_count": 0, "coverage_ratio": 0.0,
+            "runtime_coverage_ratio": 1.0, "authoritative_coverage_ratio": 0.0,
+            "reason_code": "RUNTIME_IDENTITY_ONLY",
         }
         validator.json_docs["capabilities.json"] = {"native_feature_topology_mapping": "partial", "capability_metrics": {"native_feature_topology_mapping": metrics}}
         validator.json_docs["capability_matrix.json"] = {"capabilities": [dict({"name": "native_feature_topology_mapping", "status": "complete", "evidence_count": 1}, **metrics)]}
         validator.validate_capability_consistency()
         self.assertTrue(any(item.status == "FAIL" and item.code == "CAPABILITY_STATUS_CONSISTENT" for item in validator.findings))
+
+    def test_runtime_full_coverage_without_authority_cannot_complete(self):
+        validator = self._semantic_validator()
+        validator.rows["native_feature_topology_links.jsonl"] = [{
+            "mapping_status": "runtime_matched",
+            "mapping_direction": "result_cell_to_final_face",
+            "authority": "runtime_cell_identity",
+        }]
+        metrics = self._cap_metrics(runtime_identity_count=1, runtime_coverage_ratio=1.0, authoritative_coverage_ratio=0.0, coverage_ratio=0.0)
+        validator.json_docs["capabilities.json"] = {"native_feature_topology_mapping": "complete", "capability_metrics": {"native_feature_topology_mapping": metrics}}
+        validator.validate_feature_topology_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "RUNTIME_COVERAGE_CANNOT_COMPLETE_MAPPING" for item in validator.findings))
+
+    def test_authority_coverage_without_reverse_cannot_complete(self):
+        validator = self._semantic_validator()
+        validator.rows["native_feature_topology_links.jsonl"] = [{
+            "mapping_status": "confirmed",
+            "authority": "verified_r21_public_equivalent",
+            "persistent_reference": "GN://face/1",
+            "mapping_direction": "result_cell_to_final_face",
+        }]
+        metrics = self._cap_metrics(resolved_count=1, history_confirmed_count=1, authoritative_history_count=1, runtime_coverage_ratio=1.0, authoritative_coverage_ratio=1.0, coverage_ratio=1.0)
+        validator.json_docs["capabilities.json"] = {"native_feature_topology_mapping": "complete", "capability_metrics": {"native_feature_topology_mapping": metrics}}
+        validator.validate_feature_topology_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "MAPPING_FORWARD_REVERSE" for item in validator.findings))
+
+    def test_zero_required_mapping_cannot_complete(self):
+        validator = self._semantic_validator()
+        metrics = self._cap_metrics(required_count=0, resolved_count=0, coverage_ratio=0.0, runtime_coverage_ratio=0.0, authoritative_coverage_ratio=0.0)
+        validator.json_docs["capabilities.json"] = {"native_feature_topology_mapping": "complete", "capability_metrics": {"native_feature_topology_mapping": metrics}}
+        validator.json_docs["capability_matrix.json"] = {"capabilities": [dict({"name": "native_feature_topology_mapping", "status": "complete", "evidence_count": 0}, **metrics)]}
+        validator.validate_feature_topology_semantics()
+        validator.validate_capability_consistency()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "MAPPING_COMPLETE_REQUIRES_AUTHORITATIVE_COVERAGE" for item in validator.findings))
+
+    def test_capability_metric_mismatch_is_rejected(self):
+        validator = self._semantic_validator()
+        caps_metrics = self._cap_metrics(runtime_coverage_ratio=1.0)
+        matrix_metrics = self._cap_metrics(runtime_coverage_ratio=0.5)
+        validator.json_docs["capabilities.json"] = {"native_feature_topology_mapping": "partial", "capability_metrics": {"native_feature_topology_mapping": caps_metrics}}
+        validator.json_docs["capability_matrix.json"] = {"capabilities": [dict({"name": "native_feature_topology_mapping", "status": "partial", "evidence_count": 1}, **matrix_metrics)]}
+        validator.validate_capability_consistency()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "CAPABILITY_METRICS_CONSISTENT" for item in validator.findings))
 
     def test_persistent_authority_requires_reference(self):
         validator = self._semantic_validator()
@@ -162,6 +227,85 @@ class ValidatorTests(unittest.TestCase):
         ]
         validator.validate_product_numeric_truth()
         self.assertTrue(any(item.status == "FAIL" and item.code == "PRODUCT_TRANSFORM_EXPECTED_MATRIX" for item in validator.findings))
+
+    def _product_validator(self, rows, caps):
+        validator = self._semantic_validator(fixture={"id": "PRODUCT-X", "native_expected": [], "package": "catproduct"})
+        validator.rows["product_instances.jsonl"] = rows
+        validator.json_docs["capabilities.json"] = caps
+        return validator
+
+    def _root_row(self):
+        return {
+            "instance_id": "root",
+            "parent_instance_id": "",
+            "reference_id": "ref-root",
+            "instance_path": "ROOT",
+            "depth": 0,
+            "transform_status": "identity_root",
+            "transform_4x4": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        }
+
+    def _child_row(self, instance_id="child1", path="ROOT/Child1", matrix=None, status="resolved_absolute"):
+        if matrix is None:
+            matrix = [1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        return {
+            "instance_id": instance_id,
+            "parent_instance_id": "root",
+            "reference_id": f"ref-{instance_id}",
+            "instance_path": path,
+            "depth": 1,
+            "transform_status": status,
+            "transform_4x4": matrix,
+        }
+
+    def test_root_only_product_transform_is_not_applicable(self):
+        validator = self._product_validator(
+            [self._root_row()],
+            {"product_structure_extraction": "complete", "instance_transform_extraction": "not_applicable"},
+        )
+        validator.validate_product_capability_semantics()
+        self.assertFalse(any(item.status == "FAIL" for item in validator.findings))
+
+    def test_product_complete_rejects_missing_instance_matrix(self):
+        bad = self._child_row("child2", "ROOT/Child2", matrix=[])
+        validator = self._product_validator(
+            [self._root_row(), self._child_row(), bad],
+            {"product_structure_extraction": "complete", "instance_transform_extraction": "complete"},
+        )
+        validator.validate_product_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "PRODUCT_TRANSFORM_COMPLETE_ALL_INSTANCES" for item in validator.findings))
+
+    def test_product_complete_rejects_duplicate_instance_paths(self):
+        validator = self._product_validator(
+            [self._root_row(), self._child_row("child1", "ROOT/Dup"), self._child_row("child2", "ROOT/Dup")],
+            {"product_structure_extraction": "complete", "instance_transform_extraction": "complete"},
+        )
+        validator.validate_product_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "PRODUCT_INSTANCE_PATH_UNIQUE" for item in validator.findings))
+
+    def test_product_complete_rejects_bad_rotation(self):
+        bad_rotation = [2, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        validator = self._product_validator(
+            [self._root_row(), self._child_row(matrix=bad_rotation)],
+            {"product_structure_extraction": "complete", "instance_transform_extraction": "complete"},
+        )
+        validator.validate_product_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "PRODUCT_TRANSFORM_COMPLETE_ALL_INSTANCES" for item in validator.findings))
+
+    def test_product_complete_rejects_relative_transform_status(self):
+        validator = self._product_validator(
+            [self._root_row(), self._child_row(status="resolved_relative")],
+            {"product_structure_extraction": "complete", "instance_transform_extraction": "complete"},
+        )
+        validator.validate_product_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "PRODUCT_TRANSFORM_COMPLETE_ALL_INSTANCES" for item in validator.findings))
+
+    def test_catpart_cannot_claim_product_capability_complete(self):
+        validator = self._semantic_validator(fixture={"id": "PD-PAD-01", "native_expected": [], "package": "part_design"})
+        validator.json_docs["capabilities.json"] = {"product_structure_extraction": "complete", "instance_transform_extraction": "complete"}
+        validator.rows["product_instances.jsonl"] = [self._root_row()]
+        validator.validate_product_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "CATPART_PRODUCT_CAPABILITY_NOT_APPLICABLE" for item in validator.findings))
 
 
 if __name__ == "__main__":

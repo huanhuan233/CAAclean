@@ -4,8 +4,10 @@
 #include <direct.h>
 #include <errno.h>
 #include <ctime>
+#include <float.h>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <sstream>
 #include <windows.h>
 
@@ -272,43 +274,77 @@ struct CapabilityCounts
 {
   CapabilityCounts()
     : required_count(0), resolved_count(0), history_confirmed_count(0),
+      authoritative_history_count(0),
       runtime_identity_count(0), candidate_count(0), ambiguous_count(0),
-      unmatched_count(0), failed_count(0), evidence_count(0), coverage_ratio(0.0) {}
+      unmatched_count(0), failed_count(0), evidence_count(0),
+      required_instance_count(0), resolved_instance_count(0),
+      unresolved_instance_count(0), duplicate_instance_path_count(0),
+      invalid_transform_count(0), coverage_ratio(0.0),
+      runtime_coverage_ratio(0.0), authoritative_coverage_ratio(0.0) {}
   long required_count;
   long resolved_count;
   long history_confirmed_count;
+  long authoritative_history_count;
   long runtime_identity_count;
   long candidate_count;
   long ambiguous_count;
   long unmatched_count;
   long failed_count;
   long evidence_count;
+  long required_instance_count;
+  long resolved_instance_count;
+  long unresolved_instance_count;
+  long duplicate_instance_path_count;
+  long invalid_transform_count;
   double coverage_ratio;
+  double runtime_coverage_ratio;
+  double authoritative_coverage_ratio;
 };
 
 struct CapabilityEvaluation
 {
   std::string name;
   std::string status;
+  std::string reason_code;
   CapabilityCounts counts;
 };
 
-static void FinishCounts(CapabilityCounts& counts)
+static double Ratio(long numerator, long denominator)
 {
-  counts.coverage_ratio = counts.required_count > 0 ?
-    static_cast<double>(counts.resolved_count) / static_cast<double>(counts.required_count) : 0.0;
+  if (denominator <= 0) return 0.0;
+  double value = static_cast<double>(numerator) / static_cast<double>(denominator);
+  if (value < 0.0) return 0.0;
+  if (value > 1.0) return 1.0;
+  return value;
+}
+
+static void FinishGenericCounts(CapabilityCounts& counts)
+{
+  counts.coverage_ratio = Ratio(counts.resolved_count, counts.required_count);
+}
+
+static void FinishFeatureTopologyCounts(CapabilityCounts& counts)
+{
+  counts.runtime_coverage_ratio = Ratio(counts.runtime_identity_count + counts.authoritative_history_count,
+                                        counts.required_count);
+  counts.authoritative_coverage_ratio = Ratio(counts.authoritative_history_count,
+                                              counts.required_count);
+  // For backward compatibility, coverage_ratio remains in the schema but now means authoritative coverage.
+  counts.coverage_ratio = counts.authoritative_coverage_ratio;
 }
 
 static CapabilityEvaluation MakeCapability(const char* name, const char* status,
-                                           long required, long resolved, long evidence)
+                                           long required, long resolved, long evidence,
+                                           const char* reason_code)
 {
   CapabilityEvaluation item;
   item.name = name;
   item.status = status;
+  item.reason_code = reason_code;
   item.counts.required_count = required;
   item.counts.resolved_count = resolved;
   item.counts.evidence_count = evidence;
-  FinishCounts(item.counts);
+  FinishGenericCounts(item.counts);
   return item;
 }
 
@@ -325,6 +361,7 @@ static CapabilityEvaluation EvaluateFeatureTopologyMapping(const ParseContext& c
   CapabilityEvaluation item;
   item.name = "native_feature_topology_mapping";
   item.status = "not_available";
+  item.reason_code = "NO_FEATURE_TOPOLOGY_RELATIONS";
   item.counts.required_count = static_cast<long>(context.native_feature_topology_links.size());
   item.counts.evidence_count = item.counts.required_count;
 
@@ -341,13 +378,13 @@ static CapabilityEvaluation EvaluateFeatureTopologyMapping(const ParseContext& c
     if (link->mapping_status == "confirmed" && IsPersistentHistoryAuthority(*link))
     {
       ++item.counts.history_confirmed_count;
+      ++item.counts.authoritative_history_count;
       ++item.counts.resolved_count;
     }
     else if (link->mapping_status == "runtime_matched" ||
              link->authority == "runtime_cell_identity")
     {
       ++item.counts.runtime_identity_count;
-      ++item.counts.resolved_count;
       all_authoritative = false;
     }
     else if (link->mapping_status == "candidate")
@@ -373,16 +410,254 @@ static CapabilityEvaluation EvaluateFeatureTopologyMapping(const ParseContext& c
     }
   }
 
+  FinishFeatureTopologyCounts(item.counts);
+
   const bool complete = item.counts.required_count > 0 &&
+    item.counts.authoritative_coverage_ratio >= 1.0 &&
     item.counts.candidate_count == 0 &&
     item.counts.ambiguous_count == 0 &&
     item.counts.unmatched_count == 0 &&
     item.counts.failed_count == 0 &&
     item.counts.runtime_identity_count == 0 &&
     has_forward && has_reverse && all_authoritative;
-  if (complete) item.status = "complete";
-  else if (item.counts.required_count > 0) item.status = "partial";
-  FinishCounts(item.counts);
+  if (complete)
+  {
+    item.status = "complete";
+    item.reason_code = "AUTHORITATIVE_HISTORY_COMPLETE";
+  }
+  else if (item.counts.required_count > 0)
+  {
+    item.status = "partial";
+    if (item.counts.authoritative_history_count == 0 && item.counts.runtime_identity_count > 0)
+      item.reason_code = "RUNTIME_IDENTITY_ONLY";
+    else if (!has_forward || !has_reverse)
+      item.reason_code = "MISSING_FORWARD_OR_REVERSE_MAPPING";
+    else if (item.counts.candidate_count || item.counts.ambiguous_count ||
+             item.counts.unmatched_count || item.counts.failed_count)
+      item.reason_code = "UNRESOLVED_FEATURE_TOPOLOGY_RELATIONS";
+    else
+      item.reason_code = "AUTHORITATIVE_HISTORY_INCOMPLETE";
+  }
+  return item;
+}
+
+static bool EndsWithNoCase(const std::string& value, const char* suffix)
+{
+  const std::string ending(suffix);
+  if (value.size() < ending.size()) return false;
+  const std::string tail = value.substr(value.size() - ending.size());
+  for (std::string::size_type i = 0; i < tail.size(); ++i)
+  {
+    char a = tail[i];
+    char b = ending[i];
+    if (a >= 'A' && a <= 'Z') a = static_cast<char>(a - 'A' + 'a');
+    if (b >= 'A' && b <= 'Z') b = static_cast<char>(b - 'A' + 'a');
+    if (a != b) return false;
+  }
+  return true;
+}
+
+static bool IsCatProductInput(const ParseContext& context)
+{
+  return EndsWithNoCase(context.metadata.input_file_name, ".CATProduct") ||
+         EndsWithNoCase(context.metadata.input_source_path, ".CATProduct");
+}
+
+static bool FiniteDouble(double value)
+{
+  return _finite(value) != 0;
+}
+
+static double AbsDouble(double value)
+{
+  return value < 0.0 ? -value : value;
+}
+
+static bool ProductMatrixIsRigidAbsolute(const std::vector<double>& matrix)
+{
+  if (matrix.size() != 16) return false;
+  for (std::vector<double>::const_iterator value = matrix.begin(); value != matrix.end(); ++value)
+  {
+    if (!FiniteDouble(*value)) return false;
+  }
+  if (AbsDouble(matrix[12]) > 1.0e-6 || AbsDouble(matrix[13]) > 1.0e-6 ||
+      AbsDouble(matrix[14]) > 1.0e-6 || AbsDouble(matrix[15] - 1.0) > 1.0e-6)
+    return false;
+
+  const double r00 = matrix[0], r01 = matrix[1], r02 = matrix[2];
+  const double r10 = matrix[4], r11 = matrix[5], r12 = matrix[6];
+  const double r20 = matrix[8], r21 = matrix[9], r22 = matrix[10];
+  const double c0 = r00 * r00 + r10 * r10 + r20 * r20;
+  const double c1 = r01 * r01 + r11 * r11 + r21 * r21;
+  const double c2 = r02 * r02 + r12 * r12 + r22 * r22;
+  const double d01 = r00 * r01 + r10 * r11 + r20 * r21;
+  const double d02 = r00 * r02 + r10 * r12 + r20 * r22;
+  const double d12 = r01 * r02 + r11 * r12 + r21 * r22;
+  const double det =
+    r00 * (r11 * r22 - r12 * r21) -
+    r01 * (r10 * r22 - r12 * r20) +
+    r02 * (r10 * r21 - r11 * r20);
+  return AbsDouble(c0 - 1.0) <= 1.0e-6 &&
+         AbsDouble(c1 - 1.0) <= 1.0e-6 &&
+         AbsDouble(c2 - 1.0) <= 1.0e-6 &&
+         AbsDouble(d01) <= 1.0e-6 &&
+         AbsDouble(d02) <= 1.0e-6 &&
+         AbsDouble(d12) <= 1.0e-6 &&
+         AbsDouble(det - 1.0) <= 1.0e-6;
+}
+
+static void CountProductStructure(const ParseContext& context, CapabilityCounts& counts)
+{
+  std::map<std::string, long> path_counts;
+  std::map<std::string, bool> ids;
+  std::vector<ProductInstanceRecord>::const_iterator it = context.product_instances.begin();
+  for (; it != context.product_instances.end(); ++it)
+  {
+    ids[it->instance_id] = true;
+    if (it->depth > 0)
+    {
+      ++counts.required_instance_count;
+      ++path_counts[it->tree_path];
+    }
+  }
+
+  it = context.product_instances.begin();
+  for (; it != context.product_instances.end(); ++it)
+  {
+    if (it->depth <= 0) continue;
+    const bool duplicate_path = path_counts[it->tree_path] > 1;
+    const bool parent_resolved = !it->parent_instance_id.empty() &&
+      ids.find(it->parent_instance_id) != ids.end();
+    const bool valid = !it->tree_path.empty() && !duplicate_path &&
+      parent_resolved && !it->reference_id.empty();
+    if (valid) ++counts.resolved_instance_count;
+  }
+
+  std::map<std::string, long>::const_iterator path = path_counts.begin();
+  for (; path != path_counts.end(); ++path)
+  {
+    if (path->second > 1) counts.duplicate_instance_path_count += path->second;
+  }
+  counts.required_count = counts.required_instance_count;
+  counts.resolved_count = counts.resolved_instance_count;
+  counts.unresolved_instance_count =
+    counts.required_instance_count >= counts.resolved_instance_count ?
+      counts.required_instance_count - counts.resolved_instance_count : 0;
+  counts.failed_count = counts.unresolved_instance_count + counts.duplicate_instance_path_count;
+  counts.evidence_count = static_cast<long>(context.product_instances.size());
+  FinishGenericCounts(counts);
+}
+
+static CapabilityEvaluation EvaluateProductStructure(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "product_structure_extraction";
+  item.status = "not_applicable";
+  item.reason_code = "CATPART_NOT_APPLICABLE";
+  if (!IsCatProductInput(context)) return item;
+
+  CountProductStructure(context, item.counts);
+  if (item.counts.required_instance_count == 0)
+  {
+    item.status = "complete";
+    item.reason_code = "ROOT_ONLY_PRODUCT";
+  }
+  else if (item.counts.unresolved_instance_count == 0 &&
+           item.counts.duplicate_instance_path_count == 0)
+  {
+    item.status = "complete";
+    item.reason_code = "PRODUCT_STRUCTURE_COMPLETE";
+  }
+  else
+  {
+    item.status = "partial";
+    item.reason_code = item.counts.duplicate_instance_path_count > 0 ?
+      "DUPLICATE_INSTANCE_PATH" : "UNRESOLVED_PRODUCT_INSTANCE";
+  }
+  return item;
+}
+
+static CapabilityEvaluation EvaluateInstanceTransform(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "instance_transform_extraction";
+  item.status = "not_applicable";
+  item.reason_code = "CATPART_NOT_APPLICABLE";
+  if (!IsCatProductInput(context)) return item;
+
+  std::map<std::string, long> path_counts;
+  std::vector<ProductInstanceRecord>::const_iterator it = context.product_instances.begin();
+  for (; it != context.product_instances.end(); ++it)
+  {
+    if (it->depth > 0)
+    {
+      ++item.counts.required_instance_count;
+      ++path_counts[it->tree_path];
+    }
+  }
+  item.counts.required_count = item.counts.required_instance_count;
+  item.counts.evidence_count = static_cast<long>(context.product_instances.size());
+  if (item.counts.required_instance_count == 0)
+  {
+    item.status = "not_applicable";
+    item.reason_code = "ROOT_ONLY_PRODUCT";
+    FinishGenericCounts(item.counts);
+    return item;
+  }
+
+  it = context.product_instances.begin();
+  for (; it != context.product_instances.end(); ++it)
+  {
+    if (it->depth <= 0) continue;
+    const bool unique_path = path_counts[it->tree_path] == 1;
+    const bool absolute = it->transform_status == "resolved_absolute";
+    const bool rigid = ProductMatrixIsRigidAbsolute(it->transform_4x4);
+    if (unique_path && absolute && rigid) ++item.counts.resolved_instance_count;
+    else ++item.counts.invalid_transform_count;
+  }
+  item.counts.resolved_count = item.counts.resolved_instance_count;
+  item.counts.unresolved_instance_count =
+    item.counts.required_instance_count >= item.counts.resolved_instance_count ?
+      item.counts.required_instance_count - item.counts.resolved_instance_count : 0;
+  item.counts.failed_count = item.counts.unresolved_instance_count;
+  FinishGenericCounts(item.counts);
+  if (item.counts.unresolved_instance_count == 0)
+  {
+    item.status = "complete";
+    item.reason_code = "ABSOLUTE_TRANSFORMS_COMPLETE";
+  }
+  else
+  {
+    item.status = "partial";
+    item.reason_code = "MISSING_OR_INVALID_ABSOLUTE_TRANSFORM";
+  }
+  return item;
+}
+
+static CapabilityEvaluation MakeProductCompatibilityCapability(const CapabilityEvaluation& structure,
+                                                               const CapabilityEvaluation& transform)
+{
+  CapabilityEvaluation item;
+  item.name = "catproduct_instance_extraction";
+  item.status = "not_applicable";
+  item.reason_code = structure.reason_code;
+  item.counts = structure.counts;
+  if (structure.status == "not_applicable")
+    return item;
+  if (structure.status == "complete" &&
+      (transform.status == "complete" || transform.status == "not_applicable"))
+  {
+    item.status = "complete";
+    item.reason_code = transform.status == "not_applicable" ?
+      "PRODUCT_STRUCTURE_ONLY_ROOT" : "PRODUCT_STRUCTURE_AND_TRANSFORMS_COMPLETE";
+    if (transform.counts.required_instance_count > 0) item.counts = transform.counts;
+  }
+  else
+  {
+    item.status = "partial";
+    item.reason_code = "PRODUCT_STRUCTURE_OR_TRANSFORM_INCOMPLETE";
+    if (transform.counts.required_instance_count > 0) item.counts = transform.counts;
+  }
   return item;
 }
 
@@ -411,16 +686,19 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
   items.push_back(MakeCapability("spec_tree_extraction", "partial",
                                  static_cast<long>(features.size()),
                                  static_cast<long>(features.size()),
-                                 static_cast<long>(features.size())));
+                                 static_cast<long>(features.size()),
+                                 "SPEC_TREE_PUBLIC_ENUMERATION_PARTIAL"));
   items.push_back(MakeCapability("native_feature_extraction",
                                  features.empty() ? "not_available" : "partial",
                                  static_cast<long>(features.size()), payload_complete,
-                                 static_cast<long>(features.size())));
+                                 static_cast<long>(features.size()),
+                                 features.empty() ? "NO_NATIVE_FEATURES" : "TYPE_AND_PARTIAL_PAYLOAD_EXTRACTION"));
   items.push_back(MakeCapability("topology_extraction",
                                  context.topology_bodies.empty() ? "not_available" : "partial",
                                  static_cast<long>(context.topology_bodies.size()),
                                  static_cast<long>(context.topology_bodies.size()),
-                                 static_cast<long>(context.topology_cells.size())));
+                                 static_cast<long>(context.topology_cells.size()),
+                                 context.topology_bodies.empty() ? "NO_PUBLIC_TOPOLOGY_BODY" : "REVISION_LOCAL_TOPOLOGY_ONLY"));
   items.push_back(EvaluateFeatureTopologyMapping(context));
 
   const std::map<std::string, std::string>::const_iterator fta_status_it =
@@ -432,22 +710,27 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
   items.push_back(MakeCapability("fta_extraction", fta_status.c_str(),
                                  static_cast<long>(context.fta_sets.size()),
                                  static_cast<long>(context.fta_semantics.size()),
-                                 static_cast<long>(context.fta_semantics.size())));
+                                 static_cast<long>(context.fta_semantics.size()),
+                                 context.fta_sets.empty() ? "NO_TPS_SETS" : "TPS_SET_LEVEL_EXTRACTION"));
   items.push_back(MakeCapability("fta_topology_mapping", "not_available",
                                  static_cast<long>(context.fta_topology_links.size()), 0,
-                                 static_cast<long>(context.fta_topology_links.size())));
+                                 static_cast<long>(context.fta_topology_links.size()),
+                                 "NOT_IMPLEMENTED"));
   items.push_back(MakeCapability("mesh_face_mapping",
                                  context.mesh_face_maps.empty() ? "not_available" : "partial",
                                  static_cast<long>(context.mesh_face_maps.size()),
                                  static_cast<long>(context.mesh_face_maps.size()),
-                                 static_cast<long>(context.mesh_face_maps.size())));
-  items.push_back(MakeCapability("manufacturing_feature_recognition", "not_performed", 0, 0, 0));
-  items.push_back(MakeCapability("catproduct_instance_extraction",
-                                 context.product_instances.empty() ? "not_available" : "complete",
-                                 static_cast<long>(context.product_instances.size()),
-                                 static_cast<long>(context.product_instances.size()),
-                                 static_cast<long>(context.product_instances.size())));
-  items.push_back(MakeCapability("decoder_registry_export", "complete", 1, 1, 1));
+                                 static_cast<long>(context.mesh_face_maps.size()),
+                                 context.mesh_face_maps.empty() ? "NO_MESH_FACE_MAP" : "MESH_TO_BREP_PARTIAL"));
+  items.push_back(MakeCapability("manufacturing_feature_recognition", "not_performed", 0, 0, 0,
+                                 "OUT_OF_SCOPE_PHASE1"));
+  const CapabilityEvaluation product_structure = EvaluateProductStructure(context);
+  const CapabilityEvaluation instance_transform = EvaluateInstanceTransform(context);
+  items.push_back(product_structure);
+  items.push_back(instance_transform);
+  items.push_back(MakeProductCompatibilityCapability(product_structure, instance_transform));
+  items.push_back(MakeCapability("decoder_registry_export", "complete", 1, 1, 1,
+                                 "REGISTRY_EXPORTED"));
 }
 
 static void WriteCapabilityCounts(std::ostream& output, const CapabilityCounts& counts)
@@ -455,11 +738,19 @@ static void WriteCapabilityCounts(std::ostream& output, const CapabilityCounts& 
   output << "\"required_count\":" << counts.required_count
          << ",\"resolved_count\":" << counts.resolved_count
          << ",\"history_confirmed_count\":" << counts.history_confirmed_count
+         << ",\"authoritative_history_count\":" << counts.authoritative_history_count
          << ",\"runtime_identity_count\":" << counts.runtime_identity_count
          << ",\"candidate_count\":" << counts.candidate_count
          << ",\"ambiguous_count\":" << counts.ambiguous_count
          << ",\"unmatched_count\":" << counts.unmatched_count
          << ",\"failed_count\":" << counts.failed_count
+         << ",\"required_instance_count\":" << counts.required_instance_count
+         << ",\"resolved_instance_count\":" << counts.resolved_instance_count
+         << ",\"unresolved_instance_count\":" << counts.unresolved_instance_count
+         << ",\"duplicate_instance_path_count\":" << counts.duplicate_instance_path_count
+         << ",\"invalid_transform_count\":" << counts.invalid_transform_count
+         << ",\"runtime_coverage_ratio\":" << std::setprecision(15) << counts.runtime_coverage_ratio
+         << ",\"authoritative_coverage_ratio\":" << std::setprecision(15) << counts.authoritative_coverage_ratio
          << ",\"coverage_ratio\":" << std::setprecision(15) << counts.coverage_ratio;
 }
 
@@ -1145,10 +1436,10 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
     if (cap != capabilities.begin()) output << ',';
     output << "\"" << JsonEscape(cap->name) << "\":{";
     WriteCapabilityCounts(output, cap->counts);
-    output << '}';
+    output << ",\"reason_code\":\"" << JsonEscape(cap->reason_code) << "\"}";
   }
   output
-         << "},\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"CATIShapeFeatureBody ResultOUT cell identity with final solid is preserved only as runtime_cell_identity/survives_to_final evidence; it is not generated/modified/consumed history and has no persistent reference\",\"StartupTypeCanonicalDecoder performs type recognition only; payload_extraction_status remains not_implemented until a dedicated R21 Public decoder reads parameters\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
+         << "},\"notes\":[\"R21 Public CATIAHole, CATIAPad and CATIAPocket decoders are registered when their StartUp candidates expose the matching Public interface\",\"R21 Public CATIPrtPart::GetSolid and CATTopology cell enumeration emit revision-local body/cell topology when available\",\"R21 Public CATICGMBodyTessellator emits Face to triangle range evidence when tessellation succeeds\",\"CATIShapeFeatureBody ResultOUT cell identity with final solid is preserved only as runtime_cell_identity/survives_to_final evidence; it is not generated/modified/consumed history and has no persistent reference\",\"native_feature_topology_mapping.coverage_ratio is authoritative_coverage_ratio for schema compatibility; runtime_coverage_ratio is reported separately and cannot make the capability complete\",\"CATProduct capability is split into product_structure_extraction and instance_transform_extraction; root-only or CATPart rows are not transform evidence\",\"StartupTypeCanonicalDecoder performs type recognition only; payload_extraction_status remains not_implemented until a dedicated R21 Public decoder reads parameters\",\"R21 Public CATITPSDocument/CATITPSSet can emit FTA set-level counts when the document exposes TPS data\",\"FTA-to-topology mapping is still not emitted by this CAA revision\"]}\n";
   if (!FinishOutput(output, "capabilities.json", error)) return false;
 
   if (!OpenOutput(output, JoinPath(staging, "capability_matrix.json"), error)) return false;
@@ -1158,8 +1449,9 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   {
     if (cap != capabilities.begin()) output << ',';
     output << "{\"name\":\"" << JsonEscape(cap->name)
-           << "\",\"status\":\"" << JsonEscape(cap->status)
-           << "\",\"evidence_count\":" << cap->counts.evidence_count << ',';
+            << "\",\"status\":\"" << JsonEscape(cap->status)
+            << "\",\"reason_code\":\"" << JsonEscape(cap->reason_code)
+            << "\",\"evidence_count\":" << cap->counts.evidence_count << ',';
     WriteCapabilityCounts(output, cap->counts);
     output << '}';
   }
