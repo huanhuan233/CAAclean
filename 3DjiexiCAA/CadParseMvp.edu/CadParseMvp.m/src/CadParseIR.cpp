@@ -279,7 +279,22 @@ struct CapabilityCounts
       unmatched_count(0), failed_count(0), evidence_count(0),
       required_instance_count(0), resolved_instance_count(0),
       unresolved_instance_count(0), duplicate_instance_path_count(0),
-      invalid_transform_count(0), coverage_ratio(0.0),
+      invalid_transform_count(0),
+      required_feature_count(0), recognized_feature_count(0),
+      supported_feature_count(0), fully_decoded_feature_count(0),
+      partially_decoded_feature_count(0), unsupported_feature_count(0),
+      solid_count(0), shell_count(0), face_count(0), loop_count(0),
+      coedge_count(0), edge_count(0), vertex_count(0),
+      analytic_surface_count(0), nurbs_surface_count(0), unknown_surface_count(0),
+      analytic_curve_count(0), nurbs_curve_count(0), unknown_curve_count(0),
+      invalid_reference_count(0), orientation_error_count(0),
+      geometry_decode_failure_count(0),
+      required_renderable_face_count(0), mapped_face_count(0),
+      unmapped_face_count(0), ambiguous_face_count(0),
+      triangle_count(0), mapped_triangle_count(0),
+      coverage_ratio(0.0), feature_coverage_ratio(0.0),
+      mandatory_parameter_coverage_ratio(0.0),
+      mesh_mapping_coverage_ratio(0.0),
       runtime_coverage_ratio(0.0), authoritative_coverage_ratio(0.0) {}
   long required_count;
   long resolved_count;
@@ -296,7 +311,38 @@ struct CapabilityCounts
   long unresolved_instance_count;
   long duplicate_instance_path_count;
   long invalid_transform_count;
+  long required_feature_count;
+  long recognized_feature_count;
+  long supported_feature_count;
+  long fully_decoded_feature_count;
+  long partially_decoded_feature_count;
+  long unsupported_feature_count;
+  long solid_count;
+  long shell_count;
+  long face_count;
+  long loop_count;
+  long coedge_count;
+  long edge_count;
+  long vertex_count;
+  long analytic_surface_count;
+  long nurbs_surface_count;
+  long unknown_surface_count;
+  long analytic_curve_count;
+  long nurbs_curve_count;
+  long unknown_curve_count;
+  long invalid_reference_count;
+  long orientation_error_count;
+  long geometry_decode_failure_count;
+  long required_renderable_face_count;
+  long mapped_face_count;
+  long unmapped_face_count;
+  long ambiguous_face_count;
+  long triangle_count;
+  long mapped_triangle_count;
   double coverage_ratio;
+  double feature_coverage_ratio;
+  double mandatory_parameter_coverage_ratio;
+  double mesh_mapping_coverage_ratio;
   double runtime_coverage_ratio;
   double authoritative_coverage_ratio;
 };
@@ -331,6 +377,247 @@ static void FinishFeatureTopologyCounts(CapabilityCounts& counts)
                                               counts.required_count);
   // For backward compatibility, coverage_ratio remains in the schema but now means authoritative coverage.
   counts.coverage_ratio = counts.authoritative_coverage_ratio;
+}
+
+static bool IsNativeDesignTypeRecognized(const FeatureRecord& feature)
+{
+  if (feature.GetTypedPayload()) return true;
+  std::map<std::string, std::string>::const_iterator canonical =
+    feature.attributes.find("canonical_native_type");
+  return canonical != feature.attributes.end() && !canonical->second.empty();
+}
+
+static CapabilityEvaluation EvaluateNativeFeatureTypeExtraction(
+  const std::vector<FeatureRecord>& features)
+{
+  CapabilityEvaluation item;
+  item.name = "native_feature_type_extraction";
+  item.status = "not_available";
+  item.reason_code = "NO_NATIVE_FEATURE_CANDIDATES";
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    if (IsNativeDesignTypeRecognized(*feature))
+    {
+      ++item.counts.required_feature_count;
+      ++item.counts.recognized_feature_count;
+    }
+  }
+  item.counts.required_count = item.counts.required_feature_count;
+  item.counts.evidence_count = item.counts.required_count;
+  item.counts.resolved_count = item.counts.recognized_feature_count;
+  item.counts.feature_coverage_ratio =
+    Ratio(item.counts.recognized_feature_count, item.counts.required_feature_count);
+  item.counts.coverage_ratio = item.counts.feature_coverage_ratio;
+  if (item.counts.required_feature_count > 0 &&
+      item.counts.recognized_feature_count == item.counts.required_feature_count)
+  {
+    item.status = "complete";
+    item.reason_code = "ALL_ENUMERATED_FEATURE_TYPES_RESOLVED";
+  }
+  return item;
+}
+
+static CapabilityEvaluation EvaluateNativeFeatureParameterExtraction(
+  const std::vector<FeatureRecord>& features)
+{
+  CapabilityEvaluation item;
+  item.name = "native_feature_parameter_extraction";
+  item.status = "not_available";
+  item.reason_code = "NO_NATIVE_FEATURE_CANDIDATES";
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    const ITypedPayload* payload = feature->GetTypedPayload();
+    if (payload)
+    {
+      ++item.counts.required_feature_count;
+      ++item.counts.supported_feature_count;
+      ++item.counts.fully_decoded_feature_count;
+    }
+    else if (feature->decode_level == "type_only")
+    {
+      ++item.counts.required_feature_count;
+      ++item.counts.recognized_feature_count;
+      ++item.counts.unsupported_feature_count;
+    }
+  }
+  item.counts.required_count = item.counts.required_feature_count;
+  item.counts.evidence_count = item.counts.required_count;
+  item.counts.recognized_feature_count += item.counts.fully_decoded_feature_count;
+  item.counts.resolved_count = item.counts.fully_decoded_feature_count;
+  item.counts.feature_coverage_ratio =
+    Ratio(item.counts.recognized_feature_count, item.counts.required_feature_count);
+  item.counts.mandatory_parameter_coverage_ratio =
+    Ratio(item.counts.fully_decoded_feature_count, item.counts.required_feature_count);
+  item.counts.coverage_ratio = item.counts.mandatory_parameter_coverage_ratio;
+  if (item.counts.required_feature_count > 0 &&
+      item.counts.fully_decoded_feature_count == item.counts.required_feature_count &&
+      item.counts.unsupported_feature_count == 0 &&
+      item.counts.failed_count == 0)
+  {
+    item.status = "complete";
+    item.reason_code = "ALL_REQUIRED_FEATURE_PAYLOADS_DECODED";
+  }
+  else if (item.counts.required_feature_count > 0)
+  {
+    item.status = "partial";
+    item.reason_code = "DEDICATED_DECODER_COVERAGE_INCOMPLETE";
+  }
+  return item;
+}
+
+static CapabilityEvaluation MakeNativeFeatureFamilyCapability(
+  const char* family_name,
+  long required,
+  long decoded,
+  long type_only)
+{
+  CapabilityEvaluation item;
+  item.name = std::string("native_feature_parameter_extraction_by_family.") + family_name;
+  item.status = required == 0 ? "not_applicable" : "partial";
+  item.reason_code = required == 0 ? "FAMILY_NOT_PRESENT" : "FAMILY_PAYLOAD_INCOMPLETE";
+  item.counts.required_feature_count = required;
+  item.counts.required_count = required;
+  item.counts.fully_decoded_feature_count = decoded;
+  item.counts.recognized_feature_count = decoded + type_only;
+  item.counts.supported_feature_count = decoded;
+  item.counts.unsupported_feature_count = required > decoded ? required - decoded : 0;
+  item.counts.resolved_count = decoded;
+  item.counts.evidence_count = required;
+  item.counts.feature_coverage_ratio = Ratio(item.counts.recognized_feature_count, required);
+  item.counts.mandatory_parameter_coverage_ratio = Ratio(decoded, required);
+  item.counts.coverage_ratio = item.counts.mandatory_parameter_coverage_ratio;
+  if (required > 0 && decoded == required)
+  {
+    item.status = "complete";
+    item.reason_code = "FAMILY_PAYLOAD_COMPLETE";
+  }
+  return item;
+}
+
+static void AddNativeFeatureFamilyCapabilities(const std::vector<FeatureRecord>& features,
+                                               std::vector<CapabilityEvaluation>& items)
+{
+  std::map<std::string, long> required;
+  std::map<std::string, long> decoded;
+  std::map<std::string, long> type_only;
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    std::string family;
+    const ITypedPayload* payload = feature->GetTypedPayload();
+    if (payload && std::string(payload->GetPayloadTypeId()) == "native_hole") family = "hole";
+    else if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism" &&
+             feature->decoder_id == "NativePadDecoder") family = "pad";
+    else if (payload && std::string(payload->GetPayloadTypeId()) == "native_prism" &&
+             feature->decoder_id == "NativePocketDecoder") family = "pocket";
+    else
+    {
+      std::map<std::string, std::string>::const_iterator canonical =
+        feature->attributes.find("canonical_native_type");
+      if (canonical != feature->attributes.end()) family = canonical->second;
+    }
+    if (family.empty()) continue;
+    ++required[family];
+    if (payload) ++decoded[family];
+    else if (feature->decode_level == "type_only") ++type_only[family];
+  }
+  std::map<std::string, long>::const_iterator it = required.begin();
+  for (; it != required.end(); ++it)
+    items.push_back(MakeNativeFeatureFamilyCapability(it->first.c_str(), it->second,
+                                                      decoded[it->first], type_only[it->first]));
+}
+
+static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "final_brep_topology_extraction";
+  item.status = context.topology_cells.empty() ? "not_available" : "partial";
+  item.reason_code = context.topology_cells.empty() ? "NO_PUBLIC_TOPOLOGY_CELLS" :
+    "LOOP_COEDGE_IR_INCOMPLETE";
+  item.counts.solid_count = static_cast<long>(context.topology_bodies.size());
+  item.counts.loop_count = static_cast<long>(context.topology_wires.size());
+  item.counts.required_count = static_cast<long>(context.topology_cells.size());
+  item.counts.evidence_count = item.counts.required_count + item.counts.loop_count;
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension == 2) ++item.counts.face_count;
+    else if (cell->dimension == 1) ++item.counts.edge_count;
+    else if (cell->dimension == 0) ++item.counts.vertex_count;
+    else if (cell->dimension == 3) ++item.counts.shell_count;
+    if (cell->cell_id.empty()) ++item.counts.invalid_reference_count;
+  }
+  item.counts.resolved_count = item.counts.required_count - item.counts.invalid_reference_count;
+  item.counts.coedge_count = 0;
+  item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  return item;
+}
+
+static CapabilityEvaluation EvaluateFinalBrepGeometry(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "final_brep_geometry_extraction";
+  item.status = context.topology_cells.empty() ? "not_available" : "partial";
+  item.reason_code = context.topology_cells.empty() ? "NO_PUBLIC_TOPOLOGY_CELLS" :
+    "EXACT_SURFACE_CURVE_PARAMETERS_NOT_EMITTED";
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension == 2)
+    {
+      ++item.counts.required_count;
+      ++item.counts.unknown_surface_count;
+    }
+    else if (cell->dimension == 1)
+    {
+      ++item.counts.required_count;
+      ++item.counts.unknown_curve_count;
+    }
+  }
+  item.counts.evidence_count = item.counts.required_count;
+  item.counts.geometry_decode_failure_count = item.counts.required_count;
+  item.counts.resolved_count = 0;
+  item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
+  return item;
+}
+
+static CapabilityEvaluation EvaluateMeshBrepFaceMapping(const ParseContext& context)
+{
+  CapabilityEvaluation item;
+  item.name = "mesh_brep_face_mapping";
+  item.status = context.mesh_face_maps.empty() ? "not_available" : "partial";
+  item.reason_code = context.mesh_face_maps.empty() ? "NO_MESH_FACE_MAP" :
+    "FACE_RANGE_MAP_PRESENT_TRIANGLE_PAYLOAD_NOT_EMITTED";
+  std::set<std::string> face_ids;
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+    if (cell->dimension == 2) face_ids.insert(cell->cell_id);
+  item.counts.required_renderable_face_count = static_cast<long>(face_ids.size());
+  item.counts.required_count = item.counts.required_renderable_face_count;
+  item.counts.evidence_count = static_cast<long>(context.mesh_face_maps.size());
+  std::vector<NativeMeshFaceMapRecord>::const_iterator map = context.mesh_face_maps.begin();
+  for (; map != context.mesh_face_maps.end(); ++map)
+  {
+    item.counts.triangle_count += map->triangle_count;
+    if (map->tessellation_status == "success" &&
+        face_ids.find(map->face_cell_id) != face_ids.end())
+    {
+      ++item.counts.mapped_face_count;
+      item.counts.mapped_triangle_count += map->triangle_count;
+    }
+    else
+      ++item.counts.unmapped_face_count;
+  }
+  if (item.counts.required_renderable_face_count > item.counts.mapped_face_count)
+    item.counts.unmapped_face_count +=
+      item.counts.required_renderable_face_count - item.counts.mapped_face_count;
+  item.counts.resolved_count = item.counts.mapped_face_count;
+  item.counts.mesh_mapping_coverage_ratio =
+    Ratio(item.counts.mapped_face_count, item.counts.required_renderable_face_count);
+  item.counts.coverage_ratio = item.counts.mesh_mapping_coverage_ratio;
+  return item;
 }
 
 static CapabilityEvaluation MakeCapability(const char* name, const char* status,
@@ -688,11 +975,34 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
                                  static_cast<long>(features.size()),
                                  static_cast<long>(features.size()),
                                  "SPEC_TREE_PUBLIC_ENUMERATION_PARTIAL"));
+  items.push_back(EvaluateNativeFeatureTypeExtraction(features));
+  items.push_back(EvaluateNativeFeatureParameterExtraction(features));
+  AddNativeFeatureFamilyCapabilities(features, items);
   items.push_back(MakeCapability("native_feature_extraction",
                                  features.empty() ? "not_available" : "partial",
                                  static_cast<long>(features.size()), payload_complete,
                                  static_cast<long>(features.size()),
                                  features.empty() ? "NO_NATIVE_FEATURES" : "TYPE_AND_PARTIAL_PAYLOAD_EXTRACTION"));
+  items.push_back(EvaluateFinalBrepTopology(context));
+  items.push_back(EvaluateFinalBrepGeometry(context));
+  items.push_back(MakeCapability("analytic_surface_parameter_extraction",
+                                 context.topology_cells.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.topology_cells.size()),
+                                 0,
+                                 static_cast<long>(context.topology_cells.size()),
+                                 context.topology_cells.empty() ? "NO_TOPOLOGY_CELLS" : "EXACT_ANALYTIC_SURFACE_PARAMETERS_NOT_EMITTED"));
+  items.push_back(MakeCapability("nurbs_surface_parameter_extraction",
+                                 context.topology_cells.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.topology_cells.size()),
+                                 0,
+                                 static_cast<long>(context.topology_cells.size()),
+                                 context.topology_cells.empty() ? "NO_TOPOLOGY_CELLS" : "NURBS_SURFACE_PARAMETERS_NOT_EMITTED"));
+  items.push_back(MakeCapability("curve_parameter_extraction",
+                                 context.topology_cells.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.topology_cells.size()),
+                                 0,
+                                 static_cast<long>(context.topology_cells.size()),
+                                 context.topology_cells.empty() ? "NO_TOPOLOGY_CELLS" : "EXACT_CURVE_PARAMETERS_NOT_EMITTED"));
   items.push_back(MakeCapability("topology_extraction",
                                  context.topology_bodies.empty() ? "not_available" : "partial",
                                  static_cast<long>(context.topology_bodies.size()),
@@ -700,6 +1010,8 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
                                  static_cast<long>(context.topology_cells.size()),
                                  context.topology_bodies.empty() ? "NO_PUBLIC_TOPOLOGY_BODY" : "REVISION_LOCAL_TOPOLOGY_ONLY"));
   items.push_back(EvaluateFeatureTopologyMapping(context));
+  items.push_back(EvaluateFeatureTopologyMapping(context));
+  items.back().name = "feature_final_topology_history";
 
   const std::map<std::string, std::string>::const_iterator fta_status_it =
     context.runtime_info.find("fta_extraction_status");
@@ -722,6 +1034,13 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
                                  static_cast<long>(context.mesh_face_maps.size()),
                                  static_cast<long>(context.mesh_face_maps.size()),
                                  context.mesh_face_maps.empty() ? "NO_MESH_FACE_MAP" : "MESH_TO_BREP_PARTIAL"));
+  items.push_back(MakeCapability("mesh_generation",
+                                 context.mesh_face_maps.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.mesh_face_maps.size()),
+                                 static_cast<long>(context.mesh_face_maps.size()),
+                                 static_cast<long>(context.mesh_face_maps.size()),
+                                 context.mesh_face_maps.empty() ? "NO_TESSELLATION_OUTPUT" : "FACE_TESSELLATION_SUMMARY_ONLY"));
+  items.push_back(EvaluateMeshBrepFaceMapping(context));
   items.push_back(MakeCapability("manufacturing_feature_recognition", "not_performed", 0, 0, 0,
                                  "OUT_OF_SCOPE_PHASE1"));
   const CapabilityEvaluation product_structure = EvaluateProductStructure(context);
@@ -749,6 +1068,37 @@ static void WriteCapabilityCounts(std::ostream& output, const CapabilityCounts& 
          << ",\"unresolved_instance_count\":" << counts.unresolved_instance_count
          << ",\"duplicate_instance_path_count\":" << counts.duplicate_instance_path_count
          << ",\"invalid_transform_count\":" << counts.invalid_transform_count
+         << ",\"required_feature_count\":" << counts.required_feature_count
+         << ",\"recognized_feature_count\":" << counts.recognized_feature_count
+         << ",\"supported_feature_count\":" << counts.supported_feature_count
+         << ",\"fully_decoded_feature_count\":" << counts.fully_decoded_feature_count
+         << ",\"partially_decoded_feature_count\":" << counts.partially_decoded_feature_count
+         << ",\"unsupported_feature_count\":" << counts.unsupported_feature_count
+         << ",\"solid_count\":" << counts.solid_count
+         << ",\"shell_count\":" << counts.shell_count
+         << ",\"face_count\":" << counts.face_count
+         << ",\"loop_count\":" << counts.loop_count
+         << ",\"coedge_count\":" << counts.coedge_count
+         << ",\"edge_count\":" << counts.edge_count
+         << ",\"vertex_count\":" << counts.vertex_count
+         << ",\"analytic_surface_count\":" << counts.analytic_surface_count
+         << ",\"nurbs_surface_count\":" << counts.nurbs_surface_count
+         << ",\"unknown_surface_count\":" << counts.unknown_surface_count
+         << ",\"analytic_curve_count\":" << counts.analytic_curve_count
+         << ",\"nurbs_curve_count\":" << counts.nurbs_curve_count
+         << ",\"unknown_curve_count\":" << counts.unknown_curve_count
+         << ",\"invalid_reference_count\":" << counts.invalid_reference_count
+         << ",\"orientation_error_count\":" << counts.orientation_error_count
+         << ",\"geometry_decode_failure_count\":" << counts.geometry_decode_failure_count
+         << ",\"required_renderable_face_count\":" << counts.required_renderable_face_count
+         << ",\"mapped_face_count\":" << counts.mapped_face_count
+         << ",\"unmapped_face_count\":" << counts.unmapped_face_count
+         << ",\"ambiguous_face_count\":" << counts.ambiguous_face_count
+         << ",\"triangle_count\":" << counts.triangle_count
+         << ",\"mapped_triangle_count\":" << counts.mapped_triangle_count
+         << ",\"feature_coverage_ratio\":" << std::setprecision(15) << counts.feature_coverage_ratio
+         << ",\"mandatory_parameter_coverage_ratio\":" << std::setprecision(15) << counts.mandatory_parameter_coverage_ratio
+         << ",\"mesh_mapping_coverage_ratio\":" << std::setprecision(15) << counts.mesh_mapping_coverage_ratio
          << ",\"runtime_coverage_ratio\":" << std::setprecision(15) << counts.runtime_coverage_ratio
          << ",\"authoritative_coverage_ratio\":" << std::setprecision(15) << counts.authoritative_coverage_ratio
          << ",\"coverage_ratio\":" << std::setprecision(15) << counts.coverage_ratio;

@@ -73,6 +73,8 @@ def evaluate_fixture(contract: Dict[str, Any], catalog: Dict[str, Any], results_
     validator.validate_capability_consistency()
     validator.validate_feature_topology_semantics()
     validator.validate_decoder_semantics()
+    validator.validate_brep_capability_semantics()
+    validator.validate_mesh_mapping_capability_semantics()
     validator.validate_product_capability_semantics()
     validator.validate_product_numeric_truth()
     for finding in validator.findings:

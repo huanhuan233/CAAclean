@@ -213,6 +213,64 @@ class ValidatorTests(unittest.TestCase):
         validator.validate_decoder_semantics()
         self.assertTrue(any(item.status == "FAIL" and item.code == "STARTUP_TYPE_IS_TYPE_ONLY" for item in validator.findings))
 
+    def test_parameter_complete_requires_every_payload_decoded(self):
+        validator = self._semantic_validator()
+        validator.rows["native_features.jsonl"] = [
+            {
+                "decoder": "NativeHoleDecoder",
+                "decoder_status": "decoded",
+                "payload_extraction_status": "complete",
+                "payload_type": "native_hole",
+            },
+            {
+                "decoder": "StartupTypeCanonicalDecoder",
+                "decoder_status": "type_only",
+                "payload_extraction_status": "not_implemented",
+                "payload_type": "",
+            },
+        ]
+        validator.json_docs["capabilities.json"] = {"native_feature_parameter_extraction": "complete"}
+        validator.validate_decoder_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "FEATURE_PARAMETER_COMPLETE_REQUIRES_PAYLOADS" for item in validator.findings))
+
+    def test_brep_topology_complete_requires_coedges_and_loops(self):
+        validator = self._semantic_validator()
+        validator.rows["native_topology_cells.jsonl"] = [
+            {"cell_id": "F1", "dimension": 2, "boundary_cell_ids": ["E1"], "adjacent_cell_ids": []},
+            {"cell_id": "E1", "dimension": 1, "boundary_cell_ids": [], "adjacent_cell_ids": ["F1"]},
+        ]
+        validator.rows["native_topology_wires.jsonl"] = []
+        validator.json_docs["capabilities.json"] = {
+            "final_brep_topology_extraction": "complete",
+            "capability_metrics": {"final_brep_topology_extraction": {"coedge_count": 0}},
+        }
+        validator.validate_brep_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "BREP_COMPLETE_FACE_HAS_LOOP" for item in validator.findings))
+        self.assertTrue(any(item.status == "FAIL" and item.code == "BREP_COMPLETE_REQUIRES_COEDGES" for item in validator.findings))
+
+    def test_brep_geometry_complete_requires_exact_parameters(self):
+        validator = self._semantic_validator()
+        validator.rows["native_topology_cells.jsonl"] = [
+            {"cell_id": "F1", "dimension": 2, "geometry_type": "success", "geometry_parameters": {}},
+        ]
+        validator.json_docs["capabilities.json"] = {"final_brep_geometry_extraction": "complete"}
+        validator.validate_brep_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "BREP_GEOMETRY_COMPLETE_REQUIRES_PARAMETERS" for item in validator.findings))
+        self.assertTrue(any(item.status == "FAIL" and item.code == "BREP_GEOMETRY_COMPLETE_REQUIRES_TYPES" for item in validator.findings))
+
+    def test_mesh_mapping_complete_requires_all_faces(self):
+        validator = self._semantic_validator()
+        validator.rows["native_topology_cells.jsonl"] = [
+            {"cell_id": "F1", "dimension": 2},
+            {"cell_id": "F2", "dimension": 2},
+        ]
+        validator.rows["native_mesh_face_map.jsonl"] = [
+            {"mesh_map_id": "M1", "face_cell_id": "F1", "triangle_count": 2, "tessellation_status": "success"},
+        ]
+        validator.json_docs["capabilities.json"] = {"mesh_brep_face_mapping": "complete"}
+        validator.validate_mesh_mapping_capability_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "MESH_COMPLETE_ALL_FACES_MAPPED" for item in validator.findings))
+
     def test_product_transform_numeric_truth_rejects_wrong_matrix(self):
         validator = self._semantic_validator(fixture={"id": "PRODUCT-01", "native_expected": []})
         validator.rows["product_instances.jsonl"] = [

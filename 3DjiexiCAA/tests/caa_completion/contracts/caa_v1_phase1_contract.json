@@ -34,9 +34,19 @@
     "catpart": {
       "product_structure_extraction": ["not_applicable"],
       "instance_transform_extraction": ["not_applicable"],
+      "native_feature_type_extraction": ["complete", "partial"],
+      "native_feature_parameter_extraction": ["complete", "partial"],
       "native_feature_topology_mapping": ["partial", "not_available", "blocked_public_api_r21"],
+      "feature_final_topology_history": ["partial", "not_available", "blocked_public_api_r21"],
+      "final_brep_topology_extraction": ["complete", "partial", "not_available"],
+      "final_brep_geometry_extraction": ["complete", "partial", "not_available"],
+      "analytic_surface_parameter_extraction": ["complete", "partial", "not_available"],
+      "nurbs_surface_parameter_extraction": ["complete", "partial", "not_available"],
+      "curve_parameter_extraction": ["complete", "partial", "not_available"],
       "topology_extraction": ["partial", "complete"],
+      "mesh_generation": ["complete", "partial", "not_available"],
       "mesh_face_mapping": ["partial", "complete", "not_available"],
+      "mesh_brep_face_mapping": ["complete", "partial", "not_available"],
       "decoder_registry_export": ["complete"]
     },
     "catproduct": {

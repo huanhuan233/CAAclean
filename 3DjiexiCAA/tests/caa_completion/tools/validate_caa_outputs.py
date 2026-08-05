@@ -427,6 +427,17 @@ class RunValidator:
         optional_metrics = {
             "required_instance_count", "resolved_instance_count", "unresolved_instance_count",
             "duplicate_instance_path_count", "invalid_transform_count",
+            "required_feature_count", "recognized_feature_count", "supported_feature_count",
+            "fully_decoded_feature_count", "partially_decoded_feature_count",
+            "unsupported_feature_count", "solid_count", "shell_count", "face_count",
+            "loop_count", "coedge_count", "edge_count", "vertex_count",
+            "analytic_surface_count", "nurbs_surface_count", "unknown_surface_count",
+            "analytic_curve_count", "nurbs_curve_count", "unknown_curve_count",
+            "invalid_reference_count", "orientation_error_count",
+            "geometry_decode_failure_count", "required_renderable_face_count",
+            "mapped_face_count", "unmapped_face_count", "ambiguous_face_count",
+            "triangle_count", "mapped_triangle_count", "feature_coverage_ratio",
+            "mandatory_parameter_coverage_ratio", "mesh_mapping_coverage_ratio",
         }
         metrics = capabilities.get("capability_metrics", {})
         for item in matrix_rows:
@@ -457,8 +468,10 @@ class RunValidator:
                             f"{name}.{key} mismatch: capabilities={metrics[name][key]} matrix={item[key]}",
                             "capability_matrix.json",
                         )
-            for key in ("coverage_ratio", "runtime_coverage_ratio", "authoritative_coverage_ratio"):
+            for key in ("coverage_ratio", "runtime_coverage_ratio", "authoritative_coverage_ratio", "feature_coverage_ratio", "mandatory_parameter_coverage_ratio", "mesh_mapping_coverage_ratio"):
                 value = item.get(key)
+                if value is None:
+                    continue
                 self.check(
                     finite_number(value) and 0.0 <= float(value) <= 1.0,
                     "CAPABILITY_COVERAGE_RANGE",
@@ -570,6 +583,84 @@ class RunValidator:
             and str(row.get("decoder_status", "")) == "decoded"
         ]
         self.check(not startup_decoded, "STARTUP_TYPE_IS_TYPE_ONLY", "startup type decoder is type_only", f"{len(startup_decoded)} startup type rows claim decoded payload", "native_features.jsonl")
+        capabilities = self.json_docs.get("capabilities.json")
+        if isinstance(capabilities, dict) and capabilities.get("native_feature_parameter_extraction") == "complete":
+            incomplete = [
+                row for row in rows
+                if str(row.get("payload_extraction_status", "")) != "complete"
+                or str(row.get("decoder_status", "")) != "decoded"
+                or str(row.get("payload_type", "")) == ""
+            ]
+            self.check(
+                not incomplete,
+                "FEATURE_PARAMETER_COMPLETE_REQUIRES_PAYLOADS",
+                "complete parameter extraction has decoded payloads for every native feature row",
+                f"{len(incomplete)} native feature rows are not decoded payloads",
+                "native_features.jsonl",
+            )
+
+    def validate_brep_capability_semantics(self) -> None:
+        capabilities = self.json_docs.get("capabilities.json")
+        if not isinstance(capabilities, dict):
+            return
+        cells = self.rows.get("native_topology_cells.jsonl", [])
+        wires = self.rows.get("native_topology_wires.jsonl", [])
+        if capabilities.get("final_brep_topology_extraction") == "complete":
+            cell_ids = {str(row.get("cell_id", "")) for row in cells}
+            face_ids = {str(row.get("cell_id", "")) for row in cells if int(row.get("dimension", -1) or -1) == 2}
+            edge_ids = {str(row.get("cell_id", "")) for row in cells if int(row.get("dimension", -1) or -1) == 1}
+            face_with_wire = {str(row.get("owning_face_id", "")) for row in wires}
+            dangling = []
+            for row in cells:
+                for key in ("boundary_cell_ids", "adjacent_cell_ids"):
+                    for ref in row.get(key, []) or []:
+                        if str(ref) not in cell_ids:
+                            dangling.append(str(ref))
+            missing_face_loops = sorted(face_ids - face_with_wire)
+            empty_wires = [row for row in wires if not row.get("edge_cell_ids")]
+            bad_wire_edges = [
+                str(edge) for row in wires for edge in (row.get("edge_cell_ids") or [])
+                if str(edge) not in edge_ids
+            ]
+            self.check(not dangling, "BREP_COMPLETE_NO_DANGLING_CELL_REFS", "complete B-Rep topology has no dangling cell references", f"dangling refs: {dangling[:5]}", "native_topology_cells.jsonl")
+            self.check(not missing_face_loops, "BREP_COMPLETE_FACE_HAS_LOOP", "complete B-Rep topology has loops for every face", f"faces without loops: {missing_face_loops[:5]}", "native_topology_wires.jsonl")
+            self.check(not empty_wires and not bad_wire_edges, "BREP_COMPLETE_WIRE_EDGES_VALID", "complete B-Rep topology has valid wire edges", f"empty_wires={len(empty_wires)} bad_edges={bad_wire_edges[:5]}", "native_topology_wires.jsonl")
+            cap_metrics = capabilities.get("capability_metrics", {})
+            metrics = cap_metrics.get("final_brep_topology_extraction", {}) if isinstance(cap_metrics, dict) else {}
+            self.check(int(metrics.get("coedge_count", 0) or 0) > 0, "BREP_COMPLETE_REQUIRES_COEDGES", "complete B-Rep topology includes coedge records", "coedge_count is zero", "capabilities.json")
+        if capabilities.get("final_brep_geometry_extraction") == "complete":
+            missing_params = [
+                row for row in cells
+                if int(row.get("dimension", -1) or -1) in {1, 2}
+                and (not isinstance(row.get("geometry_parameters"), dict) or not row.get("geometry_parameters"))
+            ]
+            unknown_geometry = [
+                row for row in cells
+                if int(row.get("dimension", -1) or -1) in {1, 2}
+                and str(row.get("geometry_type", "")) in {"", "unknown", "partial", "success"}
+            ]
+            self.check(not missing_params, "BREP_GEOMETRY_COMPLETE_REQUIRES_PARAMETERS", "complete B-Rep geometry has exact curve/surface parameters", f"{len(missing_params)} curve/surface cells have empty geometry_parameters", "native_topology_cells.jsonl")
+            self.check(not unknown_geometry, "BREP_GEOMETRY_COMPLETE_REQUIRES_TYPES", "complete B-Rep geometry has explicit curve/surface types", f"{len(unknown_geometry)} curve/surface cells have unknown/generic geometry_type", "native_topology_cells.jsonl")
+
+    def validate_mesh_mapping_capability_semantics(self) -> None:
+        capabilities = self.json_docs.get("capabilities.json")
+        if not isinstance(capabilities, dict):
+            return
+        if capabilities.get("mesh_brep_face_mapping") != "complete" and capabilities.get("mesh_face_mapping") != "complete":
+            return
+        rows = self.rows.get("native_mesh_face_map.jsonl", [])
+        face_ids = {
+            str(row.get("cell_id", ""))
+            for row in self.rows.get("native_topology_cells.jsonl", [])
+            if int(row.get("dimension", -1) or -1) == 2
+        }
+        missing_face = [row for row in rows if str(row.get("face_cell_id", "")) not in face_ids]
+        bad_ranges = [row for row in rows if int(row.get("triangle_count", 0) or 0) <= 0 or str(row.get("tessellation_status", "")) != "success"]
+        mapped_faces = {str(row.get("face_cell_id", "")) for row in rows if str(row.get("face_cell_id", "")) in face_ids}
+        unmapped_faces = sorted(face_ids - mapped_faces)
+        self.check(not missing_face, "MESH_COMPLETE_FACE_IDS_EXIST", "complete mesh map references existing B-Rep faces", f"{len(missing_face)} mesh rows reference missing faces", "native_mesh_face_map.jsonl")
+        self.check(not bad_ranges, "MESH_COMPLETE_TRIANGLES_MAPPED", "complete mesh map has successful non-empty triangle ranges", f"{len(bad_ranges)} mesh rows have empty/failed triangle ranges", "native_mesh_face_map.jsonl")
+        self.check(not unmapped_faces, "MESH_COMPLETE_ALL_FACES_MAPPED", "complete mesh map covers every renderable face", f"unmapped faces: {unmapped_faces[:5]}", "native_mesh_face_map.jsonl")
 
     def validate_product_numeric_truth(self) -> None:
         if self.fixture.get("id") not in {"PRODUCT-01", "PRODUCT-02"}:
@@ -764,9 +855,23 @@ class RunValidator:
             if not self.allow_known_blocked_fixtures:
                 keys.append("fta_topology_mapping")
         elif package in {"gsd_native", "boundary_negative"}:
-            keys.append("native_feature_extraction")
+            keys.extend([
+                "native_feature_type_extraction",
+                "native_feature_parameter_extraction",
+                "native_feature_extraction",
+            ])
         else:
             keys.extend([
+                "native_feature_type_extraction",
+                "native_feature_parameter_extraction",
+                "final_brep_topology_extraction",
+                "final_brep_geometry_extraction",
+                "analytic_surface_parameter_extraction",
+                "nurbs_surface_parameter_extraction",
+                "curve_parameter_extraction",
+                "mesh_generation",
+                "mesh_brep_face_mapping",
+                "feature_final_topology_history",
                 "native_feature_extraction",
                 "topology_extraction",
                 "native_feature_topology_mapping",
@@ -788,6 +893,8 @@ class RunValidator:
         self.validate_capability_consistency()
         self.validate_feature_topology_semantics()
         self.validate_decoder_semantics()
+        self.validate_brep_capability_semantics()
+        self.validate_mesh_mapping_capability_semantics()
         self.validate_product_capability_semantics()
         self.validate_product_numeric_truth()
         self.validate_completion()
