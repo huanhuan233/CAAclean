@@ -10,6 +10,7 @@ LINK_WITH = \
   CATObjectModelerBase \
   CATObjectSpecsModeler \
   CATMecModInterfaces \
+  CATSketcherInterfaces \
   CATMathematics \
   CATGMModelInterfaces \
   CATGeometricObjects \

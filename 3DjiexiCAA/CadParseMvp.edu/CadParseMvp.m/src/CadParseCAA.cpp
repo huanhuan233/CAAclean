@@ -25,6 +25,8 @@
 #include "CATITPSTextContent.h"
 #include "CATIGeometricalElement.h"
 #include "CATIMechanicalFeature.h"
+#include "CATIShapeFeatureProperties.h"
+#include "CATISketch.h"
 #include "CATLISTV_CATBaseUnknown.h"
 #include "CATLISTV_CATISpecObject.h"
 #include "CATICkeInst.h"
@@ -38,7 +40,13 @@
 #include "CATIAPocket.h"
 #include "CATIAPrism.h"
 #include "CATIAChamfer.h"
+#include "CATIADraft.h"
+#include "CATIADraftDomain.h"
+#include "CATIADraftDomains.h"
 #include "CATIAConstRadEdgeFillet.h"
+#include "CATIAVarRadEdgeFillet.h"
+#include "CATIAFaceFillet.h"
+#include "CATIATritangentFillet.h"
 #include "CATIAEdgeFillet.h"
 #include "CATIAFillet.h"
 #include "CATIAShell.h"
@@ -56,6 +64,7 @@
 #include "CATIAIntParam.h"
 #include "CATIALinearRepartition.h"
 #include "CATIAAngularRepartition.h"
+#include "CATIARepartition.h"
 #include "CATIALimit.h"
 #include "CATIALength.h"
 #include "CATIAAngle.h"
@@ -2241,6 +2250,42 @@ static void AddSingleReferenceField(NativeFeatureParameterData& data,
   data.references.push_back(field);
 }
 
+static void AddSpecObjectReferenceField(NativeFeatureParameterData& data,
+                                        const char* name,
+                                        const CATISpecObject_var& reference,
+                                        const char* source_api,
+                                        bool required,
+                                        bool& ok)
+{
+  NativeFeatureReferenceField field;
+  field.name = name ? name : "";
+  field.source_api = source_api ? source_api : "";
+  field.count = reference != NULL_var ? 1 : 0;
+  if (reference != NULL_var)
+  {
+    field.availability = "available";
+    field.reason_code = "OK";
+    try
+    {
+      const std::string display_name = UnicodeToUtf8(reference->GetDisplayName());
+      if (!display_name.empty()) field.display_names.push_back(display_name);
+      else
+      {
+        const std::string name_value = UnicodeToUtf8(reference->GetName());
+        if (!name_value.empty()) field.display_names.push_back(name_value);
+      }
+    }
+    catch (...) {}
+  }
+  else
+  {
+    if (required) ok = false;
+    field.availability = "not_available";
+    field.reason_code = "REFERENCE_NULL";
+  }
+  data.references.push_back(field);
+}
+
 static bool ReadIntParamValue(CATIAIntParam* param, long& value)
 {
   CATLONG raw_value = 0;
@@ -2257,6 +2302,197 @@ static bool VariantToDouble(const CATVariant& value, double& output)
   if (V_VT(&value) == VT_I4) { output = V_I4(&value); return true; }
   if (V_VT(&value) == VT_I2) { output = V_I2(&value); return true; }
   return false;
+}
+
+static bool ExtractVector3FromSafeArray(CATSafeArrayVariant* array, double output[3])
+{
+  if (!array) return false;
+  CATVariant* values = 0;
+  if (FAILED(SafeArrayAccessData(array, reinterpret_cast<void**>(&values))) || !values)
+    return false;
+  bool valid = true;
+  int index = 0;
+  for (; index < 3; ++index)
+    if (!VariantToDouble(values[index], output[index])) valid = false;
+  SafeArrayUnaccessData(array);
+  return valid;
+}
+
+static void AddVector3Parameters(NativeFeatureParameterData& data,
+                                 const char* prefix,
+                                 const double values[3],
+                                 const char* value_type,
+                                 const char* normalized_unit,
+                                 const char* source_api)
+{
+  const char* base = prefix ? prefix : "vector";
+  const char* suffixes[3] = { "_x", "_y", "_z" };
+  int index = 0;
+  for (; index < 3; ++index)
+  {
+    std::string name = std::string(base) + suffixes[index];
+    AddDoubleParameter(data, name.c_str(), values[index], value_type,
+                       normalized_unit, source_api);
+  }
+}
+
+static void AddUnavailableVector3(NativeFeatureParameterData& data,
+                                  const char* prefix,
+                                  const char* value_type,
+                                  const char* source_api,
+                                  const char* reason_code,
+                                  bool& ok)
+{
+  ok = false;
+  const char* base = prefix ? prefix : "vector";
+  const char* suffixes[3] = { "_x", "_y", "_z" };
+  int index = 0;
+  for (; index < 3; ++index)
+  {
+    std::string name = std::string(base) + suffixes[index];
+    AddUnavailableParameter(data, name.c_str(), value_type, source_api, reason_code);
+  }
+}
+
+static void AddSafeArrayVector3(NativeFeatureParameterData& data,
+                                const char* prefix,
+                                CATSafeArrayVariant* array,
+                                const char* value_type,
+                                const char* normalized_unit,
+                                const char* source_api,
+                                bool& ok)
+{
+  double values[3] = { 0.0, 0.0, 0.0 };
+  if (ExtractVector3FromSafeArray(array, values))
+    AddVector3Parameters(data, prefix, values, value_type, normalized_unit, source_api);
+  else
+    AddUnavailableVector3(data, prefix, value_type, source_api,
+                          "SAFEARRAY_VECTOR_READ_FAILED", ok);
+}
+
+static void ReadBaseRepartitionFields(NativeFeatureParameterData& data,
+                                      const char* prefix,
+                                      CATIARepartition* repartition,
+                                      const char* source_api,
+                                      bool required,
+                                      bool& ok)
+{
+  std::string base = prefix ? prefix : "repartition";
+  CaaInterfaceGuard<CATIAIntParam> count_guard;
+  long count = 0;
+  if (repartition &&
+      SUCCEEDED(repartition->get_InstancesCount(count_guard.Out())) &&
+      ReadIntParamValue(count_guard.Get(), count))
+  {
+    AddLongParameter(data, (base + "_instances_count").c_str(), count, source_api);
+  }
+  else
+  {
+    if (required) ok = false;
+    AddUnavailableParameter(data, (base + "_instances_count").c_str(), "integer",
+                            source_api, "VALUE_READ_FAILED");
+  }
+}
+
+static void AddLinearRepartitionFields(NativeFeatureParameterData& data,
+                                       const char* prefix,
+                                       CATIALinearRepartition* repartition,
+                                       const char* source_api,
+                                       bool required,
+                                       bool& ok)
+{
+  std::string base = prefix ? prefix : "linear_repartition";
+  ReadBaseRepartitionFields(data, base.c_str(), repartition, source_api, required, ok);
+  CaaInterfaceGuard<CATIALength> spacing_guard;
+  if (repartition &&
+      SUCCEEDED(repartition->get_Spacing(spacing_guard.Out())))
+    AddLengthParameter(data, (base + "_spacing").c_str(), spacing_guard.Get(),
+                       source_api, ok);
+  else
+  {
+    if (required) ok = false;
+    AddUnavailableParameter(data, (base + "_spacing").c_str(), "length",
+                            source_api, "VALUE_READ_FAILED");
+  }
+}
+
+static void AddAngularRepartitionFields(NativeFeatureParameterData& data,
+                                        const char* prefix,
+                                        CATIAAngularRepartition* repartition,
+                                        const char* source_api,
+                                        bool required,
+                                        bool& ok)
+{
+  std::string base = prefix ? prefix : "angular_repartition";
+  ReadBaseRepartitionFields(data, base.c_str(), repartition, source_api, required, ok);
+  CaaInterfaceGuard<CATIAAngle> angular_guard;
+  if (repartition &&
+      SUCCEEDED(repartition->get_AngularSpacing(angular_guard.Out())))
+    AddAngleParameter(data, (base + "_angular_spacing").c_str(), angular_guard.Get(),
+                      source_api, ok);
+  else
+  {
+    if (required) ok = false;
+    AddUnavailableParameter(data, (base + "_angular_spacing").c_str(), "angle",
+                            source_api, "VALUE_READ_FAILED");
+  }
+  CaaInterfaceGuard<CATIAAngle> instance_guard;
+  if (repartition &&
+      SUCCEEDED(repartition->get_InstanceSpacing(instance_guard.Out())))
+    AddAngleParameter(data, (base + "_instance_spacing").c_str(), instance_guard.Get(),
+                      source_api, ok);
+  else
+    AddUnavailableParameter(data, (base + "_instance_spacing").c_str(), "angle",
+                            source_api, "VALUE_READ_FAILED");
+}
+
+static CATIAReference* ReferenceCollectionItem(CATIAReferences* references,
+                                               CATLONG item_index)
+{
+  if (!references) return 0;
+  CATVariant index;
+  VariantInit(&index);
+  V_VT(&index) = VT_I4;
+  V_I4(&index) = item_index;
+  CATIAReference* item = 0;
+  if (FAILED(references->Item(index, item))) return 0;
+  return item;
+}
+
+static void AddBaseFilletFields(NativeFeatureParameterData& data,
+                                CATIAFillet* fillet,
+                                CATIAEdgeFillet* edge,
+                                bool& ok)
+{
+  if (edge)
+  {
+    CatFilletEdgePropagation edge_propagation;
+    if (SUCCEEDED(edge->get_EdgePropagation(edge_propagation)))
+      AddEnumParameter(data, "edge_propagation", static_cast<int>(edge_propagation),
+                       "CATIAEdgeFillet.get_EdgePropagation");
+    else AddUnavailableParameter(data, "edge_propagation", "enum_raw",
+                                 "CATIAEdgeFillet.get_EdgePropagation", "VALUE_READ_FAILED");
+    CaaInterfaceGuard<CATIAReferences> keep_guard;
+    if (SUCCEEDED(edge->get_EdgesToKeep(keep_guard.Out())))
+      AddReferenceCollectionField(data, "edges_to_keep", keep_guard.Get(),
+                                  "CATIAEdgeFillet.get_EdgesToKeep", false, ok);
+  }
+  if (fillet)
+  {
+    CatFilletBoundaryRelimitation boundary;
+    CatFilletTrimSupport trim;
+    if (SUCCEEDED(fillet->get_FilletBoundaryRelimitation(boundary)))
+      AddEnumParameter(data, "boundary_relimitation", static_cast<int>(boundary),
+                       "CATIAFillet.get_FilletBoundaryRelimitation");
+    else AddUnavailableParameter(data, "boundary_relimitation", "enum_raw",
+                                 "CATIAFillet.get_FilletBoundaryRelimitation",
+                                 "VALUE_READ_FAILED");
+    if (SUCCEEDED(fillet->get_FilletTrimSupport(trim)))
+      AddEnumParameter(data, "trim_support", static_cast<int>(trim),
+                       "CATIAFillet.get_FilletTrimSupport");
+    else AddUnavailableParameter(data, "trim_support", "enum_raw",
+                                 "CATIAFillet.get_FilletTrimSupport", "VALUE_READ_FAILED");
+  }
 }
 
 // 用途：按 CATIAHole Automation 契约预分配三个 Variant，并读取原点或方向数组。
@@ -3449,6 +3685,136 @@ public:
         AddDoubleParameter(output, "normal_y", normal_xyz[1], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
         AddDoubleParameter(output, "normal_z", normal_xyz[2], "unit_vector_component", "", "CATIPrtPart.GetReferencePlanes documented order");
       }
+      else if (family == "draft")
+      {
+        CaaInterfaceGuard<CATIADraft> draft_guard;
+        if (FAILED(_spec->QueryInterface(IID_CATIADraft,
+            reinterpret_cast<void**>(&draft_guard.Out()))) || !draft_guard.Get())
+        {
+          error = "CATIADraft is not supported";
+          return NativeFeatureParameterInterfaceUnsupported;
+        }
+        interface_supported = true;
+        output.interface_key = "CATIADraft";
+        CatDraftMode mode;
+        if (SUCCEEDED(draft_guard.Get()->get_Mode(mode)))
+          AddEnumParameter(output, "mode", static_cast<int>(mode), "CATIADraft.get_Mode");
+        else { ok = false; AddUnavailableParameter(output, "mode", "enum_raw",
+                                                   "CATIADraft.get_Mode", "VALUE_READ_FAILED"); }
+        CaaInterfaceGuard<CATIAReference> parting_guard;
+        if (SUCCEEDED(draft_guard.Get()->get_PartingElement(parting_guard.Out())))
+          AddSingleReferenceField(output, "parting_element", parting_guard.Get(),
+                                  "CATIADraft.get_PartingElement", false, ok);
+
+        CaaInterfaceGuard<CATIADraftDomains> domains_guard;
+        if (FAILED(draft_guard.Get()->get_DraftDomains(domains_guard.Out())) ||
+            !domains_guard.Get())
+        {
+          ok = false;
+          AddUnavailableParameter(output, "draft_domain_count", "integer",
+                                  "CATIADraft.get_DraftDomains", "VALUE_READ_FAILED");
+        }
+        else
+        {
+          CATLONG domain_count = 0;
+          if (SUCCEEDED(domains_guard.Get()->get_Count(domain_count)))
+            AddLongParameter(output, "draft_domain_count", static_cast<long>(domain_count),
+                             "CATIADraftDomains.get_Count");
+          else
+          {
+            ok = false;
+            AddUnavailableParameter(output, "draft_domain_count", "integer",
+                                    "CATIADraftDomains.get_Count", "VALUE_READ_FAILED");
+          }
+          if (domain_count <= 0) ok = false;
+          CATLONG domain_index = 1;
+          for (; domain_index <= domain_count; ++domain_index)
+          {
+            CATVariant index;
+            VariantInit(&index);
+            V_VT(&index) = VT_I4;
+            V_I4(&index) = domain_index;
+            CaaInterfaceGuard<CATIADraftDomain> domain_guard;
+            if (FAILED(domains_guard.Get()->Item(index, domain_guard.Out())) ||
+                !domain_guard.Get())
+            {
+              ok = false;
+              continue;
+            }
+            std::ostringstream prefix;
+            prefix << "domain_" << domain_index << "_";
+            CaaInterfaceGuard<CATIAAngle> draft_angle_guard;
+            if (SUCCEEDED(domain_guard.Get()->get_DraftAngle(draft_angle_guard.Out())))
+              AddAngleParameter(output, (prefix.str() + "draft_angle").c_str(),
+                                draft_angle_guard.Get(),
+                                "CATIADraftDomain.get_DraftAngle.Value", ok);
+            else { ok = false; AddUnavailableParameter(output,
+                                                       (prefix.str() + "draft_angle").c_str(),
+                                                       "angle", "CATIADraftDomain.get_DraftAngle",
+                                                       "VALUE_READ_FAILED"); }
+            CaaInterfaceGuard<CATIAReferences> faces_guard;
+            if (SUCCEEDED(domain_guard.Get()->get_FacesToDraft(faces_guard.Out())))
+              AddReferenceCollectionField(output, (prefix.str() + "faces_to_draft").c_str(),
+                                          faces_guard.Get(),
+                                          "CATIADraftDomain.get_FacesToDraft", true, ok);
+            else { ok = false; AddReferenceCollectionField(output,
+                                                           (prefix.str() + "faces_to_draft").c_str(),
+                                                           0, "CATIADraftDomain.get_FacesToDraft",
+                                                           true, ok); }
+            CaaInterfaceGuard<CATIAReference> neutral_guard;
+            if (SUCCEEDED(domain_guard.Get()->get_NeutralElement(neutral_guard.Out())))
+              AddSingleReferenceField(output, (prefix.str() + "neutral_element").c_str(),
+                                      neutral_guard.Get(),
+                                      "CATIADraftDomain.get_NeutralElement", true, ok);
+            else { ok = false; AddSingleReferenceField(output,
+                                                       (prefix.str() + "neutral_element").c_str(),
+                                                       0, "CATIADraftDomain.get_NeutralElement",
+                                                       true, ok); }
+            CatDraftNeutralPropagationMode neutral_mode;
+            if (SUCCEEDED(domain_guard.Get()->get_NeutralPropagationMode(neutral_mode)))
+              AddEnumParameter(output, (prefix.str() + "neutral_propagation_mode").c_str(),
+                               static_cast<int>(neutral_mode),
+                               "CATIADraftDomain.get_NeutralPropagationMode");
+            CatDraftMultiselectionMode multisel_mode;
+            if (SUCCEEDED(domain_guard.Get()->get_MultiselectionMode(multisel_mode)))
+              AddEnumParameter(output, (prefix.str() + "multiselection_mode").c_str(),
+                               static_cast<int>(multisel_mode),
+                               "CATIADraftDomain.get_MultiselectionMode");
+            CATSafeArrayVariant* pulling = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+            if (pulling && SUCCEEDED(domain_guard.Get()->GetPullingDirection(*pulling)))
+            {
+              CATVariant* values = 0;
+              if (SUCCEEDED(SafeArrayAccessData(pulling, reinterpret_cast<void**>(&values))) &&
+                  values)
+              {
+                int coord = 0;
+                for (; coord < 3; ++coord)
+                {
+                  double component = 0.0;
+                  if (VariantToDouble(values[coord], component))
+                  {
+                    const char* suffix = coord == 0 ? "x" : (coord == 1 ? "y" : "z");
+                    AddDoubleParameter(output, (prefix.str() + "pulling_direction_" + suffix).c_str(),
+                                       component, "unit_vector_component", "",
+                                       "CATIADraftDomain.GetPullingDirection");
+                  }
+                  else ok = false;
+                }
+                SafeArrayUnaccessData(pulling);
+              }
+              else ok = false;
+            }
+            else ok = false;
+            if (pulling) SafeArrayDestroy(pulling);
+            CaaInterfaceGuard<CATIAReference> pulling_element_guard;
+            if (SUCCEEDED(domain_guard.Get()->get_PullingDirectionElement(pulling_element_guard.Out())))
+              AddSingleReferenceField(output, (prefix.str() + "pulling_direction_element").c_str(),
+                                      pulling_element_guard.Get(),
+                                      "CATIADraftDomain.get_PullingDirectionElement",
+                                      false, ok);
+          }
+        }
+      }
       else if (family == "chamfer")
       {
         CaaInterfaceGuard<CATIAChamfer> chamfer_guard;
@@ -3494,49 +3860,159 @@ public:
       else if (family == "fillet")
       {
         CaaInterfaceGuard<CATIAConstRadEdgeFillet> const_guard;
-        if (FAILED(_spec->QueryInterface(IID_CATIAConstRadEdgeFillet,
-            reinterpret_cast<void**>(&const_guard.Out()))) || !const_guard.Get())
+        if (SUCCEEDED(_spec->QueryInterface(IID_CATIAConstRadEdgeFillet,
+            reinterpret_cast<void**>(&const_guard.Out()))) && const_guard.Get())
         {
-          error = "CATIAConstRadEdgeFillet is not supported";
-          return NativeFeatureParameterInterfaceUnsupported;
+          interface_supported = true;
+          output.interface_key = "CATIAConstRadEdgeFillet";
+          AddNativeParameterField(output, "radius_mode", "enum_text", "available",
+                                  "CATIAConstRadEdgeFillet", "OK", "constant", "",
+                                  false, 0.0, "");
+          CaaInterfaceGuard<CATIALength> radius_guard;
+          if (SUCCEEDED(const_guard.Get()->get_Radius(radius_guard.Out())))
+            AddLengthParameter(output, "radius", radius_guard.Get(),
+                               "CATIAConstRadEdgeFillet.get_Radius.Value", ok);
+          else { ok = false; AddUnavailableParameter(output, "radius", "length",
+                                                     "CATIAConstRadEdgeFillet.get_Radius", "VALUE_READ_FAILED"); }
+          CaaInterfaceGuard<CATIAReferences> objects_guard;
+          if (SUCCEEDED(const_guard.Get()->get_ObjectsToFillet(objects_guard.Out())))
+            AddReferenceCollectionField(output, "objects_to_fillet", objects_guard.Get(),
+                                        "CATIAConstRadEdgeFillet.get_ObjectsToFillet", true, ok);
+          else { ok = false; AddReferenceCollectionField(output, "objects_to_fillet", 0,
+                                                         "CATIAConstRadEdgeFillet.get_ObjectsToFillet", true, ok); }
+          AddBaseFilletFields(output, const_guard.Get(), const_guard.Get(), ok);
         }
-        interface_supported = true;
-        output.interface_key = "CATIAConstRadEdgeFillet";
-        AddNativeParameterField(output, "radius_mode", "enum_text", "available",
-                                "CATIAConstRadEdgeFillet", "OK", "constant", "",
-                                false, 0.0, "");
-        CaaInterfaceGuard<CATIALength> radius_guard;
-        if (SUCCEEDED(const_guard.Get()->get_Radius(radius_guard.Out())))
-          AddLengthParameter(output, "radius", radius_guard.Get(),
-                             "CATIAConstRadEdgeFillet.get_Radius.Value", ok);
-        else { ok = false; AddUnavailableParameter(output, "radius", "length",
-                                                   "CATIAConstRadEdgeFillet.get_Radius", "VALUE_READ_FAILED"); }
-        CaaInterfaceGuard<CATIAReferences> objects_guard;
-        if (SUCCEEDED(const_guard.Get()->get_ObjectsToFillet(objects_guard.Out())))
-          AddReferenceCollectionField(output, "objects_to_fillet", objects_guard.Get(),
-                                      "CATIAConstRadEdgeFillet.get_ObjectsToFillet", true, ok);
-        else { ok = false; AddReferenceCollectionField(output, "objects_to_fillet", 0,
-                                                       "CATIAConstRadEdgeFillet.get_ObjectsToFillet", true, ok); }
-        CATIAEdgeFillet* edge = const_guard.Get();
-        CatFilletEdgePropagation edge_propagation;
-        if (SUCCEEDED(edge->get_EdgePropagation(edge_propagation)))
-          AddEnumParameter(output, "edge_propagation", static_cast<int>(edge_propagation),
-                           "CATIAEdgeFillet.get_EdgePropagation");
-        else AddUnavailableParameter(output, "edge_propagation", "enum_raw",
-                                     "CATIAEdgeFillet.get_EdgePropagation", "VALUE_READ_FAILED");
-        CATIAFillet* fillet = const_guard.Get();
-        CatFilletBoundaryRelimitation boundary;
-        CatFilletTrimSupport trim;
-        if (SUCCEEDED(fillet->get_FilletBoundaryRelimitation(boundary)))
-          AddEnumParameter(output, "boundary_relimitation", static_cast<int>(boundary),
-                           "CATIAFillet.get_FilletBoundaryRelimitation");
-        else AddUnavailableParameter(output, "boundary_relimitation", "enum_raw",
-                                     "CATIAFillet.get_FilletBoundaryRelimitation", "VALUE_READ_FAILED");
-        if (SUCCEEDED(fillet->get_FilletTrimSupport(trim)))
-          AddEnumParameter(output, "trim_support", static_cast<int>(trim),
-                           "CATIAFillet.get_FilletTrimSupport");
-        else AddUnavailableParameter(output, "trim_support", "enum_raw",
-                                     "CATIAFillet.get_FilletTrimSupport", "VALUE_READ_FAILED");
+        else
+        {
+          CaaInterfaceGuard<CATIAVarRadEdgeFillet> var_guard;
+          if (SUCCEEDED(_spec->QueryInterface(IID_CATIAVarRadEdgeFillet,
+              reinterpret_cast<void**>(&var_guard.Out()))) && var_guard.Get())
+          {
+            interface_supported = true;
+            output.interface_key = "CATIAVarRadEdgeFillet";
+            AddNativeParameterField(output, "radius_mode", "enum_text", "available",
+                                    "CATIAVarRadEdgeFillet", "OK", "variable", "",
+                                    false, 0.0, "");
+            CaaInterfaceGuard<CATIAReferences> edges_guard;
+            if (SUCCEEDED(var_guard.Get()->get_EdgesToFillet(edges_guard.Out())))
+              AddReferenceCollectionField(output, "edges_to_fillet", edges_guard.Get(),
+                                          "CATIAVarRadEdgeFillet.get_EdgesToFillet", true, ok);
+            else { ok = false; AddReferenceCollectionField(output, "edges_to_fillet", 0,
+                                                           "CATIAVarRadEdgeFillet.get_EdgesToFillet", true, ok); }
+            CatFilletVariation variation;
+            if (SUCCEEDED(var_guard.Get()->get_FilletVariation(variation)))
+              AddEnumParameter(output, "fillet_variation", static_cast<int>(variation),
+                               "CATIAVarRadEdgeFillet.get_FilletVariation");
+            else { ok = false; AddUnavailableParameter(output, "fillet_variation", "enum_raw",
+                                                       "CATIAVarRadEdgeFillet.get_FilletVariation", "VALUE_READ_FAILED"); }
+            CatFilletBitangencyType bitangency;
+            if (SUCCEEDED(var_guard.Get()->get_BitangencyType(bitangency)))
+              AddEnumParameter(output, "bitangency_type", static_cast<int>(bitangency),
+                               "CATIAVarRadEdgeFillet.get_BitangencyType");
+            CaaInterfaceGuard<CATIAReferences> vertices_guard;
+            if (SUCCEEDED(var_guard.Get()->get_ImposedVertices(vertices_guard.Out())))
+            {
+              AddReferenceCollectionField(output, "imposed_vertices", vertices_guard.Get(),
+                                          "CATIAVarRadEdgeFillet.get_ImposedVertices", true, ok);
+              CATLONG vertex_count = 0;
+              if (vertices_guard.Get() &&
+                  SUCCEEDED(vertices_guard.Get()->get_Count(vertex_count)))
+              {
+                CATLONG index = 1;
+                for (; index <= vertex_count; ++index)
+                {
+                  CaaInterfaceGuard<CATIAReference> vertex_guard(ReferenceCollectionItem(vertices_guard.Get(), index));
+                  CaaInterfaceGuard<CATIALength> vertex_radius_guard;
+                  std::ostringstream name;
+                  name << "imposed_vertex_" << index << "_radius";
+                  if (vertex_guard.Get() &&
+                      SUCCEEDED(var_guard.Get()->ImposedVertexRadius(vertex_guard.Get(),
+                                                                     vertex_radius_guard.Out())))
+                    AddLengthParameter(output, name.str().c_str(), vertex_radius_guard.Get(),
+                                       "CATIAVarRadEdgeFillet.ImposedVertexRadius.Value", ok);
+                  else { ok = false; AddUnavailableParameter(output, name.str().c_str(), "length",
+                                                             "CATIAVarRadEdgeFillet.ImposedVertexRadius", "VALUE_READ_FAILED"); }
+                }
+              }
+            }
+            else { ok = false; AddReferenceCollectionField(output, "imposed_vertices", 0,
+                                                           "CATIAVarRadEdgeFillet.get_ImposedVertices", true, ok); }
+            CaaInterfaceGuard<CATIAReference> spine_guard;
+            if (SUCCEEDED(var_guard.Get()->get_FilletSpine(spine_guard.Out())))
+              AddSingleReferenceField(output, "fillet_spine", spine_guard.Get(),
+                                      "CATIAVarRadEdgeFillet.get_FilletSpine", false, ok);
+            AddBaseFilletFields(output, var_guard.Get(), var_guard.Get(), ok);
+          }
+          else
+          {
+            CaaInterfaceGuard<CATIAFaceFillet> face_guard;
+            if (SUCCEEDED(_spec->QueryInterface(IID_CATIAFaceFillet,
+                reinterpret_cast<void**>(&face_guard.Out()))) && face_guard.Get())
+            {
+              interface_supported = true;
+              output.interface_key = "CATIAFaceFillet";
+              AddNativeParameterField(output, "radius_mode", "enum_text", "available",
+                                      "CATIAFaceFillet", "OK", "face_fillet", "",
+                                      false, 0.0, "");
+              CaaInterfaceGuard<CATIALength> radius_guard;
+              if (SUCCEEDED(face_guard.Get()->get_Radius(radius_guard.Out())))
+                AddLengthParameter(output, "radius", radius_guard.Get(),
+                                   "CATIAFaceFillet.get_Radius.Value", ok);
+              else { ok = false; AddUnavailableParameter(output, "radius", "length",
+                                                         "CATIAFaceFillet.get_Radius", "VALUE_READ_FAILED"); }
+              CaaInterfaceGuard<CATIAReference> first_face_guard;
+              CaaInterfaceGuard<CATIAReference> second_face_guard;
+              if (SUCCEEDED(face_guard.Get()->get_FirstFace(first_face_guard.Out())))
+                AddSingleReferenceField(output, "first_face", first_face_guard.Get(),
+                                        "CATIAFaceFillet.get_FirstFace", true, ok);
+              else { ok = false; AddSingleReferenceField(output, "first_face", 0,
+                                                         "CATIAFaceFillet.get_FirstFace", true, ok); }
+              if (SUCCEEDED(face_guard.Get()->get_SecondFace(second_face_guard.Out())))
+                AddSingleReferenceField(output, "second_face", second_face_guard.Get(),
+                                        "CATIAFaceFillet.get_SecondFace", true, ok);
+              else { ok = false; AddSingleReferenceField(output, "second_face", 0,
+                                                         "CATIAFaceFillet.get_SecondFace", true, ok); }
+              AddBaseFilletFields(output, face_guard.Get(), 0, ok);
+            }
+            else
+            {
+              CaaInterfaceGuard<CATIATritangentFillet> tri_guard;
+              if (SUCCEEDED(_spec->QueryInterface(IID_CATIATritangentFillet,
+                  reinterpret_cast<void**>(&tri_guard.Out()))) && tri_guard.Get())
+              {
+                interface_supported = true;
+                output.interface_key = "CATIATritangentFillet";
+                AddNativeParameterField(output, "radius_mode", "enum_text", "available",
+                                        "CATIATritangentFillet", "OK", "tritangent", "",
+                                        false, 0.0, "");
+                CaaInterfaceGuard<CATIAReference> first_face_guard;
+                CaaInterfaceGuard<CATIAReference> second_face_guard;
+                CaaInterfaceGuard<CATIAReference> remove_face_guard;
+                if (SUCCEEDED(tri_guard.Get()->get_FirstFace(first_face_guard.Out())))
+                  AddSingleReferenceField(output, "first_face", first_face_guard.Get(),
+                                          "CATIATritangentFillet.get_FirstFace", true, ok);
+                else { ok = false; AddSingleReferenceField(output, "first_face", 0,
+                                                           "CATIATritangentFillet.get_FirstFace", true, ok); }
+                if (SUCCEEDED(tri_guard.Get()->get_SecondFace(second_face_guard.Out())))
+                  AddSingleReferenceField(output, "second_face", second_face_guard.Get(),
+                                          "CATIATritangentFillet.get_SecondFace", true, ok);
+                else { ok = false; AddSingleReferenceField(output, "second_face", 0,
+                                                           "CATIATritangentFillet.get_SecondFace", true, ok); }
+                if (SUCCEEDED(tri_guard.Get()->get_FaceToRemove(remove_face_guard.Out())))
+                  AddSingleReferenceField(output, "face_to_remove", remove_face_guard.Get(),
+                                          "CATIATritangentFillet.get_FaceToRemove", true, ok);
+                else { ok = false; AddSingleReferenceField(output, "face_to_remove", 0,
+                                                           "CATIATritangentFillet.get_FaceToRemove", true, ok); }
+                AddBaseFilletFields(output, tri_guard.Get(), 0, ok);
+              }
+              else
+              {
+                error = "CATIA fillet typed interfaces are not supported";
+                return NativeFeatureParameterInterfaceUnsupported;
+              }
+            }
+          }
+        }
       }
       else if (family == "shell")
       {
@@ -3619,8 +4095,38 @@ public:
         if (SUCCEEDED(revolution_guard.Get()->get_RevoluteAxis(axis_guard.Out())))
           AddSingleReferenceField(output, "revolute_axis", axis_guard.Get(),
                                   "CATIARevolution.get_RevoluteAxis", true, ok);
-        else { ok = false; AddSingleReferenceField(output, "revolute_axis", 0,
-                                                   "CATIARevolution.get_RevoluteAxis", true, ok); }
+        else
+        {
+          CaaInterfaceGuard<CATIShapeFeatureProperties> properties_guard;
+          CATISpecObject_var profile_sketch = NULL_var;
+          CATISpecObject_var center_line = NULL_var;
+          if (SUCCEEDED(_spec->QueryInterface(IID_CATIShapeFeatureProperties,
+              reinterpret_cast<void**>(&properties_guard.Out()))) && properties_guard.Get())
+          {
+            try
+            {
+              CATLISTV(CATISpecObject_var) sketches =
+                properties_guard.Get()->GiveMeYourFavoriteSketches();
+              if (sketches.Size() > 0) profile_sketch = sketches[1];
+            }
+            catch (...) { profile_sketch = NULL_var; }
+          }
+          AddSpecObjectReferenceField(output, "profile_sketch", profile_sketch,
+                                      "CATIShapeFeatureProperties.GiveMeYourFavoriteSketches",
+                                      true, ok);
+          if (profile_sketch != NULL_var)
+          {
+            CaaInterfaceGuard<CATISketch> sketch_guard;
+            if (SUCCEEDED(profile_sketch->QueryInterface(IID_CATISketch,
+                reinterpret_cast<void**>(&sketch_guard.Out()))) && sketch_guard.Get())
+            {
+              try { center_line = sketch_guard.Get()->GetCurrentCenterLine(); }
+              catch (...) { center_line = NULL_var; }
+            }
+          }
+          AddSpecObjectReferenceField(output, "revolute_axis", center_line,
+                                      "CATISketch.GetCurrentCenterLine", true, ok);
+        }
         CAT_VARIANT_BOOL value = FALSE;
         if (SUCCEEDED(revolution_guard.Get()->get_IsThin(value)))
           AddBoolParameter(output, "is_thin", value != FALSE, "CATIARevolution.get_IsThin");
@@ -3726,6 +4232,41 @@ public:
             if (SUCCEEDED(rect_guard.Get()->get_SecondOrientation(aligned)))
               AddBoolParameter(output, "second_orientation_aligned", aligned != FALSE,
                                "CATIARectPattern.get_SecondOrientation");
+            CaaInterfaceGuard<CATIALinearRepartition> first_repartition_guard;
+            if (SUCCEEDED(rect_guard.Get()->get_FirstDirectionRepartition(first_repartition_guard.Out())) &&
+                first_repartition_guard.Get())
+              AddLinearRepartitionFields(output, "first_direction_repartition",
+                                         first_repartition_guard.Get(),
+                                         "CATIARectPattern.get_FirstDirectionRepartition", true, ok);
+            else { ok = false; AddUnavailableParameter(output, "first_direction_repartition_instances_count",
+                                                       "integer", "CATIARectPattern.get_FirstDirectionRepartition",
+                                                       "VALUE_READ_FAILED"); }
+            CaaInterfaceGuard<CATIALinearRepartition> second_repartition_guard;
+            if (SUCCEEDED(rect_guard.Get()->get_SecondDirectionRepartition(second_repartition_guard.Out())) &&
+                second_repartition_guard.Get())
+              AddLinearRepartitionFields(output, "second_direction_repartition",
+                                         second_repartition_guard.Get(),
+                                         "CATIARectPattern.get_SecondDirectionRepartition", false, ok);
+            CATSafeArrayVariant* first_direction = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+            if (first_direction && SUCCEEDED(rect_guard.Get()->GetFirstDirection(*first_direction)))
+              AddSafeArrayVector3(output, "first_direction", first_direction,
+                                  "unit_vector_component", "",
+                                  "CATIARectPattern.GetFirstDirection", ok);
+            else
+              AddUnavailableVector3(output, "first_direction", "unit_vector_component",
+                                    "CATIARectPattern.GetFirstDirection",
+                                    "VALUE_READ_FAILED", ok);
+            if (first_direction) SafeArrayDestroy(first_direction);
+            CATSafeArrayVariant* second_direction = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+            if (second_direction && SUCCEEDED(rect_guard.Get()->GetSecondDirection(*second_direction)))
+              AddSafeArrayVector3(output, "second_direction", second_direction,
+                                  "unit_vector_component", "",
+                                  "CATIARectPattern.GetSecondDirection", ok);
+            else
+              AddUnavailableVector3(output, "second_direction", "unit_vector_component",
+                                    "CATIARectPattern.GetSecondDirection",
+                                    "VALUE_READ_FAILED", ok);
+            if (second_direction) SafeArrayDestroy(second_direction);
             CatRectangularPatternParameters params;
             if (SUCCEEDED(rect_guard.Get()->get_FirstRectangularPatternParameters(params)))
               AddEnumParameter(output, "first_rectangular_parameters", static_cast<int>(params),
@@ -3761,6 +4302,41 @@ public:
             if (SUCCEEDED(circ_guard.Get()->get_RotationOrientation(aligned)))
               AddBoolParameter(output, "rotation_orientation", aligned != FALSE,
                                "CATIACircPattern.get_RotationOrientation");
+            CaaInterfaceGuard<CATIALinearRepartition> radial_repartition_guard;
+            if (SUCCEEDED(circ_guard.Get()->get_RadialRepartition(radial_repartition_guard.Out())) &&
+                radial_repartition_guard.Get())
+              AddLinearRepartitionFields(output, "radial_repartition",
+                                         radial_repartition_guard.Get(),
+                                         "CATIACircPattern.get_RadialRepartition", false, ok);
+            CaaInterfaceGuard<CATIAAngularRepartition> angular_repartition_guard;
+            if (SUCCEEDED(circ_guard.Get()->get_AngularRepartition(angular_repartition_guard.Out())) &&
+                angular_repartition_guard.Get())
+              AddAngularRepartitionFields(output, "angular_repartition",
+                                          angular_repartition_guard.Get(),
+                                          "CATIACircPattern.get_AngularRepartition", true, ok);
+            else { ok = false; AddUnavailableParameter(output, "angular_repartition_instances_count",
+                                                       "integer", "CATIACircPattern.get_AngularRepartition",
+                                                       "VALUE_READ_FAILED"); }
+            CATSafeArrayVariant* rotation_center = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+            if (rotation_center && SUCCEEDED(circ_guard.Get()->GetRotationCenter(*rotation_center)))
+              AddSafeArrayVector3(output, "rotation_center", rotation_center,
+                                  "length", "mm",
+                                  "CATIACircPattern.GetRotationCenter", ok);
+            else
+              AddUnavailableVector3(output, "rotation_center", "length",
+                                    "CATIACircPattern.GetRotationCenter",
+                                    "VALUE_READ_FAILED", ok);
+            if (rotation_center) SafeArrayDestroy(rotation_center);
+            CATSafeArrayVariant* rotation_axis = SafeArrayCreateVector(VT_VARIANT, 0, 3);
+            if (rotation_axis && SUCCEEDED(circ_guard.Get()->GetRotationAxis(*rotation_axis)))
+              AddSafeArrayVector3(output, "rotation_axis", rotation_axis,
+                                  "unit_vector_component", "",
+                                  "CATIACircPattern.GetRotationAxis", ok);
+            else
+              AddUnavailableVector3(output, "rotation_axis", "unit_vector_component",
+                                    "CATIACircPattern.GetRotationAxis",
+                                    "VALUE_READ_FAILED", ok);
+            if (rotation_axis) SafeArrayDestroy(rotation_axis);
             CatCircularPatternParameters params;
             if (SUCCEEDED(circ_guard.Get()->get_CircularPatternParameters(params)))
               AddEnumParameter(output, "circular_pattern_parameters", static_cast<int>(params),

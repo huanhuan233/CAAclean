@@ -5,6 +5,8 @@ AddPrereqComponent("System", Public);
 AddPrereqComponent("ObjectModelerBase", Public);
 AddPrereqComponent("ObjectSpecsModeler", Public);
 AddPrereqComponent("MecModInterfaces", Public);
+// Purpose: provide Public CATISketch for sketch centerline evidence on Shaft/Groove revolutions.
+AddPrereqComponent("SketcherInterfaces", Public);
 // 用途：提供 Public CATMathPoint/CATMathVector 等数学对象，用于拓扑中心点和三角化结果读取。
 AddPrereqComponent("Mathematics", Public);
 // 用途：提供 Public CATBody/CATTopology/CATCell，用于读取最终实体的真实 Face/Edge/Vertex 拓扑摘要。

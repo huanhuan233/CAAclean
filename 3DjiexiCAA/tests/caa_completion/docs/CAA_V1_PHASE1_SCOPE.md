@@ -9,7 +9,7 @@ This document freezes the CAA V1 Phase 1 acceptance boundary for CATIA V5R21 x86
 - Absolute CATProduct instance transform extraction.
 - PRODUCT-01 and PRODUCT-02 local-point to world-point numeric validation.
 - Native `startup_type` recognition and canonical type classification, reported separately as `native_feature_type_extraction`.
-- Implemented Hole, Pad and Pocket parameter payload extraction through R21 Public CAA interfaces, reported separately from type recognition as `native_feature_parameter_extraction`.
+- Implemented Hole, Pad, Pocket and the validated Part Design advanced family parameter payload extraction through R21 Public CAA interfaces, reported separately from type recognition as `native_feature_parameter_extraction`. V14 evidence covers Chamfer, Shaft, Groove, Rib, Slot, Shell, Thickness, Rectangular Pattern, Boolean and constant Edge Fillet on real CATIA V5R21 runs.
 - Basic B-Rep topology body/cell/wire output from current R21 Public APIs. `final_brep_topology_extraction` is complete only when Loop/Coedge-level references are present and internally closed.
 - Current measured face/edge geometry evidence. `final_brep_geometry_extraction` is complete only when exact curve/surface types and non-empty parameter payloads are emitted; center/area/length alone is partial geometry evidence.
 - Current mesh-to-B-Rep face range evidence where tessellation succeeds. `mesh_brep_face_mapping` is complete only when every renderable Face has a successful unique triangle range.
@@ -22,7 +22,7 @@ This document freezes the CAA V1 Phase 1 acceptance boundary for CATIA V5R21 x86
 - `generated`, `modified`, `consumed`, `split` and `merged` relation semantics are not claimed from runtime pointer identity.
 - Cross-session persistent naming is not claimed.
 - Complete forward and reverse historical mapping is not claimed.
-- Fillet, Chamfer, Pattern, Boolean, Shell/Thickness, Draft, Shaft/Groove, Rib/Slot and GSD parameter decoders remain type-only or partial unless a dedicated Public CAA decoder has read payload values.
+- Feature families with compiled decoder branches but no current formal V5R21 sample remain outside the accepted claim until real samples are parsed: Draft, variable/face/tritangent Fillet, Circular Pattern and User Pattern. They must not be counted as Phase 1 complete from source code alone.
 - Complete FTA-to-Topology mapping is not included.
 - Full surface parameters, UV domains, material side, curvature and complete geometry semantics are not included.
 
