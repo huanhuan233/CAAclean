@@ -3,6 +3,7 @@
 
 #include <direct.h>
 #include <errno.h>
+#include <algorithm>
 #include <ctime>
 #include <float.h>
 #include <fstream>
@@ -646,6 +647,7 @@ static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& contex
   }
   std::set<std::string> wire_ids;
   std::set<std::string> faces_with_wires;
+  std::map<std::string, std::set<std::string> > wire_edges;
   std::vector<NativeTopologyWireRecord>::const_iterator wire = context.topology_wires.begin();
   for (; wire != context.topology_wires.end(); ++wire)
   {
@@ -656,26 +658,110 @@ static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& contex
     else
       faces_with_wires.insert(wire->owning_face_id);
     if (wire->edge_cell_ids.empty()) ++item.counts.invalid_reference_count;
+    if (wire->closed_status.empty() || wire->closed_status == "unknown")
+      ++item.counts.orientation_error_count;
     std::vector<std::string>::const_iterator edge = wire->edge_cell_ids.begin();
     for (; edge != wire->edge_cell_ids.end(); ++edge)
+    {
       if (edge_ids.find(*edge) == edge_ids.end()) ++item.counts.invalid_reference_count;
+      else wire_edges[wire->wire_id].insert(*edge);
+    }
   }
+  std::set<std::string> coedge_ids;
+  std::map<std::string, std::set<std::string> > coedges_by_wire;
+  std::map<std::string, std::set<std::string> > face_edges;
+  std::map<std::string, std::set<std::string> > edge_faces;
   std::vector<NativeTopologyCoedgeRecord>::const_iterator coedge =
     context.topology_coedges.begin();
   for (; coedge != context.topology_coedges.end(); ++coedge)
   {
-    if (coedge->coedge_id.empty() ||
-        wire_ids.find(coedge->wire_id) == wire_ids.end() ||
+    if (coedge->coedge_id.empty())
+      ++item.counts.invalid_reference_count;
+    else
+      coedge_ids.insert(coedge->coedge_id);
+    if (wire_ids.find(coedge->wire_id) == wire_ids.end() ||
         face_ids.find(coedge->owning_face_id) == face_ids.end() ||
         edge_ids.find(coedge->edge_cell_id) == edge_ids.end())
       ++item.counts.invalid_reference_count;
+    else
+    {
+      coedges_by_wire[coedge->wire_id].insert(coedge->coedge_id);
+      face_edges[coedge->owning_face_id].insert(coedge->edge_cell_id);
+      edge_faces[coedge->edge_cell_id].insert(coedge->owning_face_id);
+      std::map<std::string, std::set<std::string> >::const_iterator wire_edge =
+        wire_edges.find(coedge->wire_id);
+      if (wire_edge == wire_edges.end() ||
+          wire_edge->second.find(coedge->edge_cell_id) == wire_edge->second.end())
+        ++item.counts.invalid_reference_count;
+    }
+  }
+  coedge = context.topology_coedges.begin();
+  for (; coedge != context.topology_coedges.end(); ++coedge)
+  {
+    std::map<std::string, std::set<std::string> >::const_iterator group =
+      coedges_by_wire.find(coedge->wire_id);
+    const bool previous_ok = group != coedges_by_wire.end() &&
+      group->second.find(coedge->previous_coedge_id) != group->second.end();
+    const bool next_ok = group != coedges_by_wire.end() &&
+      group->second.find(coedge->next_coedge_id) != group->second.end();
+    if (!previous_ok || !next_ok) ++item.counts.orientation_error_count;
+  }
+  cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension == 2)
+    {
+      std::map<std::string, std::set<std::string> >::const_iterator face_edge =
+        face_edges.find(cell->cell_id);
+      if (face_edge != face_edges.end())
+      {
+        std::set<std::string>::const_iterator edge = face_edge->second.begin();
+        for (; edge != face_edge->second.end(); ++edge)
+        {
+          if (std::find(cell->boundary_cell_ids.begin(),
+                        cell->boundary_cell_ids.end(), *edge) ==
+              cell->boundary_cell_ids.end())
+            ++item.counts.invalid_reference_count;
+        }
+      }
+      std::vector<std::string>::const_iterator adjacent = cell->adjacent_cell_ids.begin();
+      for (; adjacent != cell->adjacent_cell_ids.end(); ++adjacent)
+      {
+        NativeTopologyCellRecord const* other_cell = 0;
+        std::vector<NativeTopologyCellRecord>::const_iterator lookup = context.topology_cells.begin();
+        for (; lookup != context.topology_cells.end(); ++lookup)
+          if (lookup->cell_id == *adjacent) { other_cell = &(*lookup); break; }
+        if (!other_cell || other_cell->dimension != 2 ||
+            std::find(other_cell->adjacent_cell_ids.begin(),
+                      other_cell->adjacent_cell_ids.end(), cell->cell_id) ==
+              other_cell->adjacent_cell_ids.end())
+          ++item.counts.invalid_reference_count;
+      }
+    }
+    else if (cell->dimension == 1)
+    {
+      std::map<std::string, std::set<std::string> >::const_iterator edge_face =
+        edge_faces.find(cell->cell_id);
+      if (edge_face != edge_faces.end())
+      {
+        std::set<std::string>::const_iterator face = edge_face->second.begin();
+        for (; face != edge_face->second.end(); ++face)
+        {
+          if (std::find(cell->adjacent_cell_ids.begin(),
+                        cell->adjacent_cell_ids.end(), *face) ==
+              cell->adjacent_cell_ids.end())
+            ++item.counts.invalid_reference_count;
+        }
+      }
+    }
   }
   item.counts.resolved_count =
-    item.counts.required_count > item.counts.invalid_reference_count ?
-    item.counts.required_count - item.counts.invalid_reference_count : 0;
+    item.counts.invalid_reference_count == 0 && item.counts.orientation_error_count == 0 ?
+    item.counts.required_count : 0;
   item.counts.coverage_ratio = Ratio(item.counts.resolved_count, item.counts.required_count);
   if (item.counts.required_count > 0 &&
       item.counts.invalid_reference_count == 0 &&
+      item.counts.orientation_error_count == 0 &&
       item.counts.face_count == static_cast<long>(faces_with_wires.size()) &&
       item.counts.loop_count > 0 &&
       item.counts.coedge_count > 0)
@@ -1549,6 +1635,8 @@ void WriteNativeTopologyCoedge(std::ostream& output, const NativeTopologyCoedgeR
          << "\",\"wire_id\":\"" << JsonEscape(record.wire_id)
          << "\",\"owning_face_id\":\"" << JsonEscape(record.owning_face_id)
          << "\",\"edge_cell_id\":\"" << JsonEscape(record.edge_cell_id)
+         << "\",\"previous_coedge_id\":\"" << JsonEscape(record.previous_coedge_id)
+         << "\",\"next_coedge_id\":\"" << JsonEscape(record.next_coedge_id)
          << "\",\"coedge_index\":" << record.coedge_index
          << ",\"coedge_index_in_wire\":" << record.coedge_index_in_wire
          << ",\"edge_orientation_side\":" << record.edge_orientation_side

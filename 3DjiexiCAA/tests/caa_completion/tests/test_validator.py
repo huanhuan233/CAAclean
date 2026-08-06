@@ -260,6 +260,39 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any(item.status == "FAIL" and item.code == "BREP_GEOMETRY_COMPLETE_REQUIRES_PARAMETERS" for item in validator.findings))
         self.assertTrue(any(item.status == "FAIL" and item.code == "BREP_GEOMETRY_COMPLETE_REQUIRES_TYPES" for item in validator.findings))
 
+    def test_brep_topology_complete_requires_coedge_ring_and_reverse_links(self):
+        validator = self._semantic_validator()
+        validator.rows["native_topology_cells.jsonl"] = [
+            {"cell_id": "F1", "dimension": 2, "boundary_cell_ids": [], "adjacent_cell_ids": ["F2"]},
+            {"cell_id": "F2", "dimension": 2, "boundary_cell_ids": ["E1"], "adjacent_cell_ids": []},
+            {"cell_id": "E1", "dimension": 1, "boundary_cell_ids": [], "adjacent_cell_ids": []},
+        ]
+        validator.rows["native_topology_wires.jsonl"] = [
+            {"wire_id": "W1", "owning_face_id": "F1", "edge_cell_ids": ["E1"], "closed_status": "unknown"},
+        ]
+        validator.rows["native_topology_coedges.jsonl"] = [
+            {
+                "coedge_id": "C1",
+                "wire_id": "W1",
+                "owning_face_id": "F1",
+                "edge_cell_id": "E2",
+                "previous_coedge_id": "",
+                "next_coedge_id": "",
+            },
+        ]
+        validator.json_docs["capabilities.json"] = {
+            "final_brep_topology_extraction": "complete",
+            "capability_metrics": {"final_brep_topology_extraction": {"coedge_count": 1}},
+        }
+        validator.validate_brep_capability_semantics()
+        codes = {item.code for item in validator.findings if item.status == "FAIL"}
+        self.assertIn("BREP_COMPLETE_WIRES_CLOSED", codes)
+        self.assertIn("BREP_COMPLETE_COEDGES_MATCH_WIRES", codes)
+        self.assertIn("BREP_COMPLETE_COEDGE_RING_CLOSED", codes)
+        self.assertIn("BREP_COMPLETE_EDGE_FACE_REVERSE", codes)
+        self.assertIn("BREP_COMPLETE_FACE_EDGE_BOUNDARY", codes)
+        self.assertIn("BREP_COMPLETE_FACE_ADJACENCY_SYMMETRIC", codes)
+
     def test_mesh_mapping_complete_requires_all_faces(self):
         validator = self._semantic_validator()
         validator.rows["native_topology_cells.jsonl"] = [

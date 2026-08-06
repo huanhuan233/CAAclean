@@ -93,6 +93,7 @@
 #include "CATSphere.h"
 #include "CATTorus.h"
 #include "CATNurbsSurface.h"
+#include "CATKnotVector.h"
 #include "CATLine.h"
 #include "CATConic.h"
 #include "CATCircle.h"
@@ -476,6 +477,170 @@ static void WriteJsonDirection(std::ostream& out, const CATMathDirection& direct
   out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
 }
 
+static void WriteJsonDoubleArray(std::ostream& out, const double* values, long count)
+{
+  out << '[';
+  long i = 0;
+  for (; i < count; ++i)
+  {
+    if (i) out << ',';
+    out << std::setprecision(15) << (values ? values[i] : 0.0);
+  }
+  out << ']';
+}
+
+static void WriteJsonLongArray(std::ostream& out, const std::vector<long>& values)
+{
+  out << '[';
+  size_t i = 0;
+  for (; i < values.size(); ++i)
+  {
+    if (i) out << ',';
+    out << values[i];
+  }
+  out << ']';
+}
+
+static void WriteKnotVectorJson(std::ostream& out, const char* name,
+                                const CATKnotVector* knot_vector)
+{
+  out << '"' << name << "\":";
+  if (!knot_vector)
+  {
+    out << "null";
+    return;
+  }
+  const short knot_count = knot_vector->GetNumberOfKnots();
+  const short control_count = knot_vector->GetNumberOfControlPoints();
+  const double* knots = 0;
+  knot_vector->GetKnots(knots);
+  std::vector<long> multiplicities;
+  short i = 1;
+  for (; i <= knot_count; ++i)
+    multiplicities.push_back(static_cast<long>(knot_vector->GetKnotMultiplicity(i)));
+  out << "{\"degree\":" << knot_vector->GetDegree()
+      << ",\"original_degree\":" << knot_vector->GetOriginalDegree()
+      << ",\"periodic\":" << (knot_vector->IsPeriodic() ? "true" : "false")
+      << ",\"uniform\":" << (knot_vector->IsUniform() ? "true" : "false")
+      << ",\"control_point_count\":" << control_count
+      << ",\"knot_count\":" << knot_count
+      << ",\"index_offset\":" << knot_vector->GetIndexOffset()
+      << ",\"knots\":";
+  WriteJsonDoubleArray(out, knots, knot_count);
+  out << ",\"multiplicities\":";
+  WriteJsonLongArray(out, multiplicities);
+  out << '}';
+}
+
+static std::string NurbsCurveJson(CATNurbsCurve* nurbs)
+{
+  if (!nurbs) return "";
+  const CATKnotVector* knots = 0;
+  try { knots = nurbs->GetKnotVector(); } catch (...) { knots = 0; }
+  const short control_count = knots ? knots->GetNumberOfControlPoints() : 0;
+  int original_degree = 0;
+  try { nurbs->GetOriginalDegree(original_degree); } catch (...) {}
+  double parameter_coefficient = 1.0;
+  double parameter_shift = 0.0;
+  try { nurbs->GetOriginalParametrisationDATA(parameter_coefficient, parameter_shift); } catch (...) {}
+  std::ostringstream out;
+  out << "{\"rational\":" << (nurbs->IsRational() ? "true" : "false")
+      << ",\"original_degree\":" << original_degree
+      << ",\"original_parameterization\":{\"coefficient\":" << std::setprecision(15)
+      << parameter_coefficient << ",\"shift\":" << parameter_shift << '}'
+      << ",\"control_point_count\":" << control_count
+      << ",\"control_points\":[";
+  short i = 1;
+  for (; i <= control_count; ++i)
+  {
+    if (i > 1) out << ',';
+    CATMathPoint point;
+    try { nurbs->GetOneControlPoint(i, point); } catch (...) {}
+    WriteJsonPoint(out, point);
+  }
+  out << "],\"weights\":[";
+  for (i = 1; i <= control_count; ++i)
+  {
+    if (i > 1) out << ',';
+    double weight = 1.0;
+    try { weight = nurbs->GetOneWeight(i); } catch (...) {}
+    out << std::setprecision(15) << weight;
+  }
+  out << "],";
+  WriteKnotVectorJson(out, "knot_vector", knots);
+  out << '}';
+  return out.str();
+}
+
+static std::string NurbsSurfaceJson(CATNurbsSurface* nurbs)
+{
+  if (!nurbs) return "";
+  const CATKnotVector* u_knots = 0;
+  const CATKnotVector* v_knots = 0;
+  try { u_knots = nurbs->GetKnotVectorU(); } catch (...) { u_knots = 0; }
+  try { v_knots = nurbs->GetKnotVectorV(); } catch (...) { v_knots = 0; }
+  const short u_count = u_knots ? u_knots->GetNumberOfControlPoints() : 0;
+  const short v_count = v_knots ? v_knots->GetNumberOfControlPoints() : 0;
+  int original_degree_u = 0;
+  int original_degree_v = 0;
+  try { nurbs->GetOriginalDegrees(original_degree_u, original_degree_v); } catch (...) {}
+  double coefficient_u = 1.0;
+  double shift_u = 0.0;
+  double coefficient_v = 1.0;
+  double shift_v = 0.0;
+  try
+  {
+    nurbs->GetOriginalParametrisationDATA(coefficient_u, shift_u, coefficient_v, shift_v);
+  }
+  catch (...) {}
+  std::ostringstream out;
+  out << "{\"rational\":" << (nurbs->IsRational() ? "true" : "false")
+      << ",\"original_degree_u\":" << original_degree_u
+      << ",\"original_degree_v\":" << original_degree_v
+      << ",\"original_parameterization\":{\"u\":{\"coefficient\":" << std::setprecision(15)
+      << coefficient_u << ",\"shift\":" << shift_u << "},\"v\":{\"coefficient\":"
+      << coefficient_v << ",\"shift\":" << shift_v << "}}"
+      << ",\"control_point_count_u\":" << u_count
+      << ",\"control_point_count_v\":" << v_count
+      << ",\"control_points\":[";
+  short u = 1;
+  for (; u <= u_count; ++u)
+  {
+    if (u > 1) out << ',';
+    out << '[';
+    short v = 1;
+    for (; v <= v_count; ++v)
+    {
+      if (v > 1) out << ',';
+      CATMathPoint point;
+      try { nurbs->GetOneControlPoint(u, v, point); } catch (...) {}
+      WriteJsonPoint(out, point);
+    }
+    out << ']';
+  }
+  out << "],\"weights\":[";
+  for (u = 1; u <= u_count; ++u)
+  {
+    if (u > 1) out << ',';
+    out << '[';
+    short v = 1;
+    for (; v <= v_count; ++v)
+    {
+      if (v > 1) out << ',';
+      double weight = 1.0;
+      try { weight = nurbs->GetOneWeight(u, v); } catch (...) {}
+      out << std::setprecision(15) << weight;
+    }
+    out << ']';
+  }
+  out << "],";
+  WriteKnotVectorJson(out, "u_knot_vector", u_knots);
+  out << ',';
+  WriteKnotVectorJson(out, "v_knot_vector", v_knots);
+  out << '}';
+  return out.str();
+}
+
 static std::string GeometryBoundingBoxJson(CATGeometry* geometry)
 {
   if (!geometry) return "";
@@ -683,8 +848,8 @@ static void DecodeExactCellGeometry(ParseContext& context, CATCell* cell,
     if (nurbs)
     {
       record.exact_geometry_type = "nurbs_surface";
-      record.geometry_parameters_json = std::string("{\"rational\":") + (nurbs->IsRational() ? "true}" : "false}");
-      record.geometry_status = "partial";
+      record.geometry_parameters_json = NurbsSurfaceJson(nurbs);
+      record.geometry_status = record.geometry_parameters_json.empty() ? "partial" : "exact";
       ReleaseGeometryInterface(nurbs);
       return;
     }
@@ -696,6 +861,33 @@ static void DecodeExactCellGeometry(ParseContext& context, CATCell* cell,
       CATGeometry* rep_geometry = const_cast<CATSurface*>(geometric_rep);
       if (rep_geometry && rep_geometry != surface)
       {
+        CATPlane* rep_plane = QueryGeometryInterface<CATPlane>(rep_geometry, IID_CATPlane);
+        if (rep_plane)
+        {
+          CATMathPoint origin;
+          CATMathDirection first;
+          CATMathDirection second;
+          rep_plane->GetAxis(origin, first, second);
+          CATMathPoint normal_origin;
+          CATMathVector normal;
+          rep_plane->GetNormal(normal_origin, normal);
+          std::ostringstream out;
+          out << "{\"origin\":";
+          WriteJsonPoint(out, origin);
+          out << ",\"u_direction\":";
+          WriteJsonDirection(out, first);
+          out << ",\"v_direction\":";
+          WriteJsonDirection(out, second);
+          out << ",\"normal\":";
+          WriteJsonVector(out, normal);
+          out << ",\"surface_representation\":\"CATSurface.GetGeometricRep\"}";
+          record.exact_geometry_type = "plane";
+          record.geometry_parameters_json = out.str();
+          record.geometry_status = "exact";
+          ReleaseGeometryInterface(rep_plane);
+          ReleaseGeometryInterface(surface);
+          return;
+        }
         CATCylinder* rep_cylinder = QueryGeometryInterface<CATCylinder>(rep_geometry, IID_CATCylinder);
         if (rep_cylinder)
         {
@@ -809,8 +1001,8 @@ static void DecodeExactCellGeometry(ParseContext& context, CATCell* cell,
     if (nurbs)
     {
       record.exact_geometry_type = "nurbs_curve";
-      record.geometry_parameters_json = std::string("{\"rational\":") + (nurbs->IsRational() ? "true}" : "false}");
-      record.geometry_status = "partial";
+      record.geometry_parameters_json = NurbsCurveJson(nurbs);
+      record.geometry_status = record.geometry_parameters_json.empty() ? "partial" : "exact";
       ReleaseGeometryInterface(nurbs);
       return;
     }
@@ -1425,7 +1617,96 @@ static void UpdateFaceWireIds(ParseContext& context, const std::string& face_id)
       cell->inner_wire_ids.clear();
       size_t index = 1;
       for (; index < wire_ids.size(); ++index) cell->inner_wire_ids.push_back(wire_ids[index]);
+      std::vector<NativeTopologyWireRecord>::iterator wire_record = context.topology_wires.begin();
+      for (; wire_record != context.topology_wires.end(); ++wire_record)
+      {
+        if (wire_record->owning_face_id != face_id) continue;
+        wire_record->wire_kind = wire_record->wire_id == cell->outer_wire_id ?
+          "outer_loop" : "inner_loop";
+      }
       return;
+    }
+  }
+}
+
+static void AddUniqueString(std::vector<std::string>& values, const std::string& value)
+{
+  if (value.empty()) return;
+  if (std::find(values.begin(), values.end(), value) == values.end())
+    values.push_back(value);
+}
+
+static NativeTopologyCellRecord* FindTopologyCell(ParseContext& context,
+                                                  const std::string& cell_id)
+{
+  std::vector<NativeTopologyCellRecord>::iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+    if (cell->cell_id == cell_id) return &(*cell);
+  return 0;
+}
+
+static NativeTopologyWireRecord* FindTopologyWire(ParseContext& context,
+                                                  const std::string& wire_id)
+{
+  std::vector<NativeTopologyWireRecord>::iterator wire = context.topology_wires.begin();
+  for (; wire != context.topology_wires.end(); ++wire)
+    if (wire->wire_id == wire_id) return &(*wire);
+  return 0;
+}
+
+static void FinalizeBrepTopologyGraph(ParseContext& context)
+{
+  std::map<std::string, std::vector<size_t> > coedges_by_wire;
+  std::map<std::string, std::set<std::string> > edge_to_faces;
+  size_t i = 0;
+  for (; i < context.topology_coedges.size(); ++i)
+  {
+    NativeTopologyCoedgeRecord& coedge = context.topology_coedges[i];
+    coedges_by_wire[coedge.wire_id].push_back(i);
+    if (!coedge.edge_cell_id.empty() && !coedge.owning_face_id.empty())
+      edge_to_faces[coedge.edge_cell_id].insert(coedge.owning_face_id);
+    NativeTopologyCellRecord* face = FindTopologyCell(context, coedge.owning_face_id);
+    if (face) AddUniqueString(face->boundary_cell_ids, coedge.edge_cell_id);
+  }
+
+  std::map<std::string, std::vector<size_t> >::iterator wire_group = coedges_by_wire.begin();
+  for (; wire_group != coedges_by_wire.end(); ++wire_group)
+  {
+    std::vector<size_t>& indices = wire_group->second;
+    if (indices.empty()) continue;
+    size_t count = indices.size();
+    size_t j = 0;
+    for (; j < count; ++j)
+    {
+      NativeTopologyCoedgeRecord& coedge = context.topology_coedges[indices[j]];
+      coedge.previous_coedge_id = context.topology_coedges[indices[(j + count - 1) % count]].coedge_id;
+      coedge.next_coedge_id = context.topology_coedges[indices[(j + 1) % count]].coedge_id;
+      if (coedge.orientation_status.empty() || coedge.orientation_status == "unknown")
+        coedge.orientation_status = "from_cat_boundary_iterator_side";
+    }
+    NativeTopologyWireRecord* wire = FindTopologyWire(context, wire_group->first);
+    if (wire)
+    {
+      wire->closed_status = "closed_by_cat_boundary_iterator_cycle";
+      wire->edge_count = static_cast<long>(wire->edge_cell_ids.size());
+    }
+  }
+
+  std::map<std::string, std::set<std::string> >::iterator edge_faces = edge_to_faces.begin();
+  for (; edge_faces != edge_to_faces.end(); ++edge_faces)
+  {
+    NativeTopologyCellRecord* edge = FindTopologyCell(context, edge_faces->first);
+    if (!edge) continue;
+    std::set<std::string>::const_iterator face = edge_faces->second.begin();
+    for (; face != edge_faces->second.end(); ++face)
+      AddUniqueString(edge->adjacent_cell_ids, *face);
+    for (face = edge_faces->second.begin(); face != edge_faces->second.end(); ++face)
+    {
+      NativeTopologyCellRecord* face_cell = FindTopologyCell(context, *face);
+      if (!face_cell) continue;
+      std::set<std::string>::const_iterator other = edge_faces->second.begin();
+      for (; other != edge_faces->second.end(); ++other)
+        if (*other != *face) AddUniqueString(face_cell->adjacent_cell_ids, *other);
     }
   }
 }
@@ -1580,6 +1861,8 @@ static void CollectPartMainSolidTopology(CATISpecObject* part_spec,
   index = 1;
   for (; it != volumes.end(); ++it, ++index)
     AppendTopologyCell(context, body_record.body_id, "S", index, *it, body, cell_ids);
+
+  FinalizeBrepTopologyGraph(context);
 }
 
 // 用途：从 CATBody 安全读取拓扑数量，并写入特征 ResultOUT 摘要。

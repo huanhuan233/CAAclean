@@ -306,6 +306,10 @@ class RunValidator:
                 self.add("FAIL", "COEDGE_FACE_DANGLING", f"coedge {row.get('coedge_id')} -> {row.get('owning_face_id')}", "native_topology_coedges.jsonl")
             if str(row.get("edge_cell_id", "")) not in cell_ids:
                 self.add("FAIL", "COEDGE_EDGE_DANGLING", f"coedge {row.get('coedge_id')} -> {row.get('edge_cell_id')}", "native_topology_coedges.jsonl")
+            for key in ("previous_coedge_id", "next_coedge_id"):
+                ref = str(row.get(key, "") or "")
+                if ref and ref not in coedge_ids:
+                    self.add("FAIL", "COEDGE_RING_DANGLING", f"coedge {row.get('coedge_id')} {key} -> {ref}", "native_topology_coedges.jsonl")
 
         result_rows = self.rows.get("native_feature_results.jsonl", [])
         result_ids = row_ids(result_rows, "result_id")
@@ -646,10 +650,17 @@ class RunValidator:
             return
         cells = self.rows.get("native_topology_cells.jsonl", [])
         wires = self.rows.get("native_topology_wires.jsonl", [])
+        coedges = self.rows.get("native_topology_coedges.jsonl", [])
         if capabilities.get("final_brep_topology_extraction") == "complete":
             cell_ids = {str(row.get("cell_id", "")) for row in cells}
             face_ids = {str(row.get("cell_id", "")) for row in cells if int(row.get("dimension", -1) or -1) == 2}
             edge_ids = {str(row.get("cell_id", "")) for row in cells if int(row.get("dimension", -1) or -1) == 1}
+            cells_by_id = {str(row.get("cell_id", "")): row for row in cells}
+            wires_by_id = {str(row.get("wire_id", "")): row for row in wires}
+            coedges_by_id = {str(row.get("coedge_id", "")): row for row in coedges}
+            coedges_by_wire = {}
+            for row in coedges:
+                coedges_by_wire.setdefault(str(row.get("wire_id", "")), set()).add(str(row.get("coedge_id", "")))
             face_with_wire = {str(row.get("owning_face_id", "")) for row in wires}
             dangling = []
             for row in cells:
@@ -659,13 +670,50 @@ class RunValidator:
                             dangling.append(str(ref))
             missing_face_loops = sorted(face_ids - face_with_wire)
             empty_wires = [row for row in wires if not row.get("edge_cell_ids")]
+            open_wires = [row for row in wires if str(row.get("closed_status", "")) in {"", "unknown"}]
             bad_wire_edges = [
                 str(edge) for row in wires for edge in (row.get("edge_cell_ids") or [])
                 if str(edge) not in edge_ids
             ]
+            bad_coedges = []
+            missing_reverse_edge_face = []
+            missing_face_boundary_edge = []
+            bad_coedge_ring = []
+            face_adj_asymmetry = []
+            for row in coedges:
+                coedge_id = str(row.get("coedge_id", ""))
+                wire_id = str(row.get("wire_id", ""))
+                face_id = str(row.get("owning_face_id", ""))
+                edge_id = str(row.get("edge_cell_id", ""))
+                wire = wires_by_id.get(wire_id, {})
+                if edge_id not in {str(edge) for edge in (wire.get("edge_cell_ids") or [])}:
+                    bad_coedges.append(coedge_id)
+                prev_id = str(row.get("previous_coedge_id", "") or "")
+                next_id = str(row.get("next_coedge_id", "") or "")
+                wire_coedges = coedges_by_wire.get(wire_id, set())
+                if prev_id not in wire_coedges or next_id not in wire_coedges:
+                    bad_coedge_ring.append(coedge_id)
+                edge = cells_by_id.get(edge_id, {})
+                if face_id not in {str(ref) for ref in (edge.get("adjacent_cell_ids") or [])}:
+                    missing_reverse_edge_face.append(f"{edge_id}->{face_id}")
+                face = cells_by_id.get(face_id, {})
+                if edge_id not in {str(ref) for ref in (face.get("boundary_cell_ids") or [])}:
+                    missing_face_boundary_edge.append(f"{face_id}->{edge_id}")
+            for face_id in face_ids:
+                face = cells_by_id.get(face_id, {})
+                for adjacent in face.get("adjacent_cell_ids", []) or []:
+                    other = cells_by_id.get(str(adjacent), {})
+                    if int(other.get("dimension", -1) or -1) == 2 and face_id not in {str(ref) for ref in (other.get("adjacent_cell_ids") or [])}:
+                        face_adj_asymmetry.append(f"{face_id}<->{adjacent}")
             self.check(not dangling, "BREP_COMPLETE_NO_DANGLING_CELL_REFS", "complete B-Rep topology has no dangling cell references", f"dangling refs: {dangling[:5]}", "native_topology_cells.jsonl")
             self.check(not missing_face_loops, "BREP_COMPLETE_FACE_HAS_LOOP", "complete B-Rep topology has loops for every face", f"faces without loops: {missing_face_loops[:5]}", "native_topology_wires.jsonl")
             self.check(not empty_wires and not bad_wire_edges, "BREP_COMPLETE_WIRE_EDGES_VALID", "complete B-Rep topology has valid wire edges", f"empty_wires={len(empty_wires)} bad_edges={bad_wire_edges[:5]}", "native_topology_wires.jsonl")
+            self.check(not open_wires, "BREP_COMPLETE_WIRES_CLOSED", "complete B-Rep topology has closed loop/wire records", f"open/unknown wires: {[row.get('wire_id') for row in open_wires[:5]]}", "native_topology_wires.jsonl")
+            self.check(not bad_coedges, "BREP_COMPLETE_COEDGES_MATCH_WIRES", "complete B-Rep coedges match their owning wire edge list", f"bad coedges: {bad_coedges[:5]}", "native_topology_coedges.jsonl")
+            self.check(not bad_coedge_ring, "BREP_COMPLETE_COEDGE_RING_CLOSED", "complete B-Rep coedges have previous/next links inside the same wire", f"bad coedge ring: {bad_coedge_ring[:5]}", "native_topology_coedges.jsonl")
+            self.check(not missing_reverse_edge_face, "BREP_COMPLETE_EDGE_FACE_REVERSE", "complete B-Rep edge records reverse-link to coedge owning faces", f"missing reverse edge-face: {missing_reverse_edge_face[:5]}", "native_topology_cells.jsonl")
+            self.check(not missing_face_boundary_edge, "BREP_COMPLETE_FACE_EDGE_BOUNDARY", "complete B-Rep faces list coedge edges as boundary cells", f"missing face-edge boundaries: {missing_face_boundary_edge[:5]}", "native_topology_cells.jsonl")
+            self.check(not face_adj_asymmetry, "BREP_COMPLETE_FACE_ADJACENCY_SYMMETRIC", "complete B-Rep face adjacency is symmetric", f"asymmetric face adjacency: {face_adj_asymmetry[:5]}", "native_topology_cells.jsonl")
             cap_metrics = capabilities.get("capability_metrics", {})
             metrics = cap_metrics.get("final_brep_topology_extraction", {}) if isinstance(cap_metrics, dict) else {}
             self.check(int(metrics.get("coedge_count", 0) or 0) > 0, "BREP_COMPLETE_REQUIRES_COEDGES", "complete B-Rep topology includes coedge records", "coedge_count is zero", "capabilities.json")

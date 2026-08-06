@@ -507,6 +507,8 @@ struct NativeTopologyCoedgeRecord
   std::string wire_id;
   std::string owning_face_id;
   std::string edge_cell_id;
+  std::string previous_coedge_id;
+  std::string next_coedge_id;
   long coedge_index;
   long coedge_index_in_wire;
   short edge_orientation_side;

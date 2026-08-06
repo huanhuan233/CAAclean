@@ -55,6 +55,17 @@
       "adjacencies", "normal_samples", "curvature_samples", "stable_id_method",
       "persistent_name", "value_source", "diagnostic_ids"
     ],
+    "native_topology_wires.jsonl": [
+      "wire_id", "body_id", "wire_index", "wire_kind", "owning_face_id",
+      "owning_face_topology_index", "edge_count", "closed_status",
+      "edge_cell_ids", "value_source", "diagnostic_ids"
+    ],
+    "native_topology_coedges.jsonl": [
+      "coedge_id", "body_id", "wire_id", "owning_face_id", "edge_cell_id",
+      "previous_coedge_id", "next_coedge_id", "coedge_index",
+      "coedge_index_in_wire", "edge_orientation_side", "orientation_status",
+      "value_source", "diagnostic_ids"
+    ],
     "native_feature_topology_links.jsonl": [
       "link_id", "source_feature_id", "result_id", "result_cell_id", "final_cell_id",
       "final_body_id", "mapping_direction", "relation_kind", "mapping_status",
