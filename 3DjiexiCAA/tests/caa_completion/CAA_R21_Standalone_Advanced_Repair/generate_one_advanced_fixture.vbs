@@ -7,7 +7,7 @@ Option Explicit
 '
 ' Cases:
 '   fillet | chamfer | shaft_groove | rib_slot | shell_thickness |
-'   pattern | boolean | gsd_analytic | pressure
+'   pattern | boolean | gsd_analytic | pressure | draft | fillet_advanced
 '
 ' Safety:
 '   1. Builds and reopens a temporary CATPart first.
@@ -18,11 +18,15 @@ Option Explicit
 
 Const CAT_TANGENCY_FILLET = 1
 Const CAT_MINIMAL_FILLET = 0
+Const CAT_LINEAR_FILLET_VARIATION = 0
 ' CATIA enums are zero based.  These values are deliberately explicit because
 ' Windows Script Host does not import CATIA type-library enum symbols.
 Const CAT_TANGENCY_CHAMFER = 0
 Const CAT_LENGTH_ANGLE_CHAMFER = 1
 Const CAT_NO_REVERSE_CHAMFER = 0
+Const CAT_NONE_DRAFT_NEUTRAL_PROPAGATION = 0
+Const CAT_STANDARD_DRAFT_MODE = 0
+Const CAT_NONE_DRAFT_MULTISELECT = 0
 
 Dim fso, outputDir, caseName, guidedMode
 Dim catia, cfg, ownsCatia, doc, ledger, repairLedger
@@ -71,6 +75,7 @@ If Err.Number <> 0 Or catia Is Nothing Then
   RequireSuccess "CreateObject(CATIA.Application)"
   ownsCatia = True
 End If
+On Error GoTo 0
 
 catia.Visible = True
 Err.Clear
@@ -98,6 +103,8 @@ Select Case caseName
   Case "boolean": BuildBoolean doc
   Case "gsd_analytic": BuildGsdAnalytic doc
   Case "pressure": BuildPressure doc
+  Case "draft": BuildDraft doc
+  Case "fillet_advanced": BuildFilletAdvanced doc
 End Select
 
 Err.Clear
@@ -159,7 +166,7 @@ Sub ResolveCase(ByVal requested, ByRef resolvedFile, ByRef names)
       names = Array("Pad_Shell_Base", "Shell_3mm", "Thickness_Local1mm")
     Case "pattern"
       resolvedFile = "pd_patterns.CATPart"
-      names = Array("Pad_Pattern_Base", "Pad_Pattern_Seed", "RectangularPattern_3x2")
+      names = Array("Pad_Pattern_Base", "Pad_Pattern_RectSeed", "RectangularPattern_3x2", "Pad_Pattern_CircSeed", "CircularPattern_4x90", "Pad_Pattern_UserSeed", "UserPattern_3")
     Case "boolean"
       resolvedFile = "pd_multibody_booleans.CATPart"
       names = Array("Boolean_Add", "Boolean_Remove", "Boolean_Assemble", "Boolean_Intersect")
@@ -169,9 +176,15 @@ Sub ResolveCase(ByVal requested, ByRef resolvedFile, ByRef names)
     Case "pressure"
       resolvedFile = "pressure_pad_pocket_fillet_chamfer.CATPart"
       names = Array("Pad_Pressure", "Pocket_Pressure", "Fillet_Pressure", "Chamfer_Pressure")
+    Case "draft"
+      resolvedFile = "pd_draft_variants.CATPart"
+      names = Array("Pad_Draft_Base", "Draft_Neutral_Top_7deg")
+    Case "fillet_advanced"
+      resolvedFile = "pd_fillet_advanced.CATPart"
+      names = Array("Pad_VariableFillet_Base", "VariableFillet_R3_R7", "Pad_FaceFillet_Base", "FaceFillet_R4", "Pad_TritangentFillet_Base", "TritangentFillet")
     Case Else
       WScript.Echo "[ERROR] Unknown case: " & requested
-      WScript.Echo "Allowed: fillet chamfer shaft_groove rib_slot shell_thickness pattern boolean gsd_analytic pressure"
+      WScript.Echo "Allowed: fillet chamfer shaft_groove rib_slot shell_thickness pattern boolean gsd_analytic pressure draft fillet_advanced"
       WScript.Quit 2
   End Select
 End Sub
@@ -602,30 +615,155 @@ Sub BuildShellThickness(ByVal partDoc)
 End Sub
 
 Sub BuildPattern(ByVal partDoc)
-  Dim part, body, refXY, sketch, pad, seedSketch, seed, dir1, dir2, pattern
+  Dim part, body, refXY, sketch, pad
+  Dim rectSketch, rectSeed, circSketch, circSeed, userSketch, userSeed
+  Dim dir1, dir2, pattern, circCenterRef, circAxisRef, userPositions, userAnchor
   Set part = partDoc.Part
   Set body = MainBody(part)
   Set refXY = part.CreateReferenceFromObject(part.OriginElements.PlaneXY)
-  Set sketch = RectSketch(body, refXY, "Sketch_Pattern_Base", -70, -45, 70, 45)
+  MakeRectSketch body, refXY, "Sketch_Pattern_Base", -70, -45, 70, 45, sketch
   Set pad = part.ShapeFactory.AddNewPad(sketch, 12)
   RequireSuccess "Create Pad_Pattern_Base"
+  RequireObject pad, "Pad_Pattern_Base factory result"
   pad.Name = "Pad_Pattern_Base"
   part.UpdateObject pad
   RequireSuccess "Update Pad_Pattern_Base"
-  Set seedSketch = CircleSketch(body, refXY, "Sketch_Pattern_Seed", -45, -20, 6)
-  Set seed = part.ShapeFactory.AddNewPad(seedSketch, 24)
-  RequireSuccess "Create Pad_Pattern_Seed"
-  seed.Name = "Pad_Pattern_Seed"
-  part.UpdateObject seed
-  RequireSuccess "Update Pad_Pattern_Seed"
+
+  MakeCircleSketch body, refXY, "Sketch_Pattern_RectSeed", -45, -20, 6, rectSketch
+  Set rectSeed = part.ShapeFactory.AddNewPad(rectSketch, 24)
+  RequireSuccess "Create Pad_Pattern_RectSeed"
+  RequireObject rectSeed, "Pad_Pattern_RectSeed factory result"
+  rectSeed.Name = "Pad_Pattern_RectSeed"
+  part.UpdateObject rectSeed
+  RequireSuccess "Update Pad_Pattern_RectSeed"
   Set dir1 = part.CreateReferenceFromObject(part.OriginElements.PlaneYZ)
   Set dir2 = part.CreateReferenceFromObject(part.OriginElements.PlaneZX)
   RequireSuccess "Resolve rectangular-pattern directions"
-  Set pattern = part.ShapeFactory.AddNewRectPattern(seed, 3, 2, 25, 25, 1, 1, dir1, dir2, False, False, 0)
+  Set pattern = part.ShapeFactory.AddNewRectPattern(rectSeed, 3, 2, 25, 25, 1, 1, dir1, dir2, False, False, 0)
   RequireSuccess "Create RectangularPattern_3x2"
+  RequireObject pattern, "RectangularPattern_3x2 factory result"
   pattern.Name = "RectangularPattern_3x2"
   part.UpdateObject pattern
   RequireSuccess "Update RectangularPattern_3x2"
+
+  MakeCircleSketch body, refXY, "Sketch_Pattern_CircSeed", 25, 0, 5, circSketch
+  Set circSeed = part.ShapeFactory.AddNewPad(circSketch, 18)
+  RequireSuccess "Create Pad_Pattern_CircSeed"
+  RequireObject circSeed, "Pad_Pattern_CircSeed factory result"
+  circSeed.Name = "Pad_Pattern_CircSeed"
+  part.UpdateObject circSeed
+  RequireSuccess "Update Pad_Pattern_CircSeed"
+  Set circCenterRef = HybridPointReference(part, "Pattern_Circular_Center", 25, 0, 0)
+  Set circAxisRef = part.CreateReferenceFromObject(part.OriginElements.PlaneZX)
+  RequireSuccess "Reference PlaneZX for CircularPattern axis"
+  part.InWorkObject = body
+  Set pattern = Nothing
+  Err.Clear
+  On Error Resume Next
+  Set pattern = part.ShapeFactory.AddNewCircPattern(circSeed, 2, 4, 12, 90, 1, 1, circCenterRef, circAxisRef, False, 0, True)
+  If Err.Number <> 0 Then
+    WScript.Echo "[COM-ERROR] case=pattern stage=circular method=AddNewCircPattern number=" & CStr(Err.Number) & _
+      " hex=0x" & Hex(Err.Number) & " description=" & Clean(Err.Description) & _
+      " centerType=" & ObjectTypeText(circCenterRef) & " axisType=" & ObjectTypeText(circAxisRef)
+  End If
+  RequireSuccess "Create CircularPattern_4x90"
+  On Error GoTo 0
+  RequireObject pattern, "CircularPattern_4x90 factory result"
+  pattern.Name = "CircularPattern_4x90"
+  part.UpdateObject pattern
+  RequireSuccess "Update CircularPattern_4x90"
+
+  MakeCircleSketch body, refXY, "Sketch_Pattern_UserSeed", 45, -20, 4, userSketch
+  Set userSeed = part.ShapeFactory.AddNewPad(userSketch, 16)
+  RequireSuccess "Create Pad_Pattern_UserSeed"
+  RequireObject userSeed, "Pad_Pattern_UserSeed factory result"
+  userSeed.Name = "Pad_Pattern_UserSeed"
+  part.UpdateObject userSeed
+  RequireSuccess "Update Pad_Pattern_UserSeed"
+  MakeHybridPointSetWithAnchor part, "UserPattern_Positions", Array(45, 60, 80), Array(10, 25, 0), Array(0, 0, 0), userPositions, userAnchor
+  part.InWorkObject = body
+  Set pattern = part.ShapeFactory.AddNewUserPattern(userSeed, 2)
+  RequireSuccess "Create UserPattern_3"
+  RequireObject pattern, "UserPattern_3 factory result"
+  pattern.AddFeatureToLocatePositions userPositions.HybridShapes.Item(2)
+  RequireSuccess "Attach UserPattern_Positions_P2 to UserPattern_3"
+  pattern.AddFeatureToLocatePositions userPositions.HybridShapes.Item(3)
+  RequireSuccess "Attach UserPattern_Positions_P3 to UserPattern_3"
+  pattern.AnchorPoint = userAnchor
+  RequireSuccess "Set UserPattern_3 anchor point"
+  pattern.Name = "UserPattern_3"
+  part.UpdateObject pattern
+  RequireSuccess "Update UserPattern_3"
+End Sub
+
+Sub BuildDraft(ByVal partDoc)
+  Dim part, body, refXY, sketch, pad, faceToDraft, neutralFace, draft
+  Set part = partDoc.Part
+  Set body = MainBody(part)
+  Set refXY = part.CreateReferenceFromObject(part.OriginElements.PlaneXY)
+  MakeRectSketch body, refXY, "Sketch_Draft_Base", -35, -25, 35, 25, sketch
+  Set pad = part.ShapeFactory.AddNewPad(sketch, 35)
+  RequireSuccess "Create Pad_Draft_Base"
+  pad.Name = "Pad_Draft_Base"
+  part.UpdateObject pad
+  RequireSuccess "Update Pad_Draft_Base"
+  Set faceToDraft = PadFaceReference(partDoc, part, pad, 3, "draft_face")
+  Set neutralFace = PadFaceReference(partDoc, part, pad, 2, "draft_neutral")
+  WScript.Echo "[FEATURE-CALL] case=draft method=AddNewDraft faceType=" & ObjectTypeText(faceToDraft) & _
+    " neutralType=" & ObjectTypeText(neutralFace) & " inWorkObject=" & InWorkObjectText(part)
+  Set draft = part.ShapeFactory.AddNewDraft(faceToDraft, neutralFace, CAT_NONE_DRAFT_NEUTRAL_PROPAGATION, neutralFace, 0, 0, 1, CAT_STANDARD_DRAFT_MODE, 7, CAT_NONE_DRAFT_MULTISELECT)
+  RequireSuccess "Create Draft_Neutral_Top_7deg"
+  CommitNamedFeature part, draft, "Draft_Neutral_Top_7deg", "neutral top draft"
+End Sub
+
+Sub BuildFilletAdvanced(ByVal partDoc)
+  Dim part, body, refXY, sketch, pad, edgeRef, varFillet
+  Dim faceSketch, facePad, face1, face2, faceFillet
+  Dim triSketch, triPad, triFace1, triFace2, triRemove, triFillet
+  Set part = partDoc.Part
+  Set body = MainBody(part)
+  Set refXY = part.CreateReferenceFromObject(part.OriginElements.PlaneXY)
+
+  MakeRectSketch body, refXY, "Sketch_VariableFillet_Base", -110, -25, -55, 25, sketch
+  Set pad = part.ShapeFactory.AddNewPad(sketch, 24)
+  RequireSuccess "Create Pad_VariableFillet_Base"
+  pad.Name = "Pad_VariableFillet_Base"
+  part.UpdateObject pad
+  RequireSuccess "Update Pad_VariableFillet_Base"
+  Set edgeRef = PadVerticalEdgeReference(partDoc, part, pad, sketch, 1, 2, "variable_fillet")
+  WScript.Echo "[FEATURE-CALL] case=fillet_advanced method=AddNewEdgeFilletWithVaryingRadius edgeType=" & ObjectTypeText(edgeRef)
+  Set varFillet = part.ShapeFactory.AddNewEdgeFilletWithVaryingRadius(edgeRef, CAT_MINIMAL_FILLET, CAT_LINEAR_FILLET_VARIATION, 3)
+  RequireSuccess "Create VariableFillet_R3_R7"
+  CommitNamedFeature part, varFillet, "VariableFillet_R3_R7", "variable radius edge fillet"
+
+  MakeRectSketch body, refXY, "Sketch_FaceFillet_Base", -25, -25, 30, 25, faceSketch
+  Set facePad = part.ShapeFactory.AddNewPad(faceSketch, 26)
+  RequireSuccess "Create Pad_FaceFillet_Base"
+  facePad.Name = "Pad_FaceFillet_Base"
+  part.UpdateObject facePad
+  RequireSuccess "Update Pad_FaceFillet_Base"
+  Set face1 = PadFaceReference(partDoc, part, facePad, 3, "face_fillet_first")
+  Set face2 = PadFaceReference(partDoc, part, facePad, 4, "face_fillet_second")
+  WScript.Echo "[FEATURE-CALL] case=fillet_advanced method=AddNewFaceFillet firstFaceType=" & ObjectTypeText(face1) & _
+    " secondFaceType=" & ObjectTypeText(face2)
+  Set faceFillet = part.ShapeFactory.AddNewFaceFillet(face1, face2, 4)
+  RequireSuccess "Create FaceFillet_R4"
+  CommitNamedFeature part, faceFillet, "FaceFillet_R4", "face-face fillet"
+
+  MakeRectSketch body, refXY, "Sketch_TritangentFillet_Base", 55, -25, 110, 25, triSketch
+  Set triPad = part.ShapeFactory.AddNewPad(triSketch, 26)
+  RequireSuccess "Create Pad_TritangentFillet_Base"
+  triPad.Name = "Pad_TritangentFillet_Base"
+  part.UpdateObject triPad
+  RequireSuccess "Update Pad_TritangentFillet_Base"
+  Set triFace1 = PadFaceReference(partDoc, part, triPad, 3, "tritangent_first")
+  Set triFace2 = PadFaceReference(partDoc, part, triPad, 4, "tritangent_second")
+  Set triRemove = PadFaceReference(partDoc, part, triPad, 2, "tritangent_remove")
+  WScript.Echo "[FEATURE-CALL] case=fillet_advanced method=AddNewTritangentFillet firstFaceType=" & ObjectTypeText(triFace1) & _
+    " secondFaceType=" & ObjectTypeText(triFace2) & " removeFaceType=" & ObjectTypeText(triRemove)
+  Set triFillet = part.ShapeFactory.AddNewTritangentFillet(triFace1, triFace2, triRemove)
+  RequireSuccess "Create TritangentFillet"
+  CommitNamedFeature part, triFillet, "TritangentFillet", "tritangent fillet"
 End Sub
 
 Sub BuildBoolean(ByVal partDoc)
@@ -1164,36 +1302,155 @@ Function MainBody(ByVal part)
   Set MainBody = body
 End Function
 
-Function RectSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal x1, ByVal y1, ByVal x2, ByVal y2)
+Sub MakeRectSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal x1, ByVal y1, ByVal x2, ByVal y2, ByRef outSketch)
   Dim sketch, f2d
+  Set outSketch = Nothing
   Err.Clear
+  On Error Resume Next
   Set sketch = body.Sketches.Add(supportRef)
   RequireSuccess "Create " & sketchName
+  RequireObject sketch, sketchName & " factory result"
   sketch.Name = sketchName
   Set f2d = sketch.OpenEdition()
   RequireSuccess "Open " & sketchName
+  RequireObject f2d, sketchName & " 2D factory result"
   f2d.CreateLine x1, y1, x2, y1
+  RequireSuccess "Create first line in " & sketchName
   f2d.CreateLine x2, y1, x2, y2
+  RequireSuccess "Create second line in " & sketchName
   f2d.CreateLine x2, y2, x1, y2
+  RequireSuccess "Create third line in " & sketchName
   f2d.CreateLine x1, y2, x1, y1
+  RequireSuccess "Create fourth line in " & sketchName
   sketch.CloseEdition
   RequireSuccess "Close " & sketchName
+  On Error GoTo 0
+  Set outSketch = sketch
+End Sub
+
+Function RectSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal x1, ByVal y1, ByVal x2, ByVal y2)
+  Dim sketch
+  MakeRectSketch body, supportRef, sketchName, x1, y1, x2, y2, sketch
   Set RectSketch = sketch
 End Function
 
-Function CircleSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal x, ByVal y, ByVal radius)
+Sub MakeCircleSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal x, ByVal y, ByVal radius, ByRef outSketch)
   Dim sketch, f2d
+  Set outSketch = Nothing
   Err.Clear
+  On Error Resume Next
   Set sketch = body.Sketches.Add(supportRef)
   RequireSuccess "Create " & sketchName
+  RequireObject sketch, sketchName & " factory result"
   sketch.Name = sketchName
   Set f2d = sketch.OpenEdition()
   RequireSuccess "Open " & sketchName
+  RequireObject f2d, sketchName & " 2D factory result"
   f2d.CreateClosedCircle x, y, radius
+  RequireSuccess "Create closed circle in " & sketchName
   sketch.CloseEdition
   RequireSuccess "Close " & sketchName
+  On Error GoTo 0
+  Set outSketch = sketch
+End Sub
+
+Function CircleSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal x, ByVal y, ByVal radius)
+  Dim sketch
+  MakeCircleSketch body, supportRef, sketchName, x, y, radius, sketch
   Set CircleSketch = sketch
 End Function
+
+Sub MakePointSetSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal xs, ByVal ys, ByRef outSketch)
+  Dim sketch, anchor
+  MakePointSetSketchWithAnchor body, supportRef, sketchName, xs, ys, sketch, anchor
+  Set outSketch = sketch
+End Sub
+
+Sub MakePointSetSketchWithAnchor(ByVal body, ByVal supportRef, ByVal sketchName, ByVal xs, ByVal ys, ByRef outSketch, ByRef outAnchor)
+  Dim sketch, f2d, i, point
+  Set outSketch = Nothing
+  Set outAnchor = Nothing
+  Err.Clear
+  On Error Resume Next
+  Set sketch = body.Sketches.Add(supportRef)
+  RequireSuccess "Create " & sketchName
+  RequireObject sketch, sketchName & " factory result"
+  sketch.Name = sketchName
+  Set f2d = sketch.OpenEdition()
+  RequireSuccess "Open " & sketchName
+  RequireObject f2d, sketchName & " 2D factory result"
+  For i = LBound(xs) To UBound(xs)
+    Set point = f2d.CreatePoint(xs(i), ys(i))
+    RequireSuccess "Create point " & CStr(i) & " in " & sketchName
+    If i = LBound(xs) Then Set outAnchor = point
+  Next
+  sketch.CloseEdition
+  RequireSuccess "Close " & sketchName
+  On Error GoTo 0
+  Set outSketch = sketch
+End Sub
+
+Function PointSetSketch(ByVal body, ByVal supportRef, ByVal sketchName, ByVal xs, ByVal ys)
+  Dim sketch
+  MakePointSetSketch body, supportRef, sketchName, xs, ys, sketch
+  Set PointSetSketch = sketch
+End Function
+
+Function HybridPointReference(ByVal part, ByVal pointName, ByVal x, ByVal y, ByVal z)
+  Dim hb, hsf, point
+  Set hb = part.HybridBodies.Add()
+  hb.Name = pointName & "_Set"
+  Set hsf = part.HybridShapeFactory
+  Set point = hsf.AddNewPointCoord(x, y, z)
+  point.Name = pointName
+  hb.AppendHybridShape point
+  part.UpdateObject point
+  RequireSuccess "Create " & pointName
+  Set HybridPointReference = part.CreateReferenceFromObject(point)
+  RequireSuccess "Reference " & pointName
+End Function
+
+Function HybridLineReference(ByVal part, ByVal lineName, ByVal x1, ByVal y1, ByVal z1, ByVal x2, ByVal y2, ByVal z2)
+  Dim hb, hsf, p1, p2, line
+  Set hb = part.HybridBodies.Add()
+  hb.Name = lineName & "_Set"
+  Set hsf = part.HybridShapeFactory
+  Set p1 = hsf.AddNewPointCoord(x1, y1, z1)
+  p1.Name = lineName & "_P1"
+  hb.AppendHybridShape p1
+  Set p2 = hsf.AddNewPointCoord(x2, y2, z2)
+  p2.Name = lineName & "_P2"
+  hb.AppendHybridShape p2
+  part.UpdateObject p1
+  RequireSuccess "Create " & lineName & "_P1"
+  part.UpdateObject p2
+  RequireSuccess "Create " & lineName & "_P2"
+  Set line = hsf.AddNewLinePtPt(part.CreateReferenceFromObject(p1), part.CreateReferenceFromObject(p2))
+  line.Name = lineName
+  hb.AppendHybridShape line
+  part.UpdateObject line
+  RequireSuccess "Create " & lineName
+  Set HybridLineReference = part.CreateReferenceFromObject(line)
+  RequireSuccess "Reference " & lineName
+End Function
+
+Sub MakeHybridPointSetWithAnchor(ByVal part, ByVal setName, ByVal xs, ByVal ys, ByVal zs, ByRef outFeature, ByRef outAnchor)
+  Dim hb, hsf, i, point
+  Set outFeature = Nothing
+  Set outAnchor = Nothing
+  Set hb = part.HybridBodies.Add()
+  hb.Name = setName
+  Set hsf = part.HybridShapeFactory
+  For i = LBound(xs) To UBound(xs)
+    Set point = hsf.AddNewPointCoord(xs(i), ys(i), zs(i))
+    point.Name = setName & "_P" & CStr(i + 1)
+    hb.AppendHybridShape point
+    part.UpdateObject point
+    RequireSuccess "Create " & point.Name
+    If i = LBound(xs) Then Set outAnchor = point
+  Next
+  Set outFeature = hb
+End Sub
 
 Sub CommitNamedFeature(ByVal part, ByVal feature, ByVal targetName, ByVal stepName)
   Dim errNo, errHex, errText, errSource

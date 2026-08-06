@@ -35,7 +35,7 @@ import {
   resolveFeatureCenterBuildId,
   saveRecentFeatureCenterBuildId
 } from './modules/recent-result';
-import { defaultBomVisible, geometryDisplayId, tabsForSource, workerStageLabel } from './modules/viewer-workspace';
+import { defaultBomVisible, tabsForSource, workerStageLabel } from './modules/viewer-workspace';
 import type { ViewerTab } from './modules/viewer-workspace';
 
 defineOptions({ name: 'FeatureCenterViewer' });
@@ -76,6 +76,16 @@ interface FaceMeshMap {
   primitive_to_face: Record<string, string>;
 }
 
+type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
+
+interface GeometryTreeNode {
+  id: string;
+  label: string;
+  subtitle: string;
+  kind: SelectionTarget['kind'];
+  raw?: TopologyFaceRecord | TopologySelectionRecord;
+}
+
 const route = useRoute();
 const router = useRouter();
 const assetRequestController = new AbortController();
@@ -104,6 +114,7 @@ const selectedBomNode = ref<Api.ComponentBuild.ViewerBomNode | null>(null);
 const faceFeatureIds = ref<string[]>([]);
 const loading = ref(false);
 const errorText = ref('');
+const explicitError = ref(false);
 const detailsOpen = ref(true);
 const bomVisible = ref(false);
 const activeTab = ref<ViewerTab>('bom');
@@ -114,7 +125,7 @@ const sectionEnabled = ref(false);
 const sectionOffset = ref(0);
 const geometryKeyword = ref('');
 const geometryLimit = ref(160);
-const geometryCategory = ref<'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex'>('face');
+const geometryCategory = ref<GeometryCategory>('face');
 const selectedBomPrimitiveIds = ref<string[]>([]);
 const navigationWidth = ref(310);
 const toolMode = ref<ToolMode>('select');
@@ -134,6 +145,7 @@ let controls: OrbitControls | null = null;
 let modelRoot: THREE.Object3D | null = null;
 let animationId = 0;
 let resizeObserver: ResizeObserver | null = null;
+let statusPollTimer: number | null = null;
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const faceObjects = new Map<string, THREE.Mesh[]>();
@@ -152,6 +164,23 @@ const canIsolate = computed(() => {
 const canExplode = computed(() => contract.value?.bom.assembly_mode === 'assembly' && explodableGroupCount.value > 1);
 const selectionContext = computed(() => viewerSelection.value.context || emptySelectionContext());
 const primarySelection = computed(() => viewerSelection.value.primary);
+const viewerProgress = computed(() => Math.min(100, Math.max(0, Number(contract.value?.progress ?? 0))));
+const hasBackendFailure = computed(() =>
+  Boolean(contract.value && (contract.value.status === 'failed' || contract.value.error_code || contract.value.error_message))
+);
+const processingStatusText = computed(() => {
+  if (!contract.value || contract.value.status === 'ready') return '';
+  return `${contract.value.source_format === 'CATPART' ? 'CATIA' : '模型'} 处理中：${workerStageLabel(contract.value.current_stage)}`;
+});
+const showProcessingCard = computed(() =>
+  Boolean(contract.value && contract.value.status !== 'ready' && !hasBackendFailure.value && !explicitError.value)
+);
+const showErrorCard = computed(() => Boolean(errorText.value && explicitError.value));
+const recognizedEmptyDescription = computed(() =>
+  contract.value && contract.value.status !== 'ready'
+    ? '后端仍在处理，识别特征生成后会自动显示'
+    : '当前解析结果未提供识别特征索引'
+);
 
 // 用途：只展示真实契约中的格式；没有历史结果时保持空值，绝不伪造 CATPart 或 STEP 标签。
 const sourceFormat = computed(() => contract.value?.source_format);
@@ -220,6 +249,29 @@ const filteredTopologyRecords = computed(() => {
     ? source.filter(item => `${item.id} ${topologyKind(item)}`.toLowerCase().includes(keyword))
     : source).slice(0, geometryLimit.value);
 });
+const geometryTreeNodes = computed<GeometryTreeNode[]>(() => {
+  if (geometryCategory.value === 'face') {
+    return filteredFaces.value.map((face, index) => ({
+      id: face.face_id,
+      label: `面 ${String(index + 1).padStart(3, '0')} · ${faceTypeLabel(face.surface_type)}`,
+      subtitle: face.face_id,
+      kind: 'face',
+      raw: face
+    }));
+  }
+  return filteredTopologyRecords.value.map((record, index) => ({
+    id: record.id,
+    label: `${topologyKindLabel(topologySelectionKind(record))} ${String(index + 1).padStart(3, '0')}`,
+    subtitle: record.id,
+    kind: topologySelectionKind(record),
+    raw: record
+  }));
+});
+const geometryEmptyDescription = computed(() =>
+  geometryCategory.value === 'face'
+    ? '当前解析结果未提供 Face 拓扑'
+    : `当前解析结果未提供${geometryCategoryLabel(geometryCategory.value)}`
+);
 const selectedTitle = computed(
   () => {
     const primary = primarySelection.value;
@@ -322,9 +374,25 @@ async function sha256Buffer(buffer: ArrayBuffer) {
 }
 
 // 用途：加载 STEP/CATPart 共用 Viewer 契约；可选原生语义缺失时不影响真实 GLB 展示。
+function clearStatusPoll() {
+  if (statusPollTimer == null) return;
+  window.clearTimeout(statusPollTimer);
+  statusPollTimer = null;
+}
+
+function scheduleStatusPoll(buildId: string) {
+  clearStatusPoll();
+  statusPollTimer = window.setTimeout(() => {
+    statusPollTimer = null;
+    void loadBuildBundle(buildId);
+  }, 1800);
+}
+
 async function loadBuildBundle(buildId: string) {
+  clearStatusPoll();
   loading.value = true;
   errorText.value = '';
+  explicitError.value = false;
   try {
     const result = await fetchComponentBuildViewer(buildId, { signal: assetRequestController.signal, silent: true });
     if (result.error || !result.data) throw result.error || new Error('Viewer 契约不可用');
@@ -341,7 +409,15 @@ async function loadBuildBundle(buildId: string) {
     bomVisible.value = defaultBomVisible(result.data.bom);
     activeTab.value = 'bom';
     if (result.data.status !== 'ready' || !result.data.viewer_asset) {
-      throw new Error(result.data.error_message || `模型尚未就绪：${workerStageLabel(result.data.current_stage)}`);
+      if (result.data.status === 'failed' || result.data.error_code || result.data.error_message) {
+        explicitError.value = true;
+        errorText.value =
+          result.data.error_message ||
+          result.data.error_code ||
+          `${result.data.source_format === 'CATPART' ? 'CATIA' : '模型'}处理失败`;
+      }
+      if (!explicitError.value) scheduleStatusPoll(buildId);
+      return;
     }
 
     const viewerAsset = result.data.viewer_asset;
@@ -387,6 +463,7 @@ async function loadBuildBundle(buildId: string) {
     clearSelection();
     saveRecentFeatureCenterBuildId(window.localStorage, buildId);
   } catch (error) {
+    explicitError.value = true;
     errorText.value = error instanceof Error ? error.message : 'Web Viewer 加载失败';
   } finally {
     loading.value = false;
@@ -400,8 +477,10 @@ async function retryBuild() {
   loading.value = true;
   const result = await retryComponentBuild(buildId, 'reference_step');
   if (result.error) {
+    explicitError.value = true;
     errorText.value = result.error instanceof Error ? result.error.message : '重试提交失败';
   } else {
+    explicitError.value = false;
     errorText.value = '';
     window.setTimeout(() => void loadBuildBundle(buildId), 800);
   }
@@ -718,6 +797,14 @@ function selectTopology(kind: SelectionTarget['kind'], record: TopologySelection
   selectTarget({ kind, id: record.id, label: record.id, raw: record.raw || record }, 'topology');
 }
 
+function selectGeometryTreeNode(node: GeometryTreeNode) {
+  if (node.kind === 'face') {
+    selectFace(node.id);
+    return;
+  }
+  selectTopology(node.kind, node.raw as TopologySelectionRecord);
+}
+
 function topologySelectionKind(record: TopologySelectionRecord): SelectionTarget['kind'] {
   if (geometryCategory.value === 'body_solid') return topologyKind(record) === 'body' ? 'body' : 'solid';
   if (geometryCategory.value === 'loop') return 'loop';
@@ -725,6 +812,13 @@ function topologySelectionKind(record: TopologySelectionRecord): SelectionTarget
   if (geometryCategory.value === 'edge') return 'edge';
   if (geometryCategory.value === 'vertex') return 'vertex';
   return 'face';
+}
+
+function setGeometryCategory(command: string | number | object) {
+  const value = String(command) as GeometryCategory;
+  if (['body_solid', 'face', 'loop', 'coedge', 'edge', 'vertex'].includes(value)) {
+    geometryCategory.value = value;
+  }
 }
 
 interface MaterialSnapshot {
@@ -765,43 +859,49 @@ function restoreMaterial(material: THREE.Material) {
 
 // 用途：统一计算选中、高亮、隔离、透明和剖切，不因侧栏响应式变化重置模型状态。
 function applyVisualState() {
+  const context = selectionContext.value;
   const featureFaces = new Set([
     ...(featureMeshMap.value ? facesForFeature(featureMeshMap.value, selectedFeatureId.value) : []),
-    ...selectedNativeFaces.value
+    ...selectedNativeFaces.value,
+    ...context.renderFaceIds,
+    ...context.nativeFaceIds
   ]);
-  const bomPrimitives = new Set(selectedBomPrimitiveIds.value);
+  const bomPrimitives = new Set([...selectedBomPrimitiveIds.value, ...context.primitiveIds]);
   const wholeSinglePart = Boolean(selectedBomNode.value && contract.value?.bom.assembly_mode === 'single_part');
   const hasSelection =
     featureFaces.size > 0 || bomPrimitives.size > 0 || wholeSinglePart || Boolean(selectedFaceId.value);
-  for (const [faceId, objects] of faceObjects.entries()) {
-    for (const object of objects) {
-      const primitiveId = String(
-        object.userData.mesh_primitive_id ?? faceMeshMap.value?.faces[faceId]?.mesh_primitive_id ?? ''
-      );
-      const active =
-        wholeSinglePart ||
-        featureFaces.has(faceId) ||
-        faceId === selectedFaceId.value ||
-        bomPrimitives.has(primitiveId);
-      const originalVisible = object.userData.cad_original_visible !== false;
-      object.visible = originalVisible && (!isolated.value || !hasSelection || active);
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const material of materials) {
-        const standard = material as THREE.MeshStandardMaterial;
-        restoreMaterial(material);
-        if (hasSelection && active) {
-          standard.color?.set('#6254d8');
-          standard.emissive?.set('#6254d8');
-          standard.emissiveIntensity = 0.35;
-        }
-        if (transparent.value) {
-          standard.transparent = true;
-          standard.opacity = hasSelection && active ? 0.92 : 0.24;
-          standard.depthWrite = Boolean(hasSelection && active);
-        }
-        standard.clippingPlanes = sectionEnabled.value ? [clippingPlane] : [];
-        standard.needsUpdate = true;
+  for (const object of pickableObjects) {
+    if (!(object instanceof THREE.Mesh)) continue;
+    const primitiveId = String(object.userData.mesh_primitive_id ?? object.userData.primitive_id ?? '');
+    const faceId = String(
+      object.userData.face_id ??
+        object.userData.cad_face_id ??
+        (primitiveId ? faceMeshMap.value?.primitive_to_face?.[primitiveId] : '') ??
+        ''
+    );
+    const active =
+      wholeSinglePart ||
+      featureFaces.has(faceId) ||
+      faceId === selectedFaceId.value ||
+      bomPrimitives.has(primitiveId);
+    const originalVisible = object.userData.cad_original_visible !== false;
+    object.visible = originalVisible && (!isolated.value || !hasSelection || active);
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      const standard = material as THREE.MeshStandardMaterial;
+      restoreMaterial(material);
+      if (hasSelection && active) {
+        standard.color?.set('#6254d8');
+        standard.emissive?.set('#6254d8');
+        standard.emissiveIntensity = 0.35;
       }
+      if (transparent.value) {
+        standard.transparent = true;
+        standard.opacity = hasSelection && active ? 0.94 : 0.2;
+        standard.depthWrite = Boolean(hasSelection && active);
+      }
+      standard.clippingPlanes = sectionEnabled.value ? [clippingPlane] : [];
+      standard.needsUpdate = true;
     }
   }
   clippingPlane.constant = sectionOffset.value;
@@ -1082,6 +1182,34 @@ function faceTypeLabel(type: string | undefined) {
   );
 }
 
+function geometryCategoryLabel(category: GeometryCategory) {
+  return {
+    body_solid: '几何体/实体',
+    face: '面',
+    loop: '边界环/线框',
+    coedge: '有向边',
+    edge: '边',
+    vertex: '顶点'
+  }[category];
+}
+
+function topologyKindLabel(kind: SelectionTarget['kind']) {
+  return {
+    assembly: '装配',
+    part_instance: '零件实例',
+    part: '零件',
+    body: '几何体',
+    solid: '实体',
+    native_feature: '原生特征',
+    recognized_feature: '识别特征',
+    face: '面',
+    loop: '边界环',
+    coedge: '有向边',
+    edge: '边',
+    vertex: '顶点'
+  }[kind];
+}
+
 watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
 onMounted(async () => {
@@ -1098,6 +1226,7 @@ onMounted(async () => {
   await loadBuildBundle(buildId);
 });
 onBeforeUnmount(() => {
+  clearStatusPoll();
   assetRequestController.abort();
   if (animationId) cancelAnimationFrame(animationId);
   resizeObserver?.disconnect();
@@ -1145,7 +1274,18 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div v-if="errorText" class="error-card">
+    <div v-if="showProcessingCard" class="processing-card">
+      <div class="processing-copy">
+        <strong>{{ processingStatusText }}</strong>
+        <span>后端进度 {{ viewerProgress }}%</span>
+      </div>
+      <ElProgress :percentage="viewerProgress" :stroke-width="8" :show-text="false" class="processing-progress" />
+      <button v-if="route.query.build_id" type="button" @click="loadBuildBundle(String(route.query.build_id))">
+        重新检查
+      </button>
+    </div>
+
+    <div v-if="showErrorCard" class="error-card">
       <strong>{{ contract?.source_format === 'CATPART' ? 'CATIA 处理未完成' : '模型处理未完成' }}</strong>
       <span>失败阶段：{{ workerStageLabel(contract?.current_stage) }}</span>
       <span v-if="contract?.error_code">错误码：{{ contract.error_code }}</span>
@@ -1231,58 +1371,48 @@ onBeforeUnmount(() => {
                   <strong>{{ feature.family }} / {{ feature.subtype }}</strong>
                   <span>{{ feature.feature_center_id }} · {{ feature.review_state }}</span>
                 </button>
-                <ElEmpty v-if="!canonicalFeatures.length" description="暂无可信识别特征" />
+                <ElEmpty v-if="!canonicalFeatures.length" :description="recognizedEmptyDescription" />
               </div>
             </div>
 
             <template v-if="activeTab === 'geometry'">
-              <ElInput v-model="geometryKeyword" clearable placeholder="搜索面编号或曲面类型" class="geometry-search" />
-              <div class="geometry-tabs">
-                <button type="button" :class="{ active: geometryCategory === 'body_solid' }" @click="geometryCategory = 'body_solid'">
-                  Body/Solid
-                </button>
-                <button type="button" :class="{ active: geometryCategory === 'face' }" @click="geometryCategory = 'face'">
-                  Face
-                </button>
-                <button type="button" :class="{ active: geometryCategory === 'loop' }" @click="geometryCategory = 'loop'">
-                  Loop/Wire
-                </button>
-                <button type="button" :class="{ active: geometryCategory === 'coedge' }" @click="geometryCategory = 'coedge'">
-                  Coedge
-                </button>
-                <button type="button" :class="{ active: geometryCategory === 'edge' }" @click="geometryCategory = 'edge'">
-                  Edge
-                </button>
-                <button type="button" :class="{ active: geometryCategory === 'vertex' }" @click="geometryCategory = 'vertex'">
-                  Vertex
-                </button>
+              <div class="geometry-toolbar">
+                <ElInput v-model="geometryKeyword" clearable placeholder="搜索编号或拓扑类型" class="geometry-search" />
+                <ElDropdown trigger="click" @command="setGeometryCategory">
+                  <button type="button" class="geometry-filter-button" title="过滤拓扑类型" aria-label="过滤拓扑类型">
+                    <SvgIcon icon="lucide:list-filter" />
+                  </button>
+                  <template #dropdown>
+                    <ElDropdownMenu>
+                      <ElDropdownItem command="body_solid">几何体/实体</ElDropdownItem>
+                      <ElDropdownItem command="face">面</ElDropdownItem>
+                      <ElDropdownItem command="loop">边界环/线框</ElDropdownItem>
+                      <ElDropdownItem command="coedge">有向边</ElDropdownItem>
+                      <ElDropdownItem command="edge">边</ElDropdownItem>
+                      <ElDropdownItem command="vertex">顶点</ElDropdownItem>
+                    </ElDropdownMenu>
+                  </template>
+                </ElDropdown>
               </div>
-              <button
-                v-if="geometryCategory === 'face'"
-                v-for="(face, index) in filteredFaces"
-                :key="face.face_id"
-                type="button"
-                class="list-card geometry-card"
-                :class="{ active: selectedFaceId === face.face_id }"
-                @click="selectFace(face.face_id)"
+              <div class="geometry-filter-label">当前过滤：{{ geometryCategoryLabel(geometryCategory) }}</div>
+              <ElTree
+                v-if="geometryTreeNodes.length"
+                :data="geometryTreeNodes"
+                node-key="id"
+                :props="{ label: 'label', children: 'children' }"
+                highlight-current
+                @node-click="selectGeometryTreeNode"
               >
-                <strong>{{ geometryDisplayId('face', index) }} · {{ faceTypeLabel(face.surface_type) }}</strong>
-                <span>面积 {{ face.area == null ? '—' : `${face.area.toFixed(3)} mm²` }}</span>
-              </button>
-              <button
-                v-if="geometryCategory !== 'face'"
-                v-for="record in filteredTopologyRecords"
-                :key="record.id"
-                type="button"
-                class="list-card geometry-card"
-                :class="{ active: primarySelection?.id === record.id }"
-                @click="
-                  selectTopology(topologySelectionKind(record), record)
-                "
-              >
-                <strong>{{ record.id }}</strong>
-                <span>{{ topologyKind(record) || 'topology' }}</span>
-              </button>
+                <template #default="{ data }">
+                  <span
+                    class="geometry-tree-node"
+                    :class="{ active: primarySelection?.id === data.id || selectedFaceId === data.id }"
+                  >
+                    <strong>{{ data.label }}</strong>
+                    <small>{{ data.subtitle }}</small>
+                  </span>
+                </template>
+              </ElTree>
               <button
                 v-if="geometryCategory === 'face' && filteredFaces.length < topologyFaces.length"
                 type="button"
@@ -1292,8 +1422,8 @@ onBeforeUnmount(() => {
                 继续加载
               </button>
               <ElEmpty
-                v-if="geometryCategory === 'face' ? !topologyFaces.length : !filteredTopologyRecords.length"
-                description="当前解析结果未提供该类拓扑索引"
+                v-if="!geometryTreeNodes.length"
+                :description="geometryEmptyDescription"
               />
             </template>
           </div>
@@ -1664,6 +1794,29 @@ button:disabled {
 .muted {
   color: var(--el-text-color-secondary);
 }
+.processing-card {
+  display: grid;
+  grid-template-columns: minmax(260px, max-content) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+  padding: 10px 14px;
+}
+.processing-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--el-color-primary);
+}
+.processing-copy span {
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+.processing-progress {
+  min-width: 160px;
+}
 .error-card {
   display: flex;
   align-items: center;
@@ -1702,7 +1855,6 @@ button:disabled {
 .details {
   min-width: 0;
   min-height: 0;
-  border: 1px solid var(--el-border-color-light);
   border-radius: 9px;
   background: var(--el-bg-color);
   overflow: hidden;
@@ -1817,6 +1969,7 @@ button:disabled {
   display: grid;
   width: 42px;
   height: 42px;
+  border: 0;
   place-items: center;
   padding: 0;
 }
@@ -1863,19 +2016,54 @@ button:disabled {
   font-size: 12px;
   font-weight: 600;
 }
-.geometry-search {
-  margin-bottom: 10px;
-}
-.geometry-tabs {
+.geometry-toolbar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 10px;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
 }
-.geometry-tabs button {
+.geometry-search {
   min-width: 0;
-  padding: 6px 7px;
+}
+.geometry-filter-button {
+  display: grid;
+  width: 36px;
+  height: 32px;
+  border: 0;
+  place-items: center;
+  padding: 0;
+}
+.geometry-filter-button :deep(.svg-icon) {
+  font-size: 17px;
+}
+.geometry-filter-label {
+  margin: 0 2px 8px;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+.geometry-tree-node {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.25;
+}
+.geometry-tree-node strong {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.geometry-tree-node small {
+  max-width: 220px;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.geometry-tree-node.active strong {
+  color: var(--el-color-primary);
 }
 .load-more {
   width: 100%;

@@ -182,3 +182,7 @@ fta_geometry_references.CATPart	blocked	V5R21SP0	missing fixed native FTA names:
 fta_orphan_invalid.CATPart	blocked	V5R21SP0	missing fixed native FTA names: ORPHAN_SUPPRESSED_FEATURE,INVALID_GDT,INVALID_VIEW_CAPTURE
 version_fta_v1.CATPart	blocked	V5R21SP0	formal CATPart missing; scaffold exists but cannot substitute formal native FTA
 version_fta_v2.CATPart	blocked	V5R21SP0	formal CATPart missing
+pd_patterns.CATPart	blocked	V5R21SP0	standalone repair failed 0x233C Missing expected native history object in-memory final update: Pad_Pattern_Base
+pd_patterns.CATPart	blocked	V5R21SP0	standalone repair failed 0x233F CircularPattern_4x90 factory result: CATIA returned Nothing
+pd_patterns.CATPart	blocked	V5R21SP0	standalone repair failed 0x233F CircularPattern_4x90 factory result: CATIA returned Nothing
+pd_patterns.CATPart	generated	V5R21SP0	standalone repair; close/reopen verified; expected history: Pad_Pattern_Base,Pad_Pattern_RectSeed,RectangularPattern_3x2,Pad_Pattern_CircSeed,CircularPattern_4x90,Pad_Pattern_UserSeed,UserPattern_3

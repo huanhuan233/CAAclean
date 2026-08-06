@@ -38,3 +38,7 @@
 20260805_131158	pd_shell_thickness.CATPart	generated	V5R21SP0	standalone repair; close/reopen verified; expected history: Pad_Shell_Base,Shell_3mm,Thickness_Local1mm
 20260805_131318	pressure_pad_pocket_fillet_chamfer.CATPart	blocked	V5R21SP0	standalone repair failed 0x233C Missing expected native history object in-memory final update: Fillet_Pressure
 20260805_131451	pressure_pad_pocket_fillet_chamfer.CATPart	generated	V5R21SP0	standalone repair; close/reopen verified; expected history: Pad_Pressure,Pocket_Pressure,Fillet_Pressure,Chamfer_Pressure
+20260806_112326	pd_patterns.CATPart	blocked	V5R21SP0	standalone repair failed 0x233C Missing expected native history object in-memory final update: Pad_Pattern_Base
+20260806_112641	pd_patterns.CATPart	blocked	V5R21SP0	standalone repair failed 0x233F CircularPattern_4x90 factory result: CATIA returned Nothing
+20260806_112701	pd_patterns.CATPart	blocked	V5R21SP0	standalone repair failed 0x233F CircularPattern_4x90 factory result: CATIA returned Nothing
+20260806_112926	pd_patterns.CATPart	generated	V5R21SP0	standalone repair; close/reopen verified; expected history: Pad_Pattern_Base,Pad_Pattern_RectSeed,RectangularPattern_3x2,Pad_Pattern_CircSeed,CircularPattern_4x90,Pad_Pattern_UserSeed,UserPattern_3

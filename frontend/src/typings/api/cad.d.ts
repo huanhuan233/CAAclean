@@ -426,6 +426,7 @@ declare namespace Api {
       task_id: string;
       status: string;
       current_stage: string | null;
+      progress?: number | null;
       source_format: 'STEP' | 'CATPART';
       processing_route: 'step_cad_parse' | 'catia_feature_center';
       summary: {

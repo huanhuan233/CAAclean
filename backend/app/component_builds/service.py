@@ -388,6 +388,7 @@ class ComponentBuildService:
             "summary": summary,
             "bom": bom,
             "worker": manifest.get("worker") or {"mode": "not_applicable"},
+            "progress": int(getattr(revision, "progress", 0) or 0),
         }
         if revision.status != "completed" or revision.status_message != "ready" or any(not viewer.get(key) for key in required):
             return {
