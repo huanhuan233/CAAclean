@@ -9,6 +9,10 @@
     "PD-PAD-01",
     "PD-POCKET-01",
     "PD-FILLET-01",
+    "PD-CHAMFER-01",
+    "PD-SHELL-01",
+    "PD-REVOLVE-01",
+    "PD-SWEEP-01",
     "PD-BOOLEAN-01",
     "PRODUCT-01",
     "PRODUCT-02"
@@ -64,6 +68,10 @@
     "PD-PAD-01": ["pad"],
     "PD-POCKET-01": ["pad", "pocket"],
     "PD-FILLET-01": ["fillet"],
+    "PD-CHAMFER-01": ["pad", "chamfer"],
+    "PD-SHELL-01": ["pad", "shell", "thickness"],
+    "PD-REVOLVE-01": ["shaft", "groove"],
+    "PD-SWEEP-01": ["rib", "slot"],
     "PD-BOOLEAN-01": ["add", "remove", "assemble", "intersect"]
   },
   "native_feature_parameter_field_contract": {
@@ -145,6 +153,19 @@
         "objects_to_fillet"
       ]
     },
+    "chamfer": {
+      "required_parameters": [
+        "mode",
+        "propagation",
+        "orientation",
+        "length1",
+        "length2",
+        "angle"
+      ],
+      "required_references": [
+        "elements_to_chamfer"
+      ]
+    },
     "shell": {
       "required_parameters": [
         "internal_thickness",
@@ -160,6 +181,64 @@
       ],
       "required_references": [
         "faces_to_thicken"
+      ]
+    },
+    "shaft": {
+      "required_parameters": [
+        "first_angle",
+        "second_angle",
+        "is_thin",
+        "neutral_fiber",
+        "merge_end"
+      ],
+      "required_references": [
+        "profile_sketch",
+        "revolute_axis"
+      ]
+    },
+    "groove": {
+      "required_parameters": [
+        "first_angle",
+        "second_angle",
+        "is_thin",
+        "neutral_fiber",
+        "merge_end"
+      ],
+      "required_references": [
+        "profile_sketch",
+        "revolute_axis"
+      ]
+    },
+    "rib": {
+      "required_parameters": [
+        "merge_mode",
+        "is_thin",
+        "neutral_fiber",
+        "merge_end",
+        "move_profile_to_path",
+        "normal_axis_dir_reverse",
+        "anchor_dir_reverse"
+      ],
+      "required_references": [
+        "profile_sketch",
+        "center_curve_sketch",
+        "center_curve_element"
+      ]
+    },
+    "slot": {
+      "required_parameters": [
+        "merge_mode",
+        "is_thin",
+        "neutral_fiber",
+        "merge_end",
+        "move_profile_to_path",
+        "normal_axis_dir_reverse",
+        "anchor_dir_reverse"
+      ],
+      "required_references": [
+        "profile_sketch",
+        "center_curve_sketch",
+        "center_curve_element"
       ]
     },
     "add": {
@@ -198,7 +277,7 @@
     "absolute instance transform extraction",
     "PRODUCT-01 and PRODUCT-02 known point numeric validation",
     "native startup_type recognition",
-    "Hole, Pad, Pocket, constant edge Fillet and Boolean operation payload extraction through implemented Public CAA decoders, checked by field-level payload contracts",
+    "Hole, Pad, Pocket, constant edge Fillet, Chamfer, Shell, Thickness, Shaft, Groove, Rib, Slot and Boolean operation payload extraction through implemented Public CAA decoders, checked by field-level payload contracts",
     "basic B-Rep topology output",
     "current mesh to B-Rep face range evidence",
     "ResultOUT to final Cell runtime survival evidence",
@@ -210,7 +289,7 @@
     "cross-session persistent naming",
     "complete reverse history mapping",
     "complete optional-reference coverage for every Part Design family and GSD parameter decoders",
-    "Phase 1 completion for Chamfer, Draft, Shell/Thickness promotion, Shaft, Groove, Rib, Slot, Rectangular/Circular/User Pattern, variable Fillet, face Fillet or tritangent Fillet before formal fixture and field-contract promotion",
+    "Phase 1 completion for Draft, Rectangular/Circular/User Pattern, variable Fillet, face Fillet or tritangent Fillet before formal fixture and field-contract promotion",
     "complete FTA-Topology mapping",
     "complete trimmed UV-loop semantics, curvature fields and cross-session persistent topology names"
   ]

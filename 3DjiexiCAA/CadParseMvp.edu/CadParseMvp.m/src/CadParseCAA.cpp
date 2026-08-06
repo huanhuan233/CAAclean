@@ -53,6 +53,7 @@
 #include "CATIAThickness.h"
 #include "CATIARevolution.h"
 #include "CATIASweep.h"
+#include "CATISweep.h"
 #include "CATIAPattern.h"
 #include "CATIARectPattern.h"
 #include "CATIACircPattern.h"
@@ -4577,6 +4578,30 @@ public:
         }
         interface_supported = true;
         output.interface_key = "CATIASweep";
+        CaaInterfaceGuard<CATISweep> public_sweep_guard;
+        if (SUCCEEDED(_spec->QueryInterface(IID_CATISweep,
+            reinterpret_cast<void**>(&public_sweep_guard.Out()))) &&
+            public_sweep_guard.Get())
+        {
+          CATISpecObject_var profile_sketch = NULL_var;
+          CATISpecObject_var center_curve_sketch = NULL_var;
+          try { profile_sketch = public_sweep_guard.Get()->GetProfile(); }
+          catch (...) { profile_sketch = NULL_var; }
+          AddSpecObjectReferenceField(output, "profile_sketch", profile_sketch,
+                                      "CATISweep.GetProfile", true, ok);
+          try { center_curve_sketch = public_sweep_guard.Get()->GetCenterCurve(); }
+          catch (...) { center_curve_sketch = NULL_var; }
+          AddSpecObjectReferenceField(output, "center_curve_sketch", center_curve_sketch,
+                                      "CATISweep.GetCenterCurve", true, ok);
+        }
+        else
+        {
+          ok = false;
+          AddSpecObjectReferenceField(output, "profile_sketch", NULL_var,
+                                      "CATISweep.GetProfile", true, ok);
+          AddSpecObjectReferenceField(output, "center_curve_sketch", NULL_var,
+                                      "CATISweep.GetCenterCurve", true, ok);
+        }
         CaaInterfaceGuard<CATIAReference> center_guard;
         if (SUCCEEDED(sweep_guard.Get()->get_CenterCurveElement(center_guard.Out())))
           AddSingleReferenceField(output, "center_curve_element", center_guard.Get(),
