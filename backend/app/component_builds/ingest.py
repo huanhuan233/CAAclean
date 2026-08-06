@@ -342,6 +342,7 @@ async def _build_feature_center(
     native_feature_count = 0
     if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
         native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
+    native_assets = _available_native_assets(native_bundle)
     recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
     feature_face_mapping_count = _count_jsonl_records(bundle / "feature_geometry_links.jsonl")
     solid_count = _read_feature_center_solid_count(bundle / "parts.jsonl")
@@ -354,6 +355,8 @@ async def _build_feature_center(
                 "scene_manifest": "feature-center/manifest.json",
                 "face_mesh_map": "feature-center/lightweight/face_mesh_map.json",
                 "feature_mesh_map": "feature-center/lightweight/feature_mesh_map.json",
+                "selection_index": "feature-center/lightweight/selection_index.json"
+                if (bundle / "lightweight" / "selection_index.json").is_file() else None,
             },
             "feature_center": {
                 "available": (bundle / "canonical_features.jsonl").stat().st_size > 0,
@@ -370,9 +373,8 @@ async def _build_feature_center(
                 if (bundle / "topology_edges.jsonl").is_file() else None,
             },
             "native_semantics": {
-                "available": native_bundle is not None and (native_bundle / "features.jsonl").is_file(),
-                "features": "native-caa/features.jsonl"
-                if native_bundle is not None and (native_bundle / "features.jsonl").is_file() else None,
+                "available": bool(native_assets),
+                **native_assets,
             },
             "viewer_summary": {
                 "solid_count": solid_count,
@@ -412,6 +414,32 @@ def _read_feature_center_solid_count(path: Path) -> int:
             record = json.loads(line)
             total += int(record.get("solid_count") or record.get("geometry_summary", {}).get("solid_count") or 0)
     return total
+
+
+def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
+    if native_bundle is None:
+        return {}
+    candidates = {
+        "features": "features.jsonl",
+        "native_features": "native_features.jsonl",
+        "topology_bodies": "native_topology_bodies.jsonl",
+        "topology_cells": "native_topology_cells.jsonl",
+        "topology_wires": "native_topology_wires.jsonl",
+        "topology_coedges": "native_topology_coedges.jsonl",
+        "mesh_face_map": "native_mesh_face_map.jsonl",
+        "mesh_triangles": "native_mesh_triangles.jsonl",
+        "feature_results": "native_feature_results.jsonl",
+        "feature_result_cells": "native_feature_result_cells.jsonl",
+        "feature_topology_links": "native_feature_topology_links.jsonl",
+        "product_references": "product_references.jsonl",
+        "product_instances": "product_instances.jsonl",
+        "capabilities": "capabilities.json",
+    }
+    return {
+        key: f"native-caa/{file_name}"
+        for key, file_name in candidates.items()
+        if (native_bundle / file_name).is_file()
+    }
 
 
 # 用途：重试时只清理本任务生成物，保留上传源文件和持久化任务记录。

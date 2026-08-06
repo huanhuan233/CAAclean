@@ -410,6 +410,8 @@ class ComponentBuildService:
                 "scene_manifest_url": asset_base + viewer["scene_manifest"],
                 "face_mesh_map_url": asset_base + viewer["face_mesh_map"],
                 "feature_mesh_map_url": asset_base + viewer["feature_mesh_map"],
+                "selection_index_url": asset_base + viewer["selection_index"]
+                if viewer.get("selection_index") else None,
             },
             "feature_center": {
                 "available": bool(feature_center.get("available")),
@@ -426,14 +428,32 @@ class ComponentBuildService:
                 "topology_edges_url": asset_base + feature_center["topology_edges"]
                 if feature_center.get("topology_edges") else None,
             },
-            "native_semantics": {
-                "available": bool((manifest.get("native_semantics") or {}).get("available")),
-                "features_url": asset_base + (manifest.get("native_semantics") or {})["features"]
-                if (manifest.get("native_semantics") or {}).get("features") else None,
-            },
+            "native_semantics": self._native_semantics_contract(asset_base, manifest.get("native_semantics") or {}),
             "error_code": None,
             "error_message": None,
         }
+
+    @staticmethod
+    def _native_semantics_contract(asset_base: str, native: dict) -> dict:
+        payload = {"available": bool(native.get("available"))}
+        for key in (
+            "features",
+            "native_features",
+            "topology_bodies",
+            "topology_cells",
+            "topology_wires",
+            "topology_coedges",
+            "mesh_face_map",
+            "mesh_triangles",
+            "feature_results",
+            "feature_result_cells",
+            "feature_topology_links",
+            "product_references",
+            "product_instances",
+            "capabilities",
+        ):
+            payload[f"{key}_url"] = asset_base + native[key] if native.get(key) else None
+        return payload
 
     async def _viewer_bom(self, revision, source_format: str) -> dict:
         """用途：把数据库中的真实结构实体投影为统一 BOM；无装配数据时保持单零件/空契约。"""

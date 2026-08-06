@@ -42,8 +42,14 @@ def test_lightweight_mesh_is_deterministic_and_bidirectional() -> None:
     assert first.face_mesh_map == second.face_mesh_map
     assert set(first.face_mesh_map["faces"]) == {"FACE-A", "FACE-B"}
     assert first.feature_mesh_map["features"]["FC1"]["face_ids"] == ["FACE-A", "FACE-B"]
+    assert first.selection_index["schema_version"] == "cad_viewer_selection_v1"
     for primitive_id, face_id in first.face_mesh_map["primitive_to_face"].items():
         assert first.face_mesh_map["faces"][face_id]["mesh_primitive_id"] == primitive_id
+        assert first.selection_index["primitive_to_render_face"][primitive_id] == face_id
+        assert primitive_id in first.selection_index["render_face_to_primitives"][face_id]
+    assert first.selection_index["render_face_to_recognized_features"]["FACE-A"] == ["FC1"]
+    assert first.selection_index["recognized_feature_to_render_faces"]["FC1"] == ["FACE-A", "FACE-B"]
+    assert first.selection_index["mapping_summary"]["exact"] == 2
     assert first.triangle_count == 2
 
 

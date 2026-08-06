@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
-import { buildFaceToFeatureIndex, facesForFeature, parseJsonLines } from './modules/feature-center-bundle';
+import { facesForFeature, parseJsonLines } from './modules/feature-center-bundle';
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
 import { buildDetailPanelLayout } from './modules/detail-panel';
 import type { DetailGroup } from './modules/detail-panel';
@@ -18,6 +18,18 @@ import { registerCadPickables, resolveCadSelection } from './modules/cad-selecti
 import type { CadSelectionTarget } from './modules/cad-selection';
 import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
 import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
+import {
+  clearViewerSelection,
+  emptySelectionContext,
+  resolveViewerSelection,
+  selectionPrimaryId
+} from './modules/viewer-selection';
+import type {
+  SelectionTarget,
+  TopologySelectionRecord,
+  ViewerSelection,
+  ViewerSelectionIndex
+} from './modules/viewer-selection';
 import {
   readRecentFeatureCenterBuildId,
   resolveFeatureCenterBuildId,
@@ -72,9 +84,17 @@ const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
+const topologyBodies = ref<TopologySelectionRecord[]>([]);
+const topologySolids = ref<TopologySelectionRecord[]>([]);
+const topologyLoops = ref<TopologySelectionRecord[]>([]);
+const topologyCoedges = ref<TopologySelectionRecord[]>([]);
+const topologyEdges = ref<TopologySelectionRecord[]>([]);
+const topologyVertices = ref<TopologySelectionRecord[]>([]);
 const measurements = ref<MeasurementRecord[]>([]);
 const featureMeshMap = ref<FeatureMeshMap | null>(null);
 const faceMeshMap = ref<FaceMeshMap | null>(null);
+const selectionIndex = ref<ViewerSelectionIndex | null>(null);
+const viewerSelection = ref<ViewerSelection>(clearViewerSelection());
 const selectedFeatureId = ref('');
 const selectedNativeFeatureId = ref('');
 // 用途：记录左侧规格树当前行，分组节点也能保留视觉选中状态而不被当成真实 Feature。
@@ -94,6 +114,7 @@ const sectionEnabled = ref(false);
 const sectionOffset = ref(0);
 const geometryKeyword = ref('');
 const geometryLimit = ref(160);
+const geometryCategory = ref<'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex'>('face');
 const selectedBomPrimitiveIds = ref<string[]>([]);
 const navigationWidth = ref(310);
 const toolMode = ref<ToolMode>('select');
@@ -129,6 +150,8 @@ const canIsolate = computed(() => {
   return Boolean(featureMeshMap.value && facesForFeature(featureMeshMap.value, selectedFeatureId.value).length);
 });
 const canExplode = computed(() => contract.value?.bom.assembly_mode === 'assembly' && explodableGroupCount.value > 1);
+const selectionContext = computed(() => viewerSelection.value.context || emptySelectionContext());
+const primarySelection = computed(() => viewerSelection.value.primary);
 
 // 用途：只展示真实契约中的格式；没有历史结果时保持空值，绝不伪造 CATPart 或 STEP 标签。
 const sourceFormat = computed(() => contract.value?.source_format);
@@ -145,11 +168,9 @@ const selectedMeasurements = computed(() =>
 );
 const nativeFaceRefs = computed(() => {
   const index: Record<string, string[]> = {};
-  canonicalFeatures.value.forEach(feature => {
-    feature.native_feature_ids.forEach(nativeId => {
-      index[nativeId] = [...new Set([...(index[nativeId] || []), ...feature.geometry_refs.face_ids])];
-    });
-  });
+  for (const [featureId, faceIds] of Object.entries(selectionIndex.value?.native_feature_to_native_faces || {})) {
+    index[featureId] = [...new Set(faceIds)].sort();
+  }
   return index;
 });
 const nativeTreeNodes = computed(() =>
@@ -163,7 +184,17 @@ const selectedNativeTreeParent = computed(() => {
   const parentId = selectedNativeTreeNode.value?.parentId;
   return parentId ? (nativeTreeNodeIndex.value.get(parentId) ?? null) : null;
 });
-const selectedNativeParameters = computed(() => Object.entries(selectedNativeFeature.value?.attributes || {}));
+const selectedNativeParameters = computed(() =>
+  Object.entries(
+    selectedNativeFeature.value?.native_feature_parameters ||
+      selectedNativeFeature.value?.attributes ||
+      {}
+  )
+);
+const selectedNativeParameterFamily = computed(() => {
+  const payload = selectedNativeFeature.value?.native_feature_parameters as Record<string, unknown> | undefined;
+  return String(payload?.family || selectedNativeFeature.value?.payload_type || '');
+});
 const selectedNativeFaces = computed(() => nativeFaceRefs.value[selectedNativeFeatureId.value] || []);
 const filteredFaces = computed(() => {
   const keyword = geometryKeyword.value.trim().toLowerCase();
@@ -172,14 +203,34 @@ const filteredFaces = computed(() => {
     : topologyFaces.value;
   return source.slice(0, geometryLimit.value);
 });
+const filteredTopologyRecords = computed(() => {
+  const keyword = geometryKeyword.value.trim().toLowerCase();
+  const source = geometryCategory.value === 'body_solid'
+    ? [...topologyBodies.value, ...topologySolids.value]
+    : geometryCategory.value === 'loop'
+      ? topologyLoops.value
+      : geometryCategory.value === 'coedge'
+        ? topologyCoedges.value
+        : geometryCategory.value === 'edge'
+          ? topologyEdges.value
+          : geometryCategory.value === 'vertex'
+            ? topologyVertices.value
+            : [];
+  return (keyword
+    ? source.filter(item => `${item.id} ${topologyKind(item)}`.toLowerCase().includes(keyword))
+    : source).slice(0, geometryLimit.value);
+});
 const selectedTitle = computed(
-  () =>
-    selectedBomNode.value?.name ||
-    selectedNativeFeature.value?.display_name ||
-    selectedFeature.value?.subtype ||
-    selectedFace.value?.face_id ||
-    contract.value?.summary.model_name ||
-    ''
+  () => {
+    const primary = primarySelection.value;
+    if (primary?.kind === 'face') return primary.label || primary.id;
+    if (primary?.kind === 'native_feature') return selectedNativeFeature.value?.display_name || primary.label || primary.id;
+    if (primary?.kind === 'recognized_feature') return selectedFeature.value?.subtype || primary.label || primary.id;
+    if (primary && ['assembly', 'part_instance', 'part', 'body', 'solid', 'loop', 'coedge', 'edge', 'vertex'].includes(primary.kind)) {
+      return primary.label || primary.id;
+    }
+    return contract.value?.summary.model_name || '';
+  }
 );
 const mappingAvailable = computed(() => Boolean(contract.value?.summary.feature_face_mapping_available));
 const detailNode = computed(() => selectedBomNode.value ?? contract.value?.bom.nodes[0] ?? null);
@@ -361,9 +412,32 @@ async function retryBuild() {
 async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.ViewerContract) {
   nativeFeatures.value = [];
   topologyFaces.value = [];
+  topologyBodies.value = [];
+  topologySolids.value = [];
+  topologyLoops.value = [];
+  topologyCoedges.value = [];
+  topologyEdges.value = [];
+  topologyVertices.value = [];
+  selectionIndex.value = null;
   const nativeUrl = viewerContract.native_semantics?.features_url;
   const facesUrl = viewerContract.feature_center.topology_faces_url;
+  const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
   const requests: Promise<void>[] = [];
+  if (selectionIndexUrl) {
+    requests.push(
+      fetchAsset(selectionIndexUrl).then(buffer => {
+        const loaded = JSON.parse(new TextDecoder().decode(buffer)) as ViewerSelectionIndex;
+        selectionIndex.value = {
+          ...loaded,
+          native_feature_to_native_faces: {
+            ...(loaded.native_feature_to_native_faces || {}),
+            ...(selectionIndex.value?.native_feature_to_native_faces || {})
+          }
+        };
+        hydrateTopologyFromSelectionIndex(selectionIndex.value);
+      })
+    );
+  }
   if (nativeUrl) {
     requests.push(
       fetchAsset(nativeUrl).then(buffer => {
@@ -378,7 +452,88 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       })
     );
   }
+  for (const [url, assign] of [
+    [viewerContract.native_semantics?.topology_bodies_url, (records: TopologySelectionRecord[]) => (topologyBodies.value = records)],
+    [viewerContract.native_semantics?.topology_cells_url, hydrateNativeCells],
+    [viewerContract.native_semantics?.topology_wires_url, (records: TopologySelectionRecord[]) => (topologyLoops.value = records)],
+    [viewerContract.native_semantics?.topology_coedges_url, (records: TopologySelectionRecord[]) => (topologyCoedges.value = records)]
+  ] as const) {
+    if (!url) continue;
+    requests.push(
+      fetchAsset(url).then(buffer => {
+        assign(parseJsonLines<TopologySelectionRecord>(new TextDecoder().decode(buffer)));
+      })
+    );
+  }
+  if (viewerContract.native_semantics?.feature_topology_links_url) {
+    requests.push(
+      fetchAsset(viewerContract.native_semantics.feature_topology_links_url).then(buffer => {
+        mergeNativeFeatureTopologyLinks(parseJsonLines<Record<string, unknown>>(new TextDecoder().decode(buffer)));
+      })
+    );
+  }
   await Promise.all(requests);
+}
+
+function hydrateTopologyFromSelectionIndex(index: ViewerSelectionIndex | null) {
+  topologyBodies.value = Object.values(index?.topology?.bodies || {});
+  topologySolids.value = Object.values(index?.topology?.solids || {});
+  topologyLoops.value = [
+    ...Object.values(index?.topology?.loops || {}),
+    ...Object.values(index?.topology?.wires || {})
+  ];
+  topologyCoedges.value = Object.values(index?.topology?.coedges || {});
+  topologyEdges.value = Object.values(index?.topology?.edges || {});
+  topologyVertices.value = Object.values(index?.topology?.vertices || {});
+}
+
+function hydrateNativeCells(records: TopologySelectionRecord[]) {
+  const cells = records.map(record => normalizeTopologyRecord(record));
+  topologyFaces.value = topologyFaces.value.length
+    ? topologyFaces.value
+    : cells
+      .filter(record => topologyKind(record) === 'face')
+      .map(record => ({
+        ...(record.raw || {}),
+        face_id: record.id,
+        surface_type: String((record.raw || {}).surface_type || (record.raw || {}).kernel_surface_type || '')
+      }));
+  topologySolids.value = [...topologySolids.value, ...cells.filter(record => topologyKind(record) === 'solid')];
+  topologyEdges.value = [...topologyEdges.value, ...cells.filter(record => topologyKind(record) === 'edge')];
+  topologyVertices.value = [...topologyVertices.value, ...cells.filter(record => topologyKind(record) === 'vertex')];
+}
+
+function normalizeTopologyRecord(record: TopologySelectionRecord): TopologySelectionRecord {
+  const raw = (record.raw || record) as Record<string, unknown>;
+  return {
+    ...record,
+    id: String(record.id || raw.entity_id || raw.cell_id || raw.id || ''),
+    parent_id: String(record.parent_id || raw.parent_id || raw.parent_entity_id || ''),
+    owning_body_id: String(record.owning_body_id || raw.owning_body_id || raw.body_id || ''),
+    raw
+  };
+}
+
+function topologyKind(record: TopologySelectionRecord) {
+  const raw = (record.raw || {}) as Record<string, unknown>;
+  return String(raw.topology_type || raw.entity_type || raw.cell_type || raw.type || '').toLowerCase();
+}
+
+function mergeNativeFeatureTopologyLinks(records: Array<Record<string, unknown>>) {
+  const nextIndex: ViewerSelectionIndex = selectionIndex.value || {
+    schema_version: 'cad_viewer_selection_v1',
+    native_feature_to_native_faces: {}
+  };
+  const featureToFaces = { ...(nextIndex.native_feature_to_native_faces || {}) };
+  for (const record of records) {
+    const featureId = String(record.source_feature_id || record.feature_id || record.native_feature_id || '');
+    const faceId = String(record.final_cell_id || record.target_cell_id || record.face_id || record.native_face_id || '');
+    const status = String(record.mapping_status || '').toLowerCase();
+    if (!featureId || !faceId) continue;
+    if (status && !['runtime_matched', 'runtime_current_revision', 'survives_to_final', 'exact'].includes(status)) continue;
+    featureToFaces[featureId] = [...new Set([...(featureToFaces[featureId] || []), faceId])].sort();
+  }
+  selectionIndex.value = { ...nextIndex, native_feature_to_native_faces: featureToFaces };
 }
 
 // 用途：载入一次真实 GLB；BOM/详情栏显隐只触发 ResizeObserver，不重新调用本函数。
@@ -414,8 +569,56 @@ async function loadGlb(buffer: ArrayBuffer) {
   fitCamera();
 }
 
+function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']) {
+  viewerSelection.value = resolveViewerSelection(
+    { ...target, source: origin },
+    {
+      selectionIndex: selectionIndex.value,
+      faceMeshMap: faceMeshMap.value,
+      featureMeshMap: featureMeshMap.value,
+      bomNodes: contract.value?.bom.nodes || [],
+      canonicalFeatures: canonicalFeatures.value,
+      nativeFeatures: nativeFeatures.value
+    }
+  );
+  projectSelectionForExistingTemplate();
+  applyVisualState();
+}
+
+function projectSelectionForExistingTemplate() {
+  const primary = viewerSelection.value.primary;
+  const context = viewerSelection.value.context;
+  selectedFeatureId.value = primary?.kind === 'recognized_feature'
+    ? primary.id
+    : context.recognizedFeatureIds[0] || '';
+  selectedNativeFeatureId.value = primary?.kind === 'native_feature'
+    ? primary.id
+    : context.nativeFeatureIds[0] || '';
+  selectedFaceId.value = primary?.kind === 'face'
+    ? primary.id
+    : context.renderFaceIds[0] || '';
+  selectedBomNode.value =
+    primary && ['assembly', 'part_instance', 'part'].includes(primary.kind)
+      ? findBomNode(contract.value?.bom.nodes || [], primary.id)
+      : context.bomNodeIds[0]
+        ? findBomNode(contract.value?.bom.nodes || [], context.bomNodeIds[0])
+        : null;
+  selectedBomPrimitiveIds.value = [...context.primitiveIds];
+  faceFeatureIds.value = [...context.recognizedFeatureIds];
+}
+
+function findBomNode(nodes: Api.ComponentBuild.ViewerBomNode[], nodeId: string): Api.ComponentBuild.ViewerBomNode | null {
+  for (const node of nodes) {
+    if (node.node_id === nodeId) return node;
+    const child = findBomNode(node.children || [], nodeId);
+    if (child) return child;
+  }
+  return null;
+}
+
 // 用途：清除语义选择但保持相机、透明、隔离和剖切状态。
 function clearSelection() {
+  viewerSelection.value = clearViewerSelection();
   selectedFeatureId.value = '';
   selectedNativeFeatureId.value = '';
   selectedNativeTreeNodeId.value = '';
@@ -430,32 +633,21 @@ function clearSelection() {
 
 // 用途：选择 Canonical Feature 后通过 feature_mesh_map 高亮真实面。
 function selectFeature(featureId: string) {
-  selectedFeatureId.value = featureId;
-  selectedNativeFeatureId.value = '';
-  selectedNativeTreeNodeId.value = '';
-  selectedBomNode.value = null;
-  selectedBomPrimitiveIds.value = [];
-  selectedFaceId.value = '';
+  const feature = canonicalFeatures.value.find(item => item.feature_center_id === featureId);
   selectionTarget.value = {
     source: 'catia',
     kind: 'feature',
     stableId: featureId,
     featureId,
     partId: contract.value?.part_id,
-    displayName: selectedFeature.value?.subtype
+    displayName: feature?.subtype
   };
-  applyVisualState();
+  selectTarget({ kind: 'recognized_feature', id: featureId, label: feature?.subtype, raw: feature }, 'recognized_feature');
 }
 
 // 用途：把 CAA 原生 Feature 关联到引用它的 Canonical Feature；无映射时如实保留选择。
 function selectNativeFeature(feature: NativeFeatureRecord) {
-  selectedNativeFeatureId.value = feature.feature_id;
   selectedNativeTreeNodeId.value = feature.feature_id;
-  const linked = canonicalFeatures.value.find(item => item.native_feature_ids.includes(feature.feature_id));
-  selectedFeatureId.value = linked?.feature_center_id ?? '';
-  selectedBomNode.value = null;
-  selectedBomPrimitiveIds.value = [];
-  selectedFaceId.value = '';
   selectionTarget.value = {
     source: 'catia',
     kind: 'feature',
@@ -466,7 +658,7 @@ function selectNativeFeature(feature: NativeFeatureRecord) {
     sourceRef: feature.tree_path,
     raw: feature
   };
-  applyVisualState();
+  selectTarget({ kind: 'native_feature', id: feature.feature_id, label: feature.display_name, raw: feature }, 'native_feature');
 }
 
 // 用途：规格树分组节点只参与导航；真实 Feature 节点继续复用原有选择和关联面高亮链路。
@@ -476,21 +668,15 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
     selectNativeFeature(node.raw);
     return;
   }
-  selectedNativeFeatureId.value = '';
-  selectedFeatureId.value = '';
-  selectedFaceId.value = '';
+  viewerSelection.value = clearViewerSelection();
+  projectSelectionForExistingTemplate();
   selectionTarget.value = null;
   applyVisualState();
 }
 
 // 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
 function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
-  selectedBomNode.value = node;
-  selectedBomPrimitiveIds.value = [...node.mesh_primitive_ids];
-  selectedFeatureId.value = '';
-  selectedNativeFeatureId.value = '';
   selectedNativeTreeNodeId.value = '';
-  selectedFaceId.value = '';
   selectionTarget.value = {
     source: 'catia',
     kind: node.node_type === 'assembly' || node.node_type === 'subassembly' ? 'assembly' : 'part',
@@ -502,34 +688,43 @@ function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
     sourceRef: node.assembly_path,
     raw: node
   };
-  applyVisualState();
+  const kind = node.node_type === 'assembly' || node.node_type === 'subassembly'
+    ? 'assembly'
+    : node.node_type === 'part' || node.node_type === 'imported_object'
+      ? 'part_instance'
+      : node.node_type === 'body'
+        ? 'body'
+        : node.node_type === 'solid'
+          ? 'solid'
+          : 'part';
+  selectTarget({ kind, id: node.node_id, label: node.name, instancePath: node.assembly_path, raw: node }, 'bom');
 }
 
 // 用途：选择拓扑 Face 后同步反查关联 Feature，并滚动语义页签。
 function selectFace(faceId: string) {
-  selectedFaceId.value = faceId;
-  selectedBomNode.value = null;
-  selectedBomPrimitiveIds.value = [];
-  faceFeatureIds.value = featureMeshMap.value ? (buildFaceToFeatureIndex(featureMeshMap.value)[faceId] ?? []) : [];
-  selectedFeatureId.value = faceFeatureIds.value[0] ?? '';
-  const linkedFeature = canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value);
-  selectedNativeFeatureId.value = linkedFeature?.native_feature_ids[0] ?? '';
-  selectedNativeTreeNodeId.value = selectedNativeFeatureId.value;
-  if (selectedNativeFeatureId.value) {
-    activeTab.value = 'recognized';
-    featureSubTab.value = 'native';
-    if (!bomVisible.value) toggleBom();
-  }
+  const rawFace = topologyFaces.value.find(item => item.face_id === faceId);
   selectionTarget.value = {
     source: 'catia',
     kind: 'face',
     stableId: faceId,
     faceId,
-    featureId: selectedNativeFeatureId.value || selectedFeatureId.value || undefined,
     partId: contract.value?.part_id,
-    raw: selectedFace.value
+    raw: rawFace
   };
-  applyVisualState();
+  selectTarget({ kind: 'face', id: faceId, label: faceId, raw: rawFace }, 'topology');
+}
+
+function selectTopology(kind: SelectionTarget['kind'], record: TopologySelectionRecord) {
+  selectTarget({ kind, id: record.id, label: record.id, raw: record.raw || record }, 'topology');
+}
+
+function topologySelectionKind(record: TopologySelectionRecord): SelectionTarget['kind'] {
+  if (geometryCategory.value === 'body_solid') return topologyKind(record) === 'body' ? 'body' : 'solid';
+  if (geometryCategory.value === 'loop') return 'loop';
+  if (geometryCategory.value === 'coedge') return 'coedge';
+  if (geometryCategory.value === 'edge') return 'edge';
+  if (geometryCategory.value === 'vertex') return 'vertex';
+  return 'face';
 }
 
 interface MaterialSnapshot {
@@ -595,9 +790,9 @@ function applyVisualState() {
         const standard = material as THREE.MeshStandardMaterial;
         restoreMaterial(material);
         if (hasSelection && active) {
-          standard.color?.set('#4f46e5');
-          standard.emissive?.set('#312e81');
-          standard.emissiveIntensity = 0.28;
+          standard.color?.set('#6254d8');
+          standard.emissive?.set('#6254d8');
+          standard.emissiveIntensity = 0.35;
         }
         if (transparent.value) {
           standard.transparent = true;
@@ -639,7 +834,7 @@ function handlePointerUp(event: PointerEvent) {
     sourceRef: contract.value?.summary.source_file_name || undefined
   });
   if (target.kind === 'face' && target.faceId) {
-    selectFace(target.faceId);
+    selectTarget({ kind: 'face', id: target.faceId, label: target.faceId, raw: target.raw }, 'canvas');
     selectionTarget.value = target;
     return;
   }
@@ -1042,7 +1237,28 @@ onBeforeUnmount(() => {
 
             <template v-if="activeTab === 'geometry'">
               <ElInput v-model="geometryKeyword" clearable placeholder="搜索面编号或曲面类型" class="geometry-search" />
+              <div class="geometry-tabs">
+                <button type="button" :class="{ active: geometryCategory === 'body_solid' }" @click="geometryCategory = 'body_solid'">
+                  Body/Solid
+                </button>
+                <button type="button" :class="{ active: geometryCategory === 'face' }" @click="geometryCategory = 'face'">
+                  Face
+                </button>
+                <button type="button" :class="{ active: geometryCategory === 'loop' }" @click="geometryCategory = 'loop'">
+                  Loop/Wire
+                </button>
+                <button type="button" :class="{ active: geometryCategory === 'coedge' }" @click="geometryCategory = 'coedge'">
+                  Coedge
+                </button>
+                <button type="button" :class="{ active: geometryCategory === 'edge' }" @click="geometryCategory = 'edge'">
+                  Edge
+                </button>
+                <button type="button" :class="{ active: geometryCategory === 'vertex' }" @click="geometryCategory = 'vertex'">
+                  Vertex
+                </button>
+              </div>
               <button
+                v-if="geometryCategory === 'face'"
                 v-for="(face, index) in filteredFaces"
                 :key="face.face_id"
                 type="button"
@@ -1054,14 +1270,31 @@ onBeforeUnmount(() => {
                 <span>面积 {{ face.area == null ? '—' : `${face.area.toFixed(3)} mm²` }}</span>
               </button>
               <button
-                v-if="filteredFaces.length < topologyFaces.length"
+                v-if="geometryCategory !== 'face'"
+                v-for="record in filteredTopologyRecords"
+                :key="record.id"
+                type="button"
+                class="list-card geometry-card"
+                :class="{ active: primarySelection?.id === record.id }"
+                @click="
+                  selectTopology(topologySelectionKind(record), record)
+                "
+              >
+                <strong>{{ record.id }}</strong>
+                <span>{{ topologyKind(record) || 'topology' }}</span>
+              </button>
+              <button
+                v-if="geometryCategory === 'face' && filteredFaces.length < topologyFaces.length"
                 type="button"
                 class="load-more"
                 @click="geometryLimit += 160"
               >
                 继续加载
               </button>
-              <ElEmpty v-if="!topologyFaces.length" description="没有可用的 B-Rep Face 索引" />
+              <ElEmpty
+                v-if="geometryCategory === 'face' ? !topologyFaces.length : !filteredTopologyRecords.length"
+                description="当前解析结果未提供该类拓扑索引"
+              />
             </template>
           </div>
           <div v-if="contract?.bom.assembly_mode === 'single_part'" class="panel-hint">单零件模式自动隐藏 BOM</div>
@@ -1241,6 +1474,29 @@ onBeforeUnmount(() => {
               <dd :class="mappingAvailable ? 'available' : 'muted'">{{ mappingAvailable ? '可用' : '不可用' }}</dd>
             </dl>
           </section>
+          <section v-if="primarySelection" class="detail-section">
+            <h4>选择映射证据</h4>
+            <dl>
+              <dt>主对象</dt>
+              <dd>{{ primarySelection.kind }} / {{ primarySelection.id }}</dd>
+              <dt>映射状态</dt>
+              <dd>{{ selectionContext.mappingStatus }}</dd>
+              <dt>Authority</dt>
+              <dd>{{ selectionContext.mappingAuthority || 'unavailable' }}</dd>
+              <dt>Primitive</dt>
+              <dd>{{ selectionContext.primitiveIds.length }}</dd>
+              <dt>Render Face</dt>
+              <dd>{{ selectionContext.renderFaceIds.join(', ') || '—' }}</dd>
+              <dt>关联 Feature</dt>
+              <dd>{{ selectionContext.recognizedFeatureIds.join(', ') || '—' }}</dd>
+            </dl>
+            <p v-if="selectionContext.edgeIds.length || selectionContext.vertexIds.length" class="muted">
+              当前轻量化资产未提供独立边线/顶点渲染，已高亮可追溯的相邻 Face。
+            </p>
+            <p v-if="selectionContext.diagnostics.length" class="muted">
+              {{ selectionContext.diagnostics.join('; ') }}
+            </p>
+          </section>
           <section v-if="hasDetailGroup('positioning') && detailNode" class="detail-section">
             <h4>装配定位</h4>
             <dl v-if="detailNode.instance_name || detailNode.constraint_status || detailNode.constraint_count != null">
@@ -1266,6 +1522,12 @@ onBeforeUnmount(() => {
               <dd>{{ selectedNativeFeature.traversal_index ?? '未提供' }}</dd>
               <dt>更新状态</dt>
               <dd>{{ selectedNativeFeature.update_status || '未提供' }}</dd>
+              <dt>Decoder</dt>
+              <dd>{{ selectedNativeFeature.decoder_status || selectedNativeFeature.decode_status || '未提供' }}</dd>
+              <dt>Payload</dt>
+              <dd>{{ selectedNativeFeature.payload_extraction_status || selectedNativeFeature.decode_level || '未提供' }}</dd>
+              <dt>参数族</dt>
+              <dd>{{ selectedNativeParameterFamily || '未提供' }}</dd>
             </dl>
             <h5>特征参数</h5>
             <dl v-if="selectedNativeParameters.length" class="parameter-list">
@@ -1603,6 +1865,17 @@ button:disabled {
 }
 .geometry-search {
   margin-bottom: 10px;
+}
+.geometry-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.geometry-tabs button {
+  min-width: 0;
+  padding: 6px 7px;
+  font-size: 12px;
 }
 .load-more {
   width: 100%;

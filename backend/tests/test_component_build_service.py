@@ -250,6 +250,7 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
                 "scene_manifest": "feature-center/manifest.json",
                 "face_mesh_map": "feature-center/lightweight/face_mesh_map.json",
                 "feature_mesh_map": "feature-center/lightweight/feature_mesh_map.json",
+                "selection_index": "feature-center/lightweight/selection_index.json",
             },
             "feature_center": {
                 "available": True,
@@ -257,6 +258,12 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
                 "feature_face_mapping_count": 3,
                 "canonical_features": "feature-center/canonical_features.jsonl",
                 "feature_geometry_links": "feature-center/feature_geometry_links.jsonl",
+            },
+            "native_semantics": {
+                "available": True,
+                "features": "native-caa/features.jsonl",
+                "feature_topology_links": "native-caa/native_feature_topology_links.jsonl",
+                "capabilities": "native-caa/capabilities.json",
             },
         },
     ))
@@ -271,8 +278,13 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
     assert contract["summary"]["version"] == "03.1"
     assert contract["viewer_asset"]["glb_url"].startswith(f"/api/component-builds/{build.id}/viewer/assets/")
     assert "cad-work" not in contract["viewer_asset"]["glb_url"]
+    assert contract["viewer_asset"]["selection_index_url"].endswith("feature-center/lightweight/selection_index.json")
     assert contract["feature_center"]["available"] is True
     assert contract["feature_center"]["mapping_available"] is True
+    assert contract["native_semantics"]["feature_topology_links_url"].endswith(
+        "native-caa/native_feature_topology_links.jsonl"
+    )
+    assert contract["native_semantics"]["capabilities_url"].endswith("native-caa/capabilities.json")
     assert contract["summary"]["feature_face_mapping_available"] is True
 
 

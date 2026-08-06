@@ -91,3 +91,46 @@ def test_real_multi_part_tree_defaults_to_visible_bom_and_keeps_mapping():
     assert part["constraint_count"] == 3
     assert part["mesh_primitive_ids"] == ["P1", "P2"]
     assert part["transform"] is not None
+
+
+def test_parent_bom_node_exposes_descendant_primitives_without_name_guessing():
+    contract = build_bom_contract(
+        [
+            {
+                "id": "ASM",
+                "entity_type": "assembly",
+                "label": "Assembly",
+                "metadata": {"mesh_primitive_ids": ["P-ROOT"]},
+                "children": [
+                    {
+                        "id": "PART-A",
+                        "entity_type": "part",
+                        "label": "Part A",
+                        "metadata": {"mesh_primitive_ids": ["P-A"]},
+                        "children": [],
+                    },
+                    {
+                        "id": "SUB",
+                        "entity_type": "subassembly",
+                        "label": "Sub",
+                        "metadata": {},
+                        "children": [
+                            {
+                                "id": "PART-B",
+                                "entity_type": "part",
+                                "label": "Part B",
+                                "metadata": {"mesh_primitive_ids": ["P-B"]},
+                                "children": [],
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
+        "CATPART",
+    )
+
+    root = contract["nodes"][0]
+    assert root["mesh_primitive_ids"] == ["P-ROOT"]
+    assert root["descendant_mesh_primitive_ids"] == ["P-A", "P-B", "P-ROOT"]
+    assert root["children"][1]["descendant_mesh_primitive_ids"] == ["P-B"]

@@ -11,6 +11,7 @@ export interface CadSelectionTarget {
   instanceId?: string;
   partId?: string;
   featureId?: string;
+  primitiveId?: string;
   faceId?: string;
   edgeId?: string;
   vertexId?: string;
@@ -77,6 +78,7 @@ export function resolveCadSelection(
       stableId: faceId,
       objectUuid: hit.object.uuid,
       partId: part.partId,
+      primitiveId,
       faceId,
       sourceRef: primitiveId || part.sourceRef,
       raw: hit
@@ -88,6 +90,7 @@ export function resolveCadSelection(
     stableId: part.partId,
     objectUuid: hit.object.uuid,
     partId: part.partId,
+    primitiveId,
     displayName: part.displayName,
     sourceRef: part.sourceRef,
     raw: hit

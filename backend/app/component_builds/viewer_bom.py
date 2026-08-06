@@ -32,6 +32,16 @@ def _normalize_node(node: dict, source_format: str, level: int) -> dict:
     source_ref = str(node.get("source_ref") or "")
     entity_type = str(node.get("entity_type") or node.get("node_type") or "part")
     children = [_normalize_node(child, source_format, level + 1) for child in (node.get("children") or [])]
+    own_primitives = _unique_strings(metadata.get("mesh_primitive_ids") or [])
+    own_entities = _unique_strings(metadata.get("entity_ids") or ([node_id] if node_id else []))
+    descendant_primitives = _unique_strings(
+        own_primitives +
+        [primitive_id for child in children for primitive_id in child.get("descendant_mesh_primitive_ids", [])]
+    )
+    descendant_entities = _unique_strings(
+        own_entities +
+        [entity_id for child in children for entity_id in child.get("descendant_entity_ids", [])]
+    )
     return {
         "node_id": node_id,
         "parent_id": str(node.get("parent_entity_id") or node.get("parent_id") or ""),
@@ -45,8 +55,10 @@ def _normalize_node(node: dict, source_format: str, level: int) -> dict:
         "source_format": source_format,
         "level": level,
         "transform": node.get("placement") or metadata.get("transform"),
-        "mesh_primitive_ids": list(metadata.get("mesh_primitive_ids") or []),
-        "entity_ids": list(metadata.get("entity_ids") or ([node_id] if node_id else [])),
+        "mesh_primitive_ids": own_primitives,
+        "descendant_mesh_primitive_ids": descendant_primitives,
+        "entity_ids": own_entities,
+        "descendant_entity_ids": descendant_entities,
         "solid_count": int(metadata.get("solid_count") or (1 if entity_type == "solid" else 0)),
         "volume": node.get("volume") or metadata.get("volume"),
         "bounding_box": node.get("bounding_box") or metadata.get("bounding_box"),
@@ -55,6 +67,10 @@ def _normalize_node(node: dict, source_format: str, level: int) -> dict:
         "constraint_count": metadata.get("constraint_count"),
         "children": children,
     }
+
+
+def _unique_strings(values: list) -> list[str]:
+    return sorted({str(value) for value in values if value})
 
 
 # 用途：统计真实 part/imported_object 节点；旧单零件树没有 Part 节点时以一个根模型兼容。

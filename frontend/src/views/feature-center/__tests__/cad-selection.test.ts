@@ -42,3 +42,39 @@ test('没有 Face 映射时如实降级为零件级选择', () => {
   assert.equal(target.kind, 'part');
   assert.equal(target.stableId, 'PART-1');
 });
+
+test('透明材质状态不改变稳定业务对象解析', () => {
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+  mesh.userData.mesh_primitive_id = 'MP-3';
+  const normalTarget = resolveCadSelection(
+    { object: mesh, faceIndex: 3 } as unknown as THREE.Intersection<THREE.Object3D>,
+    'catia',
+    { primitive_to_face: { 'MP-3': 'FACE-3' } },
+    { partId: 'PART-1' }
+  );
+
+  const material = mesh.material as THREE.Material;
+  material.transparent = true;
+  material.opacity = 0.2;
+  const transparentTarget = resolveCadSelection(
+    { object: mesh, faceIndex: 3 } as unknown as THREE.Intersection<THREE.Object3D>,
+    'catia',
+    { primitive_to_face: { 'MP-3': 'FACE-3' } },
+    { partId: 'PART-1' }
+  );
+
+  assert.deepEqual(
+    {
+      kind: transparentTarget.kind,
+      stableId: transparentTarget.stableId,
+      primitiveId: transparentTarget.primitiveId,
+      faceId: transparentTarget.faceId
+    },
+    {
+      kind: normalTarget.kind,
+      stableId: normalTarget.stableId,
+      primitiveId: normalTarget.primitiveId,
+      faceId: normalTarget.faceId
+    }
+  );
+});

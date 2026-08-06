@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .contracts import stable_id
+from .selection_index import build_selection_index
 from .topology import StableTopology
 
 
@@ -19,6 +20,7 @@ class LightweightMeshResult:
     model_glb: bytes
     face_mesh_map: dict[str, Any]
     feature_mesh_map: dict[str, Any]
+    selection_index: dict[str, Any]
     primitive_count: int
     vertex_count: int
     triangle_count: int
@@ -181,10 +183,18 @@ def build_lightweight_mesh(
         "shape_hash": topology.shape_hash,
         "features": feature_entries,
     }
+    selection_index = build_selection_index(
+        shape_hash=topology.shape_hash,
+        face_mesh_map=face_map,
+        feature_mesh_map=feature_map,
+        topology_entities=topology.entities,
+        topology_relations=topology.relations,
+    )
     return LightweightMeshResult(
         model_glb=_make_glb(document, bytes(binary)),
         face_mesh_map=face_map,
         feature_mesh_map=feature_map,
+        selection_index=selection_index,
         primitive_count=len(primitives),
         vertex_count=total_vertices,
         triangle_count=total_triangles,

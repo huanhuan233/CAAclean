@@ -77,13 +77,15 @@ class FeatureCenterBundleWriter:
                 for file_name, key in (
                     ("face_mesh_map.json", "face_mesh_map"),
                     ("feature_mesh_map.json", "feature_mesh_map"),
+                    ("selection_index.json", "selection_index"),
                 ):
-                    lightweight_dir.joinpath(file_name).write_text(
-                        json.dumps(bundle.lightweight[key], ensure_ascii=False, sort_keys=True,
-                                   indent=2, allow_nan=False) + "\n",
-                        encoding="utf-8",
-                        newline="\n",
-                    )
+                    if key in bundle.lightweight:
+                        lightweight_dir.joinpath(file_name).write_text(
+                            json.dumps(bundle.lightweight[key], ensure_ascii=False, sort_keys=True,
+                                       indent=2, allow_nan=False) + "\n",
+                            encoding="utf-8",
+                            newline="\n",
+                        )
 
             output_files = {
                 path.relative_to(staging).as_posix(): _file_fingerprint(path)
@@ -220,14 +222,22 @@ def validate_bundle(bundle_dir: Path | str) -> list[str]:
                 errors.append(f"BUNDLE_MEASUREMENT_FACE_MISSING:{measurement_id}:{face_id}")
     face_map_path = root / "lightweight" / "face_mesh_map.json"
     feature_map_path = root / "lightweight" / "feature_mesh_map.json"
+    selection_index_path = root / "lightweight" / "selection_index.json"
     if face_map_path.is_file() and feature_map_path.is_file():
         try:
             face_map = json.loads(face_map_path.read_text(encoding="utf-8"))
             feature_map = json.loads(feature_map_path.read_text(encoding="utf-8"))
+            selection_index = (
+                json.loads(selection_index_path.read_text(encoding="utf-8"))
+                if selection_index_path.is_file()
+                else None
+            )
             if face_map.get("shape_hash") != manifest.get("brep", {}).get("shape_hash"):
                 errors.append("BUNDLE_FACE_MESH_SHAPE_HASH_MISMATCH")
             if feature_map.get("shape_hash") != manifest.get("brep", {}).get("shape_hash"):
                 errors.append("BUNDLE_FEATURE_MESH_SHAPE_HASH_MISMATCH")
+            if selection_index and selection_index.get("shape_hash") != manifest.get("brep", {}).get("shape_hash"):
+                errors.append("BUNDLE_SELECTION_INDEX_SHAPE_HASH_MISMATCH")
             for face_id in face_map.get("faces", {}):
                 if face_id not in entity_ids:
                     errors.append(f"BUNDLE_FACE_MESH_FACE_MISSING:{face_id}")
@@ -251,6 +261,18 @@ def validate_bundle(bundle_dir: Path | str) -> list[str]:
                         errors.append(
                             f"BUNDLE_FEATURE_MESH_PRIMITIVE_MISSING:{feature_id}:{primitive_id}"
                         )
+            if selection_index:
+                if selection_index.get("schema_version") != "cad_viewer_selection_v1":
+                    errors.append("BUNDLE_SELECTION_INDEX_SCHEMA_INVALID")
+                for primitive_id, face_id in selection_index.get("primitive_to_render_face", {}).items():
+                    if primitive_to_face.get(primitive_id) != face_id:
+                        errors.append(f"BUNDLE_SELECTION_INDEX_PRIMITIVE_FACE_MISMATCH:{primitive_id}")
+                for face_id, primitive_ids in selection_index.get("render_face_to_primitives", {}).items():
+                    if face_id not in face_map.get("faces", {}):
+                        errors.append(f"BUNDLE_SELECTION_INDEX_FACE_MISSING:{face_id}")
+                    for primitive_id in primitive_ids:
+                        if primitive_to_face.get(primitive_id) != face_id:
+                            errors.append(f"BUNDLE_SELECTION_INDEX_REVERSE_MISMATCH:{face_id}:{primitive_id}")
         except (OSError, json.JSONDecodeError) as exc:
             errors.append(f"BUNDLE_MESH_MAP_INVALID:{exc}")
     return sorted(set(errors))

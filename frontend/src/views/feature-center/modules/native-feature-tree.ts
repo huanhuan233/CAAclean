@@ -33,6 +33,11 @@ export interface NativeFeatureRecord {
   decoder_id?: string;
   decode_level?: string;
   decode_status?: string;
+  decoder_status?: string;
+  payload_extraction_status?: string;
+  native_feature_parameters?: Record<string, unknown>;
+  canonical_native_type?: string;
+  payload_type?: string;
   update_status?: string;
   attributes?: Record<string, unknown>;
   [key: string]: unknown;

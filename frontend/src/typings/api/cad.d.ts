@@ -457,6 +457,7 @@ declare namespace Api {
         scene_manifest_url: string;
         face_mesh_map_url: string;
         feature_mesh_map_url: string;
+        selection_index_url?: string | null;
       } | null;
       feature_center: {
         available: boolean;
@@ -469,6 +470,19 @@ declare namespace Api {
       native_semantics?: {
         available: boolean;
         features_url?: string | null;
+        native_features_url?: string | null;
+        topology_bodies_url?: string | null;
+        topology_cells_url?: string | null;
+        topology_wires_url?: string | null;
+        topology_coedges_url?: string | null;
+        mesh_face_map_url?: string | null;
+        mesh_triangles_url?: string | null;
+        feature_results_url?: string | null;
+        feature_result_cells_url?: string | null;
+        feature_topology_links_url?: string | null;
+        product_references_url?: string | null;
+        product_instances_url?: string | null;
+        capabilities_url?: string | null;
       };
       error_code: string | null;
       error_message: string | null;
@@ -488,7 +502,9 @@ declare namespace Api {
       level: number;
       transform: Record<string, unknown> | null;
       mesh_primitive_ids: string[];
+      descendant_mesh_primitive_ids?: string[];
       entity_ids: string[];
+      descendant_entity_ids?: string[];
       solid_count: number;
       volume: number | null;
       bounding_box: Record<string, unknown> | null;

@@ -117,6 +117,7 @@ def build_bundle_from_parser_result(
             "model_glb": lightweight.model_glb,
             "face_mesh_map": lightweight.face_mesh_map,
             "feature_mesh_map": lightweight.feature_mesh_map,
+            "selection_index": lightweight.selection_index,
             "primitive_count": lightweight.primitive_count,
             "vertex_count": lightweight.vertex_count,
             "triangle_count": lightweight.triangle_count,
