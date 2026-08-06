@@ -235,6 +235,100 @@ class ValidatorTests(unittest.TestCase):
         validator.validate_decoder_semantics()
         self.assertTrue(any(item.status == "FAIL" and item.code == "FEATURE_PARAMETER_COMPLETE_REQUIRES_PAYLOADS" for item in validator.findings))
 
+    def test_feature_field_contract_rejects_missing_required_parameter(self):
+        validator = self._semantic_validator(
+            fixture={"id": "PD-FILLET-01", "native_expected": [], "roles": []},
+            contract={
+                "payload_expectations": {"PD-FILLET-01": ["fillet"]},
+                "native_feature_parameter_field_contract": {
+                    "fillet": {
+                        "required_parameters": ["radius", "edge_propagation"],
+                        "required_references": ["objects_to_fillet"],
+                    }
+                },
+            },
+        )
+        validator.rows["native_features.jsonl"] = [{
+            "native_feature_id": "F1",
+            "canonical_native_type": "fillet",
+            "decoder_status": "decoded",
+            "payload_extraction_status": "complete",
+            "payload_type": "native_feature_parameters",
+            "native_feature_parameters": {
+                "family": "fillet",
+                "parameters": {
+                    "radius": {
+                        "availability": "available",
+                        "source_api": "CATIAConstRadEdgeFillet.get_Radius.Value",
+                        "reason_code": "OK",
+                        "value_type": "length",
+                        "raw_value": "5",
+                        "raw_unit": "mm",
+                        "normalized_value": 5,
+                        "normalized_unit": "mm",
+                    }
+                },
+                "references": {
+                    "objects_to_fillet": {
+                        "availability": "available",
+                        "source_api": "CATIAConstRadEdgeFillet.get_ObjectsToFillet",
+                        "count": 1,
+                    }
+                },
+            },
+        }]
+        validator.validate_decoder_semantics()
+        self.assertTrue(any(item.status == "FAIL" and item.code == "FEATURE_PARAMETER_FIELD_MISSING" for item in validator.findings))
+
+    def test_feature_field_contract_rejects_unavailable_default_and_empty_reference(self):
+        validator = self._semantic_validator(
+            fixture={"id": "PD-SHELL-01", "native_expected": [], "roles": []},
+            contract={
+                "payload_expectations": {"PD-SHELL-01": ["shell"]},
+                "native_feature_parameter_field_contract": {
+                    "shell": {
+                        "required_parameters": ["internal_thickness"],
+                        "required_references": ["faces_to_remove"],
+                    }
+                },
+            },
+        )
+        validator.rows["native_features.jsonl"] = [{
+            "native_feature_id": "F2",
+            "canonical_native_type": "shell",
+            "decoder_status": "decoded",
+            "payload_extraction_status": "complete",
+            "payload_type": "native_feature_parameters",
+            "native_feature_parameters": {
+                "family": "shell",
+                "parameters": {
+                    "internal_thickness": {
+                        "availability": "not_available",
+                        "source_api": "",
+                        "reason_code": "API_FAILED",
+                        "value_type": "length",
+                        "raw_value": "",
+                        "raw_unit": "",
+                        "normalized_value": 0,
+                        "normalized_unit": "",
+                    }
+                },
+                "references": {
+                    "faces_to_remove": {
+                        "availability": "available",
+                        "source_api": "CATIAShell.get_FacesToRemove",
+                        "count": 0,
+                    }
+                },
+            },
+        }]
+        validator.validate_decoder_semantics()
+        codes = {item.code for item in validator.findings if item.status == "FAIL"}
+        self.assertIn("FEATURE_PARAMETER_AVAILABLE", codes)
+        self.assertIn("FEATURE_PARAMETER_SOURCE_API", codes)
+        self.assertIn("FEATURE_PARAMETER_UNIT_PRESENT", codes)
+        self.assertIn("FEATURE_REFERENCE_COUNT", codes)
+
     def test_brep_topology_complete_requires_coedges_and_loops(self):
         validator = self._semantic_validator()
         validator.rows["native_topology_cells.jsonl"] = [
@@ -286,12 +380,37 @@ class ValidatorTests(unittest.TestCase):
         }
         validator.validate_brep_capability_semantics()
         codes = {item.code for item in validator.findings if item.status == "FAIL"}
-        self.assertIn("BREP_COMPLETE_WIRES_CLOSED", codes)
+        self.assertIn("BREP_COMPLETE_WIRES_VERTEX_CLOSED", codes)
         self.assertIn("BREP_COMPLETE_COEDGES_MATCH_WIRES", codes)
         self.assertIn("BREP_COMPLETE_COEDGE_RING_CLOSED", codes)
         self.assertIn("BREP_COMPLETE_EDGE_FACE_REVERSE", codes)
         self.assertIn("BREP_COMPLETE_FACE_EDGE_BOUNDARY", codes)
         self.assertIn("BREP_COMPLETE_FACE_ADJACENCY_SYMMETRIC", codes)
+
+    def test_brep_geometry_complete_requires_domain_and_material_side(self):
+        validator = self._semantic_validator()
+        validator.rows["native_topology_cells.jsonl"] = [
+            {
+                "cell_id": "F1",
+                "dimension": 2,
+                "geometry_type": "plane",
+                "geometry_parameters": {"origin": [0, 0, 0]},
+                "parameter_domain": None,
+                "material_side": "unknown",
+            },
+            {
+                "cell_id": "E1",
+                "dimension": 1,
+                "geometry_type": "line",
+                "geometry_parameters": {"origin": [0, 0, 0]},
+                "parameter_domain": None,
+            },
+        ]
+        validator.json_docs["capabilities.json"] = {"final_brep_geometry_extraction": "complete"}
+        validator.validate_brep_capability_semantics()
+        codes = {item.code for item in validator.findings if item.status == "FAIL"}
+        self.assertIn("BREP_GEOMETRY_COMPLETE_REQUIRES_PARAMETER_DOMAIN", codes)
+        self.assertIn("BREP_GEOMETRY_COMPLETE_REQUIRES_MATERIAL_SIDE", codes)
 
     def test_mesh_mapping_complete_requires_all_faces(self):
         validator = self._semantic_validator()

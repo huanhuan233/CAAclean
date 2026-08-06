@@ -66,6 +66,8 @@ def evaluate_fixture(contract: Dict[str, Any], catalog: Dict[str, Any], results_
         "required_artifacts": contract.get("required_artifacts", []),
         "target_jsonl_fields": {},
         "authoritative_feature_mapping": {"require_forward_and_reverse": True},
+        "payload_expectations": contract.get("payload_expectations", {}),
+        "native_feature_parameter_field_contract": contract.get("native_feature_parameter_field_contract", {}),
     }
     validator = RunValidator("completion", completion_contract, fixture, run_dir)
     validator.load_artifacts()

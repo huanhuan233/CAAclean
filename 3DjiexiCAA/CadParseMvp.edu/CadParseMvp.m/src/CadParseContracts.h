@@ -463,6 +463,7 @@ struct NativeTopologyCellRecord
   std::string parameter_domain_json;
   std::string bounding_box_json;
   std::string geometry_orientation;
+  std::string material_side;
   std::string measure_status;
   std::vector<std::string> boundary_cell_ids;
   std::vector<std::string> adjacent_cell_ids;

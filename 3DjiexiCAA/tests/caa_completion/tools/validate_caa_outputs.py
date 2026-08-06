@@ -112,6 +112,44 @@ def finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
+def value_at_path(value: Any, dotted_path: str) -> Any:
+    current = value
+    for part in dotted_path.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def feature_family(row: Dict[str, Any]) -> str:
+    canonical = str(row.get("canonical_native_type", "")).lower()
+    if canonical:
+        return canonical
+    payload = row.get("native_feature_parameters")
+    if isinstance(payload, dict):
+        return str(payload.get("family", "")).lower()
+    semantic = ""
+    prism = row.get("native_prism")
+    if isinstance(prism, dict):
+        semantic = str(prism.get("semantic_kind", "")).lower()
+    if "pad" in semantic:
+        return "pad"
+    if "pocket" in semantic:
+        return "pocket"
+    if isinstance(row.get("native_hole"), dict):
+        return "hole"
+    return ""
+
+
+def feature_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+    for key in ("native_hole", "native_prism", "native_feature_parameters"):
+        payload = row.get(key)
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
 def matrix_apply(matrix: Sequence[float], point: Sequence[float]) -> List[float]:
     return [
         float(matrix[0]) * point[0] + float(matrix[1]) * point[1] + float(matrix[2]) * point[2] + float(matrix[3]),
@@ -643,6 +681,111 @@ class RunValidator:
                 f"{len(incomplete)} recognized native feature rows are not decoded payloads",
                 "native_features.jsonl",
             )
+        self.validate_feature_payload_field_contract(rows)
+
+    def validate_feature_payload_field_contract(self, rows: List[Dict[str, Any]]) -> None:
+        field_contract = self.contract.get("native_feature_parameter_field_contract", {})
+        if not isinstance(field_contract, dict) or not field_contract:
+            return
+        expected_families: Set[str] = set()
+        fixture_id = str(self.fixture.get("id", ""))
+        payload_expectations = self.contract.get("payload_expectations", {})
+        if isinstance(payload_expectations, dict):
+            for family in payload_expectations.get(fixture_id, []) or []:
+                expected_families.add(str(family).lower())
+        if not expected_families:
+            expected_families = {feature_family(row) for row in rows if feature_family(row)}
+
+        for family in sorted(expected_families):
+            spec = field_contract.get(family)
+            if not isinstance(spec, dict):
+                self.add(
+                    "FAIL",
+                    "FEATURE_FIELD_CONTRACT_MISSING",
+                    f"no field contract for expected native feature family: {family}",
+                    "caa_v1_phase1_contract.json",
+                )
+                continue
+            family_rows = [row for row in rows if feature_family(row) == family]
+            self.check(
+                bool(family_rows),
+                "FEATURE_FIELD_FAMILY_PRESENT",
+                f"{family} feature rows present",
+                f"no native feature rows for expected family {family}",
+                "native_features.jsonl",
+            )
+            for row in family_rows:
+                payload = feature_payload(row)
+                row_name = str(row.get("native_feature_id", row.get("name", family)))
+                complete_decode = (
+                    str(row.get("decoder_status", "")) == "decoded"
+                    and str(row.get("payload_extraction_status", "")) == "complete"
+                    and bool(payload)
+                )
+                self.check(
+                    complete_decode,
+                    "FEATURE_FIELD_ROW_DECODED",
+                    f"{row_name} has complete decoded payload",
+                    f"{row_name} does not have a complete decoded payload",
+                    "native_features.jsonl",
+                )
+                for path in spec.get("required_parameters", []) or []:
+                    field = value_at_path(payload, "parameters." + str(path))
+                    self._validate_feature_parameter_field(row_name, str(path), field)
+                for path in spec.get("required_top_level_fields", []) or []:
+                    value = value_at_path(payload, str(path))
+                    self.check(
+                        value not in (None, ""),
+                        "FEATURE_FIELD_TOP_LEVEL_PRESENT",
+                        f"{row_name} top-level field {path} present",
+                        f"{row_name} missing top-level field {path}",
+                        "native_features.jsonl",
+                    )
+                for path in spec.get("required_field_status", []) or []:
+                    field_status = payload.get("field_status", {})
+                    if isinstance(field_status, dict) and str(path) in field_status:
+                        value = field_status.get(str(path))
+                    else:
+                        value = value_at_path(payload, "field_status." + str(path))
+                    self.check(
+                        value == "success",
+                        "FEATURE_FIELD_STATUS_SUCCESS",
+                        f"{row_name} field_status.{path}=success",
+                        f"{row_name} field_status.{path} is {value!r}",
+                        "native_features.jsonl",
+                    )
+                for path in spec.get("required_references", []) or []:
+                    field = value_at_path(payload, "references." + str(path))
+                    self._validate_feature_reference_field(row_name, str(path), field)
+
+    def _validate_feature_parameter_field(self, row_name: str, field_name: str, field: Any) -> None:
+        if not isinstance(field, dict):
+            self.add("FAIL", "FEATURE_PARAMETER_FIELD_MISSING", f"{row_name} missing parameter {field_name}", "native_features.jsonl")
+            return
+        availability = str(field.get("availability", ""))
+        source_api = str(field.get("source_api", ""))
+        reason_code = str(field.get("reason_code", ""))
+        self.check(availability == "available", "FEATURE_PARAMETER_AVAILABLE", f"{row_name}.{field_name} available", f"{row_name}.{field_name} availability={availability!r}", "native_features.jsonl")
+        self.check(bool(source_api), "FEATURE_PARAMETER_SOURCE_API", f"{row_name}.{field_name} has source_api", f"{row_name}.{field_name} source_api missing", "native_features.jsonl")
+        self.check(reason_code == "OK", "FEATURE_PARAMETER_REASON_OK", f"{row_name}.{field_name} reason OK", f"{row_name}.{field_name} reason_code={reason_code!r}", "native_features.jsonl")
+        raw_present = "raw_value" in field and field.get("raw_value") not in (None, "")
+        normalized_present = "normalized_value" in field and field.get("normalized_value") not in (None, "")
+        self.check(raw_present or normalized_present, "FEATURE_PARAMETER_VALUE_PRESENT", f"{row_name}.{field_name} has raw or normalized value", f"{row_name}.{field_name} has no raw/normalized value", "native_features.jsonl")
+        value_type = str(field.get("value_type", ""))
+        if value_type in {"length", "angle"}:
+            self.check(bool(field.get("raw_unit")) and bool(field.get("normalized_unit")), "FEATURE_PARAMETER_UNIT_PRESENT", f"{row_name}.{field_name} has units", f"{row_name}.{field_name} missing raw_unit/normalized_unit", "native_features.jsonl")
+            self.check(finite_number(field.get("normalized_value")), "FEATURE_PARAMETER_NORMALIZED_FINITE", f"{row_name}.{field_name} normalized value finite", f"{row_name}.{field_name} normalized_value is not finite", "native_features.jsonl")
+
+    def _validate_feature_reference_field(self, row_name: str, field_name: str, field: Any) -> None:
+        if not isinstance(field, dict):
+            self.add("FAIL", "FEATURE_REFERENCE_FIELD_MISSING", f"{row_name} missing reference {field_name}", "native_features.jsonl")
+            return
+        availability = str(field.get("availability", ""))
+        source_api = str(field.get("source_api", ""))
+        count = field.get("count")
+        self.check(availability == "available", "FEATURE_REFERENCE_AVAILABLE", f"{row_name}.{field_name} reference available", f"{row_name}.{field_name} availability={availability!r}", "native_features.jsonl")
+        self.check(bool(source_api), "FEATURE_REFERENCE_SOURCE_API", f"{row_name}.{field_name} has source_api", f"{row_name}.{field_name} source_api missing", "native_features.jsonl")
+        self.check(finite_number(count) and float(count) >= 1.0, "FEATURE_REFERENCE_COUNT", f"{row_name}.{field_name} reference count positive", f"{row_name}.{field_name} count={count!r}", "native_features.jsonl")
 
     def validate_brep_capability_semantics(self) -> None:
         capabilities = self.json_docs.get("capabilities.json")
@@ -670,7 +813,10 @@ class RunValidator:
                             dangling.append(str(ref))
             missing_face_loops = sorted(face_ids - face_with_wire)
             empty_wires = [row for row in wires if not row.get("edge_cell_ids")]
-            open_wires = [row for row in wires if str(row.get("closed_status", "")) in {"", "unknown"}]
+            open_wires = [
+                row for row in wires
+                if str(row.get("closed_status", "")) != "closed_by_edge_vertex_continuity"
+            ]
             bad_wire_edges = [
                 str(edge) for row in wires for edge in (row.get("edge_cell_ids") or [])
                 if str(edge) not in edge_ids
@@ -708,7 +854,7 @@ class RunValidator:
             self.check(not dangling, "BREP_COMPLETE_NO_DANGLING_CELL_REFS", "complete B-Rep topology has no dangling cell references", f"dangling refs: {dangling[:5]}", "native_topology_cells.jsonl")
             self.check(not missing_face_loops, "BREP_COMPLETE_FACE_HAS_LOOP", "complete B-Rep topology has loops for every face", f"faces without loops: {missing_face_loops[:5]}", "native_topology_wires.jsonl")
             self.check(not empty_wires and not bad_wire_edges, "BREP_COMPLETE_WIRE_EDGES_VALID", "complete B-Rep topology has valid wire edges", f"empty_wires={len(empty_wires)} bad_edges={bad_wire_edges[:5]}", "native_topology_wires.jsonl")
-            self.check(not open_wires, "BREP_COMPLETE_WIRES_CLOSED", "complete B-Rep topology has closed loop/wire records", f"open/unknown wires: {[row.get('wire_id') for row in open_wires[:5]]}", "native_topology_wires.jsonl")
+            self.check(not open_wires, "BREP_COMPLETE_WIRES_VERTEX_CLOSED", "complete B-Rep topology has vertex-continuous closed loop/wire records", f"not vertex-closed wires: {[row.get('wire_id') for row in open_wires[:5]]}", "native_topology_wires.jsonl")
             self.check(not bad_coedges, "BREP_COMPLETE_COEDGES_MATCH_WIRES", "complete B-Rep coedges match their owning wire edge list", f"bad coedges: {bad_coedges[:5]}", "native_topology_coedges.jsonl")
             self.check(not bad_coedge_ring, "BREP_COMPLETE_COEDGE_RING_CLOSED", "complete B-Rep coedges have previous/next links inside the same wire", f"bad coedge ring: {bad_coedge_ring[:5]}", "native_topology_coedges.jsonl")
             self.check(not missing_reverse_edge_face, "BREP_COMPLETE_EDGE_FACE_REVERSE", "complete B-Rep edge records reverse-link to coedge owning faces", f"missing reverse edge-face: {missing_reverse_edge_face[:5]}", "native_topology_cells.jsonl")
@@ -728,8 +874,20 @@ class RunValidator:
                 if int(row.get("dimension", -1) or -1) in {1, 2}
                 and str(row.get("geometry_type", "")) in {"", "unknown", "partial", "success"}
             ]
+            missing_domains = [
+                row for row in cells
+                if int(row.get("dimension", -1) or -1) in {1, 2}
+                and not isinstance(row.get("parameter_domain"), dict)
+            ]
+            missing_material_side = [
+                row for row in cells
+                if int(row.get("dimension", -1) or -1) == 2
+                and str(row.get("material_side", "")) in {"", "unknown"}
+            ]
             self.check(not missing_params, "BREP_GEOMETRY_COMPLETE_REQUIRES_PARAMETERS", "complete B-Rep geometry has exact curve/surface parameters", f"{len(missing_params)} curve/surface cells have empty geometry_parameters", "native_topology_cells.jsonl")
             self.check(not unknown_geometry, "BREP_GEOMETRY_COMPLETE_REQUIRES_TYPES", "complete B-Rep geometry has explicit curve/surface types", f"{len(unknown_geometry)} curve/surface cells have unknown/generic geometry_type", "native_topology_cells.jsonl")
+            self.check(not missing_domains, "BREP_GEOMETRY_COMPLETE_REQUIRES_PARAMETER_DOMAIN", "complete B-Rep geometry has curve/surface parameter domains", f"{len(missing_domains)} curve/surface cells lack parameter_domain", "native_topology_cells.jsonl")
+            self.check(not missing_material_side, "BREP_GEOMETRY_COMPLETE_REQUIRES_MATERIAL_SIDE", "complete B-Rep geometry has non-unknown face material side", f"{len(missing_material_side)} faces have unknown material_side", "native_topology_cells.jsonl")
 
     def validate_mesh_mapping_capability_semantics(self) -> None:
         capabilities = self.json_docs.get("capabilities.json")

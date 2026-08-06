@@ -66,6 +66,127 @@
     "PD-FILLET-01": ["fillet"],
     "PD-BOOLEAN-01": ["add", "remove", "assemble", "intersect"]
   },
+  "native_feature_parameter_field_contract": {
+    "hole": {
+      "required_top_level_fields": [
+        "semantic_kind",
+        "hole_type",
+        "diameter_mm",
+        "origin_mm",
+        "direction",
+        "bottom_limit",
+        "head",
+        "thread",
+        "value_source",
+        "interface_key"
+      ],
+      "required_field_status": [
+        "diameter_mm",
+        "bottom_limit.mode",
+        "direction",
+        "hole_type",
+        "origin_mm",
+        "thread.mode"
+      ]
+    },
+    "pad": {
+      "required_top_level_fields": [
+        "semantic_kind",
+        "material_operation",
+        "direction_type",
+        "direction_orientation",
+        "direction",
+        "first_limit",
+        "second_limit",
+        "value_source",
+        "interface_key"
+      ],
+      "required_field_status": [
+        "direction",
+        "direction_orientation",
+        "direction_type",
+        "first_limit",
+        "second_limit",
+        "is_symmetric",
+        "is_thin"
+      ]
+    },
+    "pocket": {
+      "required_top_level_fields": [
+        "semantic_kind",
+        "material_operation",
+        "direction_type",
+        "direction_orientation",
+        "direction",
+        "first_limit",
+        "second_limit",
+        "value_source",
+        "interface_key"
+      ],
+      "required_field_status": [
+        "direction",
+        "direction_orientation",
+        "direction_type",
+        "first_limit",
+        "second_limit",
+        "is_symmetric",
+        "is_thin"
+      ]
+    },
+    "fillet": {
+      "required_parameters": [
+        "radius_mode",
+        "radius",
+        "edge_propagation",
+        "boundary_relimitation",
+        "trim_support"
+      ],
+      "required_references": [
+        "objects_to_fillet"
+      ]
+    },
+    "shell": {
+      "required_parameters": [
+        "internal_thickness",
+        "external_thickness"
+      ],
+      "required_references": [
+        "faces_to_remove"
+      ]
+    },
+    "thickness": {
+      "required_parameters": [
+        "offset"
+      ],
+      "required_references": [
+        "faces_to_thicken"
+      ]
+    },
+    "add": {
+      "required_parameters": [
+        "boolean_operation",
+        "operand_body"
+      ]
+    },
+    "remove": {
+      "required_parameters": [
+        "boolean_operation",
+        "operand_body"
+      ]
+    },
+    "assemble": {
+      "required_parameters": [
+        "boolean_operation",
+        "operand_body"
+      ]
+    },
+    "intersect": {
+      "required_parameters": [
+        "boolean_operation",
+        "operand_body"
+      ]
+    }
+  },
   "type_only_expected": {},
   "product_numeric_truth": {
     "PRODUCT-01": "validator_builtin",
@@ -77,7 +198,7 @@
     "absolute instance transform extraction",
     "PRODUCT-01 and PRODUCT-02 known point numeric validation",
     "native startup_type recognition",
-    "Hole, Pad, Pocket, constant edge Fillet and Boolean operation payload extraction through implemented Public CAA decoders",
+    "Hole, Pad, Pocket, constant edge Fillet and Boolean operation payload extraction through implemented Public CAA decoders, checked by field-level payload contracts",
     "basic B-Rep topology output",
     "current mesh to B-Rep face range evidence",
     "ResultOUT to final Cell runtime survival evidence",
@@ -89,7 +210,8 @@
     "cross-session persistent naming",
     "complete reverse history mapping",
     "complete optional-reference coverage for every Part Design family and GSD parameter decoders",
+    "Phase 1 completion for Chamfer, Draft, Shell/Thickness promotion, Shaft, Groove, Rib, Slot, Rectangular/Circular/User Pattern, variable Fillet, face Fillet or tritangent Fillet before formal fixture and field-contract promotion",
     "complete FTA-Topology mapping",
-    "complete surface parameters, UV domains, material side, curvature and full geometry semantics"
+    "complete trimmed UV-loop semantics, curvature fields and cross-session persistent topology names"
   ]
 }

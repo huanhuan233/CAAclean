@@ -86,6 +86,10 @@
 #include "CATGeometry.h"
 #include "CATSurface.h"
 #include "CATCurve.h"
+#include "CATSurLimits.h"
+#include "CATCrvLimits.h"
+#include "CATSurParam.h"
+#include "CATCrvParam.h"
 #include "CATPlane.h"
 #include "CATElementarySurface.h"
 #include "CATCylinder.h"
@@ -272,6 +276,19 @@ private:
   CATBoundaryIterator* _iterator;
 };
 
+class BoundedCellsIteratorGuard
+{
+public:
+  explicit BoundedCellsIteratorGuard(CATBoundedCellsIterator* iterator) : _iterator(iterator) {}
+  ~BoundedCellsIteratorGuard() { if (_iterator) CATRemove(_iterator); }
+  CATBoundedCellsIterator* Get() const { return _iterator; }
+
+private:
+  BoundedCellsIteratorGuard(const BoundedCellsIteratorGuard&);
+  BoundedCellsIteratorGuard& operator=(const BoundedCellsIteratorGuard&);
+  CATBoundedCellsIterator* _iterator;
+};
+
 // 用途：释放 CGM Tessellator；它继承 IUnknown，构造函数注释要求调用 Release。
 class CgmTessellatorGuard
 {
@@ -340,6 +357,29 @@ static void FillAdjacentCellIds(CATBody* body, CATCell* cell,
           record.adjacent_cell_ids.push_back(id);
       }
     }
+  }
+  catch (...) {}
+}
+
+static std::string CatSideName(CATSide side);
+
+static void FillMaterialSide(CATBody* body, CATCell* cell,
+                             NativeTopologyCellRecord& record)
+{
+  if (!body || !cell || record.dimension != 2) return;
+  CATBoundedCellsIterator* raw_iterator = 0;
+  try { raw_iterator = cell->CreateBoundedCellsIterator(body); }
+  catch (...) { raw_iterator = 0; }
+  BoundedCellsIteratorGuard iterator_guard(raw_iterator);
+  CATBoundedCellsIterator* iterator = iterator_guard.Get();
+  if (!iterator) return;
+  try
+  {
+    CATSide side = CATSideUnknown;
+    CATDomain* domain = 0;
+    CATCell* bounded = iterator->Next(&side, &domain);
+    if (bounded)
+      record.material_side = CatSideName(side);
   }
   catch (...) {}
 }
@@ -664,6 +704,55 @@ static std::string GeometryBoundingBoxJson(CATGeometry* geometry)
   return "";
 }
 
+static std::string SurfaceParameterDomainJson(CATSurface* surface)
+{
+  if (!surface) return "";
+  try
+  {
+    CATSurLimits limits;
+    surface->GetLimits(limits);
+    CATSurParam low;
+    CATSurParam high;
+    limits.GetLow(low);
+    limits.GetHigh(high);
+    std::ostringstream out;
+    out << "{\"kind\":\"surface_uv_limits\",\"u_min\":" << std::setprecision(15)
+        << low.GetParamU() << ",\"u_max\":" << high.GetParamU()
+        << ",\"v_min\":" << low.GetParamV() << ",\"v_max\":" << high.GetParamV()
+        << ",\"u_low_patch\":" << low.GetPatchNumberU()
+        << ",\"u_high_patch\":" << high.GetPatchNumberU()
+        << ",\"v_low_patch\":" << low.GetPatchNumberV()
+        << ",\"v_high_patch\":" << high.GetPatchNumberV()
+        << ",\"source_api\":\"CATSurface.GetLimits\"}";
+    return out.str();
+  }
+  catch (...) {}
+  return "";
+}
+
+static std::string CurveParameterDomainJson(CATCurve* curve)
+{
+  if (!curve) return "";
+  try
+  {
+    CATCrvLimits limits;
+    curve->GetLimits(limits);
+    CATCrvParam low;
+    CATCrvParam high;
+    limits.GetLow(low);
+    limits.GetHigh(high);
+    std::ostringstream out;
+    out << "{\"kind\":\"curve_limits\",\"t_min\":" << std::setprecision(15)
+        << low.GetParam() << ",\"t_max\":" << high.GetParam()
+        << ",\"low_arc\":" << low.GetArcNumber()
+        << ",\"high_arc\":" << high.GetArcNumber()
+        << ",\"source_api\":\"CATCurve.GetLimits\"}";
+    return out.str();
+  }
+  catch (...) {}
+  return "";
+}
+
 template <class InterfaceT>
 static InterfaceT* QueryGeometryInterface(CATGeometry* geometry, const IID& iid)
 {
@@ -736,6 +825,12 @@ static void DecodeExactCellGeometry(ParseContext& context, CATCell* cell,
 
   if (record.dimension == 2)
   {
+    CATSurface* domain_surface = QueryGeometryInterface<CATSurface>(geometry, IID_CATSurface);
+    if (domain_surface)
+    {
+      record.parameter_domain_json = SurfaceParameterDomainJson(domain_surface);
+      ReleaseGeometryInterface(domain_surface);
+    }
     CATPlane* plane = QueryGeometryInterface<CATPlane>(geometry, IID_CATPlane);
     if (plane)
     {
@@ -942,6 +1037,12 @@ static void DecodeExactCellGeometry(ParseContext& context, CATCell* cell,
   }
   else if (record.dimension == 1)
   {
+    CATCurve* domain_curve = QueryGeometryInterface<CATCurve>(geometry, IID_CATCurve);
+    if (domain_curve)
+    {
+      record.parameter_domain_json = CurveParameterDomainJson(domain_curve);
+      ReleaseGeometryInterface(domain_curve);
+    }
     CATLine* line = QueryGeometryInterface<CATLine>(geometry, IID_CATLine);
     if (line)
     {
@@ -1262,6 +1363,7 @@ static void AppendTopologyCell(ParseContext& context, const std::string& body_id
   if (record.geometry_status.empty()) record.geometry_status = record.has_center ? "success" : "partial";
   FillBoundaryCellIds(cell, cell_ids, record);
   FillAdjacentCellIds(body, cell, cell_ids, record);
+  FillMaterialSide(body, cell, record);
   context.topology_cells.push_back(record);
 }
 
@@ -1636,6 +1738,14 @@ static void AddUniqueString(std::vector<std::string>& values, const std::string&
     values.push_back(value);
 }
 
+static std::string CatSideName(CATSide side)
+{
+  if (side == CATSideLeft) return "left";
+  if (side == CATSideRight) return "right";
+  if (side == CATSideFull) return "full";
+  return "unknown";
+}
+
 static NativeTopologyCellRecord* FindTopologyCell(ParseContext& context,
                                                   const std::string& cell_id)
 {
@@ -1654,10 +1764,34 @@ static NativeTopologyWireRecord* FindTopologyWire(ParseContext& context,
   return 0;
 }
 
+static bool EdgesShareVertex(const std::string& first_edge,
+                             const std::string& second_edge,
+                             const std::map<std::string, std::set<std::string> >& edge_vertices)
+{
+  std::map<std::string, std::set<std::string> >::const_iterator first =
+    edge_vertices.find(first_edge);
+  std::map<std::string, std::set<std::string> >::const_iterator second =
+    edge_vertices.find(second_edge);
+  if (first == edge_vertices.end() || second == edge_vertices.end()) return false;
+  std::set<std::string>::const_iterator vertex = first->second.begin();
+  for (; vertex != first->second.end(); ++vertex)
+    if (second->second.find(*vertex) != second->second.end()) return true;
+  return false;
+}
+
 static void FinalizeBrepTopologyGraph(ParseContext& context)
 {
   std::map<std::string, std::vector<size_t> > coedges_by_wire;
   std::map<std::string, std::set<std::string> > edge_to_faces;
+  std::map<std::string, std::set<std::string> > edge_to_vertices;
+  std::vector<NativeTopologyCellRecord>::const_iterator cell = context.topology_cells.begin();
+  for (; cell != context.topology_cells.end(); ++cell)
+  {
+    if (cell->dimension != 1) continue;
+    std::vector<std::string>::const_iterator boundary = cell->boundary_cell_ids.begin();
+    for (; boundary != cell->boundary_cell_ids.end(); ++boundary)
+      edge_to_vertices[cell->cell_id].insert(*boundary);
+  }
   size_t i = 0;
   for (; i < context.topology_coedges.size(); ++i)
   {
@@ -1687,7 +1821,21 @@ static void FinalizeBrepTopologyGraph(ParseContext& context)
     NativeTopologyWireRecord* wire = FindTopologyWire(context, wire_group->first);
     if (wire)
     {
-      wire->closed_status = "closed_by_cat_boundary_iterator_cycle";
+      bool closed_by_vertices = !wire->edge_cell_ids.empty();
+      size_t edge_index = 0;
+      for (; edge_index < wire->edge_cell_ids.size(); ++edge_index)
+      {
+        const std::string& edge_id = wire->edge_cell_ids[edge_index];
+        const std::string& next_edge_id =
+          wire->edge_cell_ids[(edge_index + 1) % wire->edge_cell_ids.size()];
+        if (!EdgesShareVertex(edge_id, next_edge_id, edge_to_vertices))
+        {
+          closed_by_vertices = false;
+          break;
+        }
+      }
+      wire->closed_status = closed_by_vertices ?
+        "closed_by_edge_vertex_continuity" : "ordered_by_cat_boundary_iterator_unverified";
       wire->edge_count = static_cast<long>(wire->edge_cell_ids.size());
     }
   }

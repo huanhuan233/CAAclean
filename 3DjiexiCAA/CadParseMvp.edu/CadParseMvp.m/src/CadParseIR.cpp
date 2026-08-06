@@ -658,7 +658,7 @@ static CapabilityEvaluation EvaluateFinalBrepTopology(const ParseContext& contex
     else
       faces_with_wires.insert(wire->owning_face_id);
     if (wire->edge_cell_ids.empty()) ++item.counts.invalid_reference_count;
-    if (wire->closed_status.empty() || wire->closed_status == "unknown")
+    if (wire->closed_status != "closed_by_edge_vertex_continuity")
       ++item.counts.orientation_error_count;
     std::vector<std::string>::const_iterator edge = wire->edge_cell_ids.begin();
     for (; edge != wire->edge_cell_ids.end(); ++edge)
@@ -785,7 +785,10 @@ static CapabilityEvaluation EvaluateFinalBrepGeometry(const ParseContext& contex
     if (cell->dimension == 2)
     {
       ++item.counts.required_count;
-      if (cell->geometry_status == "exact")
+      const bool has_required_domain = !cell->parameter_domain_json.empty();
+      const bool has_material_side = !cell->material_side.empty() &&
+        cell->material_side != "unknown";
+      if (cell->geometry_status == "exact" && has_required_domain && has_material_side)
       {
         ++item.counts.resolved_count;
         if (cell->exact_geometry_type == "nurbs_surface") ++item.counts.nurbs_surface_count;
@@ -799,7 +802,8 @@ static CapabilityEvaluation EvaluateFinalBrepGeometry(const ParseContext& contex
     else if (cell->dimension == 1)
     {
       ++item.counts.required_count;
-      if (cell->geometry_status == "exact")
+      const bool has_required_domain = !cell->parameter_domain_json.empty();
+      if (cell->geometry_status == "exact" && has_required_domain)
       {
         ++item.counts.resolved_count;
         if (cell->exact_geometry_type == "nurbs_curve") ++item.counts.nurbs_curve_count;
@@ -1564,7 +1568,7 @@ void WriteNativeTopologyCell(std::ostream& output, const NativeTopologyCellRecor
   output << ",\"length_mm\":";
   WriteOptionalNumber(output, record.length_mm_available, record.length_mm);
   output << ",\"orientation\":\"" << JsonEscape(record.geometry_orientation.empty() ? "unknown" : record.geometry_orientation) << "\""
-         << ",\"material_side\":\"unknown\""
+         << ",\"material_side\":\"" << JsonEscape(record.material_side.empty() ? "unknown" : record.material_side) << "\""
          << ",\"geometry_type\":\"" << JsonEscape(record.exact_geometry_type.empty() ? record.geometry_status : record.exact_geometry_type)
          << "\",\"geometry_parameters\":";
   if (record.geometry_parameters_json.empty()) output << "{}";
