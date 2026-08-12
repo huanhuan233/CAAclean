@@ -72,9 +72,13 @@ def identify_source(file_name: str) -> IngestSource:
         return IngestSource("STEP", "step_cad_parse", extension)
     if extension == ".catpart":
         return IngestSource("CATPART", "catia_feature_center", extension)
+    if extension == ".catproduct":
+        return IngestSource("CATPRODUCT", "catia_feature_center", extension)
+    if extension == ".zip":
+        return IngestSource("CATPRODUCT", "catia_feature_center", extension)
     raise IngestSourceError(
         "UNSUPPORTED_SOURCE_FORMAT",
-        "仅支持 STEP、STP 和 CATPart 文件；不支持 .cart",
+        "仅支持 STEP、STP、CATPart、CATProduct 或 CATProduct 依赖 ZIP 文件；不支持 .cart",
     )
 
 
@@ -338,7 +342,7 @@ async def _build_feature_center(
     missing = [name for name in required if not (bundle / name).is_file()]
     if missing or (bundle / "lightweight" / "model.glb").stat().st_size == 0:
         raise IngestStageError("VIEWER_ASSET_MISSING", "lightweighting", ",".join(missing) or "model.glb 为空")
-    json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    feature_center_manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
     native_feature_count = 0
     if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
         native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
@@ -380,6 +384,10 @@ async def _build_feature_center(
                 "solid_count": solid_count,
                 "native_feature_count": native_feature_count,
                 "recognized_feature_count": recognized_feature_count,
+            },
+            "feature_center_manifest": {
+                "lightweight": feature_center_manifest.get("lightweight") or {},
+                "performance": feature_center_manifest.get("performance") or {},
             },
         },
     )

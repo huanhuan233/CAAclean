@@ -338,7 +338,7 @@ function pickFile(role: 'source' | 'drawing', event: Event) {
   if (!file) return
   const valid = role === 'source' ? isSupportedPartSourceFile(file.name) : /\.(png|jpe?g|webp)$/i.test(file.name)
   if (!valid) {
-    window.$message?.error(role === 'source' ? '请选择 STEP、STP 或 CATPart 文件；不支持 .cart' : '请选择 PNG、JPG、JPEG 或 WEBP 图纸')
+    window.$message?.error(role === 'source' ? '请选择 STEP、STP、CATPart、CATProduct 或依赖 ZIP 文件；不支持 .cart' : '请选择 PNG、JPG、JPEG 或 WEBP 图纸')
     ;(event.target as HTMLInputElement).value = ''
     return
   }
@@ -479,15 +479,15 @@ watch(visible, (val) => {
             <div class="upload-field">
               <span class="upload-label">源模型文件 <small>可稍后补充</small></span>
               <label class="file-input">
-                <input accept=".step,.stp,.CATPart" type="file" @change="pickFile('source', $event)" />
+                <input accept=".step,.stp,.CATPart,.CATProduct,.zip" type="file" @change="pickFile('source', $event)" />
                 <span>
                   {{
                     sourceFile?.name ||
-                    (editingBuild?.cad_revision_id ? '已有关联源模型；选择新文件可替换' : '选择 STEP / STP / CATPart 文件')
+                    (editingBuild?.cad_revision_id ? '已有关联源模型；选择新文件可替换' : '选择 STEP / STP / CATPart / CATProduct / ZIP 文件')
                   }}
                 </span>
               </label>
-              <small class="upload-hint">支持 STEP/STP、CATPart。CATPart 将通过 CATIA 特征中心处理，需要 CATIA Worker 可用。</small>
+              <small class="upload-hint">支持 STEP/STP、CATPart、CATProduct，或包含一个 CATProduct 及其依赖 CATPart 的 ZIP。CATIA 文件将通过 CATIA 特征中心处理，需要 CATIA Worker 可用。</small>
             </div>
             <div class="upload-field">
               <span class="upload-label">二维参数图 <small>可稍后补充</small></span>

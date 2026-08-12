@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
+import { sha256Buffer } from './modules/asset-integrity';
 import { facesForFeature, parseJsonLines } from './modules/feature-center-bundle';
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
 import { buildDetailPanelLayout } from './modules/detail-panel';
@@ -35,7 +36,7 @@ import {
   resolveFeatureCenterBuildId,
   saveRecentFeatureCenterBuildId
 } from './modules/recent-result';
-import { defaultBomVisible, tabsForSource, workerStageLabel } from './modules/viewer-workspace';
+import { defaultBomVisible, isCatiaNativeSource, tabsForSource, workerStageLabel } from './modules/viewer-workspace';
 import type { ViewerTab } from './modules/viewer-workspace';
 
 defineOptions({ name: 'FeatureCenterViewer' });
@@ -170,7 +171,7 @@ const hasBackendFailure = computed(() =>
 );
 const processingStatusText = computed(() => {
   if (!contract.value || contract.value.status === 'ready') return '';
-  return `${contract.value.source_format === 'CATPART' ? 'CATIA' : '模型'} 处理中：${workerStageLabel(contract.value.current_stage)}`;
+  return `${isCatiaNativeSource(contract.value.source_format) ? 'CATIA' : '模型'} 处理中：${workerStageLabel(contract.value.current_stage)}`;
 });
 const showProcessingCard = computed(() =>
   Boolean(contract.value && contract.value.status !== 'ready' && !hasBackendFailure.value && !explicitError.value)
@@ -184,7 +185,7 @@ const recognizedEmptyDescription = computed(() =>
 
 // 用途：只展示真实契约中的格式；没有历史结果时保持空值，绝不伪造 CATPart 或 STEP 标签。
 const sourceFormat = computed(() => contract.value?.source_format);
-const sourceTabs = computed(() => tabsForSource('CATPART'));
+const sourceTabs = computed(() => tabsForSource(sourceFormat.value || 'CATPART'));
 const selectedFeature = computed(
   () => canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value) ?? null
 );
@@ -339,7 +340,7 @@ function openNativeFace(faceId: string) {
 function openFeatureLinks() {
   if (!detailLayout.value.featureLinkEnabled) return;
   activeTab.value = 'recognized';
-  featureSubTab.value = sourceFormat.value === 'CATPART' ? 'native' : 'recognized';
+  featureSubTab.value = isCatiaNativeSource(sourceFormat.value) ? 'native' : 'recognized';
   bomVisible.value = true;
 }
 
@@ -367,12 +368,6 @@ async function fetchAsset(path: string) {
   return result.data;
 }
 
-// 用途：在浏览器中复核 Manifest 记录的 SHA-256，损坏文件不会进入 Three.js。
-async function sha256Buffer(buffer: ArrayBuffer) {
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-}
-
 // 用途：加载 STEP/CATPart 共用 Viewer 契约；可选原生语义缺失时不影响真实 GLB 展示。
 function clearStatusPoll() {
   if (statusPollTimer == null) return;
@@ -396,7 +391,7 @@ async function loadBuildBundle(buildId: string) {
   try {
     const result = await fetchComponentBuildViewer(buildId, { signal: assetRequestController.signal, silent: true });
     if (result.error || !result.data) throw result.error || new Error('Viewer 契约不可用');
-    if (result.data.source_format !== 'CATPART') {
+    if (!isCatiaNativeSource(result.data.source_format)) {
       await router.replace({
         path: '/cad-model',
         query: { build_id: buildId, revision_id: result.data.task_id }
@@ -414,7 +409,7 @@ async function loadBuildBundle(buildId: string) {
         errorText.value =
           result.data.error_message ||
           result.data.error_code ||
-          `${result.data.source_format === 'CATPART' ? 'CATIA' : '模型'}处理失败`;
+          `${isCatiaNativeSource(result.data.source_format) ? 'CATIA' : '模型'}处理失败`;
       }
       if (!explicitError.value) scheduleStatusPoll(buildId);
       return;
@@ -1247,10 +1242,10 @@ onBeforeUnmount(() => {
     <header class="model-summary">
       <div class="summary-main">
         <strong>{{ contract?.summary.model_name || 'Feature Center' }}</strong>
-        <span v-if="sourceFormat" class="format-badge">CATPart</span>
+        <span v-if="sourceFormat" class="format-badge">{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : 'CATPart' }}</span>
         <span v-if="contract?.bom.part_count">{{ contract.bom.part_count }} 个零件</span>
         <span v-if="contract?.summary.solid_count">{{ contract.summary.solid_count }} 个 Solid</span>
-        <span v-if="sourceFormat === 'CATPART'">{{ contract?.summary.native_feature_count ?? 0 }} 个原生特征</span>
+        <span v-if="isCatiaNativeSource(sourceFormat)">{{ contract?.summary.native_feature_count ?? 0 }} 个原生特征</span>
         <span v-if="contract">{{ contract.summary.recognized_feature_count }} 个识别特征</span>
         <span v-if="contract" :class="mappingAvailable ? 'available' : 'muted'">
           Feature–Face {{ mappingAvailable ? '映射可用' : '映射不可用' }}
@@ -1286,7 +1281,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="showErrorCard" class="error-card">
-      <strong>{{ contract?.source_format === 'CATPART' ? 'CATIA 处理未完成' : '模型处理未完成' }}</strong>
+      <strong>{{ isCatiaNativeSource(contract?.source_format) ? 'CATIA 处理未完成' : '模型处理未完成' }}</strong>
       <span>失败阶段：{{ workerStageLabel(contract?.current_stage) }}</span>
       <span v-if="contract?.error_code">错误码：{{ contract.error_code }}</span>
       <p>{{ errorText }}</p>
@@ -1528,7 +1523,7 @@ onBeforeUnmount(() => {
             <span class="object-icon">◇</span>
             <div>
               <strong>{{ selectedTitle }}</strong>
-              <small>CATPart</small>
+              <small>{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</small>
             </div>
           </div>
           <section v-if="hasDetailGroup('part')" class="detail-section">
@@ -1539,7 +1534,7 @@ onBeforeUnmount(() => {
               <dt>零件名称</dt>
               <dd>{{ contract?.summary.part_name || detailNode?.name || '—' }}</dd>
               <dt>文件类型</dt>
-              <dd>{{ sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</dd>
+              <dd>{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</dd>
               <dt>版本</dt>
               <dd>{{ detailNode?.version || contract?.summary.version || '—' }}</dd>
               <template v-if="detailNode?.material || contract?.summary.material">
@@ -1590,11 +1585,11 @@ onBeforeUnmount(() => {
             </dl>
           </section>
           <section v-if="hasDetailGroup('source')" class="detail-section">
-            <h4>{{ sourceFormat === 'CATPART' ? '来源与特征' : '来源与识别结果' }}</h4>
+            <h4>{{ isCatiaNativeSource(sourceFormat) ? '来源与特征' : '来源与识别结果' }}</h4>
             <dl>
               <dt>源文件</dt>
               <dd>{{ contract?.summary.source_file_name || '—' }}</dd>
-              <template v-if="sourceFormat === 'CATPART'">
+              <template v-if="isCatiaNativeSource(sourceFormat)">
                 <dt>原生特征</dt>
                 <dd>{{ contract?.native_semantics?.available ? contract.summary.native_feature_count : '不可用' }}</dd>
               </template>

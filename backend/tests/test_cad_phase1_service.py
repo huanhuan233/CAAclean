@@ -1,4 +1,6 @@
 import asyncio
+import io
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -21,6 +23,17 @@ class FakeCatPartUpload:
 
     async def read(self):
         return b"CATIA V5 binary fixture"
+
+
+class FakeCatProductZipUpload:
+    filename = "assembly-bundle.zip"
+
+    async def read(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("assembly/top.CATProduct", b"CATProduct")
+            archive.writestr("assembly/parts/part1.CATPart", b"CATPart")
+        return buffer.getvalue()
 
 
 class FakeRepository:
@@ -135,6 +148,26 @@ async def test_generic_source_upload_preserves_unicode_name_and_does_not_auto_pa
     assert Path(repository.revision.source_file_path).read_bytes() == b"CATIA V5 binary fixture"
     assert repository.manifests[0]["ingest"]["source_format"] == "CATPART"
     assert created_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_catproduct_zip_upload_is_preserved_for_worker_dependency_resolution(tmp_path, monkeypatch):
+    repository = FakeRepository(session="request-session")
+    service = CadService(repository, Settings(cad_work_dir=tmp_path))
+
+    response = await service.create_source_from_upload(
+        FakeCatProductZipUpload(),
+        "assembly",
+        source_format="CATPRODUCT",
+        processing_route="catia_feature_center",
+    )
+
+    assert response["source_format"] == "CATPRODUCT"
+    assert repository.created_fields["source_file_name"] == "assembly-bundle.zip"
+    assert repository.created_fields["source_file_ext"] == ".zip"
+    assert Path(repository.revision.source_file_path).name == "source.zip"
+    assert repository.manifests[0]["ingest"]["source_format"] == "CATPRODUCT"
+    assert repository.manifests[0]["ingest"]["source_archive_name"] == "assembly-bundle.zip"
 
 
 @pytest.mark.asyncio

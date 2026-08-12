@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil as _shutil
 from pathlib import Path
 from uuid import UUID
@@ -365,8 +366,9 @@ class ComponentBuildService:
         viewer = manifest.get("viewer_asset") or {}
         required = ("glb", "scene_manifest", "face_mesh_map", "feature_mesh_map")
         source_format = ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext)
-        bom = await self._viewer_bom(revision, source_format)
+        bom = await self._viewer_bom(revision, source_format, manifest)
         viewer_summary = manifest.get("viewer_summary") or {}
+        viewer_geometry = self._viewer_geometry_contract(source_format, manifest, viewer_summary)
         summary = {
             "model_name": build.component_name,
             "source_file_name": getattr(revision, "source_file_name", None),
@@ -387,6 +389,7 @@ class ComponentBuildService:
             "processing_route": ingest.get("processing_route") or "step_cad_parse",
             "summary": summary,
             "bom": bom,
+            "viewer_geometry": viewer_geometry,
             "worker": manifest.get("worker") or {"mode": "not_applicable"},
             "progress": int(getattr(revision, "progress", 0) or 0),
         }
@@ -456,7 +459,7 @@ class ComponentBuildService:
             payload[f"{key}_url"] = asset_base + native[key] if native.get(key) else None
         return payload
 
-    async def _viewer_bom(self, revision, source_format: str) -> dict:
+    async def _viewer_bom(self, revision, source_format: str, manifest: dict | None = None) -> dict:
         """用途：把数据库中的真实结构实体投影为统一 BOM；无装配数据时保持单零件/空契约。"""
         entities = await self.repository.list_structure_entities(revision.id)
         nodes: dict[str, dict] = {}
@@ -481,6 +484,8 @@ class ComponentBuildService:
                 roots.append(node)
             else:
                 parent["children"].append(node)
+        if not roots and source_format.upper() == "CATPRODUCT":
+            roots = self._native_product_instances_bom_roots(revision, manifest or {})
         if not roots:
             roots = [{
                 "id": str(revision.id),
@@ -494,8 +499,103 @@ class ComponentBuildService:
         return build_bom_contract(roots, source_format)
 
     @staticmethod
+    def _viewer_geometry_contract(source_format: str, manifest: dict, viewer_summary: dict) -> dict:
+        feature_manifest = manifest.get("feature_center_manifest") or {}
+        lightweight = feature_manifest.get("lightweight") or {}
+        performance = feature_manifest.get("performance") or {}
+        primitive_count = int(lightweight.get("primitive_count") or performance.get("mesh_primitive_count") or 0)
+        triangle_count = int(lightweight.get("triangle_count") or performance.get("mesh_triangle_count") or 0)
+        solid_count = int(viewer_summary.get("solid_count") or 0)
+        displayable = primitive_count > 0 and triangle_count > 0
+        empty_reason = None
+        if not displayable:
+            if source_format.upper() == "CATPRODUCT":
+                empty_reason = "catproduct_missing_loaded_representations"
+            else:
+                empty_reason = "empty_lightweight_geometry"
+        return {
+            "displayable": displayable,
+            "primitive_count": primitive_count,
+            "triangle_count": triangle_count,
+            "solid_count": solid_count,
+            "empty_reason": empty_reason,
+        }
+
+    @staticmethod
+    def _native_product_instances_bom_roots(revision, manifest: dict) -> list[dict]:
+        native = manifest.get("native_semantics") or {}
+        product_instances = native.get("product_instances")
+        if not product_instances:
+            return []
+        base_dir = Path(getattr(revision, "source_file_path", "") or "").parent
+        if not str(base_dir):
+            return []
+        relative_path = Path(product_instances)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            return []
+        path = base_dir / relative_path
+        if not path.is_file():
+            return []
+
+        records: list[dict] = []
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                if line.strip():
+                    records.append(json.loads(line))
+
+        nodes: dict[str, dict] = {}
+        ordered_records = sorted(
+            records,
+            key=lambda item: (int(item.get("depth") or 0), int(item.get("child_index") or 0)),
+        )
+        for record in ordered_records:
+            instance_id = str(record.get("instance_id") or "")
+            if not instance_id:
+                continue
+            parent_id = str(record.get("parent_instance_id") or "")
+            child_count = int(record.get("child_count") or 0)
+            node_type = "subassembly" if parent_id and child_count > 0 else ("assembly" if child_count > 0 else "part")
+            instance_name = str(record.get("instance_name") or record.get("instance_path") or instance_id)
+            reference_id = str(record.get("reference_id") or "")
+            nodes[instance_id] = {
+                "id": instance_id,
+                "parent_entity_id": parent_id,
+                "entity_type": node_type,
+                "label": instance_name,
+                "source_ref": reference_id,
+                "placement": record.get("transform_4x4"),
+                "metadata": {
+                    "instance_name": instance_name,
+                    "part_number": reference_id,
+                    "assembly_path": str(record.get("instance_path") or record.get("tree_path") or ""),
+                    "load_status": record.get("load_status"),
+                    "read_status": record.get("read_status"),
+                    "transform_status": record.get("transform_status"),
+                    "quantity": 1,
+                },
+                "children": [],
+            }
+
+        roots: list[dict] = []
+        for record in ordered_records:
+            node = nodes.get(str(record.get("instance_id") or ""))
+            if node is None:
+                continue
+            parent = nodes.get(node["parent_entity_id"])
+            if parent is None:
+                roots.append(node)
+            else:
+                parent["children"].append(node)
+        return roots
+
+    @staticmethod
     def _source_format_from_extension(extension: str) -> str:
-        return "CATPART" if (extension or "").lower() == ".catpart" else "STEP"
+        normalized = (extension or "").lower()
+        if normalized == ".catpart":
+            return "CATPART"
+        if normalized == ".catproduct":
+            return "CATPRODUCT"
+        return "STEP"
 
     async def _require_build(self, build_id: UUID) -> ComponentBuild:
         build = await self.repository.get_build(build_id)

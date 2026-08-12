@@ -307,7 +307,7 @@ declare namespace Api {
       status_message?: string | null;
       error_code?: string | null;
       error_message?: string | null;
-      source_format?: 'STEP' | 'CATPART' | null;
+      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
       processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
       current_stage?: string | null;
       children: TreeNode[];
@@ -333,7 +333,7 @@ declare namespace Api {
       status_message?: string | null;
       error_code?: string | null;
       error_message?: string | null;
-      source_format?: 'STEP' | 'CATPART' | null;
+      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
       processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
       current_stage?: string | null;
       children?: RawTreeNode[];
@@ -369,7 +369,7 @@ declare namespace Api {
       error_code: string | null;
       error_message: string | null;
       task_id?: string | null;
-      source_format?: 'STEP' | 'CATPART' | null;
+      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
       processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
       current_stage?: string | null;
       progress?: number | null;
@@ -427,7 +427,7 @@ declare namespace Api {
       status: string;
       current_stage: string | null;
       progress?: number | null;
-      source_format: 'STEP' | 'CATPART';
+      source_format: 'STEP' | 'CATPART' | 'CATPRODUCT';
       processing_route: 'step_cad_parse' | 'catia_feature_center';
       summary: {
         model_name: string;
@@ -446,6 +446,13 @@ declare namespace Api {
         default_visible: boolean;
         part_count: number;
         nodes: ViewerBomNode[];
+      };
+      viewer_geometry?: {
+        displayable: boolean;
+        primitive_count: number;
+        triangle_count: number;
+        solid_count: number;
+        empty_reason: string | null;
       };
       worker: {
         mode: string;
@@ -499,7 +506,7 @@ declare namespace Api {
       material: string;
       node_type: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
       quantity: number;
-      source_format: 'STEP' | 'CATPART';
+      source_format: 'STEP' | 'CATPART' | 'CATPRODUCT';
       level: number;
       transform: Record<string, unknown> | null;
       mesh_primitive_ids: string[];

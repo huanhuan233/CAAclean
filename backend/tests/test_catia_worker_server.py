@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -33,7 +34,7 @@ def test_worker_health_reports_readiness_without_sensitive_paths(tmp_path):
     assert response.json()["max_concurrency"] == 1
 
 
-def test_worker_rejects_non_catpart_and_empty_upload(tmp_path):
+def test_worker_rejects_non_catia_and_empty_upload(tmp_path):
     app = create_app(CatiaWorkerServerSettings(work_dir=tmp_path))
 
     with TestClient(app) as client:
@@ -44,6 +45,35 @@ def test_worker_rejects_non_catpart_and_empty_upload(tmp_path):
     assert wrong.json()["detail"]["code"] == "unsupported_format"
     assert empty.status_code == 400
     assert empty.json()["detail"]["code"] == "empty_source_file"
+
+
+def test_worker_accepts_catproduct_and_preserves_extension_for_caa(tmp_path):
+    async def noop_processor(*_args, **_kwargs):
+        return None
+
+    app = create_app(CatiaWorkerServerSettings(work_dir=tmp_path), noop_processor)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/jobs", files={"source_file": ("assy.CATProduct", b"CATProduct")})
+
+    assert response.status_code == 202
+    job_id = response.json()["worker_job_id"]
+    assert (tmp_path / job_id / "source.CATProduct").read_bytes() == b"CATProduct"
+
+
+def test_worker_accepts_catproduct_zip_and_resolves_bundle_entry(tmp_path):
+    from app.catia_worker.server import _resolve_job_source
+
+    job_root = tmp_path / "job"
+    job_root.mkdir()
+    with zipfile.ZipFile(job_root / "source.zip", "w") as archive:
+        archive.writestr("assembly/top.CATProduct", b"CATProduct")
+        archive.writestr("assembly/parts/part1.CATPart", b"CATPart")
+
+    source = _resolve_job_source(job_root)
+
+    assert source == job_root / "source-bundle" / "assembly" / "top.CATProduct"
+    assert (job_root / "source-bundle" / "assembly" / "parts" / "part1.CATPart").read_bytes() == b"CATPart"
 
 
 def test_worker_job_id_does_not_reuse_source_file_name(tmp_path):

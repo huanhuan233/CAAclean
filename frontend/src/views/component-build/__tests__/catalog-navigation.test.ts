@@ -46,9 +46,11 @@ test('机械库与航空航天库是两个同级系统根', () => {
   assert.deepEqual(roots.map(item => item.label), ['机械工程图元库', '航空航天零件库'])
 })
 
-test('上传提示只接受 STEP、STP 和 CATPart，且大小写不敏感', () => {
+test('上传提示接受 STEP、STP、CATPart、CATProduct 和依赖 ZIP，且大小写不敏感', () => {
   assert.equal(isSupportedPartSourceFile('零件 (1).STEP'), true)
   assert.equal(isSupportedPartSourceFile('零件.stp'), true)
   assert.equal(isSupportedPartSourceFile('框体.CATPart'), true)
+  assert.equal(isSupportedPartSourceFile('装配.CATProduct'), true)
+  assert.equal(isSupportedPartSourceFile('装配依赖.ZIP'), true)
   assert.equal(isSupportedPartSourceFile('错误.cart'), false)
 })

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -286,6 +287,132 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
     )
     assert contract["native_semantics"]["capabilities_url"].endswith("native-caa/capabilities.json")
     assert contract["summary"]["feature_face_mapping_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_viewer_contract_builds_catproduct_bom_from_native_product_instances(tmp_path):
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="assy-001",
+        component_name="CATProduct Assy",
+        component_type="assembly",
+        cad_revision_id=revision_id,
+    )
+    native_dir = tmp_path / str(revision_id) / "native-caa"
+    native_dir.mkdir(parents=True)
+    records = [
+        {
+            "instance_id": "PRDINS_000001",
+            "parent_instance_id": "",
+            "instance_name": "RootProduct",
+            "reference_id": "PRDREF_ROOT",
+            "instance_path": "RootProduct",
+            "depth": 0,
+            "child_index": 0,
+            "child_count": 2,
+            "transform_4x4": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        },
+        {
+            "instance_id": "PRDINS_000002",
+            "parent_instance_id": "PRDINS_000001",
+            "instance_name": "Bracket.1",
+            "reference_id": "PRDREF_BRACKET",
+            "instance_path": "RootProduct/Bracket.1",
+            "depth": 1,
+            "child_index": 1,
+            "child_count": 0,
+        },
+        {
+            "instance_id": "PRDINS_000003",
+            "parent_instance_id": "PRDINS_000001",
+            "instance_name": "Bolt.1",
+            "reference_id": "PRDREF_BOLT",
+            "instance_path": "RootProduct/Bolt.1",
+            "depth": 1,
+            "child_index": 2,
+            "child_count": 0,
+        },
+    ]
+    with (native_dir / "product_instances.jsonl").open("w", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(json.dumps(record) + "\n")
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        status="completed",
+        status_message="ready",
+        progress=100,
+        source_file_ext=".catproduct",
+        source_file_name="RootProduct.CATProduct",
+        source_file_path=str(tmp_path / str(revision_id) / "source.CATProduct"),
+        error_code=None,
+        error_message=None,
+        parse_manifest={
+            "ingest": {"source_format": "CATPRODUCT", "processing_route": "catia_feature_center"},
+            "viewer_asset": {
+                "glb": "feature-center/lightweight/model.glb",
+                "scene_manifest": "feature-center/manifest.json",
+                "face_mesh_map": "feature-center/lightweight/face_mesh_map.json",
+                "feature_mesh_map": "feature-center/lightweight/feature_mesh_map.json",
+            },
+            "native_semantics": {
+                "available": True,
+                "product_instances": "native-caa/product_instances.jsonl",
+            },
+        },
+    ))
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    contract = await service.get_viewer_contract(build.id)
+
+    assert contract["bom"]["assembly_mode"] == "assembly"
+    assert contract["bom"]["part_count"] == 2
+    root = contract["bom"]["nodes"][0]
+    assert root["name"] == "RootProduct"
+    assert [child["name"] for child in root["children"]] == ["Bracket.1", "Bolt.1"]
+    assert root["children"][0]["assembly_path"] == "RootProduct/Bracket.1"
+
+
+@pytest.mark.asyncio
+async def test_viewer_contract_reports_empty_catproduct_geometry():
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="assy-empty-001",
+        component_name="Empty Geometry Assy",
+        component_type="assembly",
+        cad_revision_id=revision_id,
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        status="completed",
+        status_message="ready",
+        progress=100,
+        source_file_ext=".catproduct",
+        source_file_name="RootProduct.CATProduct",
+        error_code=None,
+        error_message=None,
+        parse_manifest={
+            "ingest": {"source_format": "CATPRODUCT", "processing_route": "catia_feature_center"},
+            "viewer_asset": {
+                "glb": "feature-center/lightweight/model.glb",
+                "scene_manifest": "feature-center/manifest.json",
+                "face_mesh_map": "feature-center/lightweight/face_mesh_map.json",
+                "feature_mesh_map": "feature-center/lightweight/feature_mesh_map.json",
+            },
+            "viewer_summary": {"solid_count": 0},
+            "feature_center_manifest": {
+                "lightweight": {"primitive_count": 0, "triangle_count": 0},
+            },
+        },
+    ))
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    contract = await service.get_viewer_contract(build.id)
+
+    assert contract["viewer_geometry"]["displayable"] is False
+    assert contract["viewer_geometry"]["triangle_count"] == 0
+    assert contract["viewer_geometry"]["empty_reason"] == "catproduct_missing_loaded_representations"
 
 
 async def _async_value(value):

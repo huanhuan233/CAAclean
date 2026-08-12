@@ -33,8 +33,8 @@ function Read-AutomationEvidence([string]$path) {
 }
 
 try {
-    if ([System.IO.Path]::GetExtension($source).ToLowerInvariant() -ne ".catpart") {
-        throw "STEP_EXPORT_INPUT_TYPE_INVALID：输入必须是 CATPart"
+    if ([System.IO.Path]::GetExtension($source).ToLowerInvariant() -notin @(".catpart", ".catproduct")) {
+        throw "STEP_EXPORT_INPUT_TYPE_INVALID：输入必须是 CATPart 或 CATProduct"
     }
     if (Test-Path -LiteralPath $destination) {
         throw "STEP_EXPORT_OUTPUT_EXISTS：拒绝覆盖已有 STEP"

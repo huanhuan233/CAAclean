@@ -2,9 +2,9 @@
 export function modelViewerLocation(
   buildId: string,
   revisionId: string,
-  sourceFormat: 'STEP' | 'CATPART' | null | undefined
+  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT' | null | undefined
 ) {
-  if (sourceFormat === 'CATPART') {
+  if (sourceFormat === 'CATPART' || sourceFormat === 'CATPRODUCT') {
     return { path: '/feature-center', query: { build_id: buildId } };
   }
   return { path: '/cad-model', query: { build_id: buildId, revision_id: revisionId } };

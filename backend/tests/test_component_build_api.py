@@ -1,3 +1,5 @@
+import io
+import zipfile
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -264,6 +266,48 @@ def test_unified_source_upload_routes_catpart_case_insensitively(component_clien
     assert response.json()["source_format"] == "CATPART"
     assert response.json()["processing_route"] == "catia_feature_center"
     assert cad_service.uploads[0][0] == "框架 (终版).CATPart"
+
+
+def test_unified_source_upload_routes_catproduct_case_insensitively(component_client):
+    client, cad_service, _, _, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "aero-general",
+            "part_type_code": "aero-general-part",
+            "component_name": "assembly",
+        },
+        files={"source_file": ("assembly.CATProduct", b"CATProduct", "application/octet-stream")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_format"] == "CATPRODUCT"
+    assert response.json()["processing_route"] == "catia_feature_center"
+    assert cad_service.uploads[0][0] == "assembly.CATProduct"
+
+
+def test_unified_source_upload_routes_catproduct_zip_bundle(component_client):
+    client, cad_service, _, _, _ = component_client
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("assembly/top.CATProduct", b"CATProduct")
+        archive.writestr("assembly/parts/part1.CATPart", b"CATPart")
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "aero-general",
+            "part_type_code": "aero-general-part",
+            "component_name": "assembly bundle",
+        },
+        files={"source_file": ("assembly-bundle.zip", buffer.getvalue(), "application/zip")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_format"] == "CATPRODUCT"
+    assert response.json()["processing_route"] == "catia_feature_center"
+    assert cad_service.uploads[0][0] == "assembly-bundle.zip"
 
 
 def test_cart_is_explicitly_rejected(component_client):

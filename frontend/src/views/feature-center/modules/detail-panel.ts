@@ -15,7 +15,7 @@ export interface DetailPanelContext {
   assemblyMode: 'none' | 'single_part' | 'assembly';
   nodeType?: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
   hasParent?: boolean;
-  sourceFormat: 'STEP' | 'CATPART';
+  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT';
   nativeFeatureAvailable?: boolean;
   featureFaceMappingAvailable?: boolean;
   geometryHasLinkedFeature?: boolean;
@@ -29,7 +29,7 @@ export interface DetailPanelLayout {
 
 // 用途：根据真实对象类型和装配契约决定右侧分组；界面的 BOM 显隐状态不参与业务判断。
 export function buildDetailPanelLayout(context: DetailPanelContext): DetailPanelLayout {
-  const featureLinkLabel = context.sourceFormat === 'CATPART'
+  const featureLinkLabel = context.sourceFormat === 'CATPART' || context.sourceFormat === 'CATPRODUCT'
     ? '查看原生特征与关联面'
     : '查看识别特征与关联面';
   const featureLinkEnabled = Boolean(

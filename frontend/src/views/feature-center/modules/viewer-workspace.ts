@@ -1,4 +1,9 @@
 export type ViewerTab = 'bom' | 'native' | 'recognized' | 'geometry';
+export type ViewerSourceFormat = 'STEP' | 'CATPART' | 'CATPRODUCT';
+
+export function isCatiaNativeSource(sourceFormat: string | null | undefined) {
+  return sourceFormat === 'CATPART' || sourceFormat === 'CATPRODUCT';
+}
 
 // 用途：遵循后端装配契约决定初始 BOM 状态；用户切换后由页面本地响应式状态维护。
 export function defaultBomVisible(bom: { assembly_mode: string; default_visible: boolean } | null | undefined) {
@@ -6,7 +11,7 @@ export function defaultBomVisible(bom: { assembly_mode: string; default_visible:
 }
 
 // 用途：在共享 Viewer 中区分 STEP 推理语义与 CATIA 原生语义，不复制页面实现。
-export function tabsForSource(sourceFormat: 'STEP' | 'CATPART'): ViewerTab[] {
+export function tabsForSource(sourceFormat: ViewerSourceFormat): ViewerTab[] {
   void sourceFormat;
   return ['bom', 'recognized', 'geometry'];
 }

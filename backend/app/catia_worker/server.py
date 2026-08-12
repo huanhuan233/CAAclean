@@ -104,12 +104,14 @@ class WorkerService:
 
     # 用途：保存上传字节并创建随机任务编号，源文件名只作为受控显示信息。
     async def create(self, upload: UploadFile) -> WorkerJob:
-        if Path(upload.filename or "").suffix.lower() != ".catpart":
-            raise HTTPException(415, detail={"code": "unsupported_format", "message": "Worker 只接受 CATPart"})
+        suffix = Path(upload.filename or "").suffix.lower()
+        if suffix not in {".catpart", ".catproduct", ".zip"}:
+            raise HTTPException(415, detail={"code": "unsupported_format", "message": "Worker 只接受 CATPart/CATProduct/ZIP"})
         worker_job_id = str(uuid4())
         job_root = self.settings.work_dir / worker_job_id
         job_root.mkdir(parents=True)
-        source_path = job_root / "source.CATPart"
+        source_name = "source.zip" if suffix == ".zip" else ("source.CATProduct" if suffix == ".catproduct" else "source.CATPart")
+        source_path = job_root / source_name
         digest = hashlib.sha256()
         size = 0
         with source_path.open("wb") as stream:
@@ -191,8 +193,41 @@ def _set_stage(service_job: WorkerJob, settings: CatiaWorkerServerSettings, stag
 
 
 # 用途：调用仓库已有 CAA Batch 与 Automation 导出器，不复制任何 CATIA 解析逻辑。
+def _resolve_job_source(job_root: Path) -> Path:
+    if (job_root / "source.zip").is_file():
+        bundle_root = job_root / "source-bundle"
+        if bundle_root.exists():
+            shutil.rmtree(bundle_root)
+        bundle_root.mkdir()
+        resolved_root = bundle_root.resolve()
+        with zipfile.ZipFile(job_root / "source.zip") as archive:
+            entries = [item for item in archive.infolist() if not item.is_dir()]
+            for entry in entries:
+                destination = (bundle_root / entry.filename).resolve()
+                try:
+                    destination.relative_to(resolved_root)
+                except ValueError as exc:
+                    raise WorkerExecutionError("catia_source_bundle_invalid", "queued_caa", "CATProduct ZIP 包含越界路径") from exc
+            archive.extractall(bundle_root)
+        catproducts = sorted(
+            path for path in bundle_root.rglob("*") if path.is_file() and path.suffix.lower() == ".catproduct"
+        )
+        if len(catproducts) != 1:
+            raise WorkerExecutionError(
+                "catia_source_bundle_invalid",
+                "queued_caa",
+                "CATProduct ZIP 必须包含且只能包含一个入口 CATProduct",
+            )
+        return catproducts[0]
+    if (job_root / "source.CATProduct").is_file():
+        return job_root / "source.CATProduct"
+    if (job_root / "source.CATPart").is_file():
+        return job_root / "source.CATPart"
+    raise WorkerExecutionError("catia_source_missing", "queued_caa", "CATIA 源文件不存在")
+
+
 async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServerSettings) -> None:
-    source = job_root / "source.CATPart"
+    source = _resolve_job_source(job_root)
     staging = job_root / "staging"
     artifacts = job_root / "artifacts"
     if staging.exists():

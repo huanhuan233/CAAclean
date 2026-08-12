@@ -27,6 +27,9 @@ from app.core.config import Settings
     [
         ("part.step", "STEP", "step_cad_parse"),
         ("PART.STP", "STEP", "step_cad_parse"),
+        ("assembly.CATProduct", "CATPRODUCT", "catia_feature_center"),
+        ("assembly.catproduct", "CATPRODUCT", "catia_feature_center"),
+        ("assembly_bundle.zip", "CATPRODUCT", "catia_feature_center"),
         ("零件 (终版).CATPart", "CATPART", "catia_feature_center"),
         ("零件.catpart", "CATPART", "catia_feature_center"),
     ],
@@ -38,7 +41,7 @@ def test_source_format_is_derived_from_real_file_name(name, source_format, route
     assert source.processing_route == route
 
 
-@pytest.mark.parametrize("name", ["wrong.cart", "part.zip", "part", "part.CATProduct"])
+@pytest.mark.parametrize("name", ["wrong.cart", "part"])
 def test_unsupported_source_is_rejected(name):
     with pytest.raises(IngestSourceError) as error:
         identify_source(name)

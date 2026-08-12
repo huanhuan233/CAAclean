@@ -76,6 +76,7 @@ class CadService:
         allowed = {
             "STEP": {".step", ".stp"},
             "CATPART": {".catpart"},
+            "CATPRODUCT": {".catproduct", ".zip"},
         }
         if source_format not in allowed or ext not in allowed[source_format]:
             raise ValueError("source format does not match file extension")
@@ -111,16 +112,17 @@ class CadService:
             await commit()
         update_manifest = getattr(self.repository, "update_revision_manifest", None)
         if update_manifest:
+            ingest = {
+                "source_format": source_format,
+                "processing_route": processing_route,
+                "source_file_name": filename,
+                "source_sha256": sha256,
+            }
+            if source_format == "CATPRODUCT" and ext == ".zip":
+                ingest["source_archive_name"] = filename
             await update_manifest(
                 revision.id,
-                {
-                    "ingest": {
-                        "source_format": source_format,
-                        "processing_route": processing_route,
-                        "source_file_name": filename,
-                        "source_sha256": sha256,
-                    }
-                },
+                {"ingest": ingest},
             )
         return {
             "model_id": model.id,

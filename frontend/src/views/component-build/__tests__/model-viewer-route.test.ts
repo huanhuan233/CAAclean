@@ -17,3 +17,10 @@ test('catpart opens feature center route', () => {
     query: { build_id: 'build-2' }
   });
 });
+
+test('catproduct opens feature center route', () => {
+  assert.deepEqual(modelViewerLocation('build-3', 'revision-3', 'CATPRODUCT'), {
+    path: '/feature-center',
+    query: { build_id: 'build-3' }
+  });
+});
