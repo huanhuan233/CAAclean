@@ -1,0 +1,16 @@
+<I.C SCRIPT>  WINNT 3
+M8 1 "" ""
+M1 2 System,1
+M1 2 ObjectModelerBase,1
+M1 2 ObjectSpecsModeler,1
+M1 2 MecModInterfaces,1
+M1 2 SketcherInterfaces,1
+M1 2 Mathematics,1
+M1 2 GMModelInterfaces,1
+M1 2 GeometricObjects,1
+M1 2 CATTPSInterfaces,1
+M1 2 KnowledgeInterfaces,1
+M1 2 PartInterfaces,1
+M1 2 ProductStructure,1
+M1 2 ProductStructureInterfaces,1
+EOF
