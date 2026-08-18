@@ -58,6 +58,19 @@ interface BundleManifest {
   output_files: Record<string, { sha256: string }>;
 }
 
+interface StepCurveRecord {
+  id: string;
+  name?: string;
+  points: number[][];
+}
+
+interface StepCurvesAsset {
+  schema_version: 'cad_step_curves_v1';
+  curve_count: number;
+  point_count: number;
+  curves: StepCurveRecord[];
+}
+
 interface TopologyFaceRecord {
   face_id: string;
   surface_type?: string;
@@ -202,6 +215,7 @@ let camera: THREE.PerspectiveCamera | null = null;
 let renderer: THREE.WebGLRenderer | null = null;
 let controls: OrbitControls | null = null;
 let modelRoot: THREE.Object3D | null = null;
+let stepCurveRoot: THREE.Object3D | null = null;
 let animationId = 0;
 let resizeObserver: ResizeObserver | null = null;
 let statusPollTimer: number | null = null;
@@ -512,6 +526,7 @@ async function loadBuildBundle(buildId: string) {
     featureMeshMap.value = nextFeatureMap;
     faceMeshMap.value = nextFaceMap;
     await loadGlb(modelBuffer);
+    await loadStepCurves(viewerAsset.curves_url, manifest);
     await loadOptionalSemanticAssets(result.data);
     clearSelection();
     saveRecentFeatureCenterBuildId(window.localStorage, buildId);
@@ -554,6 +569,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   const productFeatureTreeUrl = viewerContract.native_semantics?.product_feature_tree_url;
   const productInstancesUrl = viewerContract.native_semantics?.product_instances_url;
   const nativeUrl = viewerContract.native_semantics?.features_url;
+  const shouldLoadProductTree = viewerContract.source_format === 'CATPRODUCT';
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
   const requests: Promise<void>[] = [];
@@ -572,13 +588,13 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       })
     );
   }
-  if (productFeatureTreeUrl) {
+  if (shouldLoadProductTree && productFeatureTreeUrl) {
     requests.push(
       fetchAsset(productFeatureTreeUrl).then(buffer => {
         nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
       })
     );
-  } else if (productInstancesUrl) {
+  } else if (shouldLoadProductTree && productInstancesUrl) {
     requests.push(
       fetchAsset(productInstancesUrl).then(buffer => {
         nativeFeatures.value = productInstancesToNativeRecords(
@@ -690,6 +706,7 @@ async function loadGlb(buffer: ArrayBuffer) {
   const gltf = await new Promise<Awaited<ReturnType<GLTFLoader['parseAsync']>>>((resolve, reject) => {
     new GLTFLoader().parse(buffer, '', resolve, reject);
   });
+  clearStepCurves();
   if (modelRoot) scene.remove(modelRoot);
   disposeModel(modelRoot);
   faceObjects.clear();
@@ -715,6 +732,56 @@ async function loadGlb(buffer: ArrayBuffer) {
   scene.add(modelRoot);
   applyToolMode();
   fitCamera();
+}
+
+async function loadStepCurves(curvesUrl: string | null | undefined, manifest: BundleManifest) {
+  clearStepCurves();
+  if (!scene || !curvesUrl) return;
+  const buffer = await fetchAsset(curvesUrl);
+  const expected = manifest.output_files['lightweight/curves.json']?.sha256;
+  if (expected && (await sha256Buffer(buffer)) !== expected) throw new Error('Bundle 文件哈希不匹配：lightweight/curves.json');
+  const asset = JSON.parse(new TextDecoder('utf-8').decode(buffer)) as StepCurvesAsset;
+  if (asset.schema_version !== 'cad_step_curves_v1' || !asset.curves.length) return;
+
+  const root = new THREE.Group();
+  root.name = 'STEP 曲线';
+  const colorA = new THREE.Color('#00d4ff');
+  const colorB = new THREE.Color('#f8e71c');
+  for (let index = 0; index < asset.curves.length; index += 1) {
+    const curve = asset.curves[index];
+    if (!Array.isArray(curve.points) || curve.points.length < 2) continue;
+    const positions: number[] = [];
+    for (let pointIndex = 1; pointIndex < curve.points.length; pointIndex += 1) {
+      const previous = curve.points[pointIndex - 1];
+      const current = curve.points[pointIndex];
+      if (previous.length < 3 || current.length < 3) continue;
+      positions.push(previous[0], previous[1], previous[2], current[0], current[1], current[2]);
+    }
+    if (!positions.length) continue;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const material = new THREE.LineBasicMaterial({
+      color: (index % 2 ? colorA : colorB).clone(),
+      linewidth: 1.5,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: true,
+    });
+    const line = new THREE.LineSegments(geometry, material);
+    line.name = curve.name || curve.id;
+    line.userData.step_curve_id = curve.id;
+    root.add(line);
+  }
+  if (!root.children.length) return;
+  stepCurveRoot = root;
+  scene.add(root);
+  fitCamera();
+}
+
+function clearStepCurves() {
+  if (scene && stepCurveRoot) scene.remove(stepCurveRoot);
+  disposeModel(stepCurveRoot);
+  stepCurveRoot = null;
 }
 
 function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']) {
@@ -1073,8 +1140,17 @@ function updateOrientationAxes() {
 
 // 用途：按真实模型包围盒适应窗口，不写死参考图尺寸或相机位置。
 function fitCamera() {
-  if (!modelRoot || !camera || !controls) return;
-  const box = new THREE.Box3().setFromObject(modelRoot);
+  if (!camera || !controls) return;
+  const roots = [modelRoot, stepCurveRoot].filter((item): item is THREE.Object3D => Boolean(item));
+  if (!roots.length) return;
+  const box = new THREE.Box3();
+  for (const root of roots) {
+    const nextBox = new THREE.Box3().setFromObject(root);
+    if (!Number.isFinite(nextBox.min.x) || !Number.isFinite(nextBox.max.x)) continue;
+    if (nextBox.isEmpty()) continue;
+    box.union(nextBox);
+  }
+  if (!Number.isFinite(box.min.x) || box.isEmpty()) return;
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   const distance = Math.max(size.x, size.y, size.z, 1) * 1.8;
@@ -1217,10 +1293,11 @@ function animate() {
 // 用途：释放模型显存，避免路由切换或重载 Bundle 后遗留 GPU 资源。
 function disposeModel(root: THREE.Object3D | null) {
   root?.traverse(object => {
-    if (!(object instanceof THREE.Mesh)) return;
+    if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.LineSegments)) return;
     object.geometry.dispose();
-    const materials = Array.isArray(object.material) ? object.material : [object.material];
-    materials.forEach(material => material.dispose());
+    const material = object.material as THREE.Material | THREE.Material[];
+    const materials = Array.isArray(material) ? material : [material];
+    materials.forEach(item => item.dispose());
   });
 }
 

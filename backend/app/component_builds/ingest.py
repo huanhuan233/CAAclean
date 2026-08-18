@@ -530,6 +530,8 @@ async def _build_feature_center(
                 "scene_manifest": "feature-center/manifest.json",
                 "face_mesh_map": "feature-center/lightweight/face_mesh_map.json",
                 "feature_mesh_map": "feature-center/lightweight/feature_mesh_map.json",
+                "curves": "feature-center/lightweight/curves.json"
+                if (bundle / "lightweight" / "curves.json").is_file() else None,
                 "selection_index": "feature-center/lightweight/selection_index.json"
                 if (bundle / "lightweight" / "selection_index.json").is_file() else None,
             },

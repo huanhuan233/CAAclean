@@ -242,7 +242,7 @@ async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServ
     _set_stage(job, settings, "running_caa", 20)
     await _run_process(
         [
-            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x86.bat"),
+            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x64_host_intel_a.bat"),
             "--input", str(source), "--output", str(native), "--read-only",
         ],
         job,

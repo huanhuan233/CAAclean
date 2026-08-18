@@ -465,6 +465,7 @@ declare namespace Api {
         scene_manifest_url: string;
         face_mesh_map_url: string;
         feature_mesh_map_url: string;
+        curves_url?: string | null;
         selection_index_url?: string | null;
       } | null;
       feature_center: {

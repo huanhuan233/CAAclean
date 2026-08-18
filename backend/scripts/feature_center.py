@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import re
 import sys
 import tempfile
 import uuid
@@ -23,6 +25,178 @@ from app.feature_center.step_input import StepInputError, inspect_step_input
 
 
 # 用途：为同一 STEP Hash 生成稳定解析任务编号，使旧解析器中间结果也能双跑复现。
+_STEP_ENTITY_RE = re.compile(r"^#(?P<id>\d+)\s*=\s*(?P<type>[A-Z0-9_]+)\((?P<body>.*)\)\s*;")
+_STEP_REF_RE = re.compile(r"#(\d+)")
+_STEP_POINT_RE = re.compile(
+    r"^#(?P<id>\d+)\s*=\s*CARTESIAN_POINT\('(?P<name>(?:''|[^'])*)',\((?P<coords>[^)]*)\)\)\s*;"
+)
+
+
+def _decode_step_name(value: str) -> str:
+    value = value.replace("''", "'")
+
+    def repl(match: re.Match[str]) -> str:
+        try:
+            return bytes.fromhex(match.group(1)).decode("utf-16-be")
+        except (ValueError, UnicodeDecodeError):
+            return match.group(0)
+
+    return re.sub(r"\\X2\\([0-9A-Fa-f]+)\\X0\\", repl, value)
+
+
+def _step_entity_name(body: str) -> str:
+    if not body.startswith("'"):
+        return ""
+    index = 1
+    chars: list[str] = []
+    while index < len(body):
+        char = body[index]
+        if char == "'":
+            if index + 1 < len(body) and body[index + 1] == "'":
+                chars.append("'")
+                index += 2
+                continue
+            break
+        chars.append(char)
+        index += 1
+    return _decode_step_name("".join(chars))
+
+
+def _extract_step_curves(step_path: Path) -> dict:
+    points: dict[str, list[float]] = {}
+    entities: dict[str, tuple[str, str]] = {}
+    for line in step_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        text = line.strip()
+        point_match = _STEP_POINT_RE.match(text)
+        if point_match:
+            coords = [
+                float(item.strip().replace("D", "E"))
+                for item in point_match.group("coords").split(",")
+                if item.strip()
+            ]
+            if len(coords) >= 3:
+                points[point_match.group("id")] = coords[:3]
+            continue
+        entity_match = _STEP_ENTITY_RE.match(text)
+        if entity_match:
+            entities[entity_match.group("id")] = (entity_match.group("type"), entity_match.group("body"))
+
+    def spline_curve_points(entity_id: str) -> list[list[float]]:
+        entity = entities.get(entity_id)
+        if not entity or not entity[0].startswith("B_SPLINE_CURVE"):
+            return []
+        return [points[ref] for ref in _STEP_REF_RE.findall(entity[1]) if ref in points]
+
+    def curve_entity_points(entity_id: str) -> list[list[float]]:
+        entity = entities.get(entity_id)
+        if not entity:
+            return []
+        if entity[0].startswith("B_SPLINE_CURVE"):
+            return spline_curve_points(entity_id)
+        if entity[0] != "TRIMMED_CURVE":
+            return []
+        refs = _STEP_REF_RE.findall(entity[1])
+        if refs:
+            base_points = spline_curve_points(refs[0])
+            if len(base_points) >= 2:
+                return base_points
+        endpoint_refs = [ref for ref in refs[1:] if ref in points]
+        if len(endpoint_refs) >= 2:
+            return [points[endpoint_refs[0]], points[endpoint_refs[1]]]
+        return []
+
+    def trimmed_curve_points(entity_id: str) -> list[list[float]]:
+        entity = entities.get(entity_id)
+        if not entity or entity[0] != "TRIMMED_CURVE":
+            return []
+        return curve_entity_points(entity_id)
+
+    curves: list[dict] = []
+    all_points: list[list[float]] = []
+    for entity_id, (entity_type, body) in entities.items():
+        if entity_type != "COMPOSITE_CURVE":
+            continue
+        curve_points: list[list[float]] = []
+        for segment_id in _STEP_REF_RE.findall(body):
+            segment = entities.get(segment_id)
+            if not segment or segment[0] != "COMPOSITE_CURVE_SEGMENT":
+                continue
+            refs = _STEP_REF_RE.findall(segment[1])
+            if not refs:
+                continue
+            segment_points = curve_entity_points(refs[-1])
+            if not segment_points:
+                continue
+            if curve_points and curve_points[-1] == segment_points[0]:
+                curve_points.extend(segment_points[1:])
+            else:
+                curve_points.extend(segment_points)
+        if len(curve_points) < 2:
+            continue
+        all_points.extend(curve_points)
+        curves.append({
+            "id": f"step_curve_{entity_id}",
+            "name": _step_entity_name(body) or f"STEP curve #{entity_id}",
+            "source_entity": f"#{entity_id}",
+            "points": curve_points,
+        })
+    for entity_id, (entity_type, body) in entities.items():
+        if not entity_type.startswith("B_SPLINE_CURVE"):
+            continue
+        curve_points = spline_curve_points(entity_id)
+        if len(curve_points) < 2:
+            continue
+        all_points.extend(curve_points)
+        curves.append({
+            "id": f"step_curve_{entity_id}",
+            "name": _step_entity_name(body) or f"STEP spline #{entity_id}",
+            "source_entity": f"#{entity_id}",
+            "points": curve_points,
+        })
+
+    bbox = None
+    if all_points:
+        bbox = {
+            "min": [min(point[index] for point in all_points) for index in range(3)],
+            "max": [max(point[index] for point in all_points) for index in range(3)],
+        }
+    return {
+        "schema_version": "cad_step_curves_v1",
+        "source": {"file_name": step_path.name},
+        "curve_count": len(curves),
+        "point_count": sum(len(curve["points"]) for curve in curves),
+        "bbox": bbox,
+        "curves": curves,
+    }
+
+
+def _fingerprint(path: Path) -> dict[str, object]:
+    content = path.read_bytes()
+    return {"size_bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+
+
+def _write_step_curves_asset(step_path: Path, bundle_dir: Path) -> None:
+    curves = _extract_step_curves(step_path)
+    if not curves["curve_count"]:
+        return
+    curves_path = bundle_dir / "lightweight" / "curves.json"
+    curves_path.write_text(
+        json.dumps(curves, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    manifest_path = bundle_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.setdefault("output_files", {})["lightweight/curves.json"] = _fingerprint(curves_path)
+    manifest.setdefault("lightweight", {})["curve_count"] = curves["curve_count"]
+    manifest["lightweight"]["curve_point_count"] = curves["point_count"]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def _revision_id(step_sha256: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"cad-feature-center:{step_sha256}")
 
@@ -48,6 +222,7 @@ async def _build(args: argparse.Namespace) -> int:
             native_features = read_jsonl(native_path)
         bundle = build_bundle_from_parser_result(step_info, parser_result, native_features)
         FeatureCenterBundleWriter().write(bundle, output)
+        _write_step_curves_asset(Path(args.step).resolve(), output)
         errors = validate_bundle(output)
         if errors:
             print("FC_BUNDLE_VALIDATION_FAILED " + ";".join(errors), file=sys.stderr)

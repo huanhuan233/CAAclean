@@ -414,6 +414,7 @@ class ComponentBuildService:
                 "scene_manifest_url": asset_base + viewer["scene_manifest"],
                 "face_mesh_map_url": asset_base + viewer["face_mesh_map"],
                 "feature_mesh_map_url": asset_base + viewer["feature_mesh_map"],
+                "curves_url": asset_base + viewer["curves"] if viewer.get("curves") else None,
                 "selection_index_url": asset_base + viewer["selection_index"]
                 if viewer.get("selection_index") else None,
             },
