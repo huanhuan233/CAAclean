@@ -13,4 +13,5 @@
   <prerequisite name = "PartInterfaces" access = "Public"/>
   <prerequisite name = "ProductStructure" access = "Public"/>
   <prerequisite name = "ProductStructureInterfaces" access = "Public"/>
+  <prerequisite name = "SpaceAnalysisInterfaces" access = "Public"/>
 </eduFramework>

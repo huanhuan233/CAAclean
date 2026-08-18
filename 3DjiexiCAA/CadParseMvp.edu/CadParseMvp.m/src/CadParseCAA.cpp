@@ -26,6 +26,7 @@
 #include "CATIGeometricalElement.h"
 #include "CATIMechanicalFeature.h"
 #include "CATIShapeFeatureProperties.h"
+#include "CATIInertia.h"
 #include "CATISketch.h"
 #include "CATLISTV_CATBaseUnknown.h"
 #include "CATLISTV_CATISpecObject.h"
@@ -127,6 +128,13 @@
 
 namespace cadparse
 {
+static std::string DoubleToString(double value)
+{
+  std::ostringstream out;
+  out << std::setprecision(15) << value;
+  return out.str();
+}
+
 // 通用 CAA 接口指针 RAII 守卫。
 // 模板参数 T 保留具体接口类型；守卫接管一个已持有引用，并在析构时调用一次 Release。
 template <class T>
@@ -3503,6 +3511,58 @@ public:
       const CATIContainer_var container = _spec->GetFeatContainer();
       output.attributes["container_accessible"] = container == NULL_var ? "false" : "true";
       output.attributes["result_summary"] = "not_exposed_by_verified_mvp_interface";
+      CATIInertia* raw_inertia = 0;
+      const HRESULT inertia_query = _spec->QueryInterface(IID_CATIInertia, reinterpret_cast<void**>(&raw_inertia));
+      CaaInterfaceGuard<CATIInertia> inertia(raw_inertia);
+      if (SUCCEEDED(inertia_query) && inertia.Get())
+      {
+        double density = 0.0;
+        double mass = 0.0;
+        double position[3] = { 0.0, 0.0, 0.0 };
+        double matrix[9] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+        double components[9] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+        double values[3] = { 0.0, 0.0, 0.0 };
+        double volume = 0.0;
+        double area = 0.0;
+        const HRESULT inertia_result = inertia.Get()->GetInertia(
+          &density, &mass, position, matrix, components, values, &volume, &area);
+        if (SUCCEEDED(inertia_result))
+        {
+          output.attributes["catia_property_mechanical_status"] = "available";
+          output.attributes["catia_property_density_kg_m3"] = DoubleToString(density);
+          output.attributes["catia_property_mass_kg"] = DoubleToString(mass);
+          output.attributes["catia_property_volume_m3"] = DoubleToString(volume);
+          output.attributes["catia_property_area_m2"] = DoubleToString(area);
+          output.attributes["catia_property_center_x_mm"] = DoubleToString(position[0] * 1000.0);
+          output.attributes["catia_property_center_y_mm"] = DoubleToString(position[1] * 1000.0);
+          output.attributes["catia_property_center_z_mm"] = DoubleToString(position[2] * 1000.0);
+          output.attributes["catia_property_ixx_kg_m2"] = DoubleToString(matrix[0]);
+          output.attributes["catia_property_ixy_kg_m2"] = DoubleToString(matrix[1]);
+          output.attributes["catia_property_ixz_kg_m2"] = DoubleToString(matrix[2]);
+          output.attributes["catia_property_iyx_kg_m2"] = DoubleToString(matrix[3]);
+          output.attributes["catia_property_iyy_kg_m2"] = DoubleToString(matrix[4]);
+          output.attributes["catia_property_iyz_kg_m2"] = DoubleToString(matrix[5]);
+          output.attributes["catia_property_izx_kg_m2"] = DoubleToString(matrix[6]);
+          output.attributes["catia_property_izy_kg_m2"] = DoubleToString(matrix[7]);
+          output.attributes["catia_property_izz_kg_m2"] = DoubleToString(matrix[8]);
+          output.attributes["catia_property_principal_axis_x1"] = DoubleToString(components[0]);
+          output.attributes["catia_property_principal_axis_y1"] = DoubleToString(components[1]);
+          output.attributes["catia_property_principal_axis_z1"] = DoubleToString(components[2]);
+          output.attributes["catia_property_principal_axis_x2"] = DoubleToString(components[3]);
+          output.attributes["catia_property_principal_axis_y2"] = DoubleToString(components[4]);
+          output.attributes["catia_property_principal_axis_z2"] = DoubleToString(components[5]);
+          output.attributes["catia_property_principal_axis_x3"] = DoubleToString(components[6]);
+          output.attributes["catia_property_principal_axis_y3"] = DoubleToString(components[7]);
+          output.attributes["catia_property_principal_axis_z3"] = DoubleToString(components[8]);
+          output.attributes["catia_property_principal_moment_1_kg_m2"] = DoubleToString(values[0]);
+          output.attributes["catia_property_principal_moment_2_kg_m2"] = DoubleToString(values[1]);
+          output.attributes["catia_property_principal_moment_3_kg_m2"] = DoubleToString(values[2]);
+        }
+        else
+        {
+          output.attributes["catia_property_mechanical_status"] = "inertia_read_failed";
+        }
+      }
       return true;
     }
     catch (...)

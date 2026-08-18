@@ -22,4 +22,5 @@ LINK_WITH = \
   PartInterfacesUUID \
   CATProductStructure1 \
   CATProductStructureInterfaces \
-  ProductStructureUUID
+  ProductStructureUUID \
+  CATSaiSpaceAnalysisItf

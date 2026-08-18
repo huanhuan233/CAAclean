@@ -203,6 +203,9 @@ const navigationWidth = ref(310);
 const toolMode = ref<ToolMode>('select');
 const sceneMode = ref<SceneMode>('whole');
 const selectionTarget = ref<CadSelectionTarget | null>(null);
+const catiaPropertyDialogOpen = ref(false);
+const catiaPropertyNode = ref<FeatureTreeNode | null>(null);
+const catiaPropertyTab = ref('product');
 const explodableGroupCount = ref(0);
 const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
   x: { x: 66, y: 45, depth: 0 },
@@ -389,6 +392,12 @@ const detailLayout = computed(() => {
     geometryHasLinkedFeature: Boolean(selectedFace.value && (selectedNativeFeature.value || selectedFeature.value))
   });
 });
+const catiaPropertyTitle = computed(() => {
+  const node = catiaPropertyNode.value;
+  if (!node) return 'CATIA 属性';
+  return `${node.displayName}${node.nativeType ? ` · ${node.nativeType}` : ''}`;
+});
+const catiaPropertyTabs = computed(() => buildCatiaPropertyTabs(catiaPropertyNode.value));
 
 // 用途：模板只查询已计算的业务分组，BOM 的展开或隐藏不会改变右侧属性语义。
 function hasDetailGroup(group: DetailGroup) {
@@ -400,6 +409,151 @@ function formatNativeAttribute(value: unknown) {
   if (value == null) return '未提供';
   if (typeof value === 'object') return JSON.stringify(value, null, 2);
   return String(value);
+}
+
+function nativeAttributesOf(node: FeatureTreeNode | null) {
+  return (node?.raw?.attributes || {}) as Record<string, unknown>;
+}
+
+function pickAttribute(attrs: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = attrs[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+function formatCatiaNumber(value: unknown) {
+  const numeric = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+  if (!Number.isFinite(numeric)) return formatNativeAttribute(value);
+  if (numeric === 0) return '0';
+  if (Math.abs(numeric) < 0.001) return numeric.toExponential(3);
+  const rounded = numeric.toFixed(3);
+  return rounded.replace(/\.?0+$/, '');
+}
+
+function propertyRow(label: string, value: unknown, unit = '') {
+  if (value === undefined || value === null || value === '') return null;
+  const text = unit ? formatCatiaNumber(value) : formatNativeAttribute(value);
+  return { label, value: unit && !text.endsWith(unit) ? `${text}${unit}` : text };
+}
+
+function compactRows(rows: Array<{ label: string; value: string } | null>) {
+  return rows.filter(Boolean) as Array<{ label: string; value: string }>;
+}
+
+function isCatiaPropertyTarget(node: FeatureTreeNode) {
+  const typeText = `${node.kind} ${node.nativeType || ''} ${node.raw?.startup_type || ''} ${node.raw?.native_type || ''}`.toLowerCase();
+  return ['catpart', 'catproduct', 'product', 'mechanicalpart', 'part'].some(token => typeText.includes(token));
+}
+
+function buildMechanicalRows(node: FeatureTreeNode | null) {
+  const attrs = nativeAttributesOf(node);
+  return {
+    characteristic: compactRows([
+      propertyRow('体积', pickAttribute(attrs, ['catia_property_volume_m3', 'volume_m3', 'volume']), 'm3'),
+      propertyRow('质量', pickAttribute(attrs, ['catia_property_mass_kg', 'mass_kg', 'mass']), 'kg'),
+      propertyRow('曲面', pickAttribute(attrs, ['catia_property_area_m2', 'area_m2', 'surface_area_m2', 'area']), 'm2'),
+      propertyRow('密度', pickAttribute(attrs, ['catia_property_density_kg_m3', 'density_kg_m3', 'density']), 'kg_m3')
+    ]),
+    center: compactRows([
+      propertyRow('x', pickAttribute(attrs, ['catia_property_center_x_mm', 'center_x_mm', 'center_x']), 'mm'),
+      propertyRow('y', pickAttribute(attrs, ['catia_property_center_y_mm', 'center_y_mm', 'center_y']), 'mm'),
+      propertyRow('z', pickAttribute(attrs, ['catia_property_center_z_mm', 'center_z_mm', 'center_z']), 'mm')
+    ]),
+    inertia: compactRows([
+      propertyRow('Ixx', pickAttribute(attrs, ['catia_property_ixx_kg_m2', 'ixx_kg_m2', 'ixx']), 'kgxm2'),
+      propertyRow('Ixy', pickAttribute(attrs, ['catia_property_ixy_kg_m2', 'ixy_kg_m2', 'ixy']), 'kgxm2'),
+      propertyRow('Ixz', pickAttribute(attrs, ['catia_property_ixz_kg_m2', 'ixz_kg_m2', 'ixz']), 'kgxm2'),
+      propertyRow('Iyx', pickAttribute(attrs, ['catia_property_iyx_kg_m2', 'iyx_kg_m2', 'iyx']), 'kgxm2'),
+      propertyRow('Iyy', pickAttribute(attrs, ['catia_property_iyy_kg_m2', 'iyy_kg_m2', 'iyy']), 'kgxm2'),
+      propertyRow('Iyz', pickAttribute(attrs, ['catia_property_iyz_kg_m2', 'iyz_kg_m2', 'iyz']), 'kgxm2'),
+      propertyRow('Izx', pickAttribute(attrs, ['catia_property_izx_kg_m2', 'izx_kg_m2', 'izx']), 'kgxm2'),
+      propertyRow('Izy', pickAttribute(attrs, ['catia_property_izy_kg_m2', 'izy_kg_m2', 'izy']), 'kgxm2'),
+      propertyRow('Izz', pickAttribute(attrs, ['catia_property_izz_kg_m2', 'izz_kg_m2', 'izz']), 'kgxm2')
+    ])
+  };
+}
+
+function buildCatiaPropertyTabs(node: FeatureTreeNode | null) {
+  if (!node) return [];
+  const attrs = nativeAttributesOf(node);
+  const mechanical = buildMechanicalRows(node);
+  const componentRows = compactRows([
+    propertyRow('实例名称', pickAttribute(attrs, ['instance_name']) || node.displayName),
+    propertyRow('描述', pickAttribute(attrs, ['description'])),
+    propertyRow('在物料清单中可视化', pickAttribute(attrs, ['bom_visible', 'visible_in_bom'])),
+    propertyRow('StartUp', node.raw?.startup_type || node.nativeType),
+    propertyRow('内部名称', node.raw?.internal_name || node.name),
+    propertyRow('树路径', node.raw?.tree_path || node.sourceRef)
+  ]);
+  const referenceRows = compactRows([
+    propertyRow('参考链接', pickAttribute(attrs, ['source_document', 'instance_path', 'tree_path']) || node.sourceRef),
+    propertyRow('引用 ID', pickAttribute(attrs, ['reference_id'])),
+    propertyRow('实例 ID', pickAttribute(attrs, ['instance_id'])),
+    propertyRow('父实例 ID', pickAttribute(attrs, ['parent_instance_id']))
+  ]);
+  const productRows = compactRows([
+    propertyRow('零件编号', pickAttribute(attrs, ['part_number']) || node.displayName),
+    propertyRow('版本', pickAttribute(attrs, ['revision', 'version'])),
+    propertyRow('定义', pickAttribute(attrs, ['definition'])),
+    propertyRow('术语', pickAttribute(attrs, ['nomenclature'])),
+    propertyRow('源', pickAttribute(attrs, ['source']) || pickAttribute(attrs, ['value_source'])),
+    propertyRow('描述', pickAttribute(attrs, ['product_description', 'description'])),
+    propertyRow('子节点数', pickAttribute(attrs, ['child_count'])),
+    propertyRow('读取状态', pickAttribute(attrs, ['read_status', 'load_status'])),
+    propertyRow('更新状态', node.raw?.update_status)
+  ]);
+  const graphicPropertyRows = compactRows([
+    propertyRow('颜色', pickAttribute(attrs, ['color', 'rgb', 'material_color']) || '无颜色'),
+    propertyRow('线型', pickAttribute(attrs, ['line_type']) || '无线型'),
+    propertyRow('线宽', pickAttribute(attrs, ['line_width']) || '无宽度'),
+    propertyRow('透明度', pickAttribute(attrs, ['transparency', 'opacity'])),
+    propertyRow('显示状态', pickAttribute(attrs, ['visibility', 'show_status', 'visible']) || node.raw?.visibility)
+  ]);
+  const graphicGlobalRows = compactRows([
+    propertyRow('显示的', pickAttribute(attrs, ['shown', 'visible'])),
+    propertyRow('图层', pickAttribute(attrs, ['layer'])),
+    propertyRow('渲染样式', pickAttribute(attrs, ['render_style'])),
+    propertyRow('可拾取', pickAttribute(attrs, ['pickable'])),
+    propertyRow('抑制状态', pickAttribute(attrs, ['suppressed']))
+  ]);
+  const drawingRows = compactRows([
+    propertyRow('工程制图状态', pickAttribute(attrs, ['drafting_status', 'drawing_status'])),
+    propertyRow('标注/注释', pickAttribute(attrs, ['annotation_status', 'fta_status'])),
+    propertyRow('视图', pickAttribute(attrs, ['drawing_view'])),
+    propertyRow('线型继承', pickAttribute(attrs, ['line_inheritance'])),
+    propertyRow('TPS/FTA', node.raw?.decoder_id === 'fta' ? node.raw?.decode_status : undefined)
+  ]);
+  return [
+    {
+      name: 'product',
+      label: '产品',
+      groups: [
+        { title: '部件', rows: componentRows },
+        { title: '参考链接', rows: referenceRows },
+        { title: '产品', rows: productRows }
+      ]
+    },
+    {
+      name: 'graphic',
+      label: '图形',
+      groups: [
+        { title: '图形属性', rows: graphicPropertyRows },
+        { title: '全局属性', rows: graphicGlobalRows }
+      ]
+    },
+    {
+      name: 'mechanical',
+      label: '机械',
+      groups: [
+        { title: '特性', rows: mechanical.characteristic },
+        { title: '惯性中心', rows: mechanical.center },
+        { title: '惯性矩阵', rows: mechanical.inertia }
+      ]
+    },
+    { name: 'drafting', label: '工程制图', groups: [{ title: '工程制图', rows: drawingRows }] }
+  ];
 }
 
 // 用途：从特征关联面跳到几何拓扑并复用现有 Face 反查与 Viewer 高亮。
@@ -892,7 +1046,10 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
 // 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
 function showNativeTreeNodeProperties(node: FeatureTreeNode) {
   selectNativeTreeNode(node);
-  detailsOpen.value = true;
+  if (!isCatiaPropertyTarget(node)) return;
+  catiaPropertyNode.value = node;
+  catiaPropertyTab.value = buildMechanicalRows(node).characteristic.length ? 'mechanical' : 'product';
+  catiaPropertyDialogOpen.value = true;
 }
 
 function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
@@ -1877,6 +2034,37 @@ onBeforeUnmount(() => {
         </div>
       </aside>
     </main>
+
+    <ElDialog
+      v-model="catiaPropertyDialogOpen"
+      class="catia-property-dialog"
+      :title="catiaPropertyTitle"
+      width="640px"
+      append-to-body
+    >
+      <div class="catia-current-selection">
+        <span>当前选择：</span>
+        <strong>{{ catiaPropertyNode?.sourceRef || catiaPropertyNode?.displayName || '—' }}</strong>
+      </div>
+      <ElTabs v-if="catiaPropertyTabs.length" v-model="catiaPropertyTab" type="card">
+        <ElTabPane v-for="tab in catiaPropertyTabs" :key="tab.name" :label="tab.label" :name="tab.name">
+          <section v-for="group in tab.groups" :key="group.title" class="catia-property-group">
+            <h4>{{ group.title }}</h4>
+            <dl v-if="group.rows.length">
+              <template v-for="row in group.rows" :key="`${group.title}-${row.label}`">
+                <dt>{{ row.label }}</dt>
+                <dd :title="row.value">{{ row.value }}</dd>
+              </template>
+            </dl>
+            <p v-else class="catia-property-empty">当前解析结果未提供</p>
+          </section>
+        </ElTabPane>
+      </ElTabs>
+      <ElEmpty v-else description="当前节点没有可显示的 CATIA 属性" />
+      <template #footer>
+        <ElButton @click="catiaPropertyDialogOpen = false">关闭</ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
@@ -2313,6 +2501,74 @@ button:disabled {
 .detail-section dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+:global(.catia-property-dialog .el-dialog__body) {
+  padding-top: 8px;
+}
+.catia-current-selection {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.catia-current-selection span {
+  color: var(--el-text-color-regular);
+}
+.catia-current-selection strong {
+  min-width: 0;
+  border: 1px solid var(--el-border-color-light);
+  background: var(--el-fill-color-lighter);
+  font-weight: 500;
+  overflow: hidden;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catia-property-group {
+  border: 1px solid var(--el-border-color);
+  margin: 8px 0 10px;
+  padding: 12px 8px 8px;
+  position: relative;
+}
+.catia-property-group h4 {
+  position: absolute;
+  top: -10px;
+  left: 8px;
+  background: var(--el-bg-color);
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+  padding: 0 5px;
+}
+.catia-property-group dl {
+  display: grid;
+  grid-template-columns: max-content minmax(118px, 1fr) max-content minmax(118px, 1fr) max-content minmax(118px, 1fr);
+  gap: 6px 6px;
+  align-items: center;
+  margin: 0;
+}
+.catia-property-group dt {
+  color: var(--el-text-color-primary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.catia-property-group dd {
+  min-height: 26px;
+  border: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-lighter);
+  font-size: 12px;
+  margin: 0;
+  overflow: hidden;
+  padding: 4px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catia-property-empty {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
+  margin: 2px 0 0;
 }
 .parameter-list dd {
   white-space: pre-wrap;

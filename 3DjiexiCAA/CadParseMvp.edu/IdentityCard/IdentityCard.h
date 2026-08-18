@@ -1,25 +1,28 @@
-// ±¾ÎÄ¼þÊÇ CAA Framework µÄ IdentityCard£¬²»»á×÷ÎªÆÕÍ¨ C++ ÔËÐÐÊ±´úÂëÖ´ÐÐ¡£
-// AddPrereqComponent ÓÃÍ¾£ºÉùÃ÷±àÒëºÍÁ´½Ó CadParseMvp ËùÐèµÄ R21 Framework ÒÀÀµ¡£
-// Public ±íÊ¾ÕâÀïÖ»Ê¹ÓÃ¶ÔÓ¦ Framework ¶ÔÍâ¹«¿ªµÄ½Ó¿ÚÆõÔ¼¡£
+// ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ CAA Framework ï¿½ï¿½ IdentityCardï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½Í¨ C++ ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½Ö´ï¿½Ð¡ï¿½
+// AddPrereqComponent ï¿½ï¿½Í¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ CadParseMvp ï¿½ï¿½ï¿½ï¿½ï¿½ R21 Framework ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+// Public ï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½Ö»Ê¹ï¿½Ã¶ï¿½Ó¦ Framework ï¿½ï¿½ï¿½â¹«ï¿½ï¿½ï¿½Ä½Ó¿ï¿½ï¿½ï¿½Ô¼ï¿½ï¿½
 AddPrereqComponent("System", Public);
 AddPrereqComponent("ObjectModelerBase", Public);
 AddPrereqComponent("ObjectSpecsModeler", Public);
 AddPrereqComponent("MecModInterfaces", Public);
 // Purpose: provide Public CATISketch for sketch centerline evidence on Shaft/Groove revolutions.
 AddPrereqComponent("SketcherInterfaces", Public);
-// ÓÃÍ¾£ºÌá¹© Public CATMathPoint/CATMathVector µÈÊýÑ§¶ÔÏó£¬ÓÃÓÚÍØÆËÖÐÐÄµãºÍÈý½Ç»¯½á¹û¶ÁÈ¡¡£
+// ï¿½ï¿½Í¾ï¿½ï¿½ï¿½á¹© Public CATMathPoint/CATMathVector ï¿½ï¿½ï¿½ï¿½Ñ§ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Äµï¿½ï¿½ï¿½ï¿½ï¿½Ç»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½
 AddPrereqComponent("Mathematics", Public);
-// ÓÃÍ¾£ºÌá¹© Public CATBody/CATTopology/CATCell£¬ÓÃÓÚ¶ÁÈ¡×îÖÕÊµÌåµÄÕæÊµ Face/Edge/Vertex ÍØÆËÕªÒª¡£
+// ï¿½ï¿½Í¾ï¿½ï¿½ï¿½á¹© Public CATBody/CATTopology/CATCellï¿½ï¿½ï¿½ï¿½ï¿½Ú¶ï¿½È¡ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½ï¿½ï¿½ï¿½Êµ Face/Edge/Vertex ï¿½ï¿½ï¿½ï¿½ÕªÒªï¿½ï¿½
 AddPrereqComponent("GMModelInterfaces", Public);
 // Purpose: provide Public CATSurface/CATCurve analytic geometry interfaces for exact final B-Rep parameters.
 AddPrereqComponent("GeometricObjects", Public);
-// ÓÃÍ¾£ºÌá¹© Public CATITPSDocument/CATITPSSet£¬ÓÃÓÚ¶ÁÈ¡ FTA/TPS ¼¯ºÏ¼¶ÕªÒª¡£
+// ï¿½ï¿½Í¾ï¿½ï¿½ï¿½á¹© Public CATITPSDocument/CATITPSSetï¿½ï¿½ï¿½ï¿½ï¿½Ú¶ï¿½È¡ FTA/TPS ï¿½ï¿½ï¿½Ï¼ï¿½ÕªÒªï¿½ï¿½
 AddPrereqComponent("CATTPSInterfaces", Public);
-// ÓÃÍ¾£ºÌá¹© Public CATICkeParm/CATICkeType/CATICkeInst µÄÀàÐÍ»¯ String ²ÎÊý¶ÁÈ¡ÆõÔ¼¡£
+// ï¿½ï¿½Í¾ï¿½ï¿½ï¿½á¹© Public CATICkeParm/CATICkeType/CATICkeInst ï¿½ï¿½ï¿½ï¿½ï¿½Í»ï¿½ String ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½Ô¼ï¿½ï¿½
 AddPrereqComponent("KnowledgeInterfaces", Public);
-// ÓÃÍ¾£ºÌá¹© Public CATIAHole/CATIALimit¡¢ÕæÊµÃ¶¾ÙºÍ¶ÔÓ¦ Automation C++ ½Ó¿Ú¡£
+// ï¿½ï¿½Í¾ï¿½ï¿½ï¿½á¹© Public CATIAHole/CATIALimitï¿½ï¿½ï¿½ï¿½ÊµÃ¶ï¿½ÙºÍ¶ï¿½Ó¦ Automation C++ ï¿½Ó¿Ú¡ï¿½
 AddPrereqComponent("PartInterfaces", Public);
 
 // Purpose: expose Public CATIProduct for CATProduct reference/instance hierarchy extraction.
 AddPrereqComponent("ProductStructure", Public);
 AddPrereqComponent("ProductStructureInterfaces", Public);
+// Purpose: provide Public CATIInertia for CATIA Properties > Mechanical values.
+AddPrereqComponent("SpaceAnalysisInterfaces", Public);
+

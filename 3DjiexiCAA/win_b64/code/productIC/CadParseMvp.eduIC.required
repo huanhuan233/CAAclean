@@ -11,6 +11,7 @@ PartInterfaces
 ProductStructure
 ProductStructureInterfaces
 SketcherInterfaces
+SpaceAnalysisInterfaces
 System
 AdvancedMathematics
 ApplicationFrame
@@ -36,6 +37,7 @@ CATXDocLinkInterfaces
 CDMOperatorsInterfaces
 Communications
 ComponentsCatalogsInterfaces
+DMAPSInterfaces
 Dialog
 DialogEngine
 DraftingInterfaces
@@ -52,7 +54,10 @@ KnowledgeModeler
 LCCommon
 LiteralFeatures
 Mainwin
+MeasureGeometryInterfaces
 Multimedia
+Navigator2Interfaces
+NavigatorInterfaces
 NewTopologicalObjects
 ObjectModelerBaseUI
 ObjectModelerCATIA
@@ -68,6 +73,8 @@ PolyhedralOperators
 PolyhedralVisualization
 Print
 PrintBase
+SIMInterfaces
+SimulationInterfaces
 SpecialAPI
 Tessellation
 TopologicalOperators
