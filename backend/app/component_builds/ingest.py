@@ -215,7 +215,8 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
     if revision is None:
         return
     task_root = _cad_work_root(settings) / str(revision_id)
-    source_path = _prepare_catia_source(_source_file_path(revision.source_file_path), task_root)
+    original_source_path = _source_file_path(revision.source_file_path)
+    source_path = _prepare_catia_source(original_source_path, task_root)
     native_bundle = task_root / "native-caa"
     exported_step = task_root / "exported.stp"
     export_report = task_root / "step-export.json"
@@ -228,7 +229,9 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
     if mode == "disabled":
         raise IngestStageError("catia_worker_disabled", "dispatching_caa", "CATIA Worker 未启用")
     if mode == "http":
-        await _run_remote_catpart_worker(repository, revision_id, settings, str(source_path), task_root)
+        worker_source_path = original_source_path if original_source_path.suffix.lower() == ".zip" else source_path
+        await _run_remote_catpart_worker(repository, revision_id, settings, str(worker_source_path), task_root)
+        await _append_catpart_feature_trees(source_path, native_bundle, rade_root, prereq_root, settings)
         await _set_stage(repository, revision_id, "feature_center_processing", 70)
         await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
         return

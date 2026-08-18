@@ -32,6 +32,23 @@ function Read-AutomationEvidence([string]$path) {
     return $values
 }
 
+function Get-Sha256Hex([string]$path) {
+    $stream = [System.IO.File]::OpenRead($path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 try {
     if ([System.IO.Path]::GetExtension($source).ToLowerInvariant() -notin @(".catpart", ".catproduct")) {
         throw "STEP_EXPORT_INPUT_TYPE_INVALID：输入必须是 CATPart 或 CATProduct"
@@ -46,7 +63,7 @@ try {
     }
 
     # 导出执行交给已在本机 R21 验证过的 WSH Automation；编排层只负责追溯和发布。
-    $sourceHashBefore = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sourceHashBefore = Get-Sha256Hex $source
     # WSH R21 不接受 UTF-8 脚本；运行时生成 UTF-16 临时副本，以便源码仍能保留中文注释。
     $automationText = Get-Content -Raw -Encoding UTF8 -LiteralPath $automationScript
     [System.IO.File]::WriteAllText($temporaryAutomation, $automationText, [System.Text.Encoding]::Unicode)
@@ -57,7 +74,7 @@ try {
     if (-not (Test-Path -LiteralPath $destination)) {
         throw "STEP_EXPORT_OUTPUT_MISSING：CATIA 未生成目标 STEP"
     }
-    $sourceHashAfter = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sourceHashAfter = Get-Sha256Hex $source
     if ($sourceHashBefore -ne $sourceHashAfter) {
         throw "STEP_EXPORT_SOURCE_CHANGED：导出前后 CATPart 哈希不同"
     }
@@ -89,7 +106,7 @@ try {
         output = [ordered]@{
             file_name = [System.IO.Path]::GetFileName($destination)
             size_bytes = (Get-Item -LiteralPath $destination).Length
-            sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            sha256 = Get-Sha256Hex $destination
             absolute_path_included = $false
         }
         catia_runtime = [ordered]@{
