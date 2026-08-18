@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from app.drawing.cropper import PADDING_BY_REGION_TYPE, crop_regions
@@ -42,6 +43,7 @@ class DrawingLayoutService:
         self.merge_gap_ratio = merge_gap_ratio
         self._extraction_repository = extraction_repository or repository
         self.vision_client = vision_client
+        self._resolved_vision_client = None
 
     async def create_task(self, *, revision_id, drawing_file: Path, target_code: str | None, target_dn: str | None):
         source_path = copy_source_to_task_dir(Path(drawing_file), self.work_dir / "incoming" / str(uuid.uuid4()))
@@ -268,11 +270,20 @@ class DrawingLayoutService:
 
     @property
     def extraction_service(self):
-        return DrawingExtractionService(self.extraction_repository, vision_client=self.vision_client)
+        return DrawingExtractionService(self.extraction_repository, vision_client=self._get_vision_client())
 
     @property
     def extraction_repository(self):
         return self._extraction_repository
+
+    def _get_vision_client(self):
+        if self._resolved_vision_client is not None:
+            return self._resolved_vision_client
+        if isinstance(self.vision_client, Callable):
+            self._resolved_vision_client = self.vision_client()
+        else:
+            self._resolved_vision_client = self.vision_client
+        return self._resolved_vision_client
 
     def _fact_to_dict(self, row) -> dict:
         if hasattr(row, "model_dump"):

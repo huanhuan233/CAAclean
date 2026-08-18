@@ -71,10 +71,68 @@ interface TopologyFaceRecord {
   [key: string]: unknown;
 }
 
+interface ProductInstanceRecord {
+  instance_id: string;
+  parent_instance_id?: string;
+  reference_id?: string;
+  instance_name?: string;
+  instance_path?: string;
+  tree_path?: string;
+  depth?: number;
+  child_index?: number;
+  child_count?: number;
+  load_status?: string;
+  read_status?: string;
+  value_source?: string;
+  transform_status?: string;
+  transform_value_source?: string;
+  transform_4x4?: number[];
+  suppressed?: boolean;
+  [key: string]: unknown;
+}
+
 interface FaceMeshMap {
   shape_hash: string;
   faces: Record<string, { mesh_primitive_id: string; primitive_index: number }>;
   primitive_to_face: Record<string, string>;
+}
+
+function productInstancesToNativeRecords(records: ProductInstanceRecord[]): NativeFeatureRecord[] {
+  return records.map(record => {
+    const hasChildren = Number(record.child_count || 0) > 0;
+    return {
+      feature_id: record.instance_id,
+      parent_id: record.parent_instance_id || '',
+      traversal_index: Number(record.child_index ?? 0) + Number(record.depth ?? 0) * 100000,
+      display_name: record.instance_name || record.instance_path || record.instance_id,
+      internal_name: record.instance_path || record.tree_path || record.instance_name || record.instance_id,
+      native_type: hasChildren ? 'CATProduct' : 'CATPart',
+      startup_type: hasChildren ? 'CATProduct' : 'CATPart',
+      container_kind: hasChildren ? 'product' : 'part',
+      tree_path: record.tree_path || record.instance_path,
+      decode_status: record.read_status,
+      decoder_status: record.load_status,
+      payload_extraction_status: record.value_source,
+      update_status: record.suppressed ? 'suppressed' : 'active',
+      attributes: {
+        instance_id: record.instance_id,
+        parent_instance_id: record.parent_instance_id || '',
+        reference_id: record.reference_id || '',
+        instance_path: record.instance_path || '',
+        tree_path: record.tree_path || '',
+        depth: record.depth ?? '',
+        child_count: record.child_count ?? 0,
+        load_status: record.load_status || '',
+        read_status: record.read_status || '',
+        value_source: record.value_source || '',
+        transform_status: record.transform_status || '',
+        transform_value_source: record.transform_value_source || '',
+        transform_4x4: record.transform_4x4 || [],
+        suppressed: Boolean(record.suppressed)
+      },
+      raw: record
+    };
+  });
 }
 
 type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
@@ -393,7 +451,7 @@ async function loadBuildBundle(buildId: string) {
     if (result.error || !result.data) throw result.error || new Error('Viewer 契约不可用');
     if (!isCatiaNativeSource(result.data.source_format)) {
       await router.replace({
-        path: '/cad-model',
+        path: '/component-build',
         query: { build_id: buildId, revision_id: result.data.task_id }
       });
       return;
@@ -493,6 +551,8 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyEdges.value = [];
   topologyVertices.value = [];
   selectionIndex.value = null;
+  const productFeatureTreeUrl = viewerContract.native_semantics?.product_feature_tree_url;
+  const productInstancesUrl = viewerContract.native_semantics?.product_instances_url;
   const nativeUrl = viewerContract.native_semantics?.features_url;
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
@@ -512,7 +572,21 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       })
     );
   }
-  if (nativeUrl) {
+  if (productFeatureTreeUrl) {
+    requests.push(
+      fetchAsset(productFeatureTreeUrl).then(buffer => {
+        nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
+      })
+    );
+  } else if (productInstancesUrl) {
+    requests.push(
+      fetchAsset(productInstancesUrl).then(buffer => {
+        nativeFeatures.value = productInstancesToNativeRecords(
+          parseJsonLines<ProductInstanceRecord>(new TextDecoder().decode(buffer))
+        );
+      })
+    );
+  } else if (nativeUrl) {
     requests.push(
       fetchAsset(nativeUrl).then(buffer => {
         nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
@@ -749,6 +823,11 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
 }
 
 // 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
+function showNativeTreeNodeProperties(node: FeatureTreeNode) {
+  selectNativeTreeNode(node);
+  detailsOpen.value = true;
+}
+
 function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
   selectedNativeTreeNodeId.value = '';
   selectionTarget.value = {
@@ -1353,6 +1432,7 @@ onBeforeUnmount(() => {
                 :selected-id="selectedNativeTreeNodeId"
                 :face-refs-by-feature-id="nativeFaceRefs"
                 @select="selectNativeTreeNode"
+                @properties="showNativeTreeNodeProperties"
               />
               <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
                 <button
@@ -1485,7 +1565,7 @@ onBeforeUnmount(() => {
         <ElEmpty
           v-if="!contract"
           class="viewer-empty"
-          description="暂无 CATPart 解析结果，请从图元建库打开已完成的 CATPart"
+          description="暂无 CATPart 解析结果，请从零件库打开已完成的 CATPart"
         />
         <CadViewerControls
           v-if="contract"

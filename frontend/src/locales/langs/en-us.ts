@@ -172,10 +172,7 @@ const local: App.I18n.Schema = {
     document_antd: 'Ant Design Vue Document',
     'document_element-plus': 'Element Plus Document',
     document_alova: 'Alova Document',
-    'cad-model': 'CAD Model Parser',
     'feature-center': 'Feature Center',
-    'cad-spec': '2D Drawing Parser',
-    'patent-annotation': 'Patent Figure Annotation',
     'user-center': 'User Center',
     about: 'About',
     function: 'System Function',
@@ -231,7 +228,7 @@ const local: App.I18n.Schema = {
     plugin_typeit: 'Typeit',
     plugin_tables: 'Tables',
     plugin_tables_vtable: 'VTable',
-    'component-build': 'Component Library'
+    'component-build': '零件库'
   },
   page: {
     login: {

@@ -129,15 +129,6 @@ function isSelected(id: string) {
       <ElEmpty v-if="!loading && !catalogItems.length" description="" :image-size="40" />
     </div>
 
-    <!-- Info footer -->
-    <div class="catalog-footer">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="16" x2="12" y2="12" />
-        <line x1="12" y1="8" x2="12.01" y2="8" />
-      </svg>
-      <span>支持多级目录扩展。新增目录将同步至用户端图元选择器与检索命名空间。</span>
-    </div>
   </div>
 </template>
 

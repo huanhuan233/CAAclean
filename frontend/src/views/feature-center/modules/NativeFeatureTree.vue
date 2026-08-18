@@ -14,6 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [node: FeatureTreeNode];
+  properties: [node: FeatureTreeNode];
 }>();
 
 interface TreeNodeState {
@@ -113,6 +114,12 @@ function handleSelect(node: FeatureTreeNode) {
   emit('select', node);
 }
 
+function handleContextMenu(event: Event, node: FeatureTreeNode) {
+  event.preventDefault();
+  emit('select', node);
+  emit('properties', node);
+}
+
 function iconFor(kind: FeatureTreeKind) {
   return KIND_ICONS[kind];
 }
@@ -185,6 +192,7 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
         :indent="20"
         highlight-current
         @node-click="handleSelect"
+        @node-contextmenu="handleContextMenu"
         @node-expand="handleExpand"
         @node-collapse="handleCollapse"
       >
@@ -196,12 +204,18 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
           >
             <span class="feature-tree-row" :class="[`kind-${data.kind}`, { system: data.isSystem }]">
               <span class="node-icon"><SvgIcon :icon="iconFor(data.kind)" /></span>
-              <span class="node-title">
+              <span class="node-title" :class="{ 'has-value': data.parameterValue }">
                 <template v-for="(part, index) in highlightParts(data.displayName)" :key="`${data.id}-${index}`">
                   <mark v-if="part.matched">{{ part.text }}</mark>
                   <span v-else>{{ part.text }}</span>
                 </template>
               </span>
+              <strong v-if="data.parameterValue" class="node-value" :title="data.parameterValue">
+                <template v-for="(part, index) in highlightParts(data.parameterValue)" :key="`${data.id}-value-${index}`">
+                  <mark v-if="part.matched">{{ part.text }}</mark>
+                  <span v-else>{{ part.text }}</span>
+                </template>
+              </strong>
               <span v-if="data.faceRefs.length" class="mapping-dot" title="已建立 Feature–Face 映射" />
               <small v-if="kindLabel(data)" class="node-kind">{{ kindLabel(data) }}</small>
             </span>
@@ -341,7 +355,31 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.node-title.has-value {
+  flex: 0 1 auto;
+}
 .node-title mark {
+  border-radius: 2px;
+  background: var(--el-color-warning-light-7);
+  color: inherit;
+  padding: 0 1px;
+}
+.node-value {
+  min-width: 0;
+  flex: 1;
+  color: var(--el-text-color-primary);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-value::before {
+  color: var(--el-text-color-placeholder);
+  content: '=';
+  font-weight: 600;
+  margin: 0 5px;
+}
+.node-value mark {
   border-radius: 2px;
   background: var(--el-color-warning-light-7);
   color: inherit;

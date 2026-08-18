@@ -446,7 +446,7 @@ async function loadTree(options: { preserveSelection?: boolean; silent?: boolean
     })
     if (requestController.signal.aborted) return false
     if (result.error || !result.data) {
-      if (!options.silent) window.$message?.error('图元建库树暂时不可用')
+      if (!options.silent) window.$message?.error('零件库树暂时不可用')
       return false
     }
     treeData.value = normalizeTree(result.data)
@@ -766,8 +766,7 @@ onBeforeUnmount(() => {
     <!-- Header -->
     <header class="library-header">
       <div class="header-title-group">
-        <h3 class="header-title">图元库存储管理</h3>
-        <span class="header-subtitle">目录层级建设 · 元数据管理 · 支持增删改查</span>
+        <h3 class="header-title">零件存储管理</h3>
       </div>
       <div class="header-actions">
         <ElButton
@@ -818,7 +817,7 @@ onBeforeUnmount(() => {
           @edit="openDialogForBuild"
           @delete-build="handleDeleteBuild"
           @view-cad-model="openModelViewer"
-          @view-drawing="(bid, taskId) => router.push({ path: '/cad-spec', query: { revision_id: '', task_id: taskId, build_id: bid } })"
+          @view-drawing="(bid) => openDialogForBuild(bid)"
           @start-step-parsing="(bid) => handleStartParsing(bid, 'reference_step')"
           @start-drawing-parsing="(bid) => handleStartParsing(bid, 'drawing')"
           @view-component-spec="(bid) => openDialogForBuild(bid)"

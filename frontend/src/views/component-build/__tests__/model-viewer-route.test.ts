@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { modelViewerLocation } from '../model-viewer-route';
 
-// 用途：STEP 必须进入 CAD 模型解析，不能误进 CATPart 专属 Feature Center。
-test('step opens cad model analysis route', () => {
+// 用途：STEP 留在零件库，不能误进 CATPart 专属 Feature Center。
+test('step opens component library route', () => {
   assert.deepEqual(modelViewerLocation('build-1', 'revision-1', 'STEP'), {
-    path: '/cad-model',
+    path: '/component-build',
     query: { build_id: 'build-1', revision_id: 'revision-1' }
   });
 });

@@ -100,7 +100,7 @@ const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({})
 const formRules: FormRules = {
   category_code: [{ required: true, message: '请选择大类', trigger: 'change' }],
   part_type_code: [{ required: true, message: '请选择部件类型', trigger: 'change' }],
-  component_name: [{ required: true, message: '请输入图元名称', trigger: 'blur' }],
+  component_name: [{ required: true, message: '请输入零件名称', trigger: 'blur' }],
 }
 
 const selectedCategory = computed(
@@ -366,14 +366,7 @@ function handleViewCad() {
 
 function handleViewDrawing() {
   if (!editingBuild.value?.drawing_task_id) return
-  router.push({
-    path: '/cad-spec',
-    query: {
-      revision_id: editingBuild.value.cad_revision_id,
-      task_id: editingBuild.value.drawing_task_id,
-      build_id: editingBuild.value.id
-    }
-  })
+  activeTab.value = 'drawing'
 }
 
 function handleStartParsing(role: Api.ComponentBuild.RetryRole) {
@@ -400,7 +393,7 @@ watch(visible, (val) => {
   <ElDialog
     v-model="visible"
     :before-close="handleBeforeClose"
-    :title="`编辑图元 · ${editingBuild?.component_id || '新建'}`"
+    :title="`编辑零件 · ${editingBuild?.component_id || '新建'}`"
     :width="720"
     :close-on-click-modal="false"
     :destroy-on-close="true"
@@ -419,10 +412,10 @@ watch(visible, (val) => {
           class="basic-form"
         >
           <div class="form-grid-2">
-            <ElFormItem label="图元编码">
+            <ElFormItem label="零件编码">
               <ElInput :model-value="editingBuild?.component_id || generatedIdPreview" readonly />
             </ElFormItem>
-            <ElFormItem label="图元名称" prop="component_name">
+            <ElFormItem label="零件名称" prop="component_name">
               <ElInput v-model="form.component_name" placeholder="例如 带颈对焊法兰" />
             </ElFormItem>
           </div>
@@ -694,7 +687,7 @@ watch(visible, (val) => {
         :disabled="catalogLoading || !catalog.length"
         @click="handleSubmit"
       >
-        {{ isEditing ? '保存修改' : '创建图元' }}
+        {{ isEditing ? '保存修改' : '创建零件' }}
       </ElButton>
     </template>
   </ElDialog>

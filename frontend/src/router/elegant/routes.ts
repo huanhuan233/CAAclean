@@ -96,24 +96,6 @@ export const generatedRoutes: GeneratedRoute[] = [
     ]
   },
   {
-    name: 'cad-model',
-    path: '/cad-model',
-    component: 'layout.base$view.cad-model',
-    meta: {
-      title: 'cad-model',
-      i18nKey: 'route.cad-model'
-    }
-  },
-  {
-    name: 'cad-spec',
-    path: '/cad-spec',
-    component: 'layout.base$view.cad-spec',
-    meta: {
-      title: 'cad-spec',
-      i18nKey: 'route.cad-spec'
-    }
-  },
-  {
     name: 'component-build',
     path: '/component-build',
     component: 'layout.base$view.component-build',
@@ -410,15 +392,6 @@ export const generatedRoutes: GeneratedRoute[] = [
         ]
       }
     ]
-  },
-  {
-    name: 'patent-annotation',
-    path: '/patent-annotation',
-    component: 'layout.base$view.patent-annotation',
-    meta: {
-      title: 'patent-annotation',
-      i18nKey: 'route.patent-annotation'
-    }
   },
   {
     name: 'plugin',

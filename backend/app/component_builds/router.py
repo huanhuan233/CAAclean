@@ -291,6 +291,8 @@ async def retry_component_build(
     cad_service: CadService = Depends(get_cad_service),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    get_settings.cache_clear()
+    settings = get_settings()
     build = await _get_build_or_404(service, build_id)
     if payload.role == "reference_step":
         if build["cad_revision_id"] is None:

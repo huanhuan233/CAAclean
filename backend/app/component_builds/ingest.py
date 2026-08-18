@@ -23,7 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.cad.repository import CadRepository
 from app.cad.service import CadService
 from app.component_builds.catia_worker import CatiaWorkerClient, CatiaWorkerError
-from app.core.config import REPOSITORY_ROOT, Settings
+from app.core.config import BACKEND_ROOT, REPOSITORY_ROOT, Settings
 from app.db.session import SessionLocal
 
 
@@ -63,9 +63,27 @@ class _IngestRuntimeSettings(BaseSettings):
     )
     caa_rade_root: str = ""
     caa_prereq_root: str = ""
+    catia_worker_mode: str = ""
 
 
 # 用途：只根据已校验文件名识别真实格式，绝不接受客户端指定处理路线。
+def _cad_work_root(settings: Settings) -> Path:
+    work_dir = Path(settings.cad_work_dir)
+    if work_dir.is_absolute():
+        return work_dir
+    return BACKEND_ROOT / work_dir
+
+
+def _source_file_path(source_file_path: str) -> Path:
+    path = Path(source_file_path)
+    if path.is_absolute():
+        return path
+    backend_path = BACKEND_ROOT / path
+    if backend_path.exists():
+        return backend_path
+    return REPOSITORY_ROOT / path
+
+
 def identify_source(file_name: str) -> IngestSource:
     extension = Path(Path(file_name).name).suffix.lower()
     if extension in {".step", ".stp"}:
@@ -134,7 +152,7 @@ async def run_ingest_pipeline(revision_id: UUID, settings: Settings) -> None:
         ingest = dict((revision.parse_manifest or {}).get("ingest", {}))
         route = ingest.get("processing_route")
         try:
-            _prepare_generated_outputs(Path(settings.cad_work_dir) / str(revision_id), route)
+            _prepare_generated_outputs(_cad_work_root(settings) / str(revision_id), route)
             if route == "step_cad_parse":
                 await _run_step_route(repository, revision_id, settings)
             elif route == "catia_feature_center":
@@ -188,7 +206,7 @@ async def _run_step_route(repository: CadRepository, revision_id: UUID, settings
         )
     await repository.update_revision_manifest(revision_id, {"ingest": ingest})
     await _set_stage(repository, revision_id, "lightweighting", 80)
-    await _build_feature_center(repository, revision_id, settings, Path(revision.source_file_path), None)
+    await _build_feature_center(repository, revision_id, settings, _source_file_path(revision.source_file_path), None)
 
 
 # 用途：先运行已有 CAA 原生解析，再用 Automation ExportData 导出 STEP，最后调用既有 Sidecar。
@@ -196,15 +214,21 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
     revision = await repository.get_revision(revision_id)
     if revision is None:
         return
-    task_root = Path(settings.cad_work_dir) / str(revision_id)
+    task_root = _cad_work_root(settings) / str(revision_id)
+    source_path = _prepare_catia_source(_source_file_path(revision.source_file_path), task_root)
     native_bundle = task_root / "native-caa"
     exported_step = task_root / "exported.stp"
     export_report = task_root / "step-export.json"
-    mode = settings.catia_worker_mode.strip().lower()
+    runtime = _IngestRuntimeSettings()
+    rade_root = os.environ.get("CAA_RADE_ROOT") or runtime.caa_rade_root
+    prereq_root = os.environ.get("CAA_PREREQ_ROOT") or runtime.caa_prereq_root
+    mode = (runtime.catia_worker_mode or settings.catia_worker_mode).strip().lower()
+    if mode in {"", "disabled"}:
+        mode = "local_process"
     if mode == "disabled":
         raise IngestStageError("catia_worker_disabled", "dispatching_caa", "CATIA Worker 未启用")
     if mode == "http":
-        await _run_remote_catpart_worker(repository, revision_id, settings, revision.source_file_path, task_root)
+        await _run_remote_catpart_worker(repository, revision_id, settings, str(source_path), task_root)
         await _set_stage(repository, revision_id, "feature_center_processing", 70)
         await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
         return
@@ -213,29 +237,27 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
     if os.name != "nt":
         raise IngestStageError("catia_worker_unavailable", "dispatching_caa", "local_process 仅允许在 Windows 主机运行")
 
-    runtime = _IngestRuntimeSettings()
-    rade_root = os.environ.get("CAA_RADE_ROOT") or runtime.caa_rade_root
-    prereq_root = os.environ.get("CAA_PREREQ_ROOT") or runtime.caa_prereq_root
     if not rade_root or not prereq_root:
         raise IngestStageError("catia_worker_unavailable", "dispatching_caa", "未配置 CAA_RADE_ROOT 或 CAA_PREREQ_ROOT")
 
     await _set_stage(repository, revision_id, "running_caa", 15)
     await _run_command(
         [
-            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x86.bat"),
-            "--input", str(revision.source_file_path), "--output", str(native_bundle), "--read-only",
+            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x64_host_intel_a.bat"),
+            "--input", str(source_path), "--output", str(native_bundle), "--read-only",
         ],
         "caa_parse_failed",
         "running_caa",
         settings.freecad_timeout,
         {"CAA_RADE_ROOT": rade_root, "CAA_PREREQ_ROOT": prereq_root},
     )
+    await _append_catpart_feature_trees(source_path, native_bundle, rade_root, prereq_root, settings)
     await _set_stage(repository, revision_id, "exporting_step", 45)
     await _run_command(
         [
             "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
             str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "export_catpart_step.ps1"),
-            "-InputCatPart", str(revision.source_file_path),
+            "-InputCatPart", str(source_path),
             "-OutputStep", str(exported_step),
             "-ReportPath", str(export_report),
         ],
@@ -312,6 +334,155 @@ def _extract_worker_archive(archive_path: Path, output_dir: Path) -> None:
 
 
 # 用途：调用仓库已有 Sidecar CLI 生成并校验 Bundle，不在 Web 层复制任何几何算法。
+def _prepare_catia_source(source_path: Path, task_root: Path) -> Path:
+    if source_path.suffix.lower() != ".zip":
+        return source_path
+    extract_root = task_root / "source-unpacked"
+    if extract_root.exists():
+        shutil.rmtree(extract_root)
+    _extract_worker_archive(source_path, extract_root)
+    candidates = sorted(
+        [path for path in extract_root.rglob("*") if path.suffix.lower() == ".catproduct"],
+        key=lambda item: (len(item.parts), str(item).lower()),
+    )
+    if not candidates:
+        candidates = sorted(
+            [path for path in extract_root.rglob("*") if path.suffix.lower() == ".catpart"],
+            key=lambda item: (len(item.parts), str(item).lower()),
+        )
+    if not candidates:
+        raise IngestStageError("catia_source_missing", "running_caa", "ZIP 内未找到 CATProduct 或 CATPart")
+    return candidates[0]
+
+
+async def _append_catpart_feature_trees(
+    source_path: Path,
+    native_bundle: Path,
+    rade_root: str,
+    prereq_root: str,
+    settings: Settings,
+) -> None:
+    product_instances_path = native_bundle / "product_instances.jsonl"
+    if source_path.suffix.lower() != ".catproduct" or not product_instances_path.is_file():
+        return
+    catparts = sorted(source_path.parent.rglob("*.CATPart"))
+    if not catparts:
+        catparts = sorted(source_path.parent.rglob("*.catpart"))
+    if not catparts:
+        return
+
+    part_output_root = native_bundle / "part-feature-trees"
+    if part_output_root.exists():
+        shutil.rmtree(part_output_root)
+    part_output_root.mkdir(parents=True, exist_ok=True)
+
+    instances = [_load_json_line(line) for line in product_instances_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    combined_path = native_bundle / "product_feature_tree.jsonl"
+    with combined_path.open("w", encoding="utf-8", newline="\n") as stream:
+        for instance in instances:
+            if instance:
+                stream.write(json.dumps(_product_instance_tree_record(instance), ensure_ascii=False) + "\n")
+
+        for catpart in catparts:
+            output_dir = part_output_root / catpart.stem
+            await _run_command(
+                [
+                    "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x64_host_intel_a.bat"),
+                    "--input", str(catpart), "--output", str(output_dir), "--read-only",
+                ],
+                "caa_parse_failed",
+                "running_caa",
+                settings.freecad_timeout,
+                {"CAA_RADE_ROOT": rade_root, "CAA_PREREQ_ROOT": prereq_root},
+            )
+            parent_ids = _matching_product_instance_ids(instances, catpart.stem)
+            if not parent_ids:
+                parent_ids = [f"CATPART:{catpart.stem}"]
+                stream.write(json.dumps({
+                    "feature_id": parent_ids[0],
+                    "parent_id": "",
+                    "display_name": catpart.stem,
+                    "internal_name": str(catpart),
+                    "native_type": "CATPart",
+                    "startup_type": "CATPart",
+                    "tree_path": catpart.name,
+                    "attributes": {"source_document": str(catpart)}
+                }, ensure_ascii=False) + "\n")
+            part_features_path = output_dir / "features.jsonl"
+            if not part_features_path.is_file():
+                continue
+            records = [_load_json_line(line) for line in part_features_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            for parent_id in parent_ids:
+                for record in records:
+                    if not record:
+                        continue
+                    feature_id = str(record.get("feature_id") or "")
+                    if not feature_id:
+                        continue
+                    merged = dict(record)
+                    merged["feature_id"] = f"{parent_id}/{feature_id}"
+                    original_parent = str(record.get("parent_id") or "")
+                    merged["parent_id"] = f"{parent_id}/{original_parent}" if original_parent else parent_id
+                    merged["tree_path"] = f"{parent_id}/{record.get('tree_path') or record.get('display_name') or feature_id}"
+                    attributes = dict(record.get("attributes") or {})
+                    attributes["source_catpart"] = str(catpart)
+                    attributes["product_instance_id"] = parent_id
+                    merged["attributes"] = attributes
+                    stream.write(json.dumps(merged, ensure_ascii=False) + "\n")
+
+
+def _load_json_line(line: str) -> dict:
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _product_instance_tree_record(instance: dict) -> dict:
+    has_children = int(instance.get("child_count") or 0) > 0
+    return {
+        "feature_id": instance.get("instance_id"),
+        "parent_id": instance.get("parent_instance_id") or "",
+        "display_name": instance.get("instance_name") or instance.get("instance_path") or instance.get("instance_id"),
+        "internal_name": instance.get("instance_path") or instance.get("tree_path") or instance.get("instance_name"),
+        "native_type": "CATProduct" if has_children else "CATPart",
+        "startup_type": "CATProduct" if has_children else "CATPart",
+        "tree_path": instance.get("tree_path") or instance.get("instance_path"),
+        "decode_status": instance.get("read_status"),
+        "decoder_status": instance.get("load_status"),
+        "payload_extraction_status": instance.get("value_source"),
+        "update_status": "suppressed" if instance.get("suppressed") else "active",
+        "attributes": instance,
+    }
+
+
+def _matching_product_instance_ids(instances: list[dict], catpart_stem: str) -> list[str]:
+    normalized_stem = _normalize_part_name(catpart_stem)
+    matches: list[str] = []
+    for instance in instances:
+        instance_id = str(instance.get("instance_id") or "")
+        if not instance_id:
+            continue
+        names = [
+            instance.get("instance_name"),
+            instance.get("instance_path"),
+            instance.get("tree_path"),
+            instance.get("reference_id"),
+        ]
+        normalized_names = [_normalize_part_name(str(name)) for name in names if name]
+        if any(name == normalized_stem or name.startswith(f"{normalized_stem}.") for name in normalized_names):
+            matches.append(instance_id)
+    return matches
+
+
+def _normalize_part_name(value: str) -> str:
+    base = Path(value.replace("\\", "/")).name
+    if "." in base:
+        base = base.split(".", 1)[0]
+    return base.lower()
+
+
 async def _build_feature_center(
     repository: CadRepository,
     revision_id: UUID,
@@ -319,7 +490,7 @@ async def _build_feature_center(
     step_path: Path,
     native_bundle: Path | None,
 ) -> None:
-    task_root = Path(settings.cad_work_dir) / str(revision_id)
+    task_root = _cad_work_root(settings) / str(revision_id)
     bundle = task_root / "feature-center"
     command = [
         sys.executable,
@@ -441,6 +612,7 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
         "feature_topology_links": "native_feature_topology_links.jsonl",
         "product_references": "product_references.jsonl",
         "product_instances": "product_instances.jsonl",
+        "product_feature_tree": "product_feature_tree.jsonl",
         "capabilities": "capabilities.json",
     }
     return {

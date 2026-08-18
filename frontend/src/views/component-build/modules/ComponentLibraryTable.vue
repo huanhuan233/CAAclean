@@ -251,7 +251,7 @@ function handleDeleteClick(e: MouseEvent, row: BuildRow) {
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
             <div class="action-cell" @click.stop>
-              <el-tooltip content="编辑图元" placement="top">
+              <el-tooltip content="编辑零件" placement="top">
                 <el-button text circle size="small" @click="handleEditClick($event, row)">
                   <template #icon>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

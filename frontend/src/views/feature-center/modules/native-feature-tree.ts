@@ -40,6 +40,7 @@ export interface NativeFeatureRecord {
   payload_type?: string;
   update_status?: string;
   attributes?: Record<string, unknown>;
+  parameter?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -57,6 +58,7 @@ export interface FeatureTreeNode {
   isContainer: boolean;
   faceRefs: string[];
   parameters?: Record<string, unknown>;
+  parameterValue?: string;
   raw?: NativeFeatureRecord;
 }
 
@@ -76,6 +78,9 @@ const SYSTEM_TYPES = new Set([
 
 const KIND_BY_TYPE: Record<string, FeatureTreeKind> = {
   catdocument: 'catpart',
+  catproduct: 'part',
+  product: 'part',
+  catpart: 'part',
   mechanicalpart: 'part',
   gsmplane: 'datum',
   origin: 'datum',
@@ -133,6 +138,13 @@ function sequenceOf(record: NativeFeatureRecord) {
   );
 }
 
+function parameterValueOf(record: NativeFeatureRecord) {
+  const parameter = record.parameter || record.native_feature_parameters;
+  if (!parameter || typeof parameter !== 'object') return '';
+  const value = parameter.value_text ?? parameter.raw_display_text ?? parameter.value ?? '';
+  return String(value ?? '');
+}
+
 function sortNodes(nodes: FeatureTreeNode[]) {
   nodes.sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
   nodes.forEach(node => sortNodes(node.children));
@@ -166,6 +178,7 @@ export function buildNativeFeatureTree(
       isContainer: CONTAINER_KINDS.has(kind),
       faceRefs: [...(faceRefsByFeatureId[record.feature_id] || [])],
       parameters: record.attributes,
+      parameterValue: parameterValueOf(record),
       raw: record
     });
   });
@@ -231,7 +244,7 @@ function categoryMatches(node: FeatureTreeNode, category: FeatureTreeCategory) {
 
 function textMatches(node: FeatureTreeNode, query: string) {
   if (!query) return true;
-  const haystack = [node.displayName, node.nativeType, node.id, node.sourceRef]
+  const haystack = [node.displayName, node.parameterValue, node.nativeType, node.id, node.sourceRef]
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase();

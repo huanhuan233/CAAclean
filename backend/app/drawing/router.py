@@ -55,7 +55,7 @@ def create_drawing_service(session: AsyncSession, settings: Settings) -> Drawing
             "parameter_table": settings.drawing_table_padding_ratio,
         },
         merge_gap_ratio=settings.drawing_region_merge_gap_ratio,
-        vision_client=build_vision_client(settings),
+        vision_client=lambda: build_vision_client(settings),
     )
     service._extraction_repository = SqlAlchemyExtractionRepository(session, service)
     return service

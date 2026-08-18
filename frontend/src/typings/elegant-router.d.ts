@@ -39,8 +39,6 @@ declare module "@elegant-router/types" {
     "alova_request": "/alova/request";
     "alova_scenes": "/alova/scenes";
     "alova_user": "/alova/user";
-    "cad-model": "/cad-model";
-    "cad-spec": "/cad-spec";
     "component-build": "/component-build";
     "feature-center": "/feature-center";
     "function": "/function";
@@ -67,7 +65,6 @@ declare module "@elegant-router/types" {
     "multi-menu_second": "/multi-menu/second";
     "multi-menu_second_child": "/multi-menu/second/child";
     "multi-menu_second_child_home": "/multi-menu/second/child/home";
-    "patent-annotation": "/patent-annotation";
     "plugin": "/plugin";
     "plugin_barcode": "/plugin/barcode";
     "plugin_charts": "/plugin/charts";
@@ -143,8 +140,6 @@ declare module "@elegant-router/types" {
     | "500"
     | "about"
     | "alova"
-    | "cad-model"
-    | "cad-spec"
     | "component-build"
     | "feature-center"
     | "function"
@@ -153,7 +148,6 @@ declare module "@elegant-router/types" {
     | "login"
     | "manage"
     | "multi-menu"
-    | "patent-annotation"
     | "plugin"
     | "user-center"
   >;
@@ -183,8 +177,6 @@ declare module "@elegant-router/types" {
     | "alova_request"
     | "alova_scenes"
     | "alova_user"
-    | "cad-model"
-    | "cad-spec"
     | "component-build"
     | "feature-center"
     | "function_hide-child_one"
@@ -202,7 +194,6 @@ declare module "@elegant-router/types" {
     | "manage_user"
     | "multi-menu_first_child"
     | "multi-menu_second_child_home"
-    | "patent-annotation"
     | "plugin_barcode"
     | "plugin_charts_antv"
     | "plugin_charts_echarts"

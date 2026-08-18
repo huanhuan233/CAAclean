@@ -454,6 +454,7 @@ class ComponentBuildService:
             "feature_topology_links",
             "product_references",
             "product_instances",
+            "product_feature_tree",
             "capabilities",
         ):
             payload[f"{key}_url"] = asset_base + native[key] if native.get(key) else None

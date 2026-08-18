@@ -1,6 +1,6 @@
 const local: App.I18n.Schema = {
   system: {
-    title: '机械图元库',
+    title: 'CATIA轻量化显示系统',
     updateTitle: '系统版本更新通知',
     updateContent: '检测到系统有新版本发布，是否立即刷新页面？',
     updateConfirm: '立即刷新',
@@ -172,10 +172,7 @@ const local: App.I18n.Schema = {
     document_antd: 'Ant Design Vue文档',
     'document_element-plus': 'Element Plus文档',
     document_alova: 'Alova文档',
-    'cad-model': 'CAD 模型解析',
     'feature-center': '特征中心',
-    'cad-spec': '二维图纸解析',
-    'patent-annotation': '专利附图标注',
     'user-center': '个人中心',
     about: '关于',
     function: '系统功能',
@@ -231,7 +228,7 @@ const local: App.I18n.Schema = {
     plugin_typeit: '打字机',
     plugin_tables: '表格',
     plugin_tables_vtable: 'VTable',
-    'component-build': '图元建库'
+    'component-build': '零件库'
   },
   page: {
     login: {

@@ -490,6 +490,7 @@ declare namespace Api {
         feature_topology_links_url?: string | null;
         product_references_url?: string | null;
         product_instances_url?: string | null;
+        product_feature_tree_url?: string | null;
         capabilities_url?: string | null;
       };
       error_code: string | null;

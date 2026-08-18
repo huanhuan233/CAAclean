@@ -109,7 +109,7 @@ async function initBypassRoute(to: RouteLocationNormalized): Promise<RouteLocati
   }
 
   if (to.name === 'login') {
-    return { name: 'cad-model' };
+    return { name: 'component-build' };
   }
 
   return undefined;

@@ -1,4 +1,4 @@
-// 用途：按真实源格式决定页面身份；STEP 属于 CAD 模型解析，CATPart 属于 Feature Center。
+// 用途：按真实源格式决定页面身份；CATIA native 进入 Feature Center，其余留在零件库。
 export function modelViewerLocation(
   buildId: string,
   revisionId: string,
@@ -7,5 +7,5 @@ export function modelViewerLocation(
   if (sourceFormat === 'CATPART' || sourceFormat === 'CATPRODUCT') {
     return { path: '/feature-center', query: { build_id: buildId } };
   }
-  return { path: '/cad-model', query: { build_id: buildId, revision_id: revisionId } };
+  return { path: '/component-build', query: { build_id: buildId, revision_id: revisionId } };
 }
