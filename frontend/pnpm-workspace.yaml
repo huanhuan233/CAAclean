@@ -2,8 +2,13 @@ packages:
   - 'packages/*'
 allowBuilds:
   '@parcel/watcher': false
+  core-js: true
+  core-js-pure: true
+  es5-ext: true
   esbuild: false
   simple-git-hooks: false
+  typeit: true
+  unrs-resolver: true
   vue-demi: false
 shamefullyHoist: true
 ignoreWorkspaceRootCheck: true

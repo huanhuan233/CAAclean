@@ -110,6 +110,78 @@ interface FaceMeshMap {
   primitive_to_face: Record<string, string>;
 }
 
+interface ProcessStep {
+  sequence: string;
+  type: string;
+  description: string;
+  name?: string;
+  specification?: string;
+  category?: string;
+  quantity?: string;
+  basis?: string;
+  remark?: string;
+}
+
+// 原型数据来自 AO 工序页，后续可替换为后端解析结果。
+const prototypeProcessSteps: ProcessStep[] = [
+  {
+    sequence: '005',
+    type: '铆装钳工',
+    name: '聚硫密封剂底涂',
+    specification: 'CMS-SL-908',
+    category: 'M',
+    quantity: '按需',
+    description: '按工程数模 5621C02000G23 及 CPS1000、HPGC919-2781-250003，对旅客观察窗窗框与弹簧夹支架贴合面涂覆聚硫密封剂底涂。',
+    basis: 'CPS1000',
+    remark: '涂覆前需清洗、干燥；处理后室温干燥至少 30 分钟。'
+  },
+  {
+    sequence: '010',
+    type: '铆装检验工',
+    description: '按 CPS1000 检查聚硫密封剂底涂的涂覆质量。',
+    basis: 'CPS1000'
+  },
+  {
+    sequence: '015',
+    type: '铆装钳工',
+    name: '低密度通用密封化合物',
+    specification: 'CMS-SL-104/C-8',
+    category: 'M',
+    quantity: '按需',
+    description: '按工程数模 5621C02000G23 及 CPS1000，对观察窗窗框与弹簧夹支架贴合面涂覆密封胶。',
+    basis: 'HPGC919-2781-250003'
+  },
+  {
+    sequence: '020',
+    type: '铆装检验工',
+    description: '按 CPS1000 检查密封胶涂覆质量。',
+    basis: 'CPS1000'
+  },
+  {
+    sequence: '025',
+    type: '铆装钳工',
+    name: '实心铆钉',
+    specification: 'MS20470T4-6',
+    category: 'B',
+    quantity: '240',
+    description: '按工程数模 5621C02000G23、CPS2100 湿安装弹簧夹支架与窗框连接的紧固件，并记录相关工艺参数。',
+    basis: 'CPS2100'
+  },
+  {
+    sequence: '030',
+    type: '铆装检验工',
+    description: '按 CPS2101 检查紧固件安装质量，并记录专用工具与量具信息。',
+    basis: 'CPS2101',
+    remark: 'MS20470T4* 铆头高度应大于等于 1.58mm、铆头直径应大于等于 3.96mm。'
+  },
+  {
+    sequence: '035',
+    type: '铆装钳工',
+    description: '按 HPG/MJ-2781-250018 清除多余物。',
+    basis: 'HPG/MJ-2781-250018'
+  }
+];
+
 function productInstancesToNativeRecords(records: ProductInstanceRecord[]): NativeFeatureRecord[] {
   return records.map(record => {
     const hasChildren = Number(record.child_count || 0) > 0;
@@ -206,6 +278,10 @@ const selectionTarget = ref<CadSelectionTarget | null>(null);
 const catiaPropertyDialogOpen = ref(false);
 const catiaPropertyNode = ref<FeatureTreeNode | null>(null);
 const catiaPropertyTab = ref('product');
+const processPanelOpen = ref(false);
+const processGenerating = ref(false);
+const processProgress = ref(0);
+const activeProcessSteps = ref<string[]>(['035']);
 const explodableGroupCount = ref(0);
 const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
   x: { x: 66, y: 45, depth: 0 },
@@ -222,6 +298,7 @@ let stepCurveRoot: THREE.Object3D | null = null;
 let animationId = 0;
 let resizeObserver: ResizeObserver | null = null;
 let statusPollTimer: number | null = null;
+let processTimer: number | null = null;
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const faceObjects = new Map<string, THREE.Mesh[]>();
@@ -1468,6 +1545,29 @@ function toggleDetails() {
   void nextTick(resizeViewer);
 }
 
+function openProcessPanel() {
+  processPanelOpen.value = true;
+  processGenerating.value = true;
+  processProgress.value = 0;
+  if (processTimer) window.clearInterval(processTimer);
+  processTimer = window.setInterval(() => {
+    processProgress.value = Math.min(100, processProgress.value + 10);
+    if (processProgress.value >= 100) {
+      processGenerating.value = false;
+      if (processTimer) window.clearInterval(processTimer);
+      processTimer = null;
+    }
+  }, 120);
+}
+
+function closeProcessPanel() {
+  processPanelOpen.value = false;
+}
+
+function showProcessStep(sequence: string) {
+  if (!activeProcessSteps.value.includes(sequence)) activeProcessSteps.value.push(sequence);
+}
+
 function tabLabel(tab: ViewerTab) {
   return { bom: 'BOM 树', native: '原生特征', recognized: '特征', geometry: '几何拓扑' }[tab];
 }
@@ -1535,6 +1635,7 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   clearStatusPoll();
+  if (processTimer) window.clearInterval(processTimer);
   assetRequestController.abort();
   if (animationId) cancelAnimationFrame(animationId);
   resizeObserver?.disconnect();
@@ -1568,6 +1669,9 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <div class="summary-actions">
+        <button type="button" class="process-trigger" :disabled="!contract" @click="openProcessPanel">
+          工艺生成
+        </button>
         <button type="button" :disabled="!contract" @click="fitCamera">适应窗口</button>
         <button
           type="button"
@@ -1581,6 +1685,69 @@ onBeforeUnmount(() => {
         <button type="button" class="details-trigger" @click="toggleDetails">详情</button>
       </div>
     </header>
+
+    <ElDrawer v-model="processPanelOpen" direction="rtl" size="430px" :with-header="false" class="process-drawer">
+      <div class="process-drawer-content">
+        <div class="process-drawer-heading">
+          <div>
+            <strong>相关工序</strong>
+            <span>共 {{ prototypeProcessSteps.length }} 道工序</span>
+          </div>
+          <button type="button" aria-label="关闭工序面板" @click="closeProcessPanel">×</button>
+        </div>
+
+        <div v-if="processGenerating" class="process-generation-card">
+          <div class="process-generation-copy">
+            <span class="process-generation-icon"><SvgIcon icon="lucide:sparkles" /></span>
+            <div>
+              <strong>{{ processGenerating ? '相关工艺生成中' : '相关工艺已生成' }}</strong>
+              <span>{{ processGenerating ? '正在根据零件与工序栏匹配工艺步骤' : '已从 AO 工序栏整理出可执行步骤' }}</span>
+            </div>
+          </div>
+          <ElProgress :percentage="processProgress" :stroke-width="7" :show-text="false" />
+          <span class="process-generation-percent">{{ processProgress }}%</span>
+        </div>
+
+        <ElCollapse v-if="!processGenerating" v-model="activeProcessSteps" class="process-list">
+          <ElCollapseItem v-for="step in prototypeProcessSteps" :key="step.sequence" :name="step.sequence">
+            <template #title>
+              <div class="process-item-title">
+                <span class="process-sequence">{{ step.sequence }}</span>
+                <div>
+                  <strong>{{ step.type }}</strong>
+                  <small>{{ step.description }}</small>
+                </div>
+              </div>
+            </template>
+            <div class="process-item-body">
+              <dl>
+                <template v-if="step.name">
+                  <dt>名称</dt><dd>{{ step.name }}</dd>
+                </template>
+                <template v-if="step.basis">
+                  <dt>依据</dt><dd>{{ step.basis }}</dd>
+                </template>
+                <template v-if="step.specification">
+                  <dt>图号/规格</dt><dd>{{ step.specification }}</dd>
+                </template>
+                <template v-if="step.quantity">
+                  <dt>数量</dt><dd>{{ step.quantity }}</dd>
+                </template>
+                <template v-if="step.remark">
+                  <dt>备注</dt><dd>{{ step.remark }}</dd>
+                </template>
+              </dl>
+              <div class="process-item-actions">
+                <button type="button" @click.stop="showProcessStep(step.sequence)">查看详情</button>
+                <button type="button" @click.stop="showProcessStep(step.sequence)">定位</button>
+                <button type="button" @click.stop="showProcessStep(step.sequence)">视图显示</button>
+              </div>
+            </div>
+          </ElCollapseItem>
+        </ElCollapse>
+        <p class="process-drawer-hint"><SvgIcon icon="lucide:info" /> 点击工序卡片可展开依据、备注与规格信息</p>
+      </div>
+    </ElDrawer>
 
     <div v-if="showProcessingCard" class="processing-card">
       <div class="processing-copy">
@@ -2075,7 +2242,11 @@ onBeforeUnmount(() => {
   min-height: 620px;
   flex-direction: column;
   gap: 10px;
+  font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   color: var(--el-text-color-primary);
+}
+:global(.process-drawer) {
+  font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans CJK SC", sans-serif;
 }
 button {
   border: 1px solid var(--el-border-color-light);
@@ -2119,6 +2290,12 @@ button:disabled {
 .summary-main span {
   font-size: 13px;
   white-space: nowrap;
+}
+.process-trigger {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  font-weight: 600;
 }
 .format-badge,
 .stage-badge {
@@ -2171,6 +2348,205 @@ button:disabled {
   flex: 1;
   margin: 0;
   overflow-wrap: anywhere;
+}
+:global(.process-drawer .el-drawer__body) {
+  padding: 0;
+}
+.process-drawer-content {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  background: var(--el-bg-color-page);
+}
+.process-drawer-heading {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+  padding: 0 16px;
+}
+.process-drawer-heading > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.process-drawer-heading strong {
+  font-size: 16px;
+}
+.process-drawer-heading span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.process-drawer-heading button {
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+}
+.process-generation-card {
+  margin: 12px 14px 8px;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 9px;
+  background: var(--el-color-primary-light-9);
+  padding: 12px;
+}
+.process-generation-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.process-generation-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary);
+  place-items: center;
+}
+.process-generation-icon :deep(svg),
+.process-generation-icon :deep(svg *) {
+  color: #fff !important;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
+.process-generation-copy div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.process-generation-copy strong {
+  font-size: 13px;
+}
+.process-generation-copy span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.process-generation-percent {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  text-align: right;
+}
+.process-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  border: 0;
+  padding: 10px 14px 0;
+}
+.process-list :deep(.el-collapse-item) {
+  margin-bottom: 8px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+}
+.process-list :deep(.el-collapse-item:last-child) {
+  margin-bottom: 0;
+}
+.process-list :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 72px;
+  align-items: flex-start;
+  border-bottom: 0;
+  background: var(--el-bg-color);
+  border-radius: 8px;
+  padding: 10px 8px;
+  line-height: 1.25;
+}
+.process-list :deep(.el-collapse-item__wrap) {
+  border-top: 1px solid var(--el-border-color-lighter);
+  border-bottom: 0;
+  background: transparent;
+}
+.process-list :deep(.el-collapse-item__content) {
+  padding: 10px;
+}
+.process-item-title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+}
+.process-sequence {
+  flex: 0 0 auto;
+  border-radius: 5px;
+  color: #fff;
+  background: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  padding: 0 6px;
+}
+.process-item-title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.process-item-title strong {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+}
+.process-item-title small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.process-item-body {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 7px;
+  background: var(--el-fill-color-lighter);
+  padding: 10px;
+}
+.process-item-body dl {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+.process-item-body dt {
+  color: var(--el-text-color-secondary);
+}
+.process-item-body dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.process-item-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding-top: 8px;
+}
+.process-item-actions button {
+  border: 0;
+  color: var(--el-color-primary);
+  background: transparent;
+  font-size: 12px;
+  padding: 0;
+}
+.process-drawer-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  border-top: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  padding: 11px 14px;
 }
 .workspace {
   position: relative;
