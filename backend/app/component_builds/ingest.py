@@ -397,6 +397,7 @@ async def _append_catpart_feature_trees(
 
     instances = [_load_json_line(line) for line in product_instances_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     combined_path = native_bundle / "product_feature_tree.jsonl"
+    part_tree_index: dict[str, str] = {}
     with combined_path.open("w", encoding="utf-8", newline="\n") as stream:
         for instance in instances:
             if instance:
@@ -415,6 +416,8 @@ async def _append_catpart_feature_trees(
                 {"CAA_RADE_ROOT": rade_root, "CAA_PREREQ_ROOT": prereq_root},
             )
             parent_ids = _matching_product_instance_ids(instances, catpart.stem)
+            for parent_id in parent_ids:
+                part_tree_index[parent_id] = f"native-caa/part-feature-trees/{catpart.stem}/features.jsonl"
             if not parent_ids:
                 parent_ids = [f"CATPART:{catpart.stem}"]
                 stream.write(json.dumps({
@@ -448,6 +451,9 @@ async def _append_catpart_feature_trees(
                     attributes["product_instance_id"] = parent_id
                     merged["attributes"] = attributes
                     stream.write(json.dumps(merged, ensure_ascii=False) + "\n")
+    (part_output_root / "index.json").write_text(
+        json.dumps(part_tree_index, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _load_json_line(line: str) -> dict:
@@ -634,6 +640,7 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
         "product_references": "product_references.jsonl",
         "product_instances": "product_instances.jsonl",
         "product_feature_tree": "product_feature_tree.jsonl",
+        "part_feature_tree_index": "part-feature-trees/index.json",
         "capabilities": "capabilities.json",
     }
     return {

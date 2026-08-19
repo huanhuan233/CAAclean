@@ -41,6 +41,9 @@ import type { ViewerTab } from './modules/viewer-workspace';
 
 defineOptions({ name: 'FeatureCenterViewer' });
 
+// 大型 CATIA 模型的 Feature Center 契约和资产可能需要较长时间生成或传输。
+const FEATURE_CENTER_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+
 interface MeasurementRecord {
   measurement_id: string;
   feature_center_id: string;
@@ -246,6 +249,8 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
+const partFeatureTreeIndex = ref<Record<string, string>>({});
+const loadedPartFeatureTrees = new Set<string>();
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
 const topologyBodies = ref<TopologySelectionRecord[]>([]);
 const topologySolids = ref<TopologySelectionRecord[]>([]);
@@ -316,6 +321,8 @@ let pickableObjects: THREE.Object3D[] = [];
 let pointerDownPosition: { x: number; y: number } | null = null;
 const clippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
 const workspaceStyle = computed(() => ({ '--navigation-width': `${navigationWidth.value}px` }));
+// 大型装配只展开最外层节点，避免 ElTree 首次为整棵 BOM 创建大量 DOM。
+const bomDefaultExpandedKeys = computed(() => (contract.value?.bom.nodes || []).map(node => node.node_id));
 const canIsolate = computed(() => {
   if (selectedFaceId.value) return true;
   if (selectedNativeFeatureId.value) return selectedNativeFaces.value.length > 0;
@@ -675,7 +682,11 @@ function startNavigationResize(event: PointerEvent) {
 
 // 用途：从受控资产接口取得字节并校验响应类型，浏览器永远不接触服务器绝对路径。
 async function fetchAsset(path: string) {
-  const result = await fetchComponentBuildViewerAsset(path, { signal: assetRequestController.signal, silent: true });
+  const result = await fetchComponentBuildViewerAsset(path, {
+    signal: assetRequestController.signal,
+    silent: true,
+    timeout: FEATURE_CENTER_REQUEST_TIMEOUT_MS
+  });
   if (result.error || !(result.data instanceof ArrayBuffer)) throw result.error || new Error('Viewer 资产响应无效');
   return result.data;
 }
@@ -701,7 +712,11 @@ async function loadBuildBundle(buildId: string) {
   errorText.value = '';
   explicitError.value = false;
   try {
-    const result = await fetchComponentBuildViewer(buildId, { signal: assetRequestController.signal, silent: true });
+    const result = await fetchComponentBuildViewer(buildId, {
+      signal: assetRequestController.signal,
+      silent: true,
+      timeout: FEATURE_CENTER_REQUEST_TIMEOUT_MS
+    });
     if (result.error || !result.data) throw result.error || new Error('Viewer 契约不可用');
     if (!isCatiaNativeSource(result.data.source_format)) {
       await router.replace({
@@ -728,36 +743,48 @@ async function loadBuildBundle(buildId: string) {
     }
 
     const viewerAsset = result.data.viewer_asset;
+    const skipStepViewer = result.data.source_format === 'CATPRODUCT';
     const canonicalUrl = result.data.feature_center.canonical_features_url;
     const measurementUrl = result.data.feature_center.measurements_url;
     if (!canonicalUrl || !measurementUrl) throw new Error('Feature Center 索引资产缺失');
-    const mandatoryBuffers = await Promise.all([
-      fetchAsset(viewerAsset.scene_manifest_url),
-      fetchAsset(canonicalUrl),
-      fetchAsset(measurementUrl),
-      fetchAsset(viewerAsset.face_mesh_map_url),
-      fetchAsset(viewerAsset.feature_mesh_map_url),
-      fetchAsset(viewerAsset.glb_url)
-    ]);
-    const [manifestBuffer, canonicalBuffer, measurementBuffer, nextFaceMapBuffer, featureMapBuffer, modelBuffer] =
-      mandatoryBuffers;
+    // 大模型不要并行保留多份完整资产；CATProduct 暂不加载 STEP/GLB，避免浏览器和显卡 OOM。
+    const manifestBuffer = await fetchAsset(viewerAsset.scene_manifest_url);
+    const canonicalBuffer = await fetchAsset(canonicalUrl);
+    const measurementBuffer = await fetchAsset(measurementUrl);
     const decode = (buffer: ArrayBuffer) => new TextDecoder('utf-8').decode(buffer);
     const manifest = JSON.parse(decode(manifestBuffer)) as BundleManifest;
     if (manifest.schema_version !== 'cad_feature_center_v1') throw new Error('Feature Center Schema 不兼容');
-    for (const [relativePath, buffer] of [
+    const requiredBuffers: Array<readonly [string, ArrayBuffer]> = [
       ['canonical_features.jsonl', canonicalBuffer],
-      ['measurements.jsonl', measurementBuffer],
-      ['lightweight/face_mesh_map.json', nextFaceMapBuffer],
-      ['lightweight/feature_mesh_map.json', featureMapBuffer],
-      ['lightweight/model.glb', modelBuffer]
-    ] as const) {
+      ['measurements.jsonl', measurementBuffer]
+    ];
+    let nextFeatureMap: FeatureMeshMap | null = null;
+    let nextFaceMap: FaceMeshMap | null = null;
+    let modelBuffer: ArrayBuffer | null = null;
+    if (!skipStepViewer) {
+      const nextFaceMapBuffer = await fetchAsset(viewerAsset.face_mesh_map_url);
+      const featureMapBuffer = await fetchAsset(viewerAsset.feature_mesh_map_url);
+      const modelAsset = await fetchAsset(viewerAsset.glb_url);
+      modelBuffer = modelAsset;
+      requiredBuffers.push(
+        ['lightweight/face_mesh_map.json', nextFaceMapBuffer],
+        ['lightweight/feature_mesh_map.json', featureMapBuffer],
+        ['lightweight/model.glb', modelAsset]
+      );
+      nextFeatureMap = JSON.parse(decode(featureMapBuffer)) as FeatureMeshMap;
+      nextFaceMap = JSON.parse(decode(nextFaceMapBuffer)) as FaceMeshMap;
+    }
+    for (const [relativePath, buffer] of requiredBuffers) {
       const expected = manifest.output_files[relativePath]?.sha256;
       if (!expected || (await sha256Buffer(buffer)) !== expected)
         throw new Error(`Bundle 文件哈希不匹配：${relativePath}`);
     }
-    const nextFeatureMap = JSON.parse(decode(featureMapBuffer)) as FeatureMeshMap;
-    const nextFaceMap = JSON.parse(decode(nextFaceMapBuffer)) as FaceMeshMap;
-    if (nextFeatureMap.shape_hash !== manifest.brep.shape_hash || nextFaceMap.shape_hash !== manifest.brep.shape_hash) {
+    if (
+      !skipStepViewer &&
+      (!nextFeatureMap || !nextFaceMap ||
+        nextFeatureMap.shape_hash !== manifest.brep.shape_hash ||
+        nextFaceMap.shape_hash !== manifest.brep.shape_hash)
+    ) {
       throw new Error('Mesh 映射与 B-Rep Shape Hash 不一致');
     }
 
@@ -765,8 +792,10 @@ async function loadBuildBundle(buildId: string) {
     measurements.value = parseJsonLines<MeasurementRecord>(decode(measurementBuffer));
     featureMeshMap.value = nextFeatureMap;
     faceMeshMap.value = nextFaceMap;
-    await loadGlb(modelBuffer);
-    await loadStepCurves(viewerAsset.curves_url, manifest);
+    if (modelBuffer) await loadGlb(modelBuffer);
+    if (result.data.source_format !== 'CATPRODUCT') {
+      await loadStepCurves(viewerAsset.curves_url, manifest);
+    }
     await loadOptionalSemanticAssets(result.data);
     clearSelection();
     saveRecentFeatureCenterBuildId(window.localStorage, buildId);
@@ -795,7 +824,7 @@ async function retryBuild() {
   loading.value = false;
 }
 
-// 用途：并行读取原生 CAA Feature 与 B-Rep Face；缺失代表数据能力降级，不伪造内容。
+// 用途：分阶段读取原生 CAA Feature 与 B-Rep Face，避免大型装配同时保留多个完整 ArrayBuffer。
 async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.ViewerContract) {
   nativeFeatures.value = [];
   topologyFaces.value = [];
@@ -808,75 +837,90 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   selectionIndex.value = null;
   const productFeatureTreeUrl = viewerContract.native_semantics?.product_feature_tree_url;
   const productInstancesUrl = viewerContract.native_semantics?.product_instances_url;
+  const partFeatureTreeIndexUrl = viewerContract.native_semantics?.part_feature_tree_index_url;
   const nativeUrl = viewerContract.native_semantics?.features_url;
   const shouldLoadProductTree = viewerContract.source_format === 'CATPRODUCT';
+  // CATProduct 的选择索引和拓扑资产可能远大于特征树本身，首屏先不加载，避免浏览器 OOM。
+  const skipHeavyAssemblySemantics = shouldLoadProductTree;
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
-  const requests: Promise<void>[] = [];
-  if (selectionIndexUrl) {
-    requests.push(
-      fetchAsset(selectionIndexUrl).then(buffer => {
-        const loaded = JSON.parse(new TextDecoder().decode(buffer)) as ViewerSelectionIndex;
-        selectionIndex.value = {
-          ...loaded,
-          native_feature_to_native_faces: {
-            ...(loaded.native_feature_to_native_faces || {}),
-            ...(selectionIndex.value?.native_feature_to_native_faces || {})
-          }
-        };
-        hydrateTopologyFromSelectionIndex(selectionIndex.value);
-      })
-    );
+  if (partFeatureTreeIndexUrl) {
+    const indexBuffer = await fetchAsset(partFeatureTreeIndexUrl);
+    partFeatureTreeIndex.value = JSON.parse(new TextDecoder().decode(indexBuffer)) as Record<string, string>;
   }
-  if (shouldLoadProductTree && productFeatureTreeUrl) {
-    requests.push(
-      fetchAsset(productFeatureTreeUrl).then(buffer => {
-        nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
-      })
-    );
-  } else if (shouldLoadProductTree && productInstancesUrl) {
-    requests.push(
-      fetchAsset(productInstancesUrl).then(buffer => {
-        nativeFeatures.value = productInstancesToNativeRecords(
-          parseJsonLines<ProductInstanceRecord>(new TextDecoder().decode(buffer))
-        );
-      })
-    );
+  const loadJsonLines = async <T>(url: string, assign: (records: T[]) => void) => {
+    const buffer = await fetchAsset(url);
+    const text = new TextDecoder().decode(buffer);
+    assign(parseJsonLines<T>(text));
+  };
+  if (selectionIndexUrl && !skipHeavyAssemblySemantics) {
+    const buffer = await fetchAsset(selectionIndexUrl);
+    const loaded = JSON.parse(new TextDecoder().decode(buffer)) as ViewerSelectionIndex;
+    selectionIndex.value = {
+      ...loaded,
+      native_feature_to_native_faces: loaded.native_feature_to_native_faces || {}
+    };
+    hydrateTopologyFromSelectionIndex(selectionIndex.value);
+  }
+  // CATProduct 首屏优先使用轻量装配实例索引；完整特征树体积可能是实例索引的数量级倍数。
+  if (shouldLoadProductTree && productInstancesUrl) {
+    await loadJsonLines<ProductInstanceRecord>(productInstancesUrl, records => {
+      nativeFeatures.value = productInstancesToNativeRecords(records);
+    });
+  } else if (shouldLoadProductTree && productFeatureTreeUrl) {
+    await loadJsonLines<NativeFeatureRecord>(productFeatureTreeUrl, records => {
+      nativeFeatures.value = records;
+    });
   } else if (nativeUrl) {
-    requests.push(
-      fetchAsset(nativeUrl).then(buffer => {
-        nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
-      })
-    );
+    await loadJsonLines<NativeFeatureRecord>(nativeUrl, records => {
+      nativeFeatures.value = records;
+    });
   }
-  if (facesUrl) {
-    requests.push(
-      fetchAsset(facesUrl).then(buffer => {
-        topologyFaces.value = parseJsonLines<TopologyFaceRecord>(new TextDecoder().decode(buffer));
-      })
-    );
+  if (facesUrl && !skipHeavyAssemblySemantics) {
+    await loadJsonLines<TopologyFaceRecord>(facesUrl, records => {
+      topologyFaces.value = records;
+    });
   }
-  for (const [url, assign] of [
+  if (!skipHeavyAssemblySemantics) for (const [url, assign] of [
     [viewerContract.native_semantics?.topology_bodies_url, (records: TopologySelectionRecord[]) => (topologyBodies.value = records)],
     [viewerContract.native_semantics?.topology_cells_url, hydrateNativeCells],
     [viewerContract.native_semantics?.topology_wires_url, (records: TopologySelectionRecord[]) => (topologyLoops.value = records)],
     [viewerContract.native_semantics?.topology_coedges_url, (records: TopologySelectionRecord[]) => (topologyCoedges.value = records)]
   ] as const) {
     if (!url) continue;
-    requests.push(
-      fetchAsset(url).then(buffer => {
-        assign(parseJsonLines<TopologySelectionRecord>(new TextDecoder().decode(buffer)));
-      })
+    await loadJsonLines<TopologySelectionRecord>(url, assign);
+  }
+  if (viewerContract.native_semantics?.feature_topology_links_url && !skipHeavyAssemblySemantics) {
+    await loadJsonLines<Record<string, unknown>>(
+      viewerContract.native_semantics.feature_topology_links_url,
+      mergeNativeFeatureTopologyLinks
     );
   }
-  if (viewerContract.native_semantics?.feature_topology_links_url) {
-    requests.push(
-      fetchAsset(viewerContract.native_semantics.feature_topology_links_url).then(buffer => {
-        mergeNativeFeatureTopologyLinks(parseJsonLines<Record<string, unknown>>(new TextDecoder().decode(buffer)));
-      })
-    );
-  }
-  await Promise.all(requests);
+}
+
+// 展开 CATProduct 子 CATPart 时才加载该零件的完整 CAA 原生特征树。
+async function loadPartFeatureTree(node: FeatureTreeNode) {
+  if (loadedPartFeatureTrees.has(node.id)) return;
+  const assetPath = partFeatureTreeIndex.value[node.id];
+  if (!assetPath) return;
+  const buffer = await fetchAsset(assetPath);
+  const records = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
+  const merged = records.map(record => {
+    const featureId = String(record.feature_id || '');
+    const originalParent = String(record.parent_id || '');
+    return {
+      ...record,
+      feature_id: `${node.id}/${featureId}`,
+      parent_id: originalParent ? `${node.id}/${originalParent}` : node.id,
+      tree_path: `${node.id}/${record.tree_path || record.display_name || featureId}`,
+      attributes: {
+        ...(record.attributes || {}),
+        product_instance_id: node.id
+      }
+    };
+  });
+  nativeFeatures.value = [...nativeFeatures.value, ...merged];
+  loadedPartFeatureTrees.add(node.id);
 }
 
 function hydrateTopologyFromSelectionIndex(index: ViewerSelectionIndex | null) {
@@ -1808,7 +1852,7 @@ onBeforeUnmount(() => {
               v-if="activeTab === 'bom' && contract?.bom.nodes.length"
               :data="contract.bom.nodes"
               node-key="node_id"
-              default-expand-all
+              :default-expanded-keys="bomDefaultExpandedKeys"
               :props="{ label: 'name', children: 'children' }"
               highlight-current
               @node-click="selectBom"
@@ -1843,6 +1887,7 @@ onBeforeUnmount(() => {
                 :face-refs-by-feature-id="nativeFaceRefs"
                 @select="selectNativeTreeNode"
                 @properties="showNativeTreeNodeProperties"
+                @expand="loadPartFeatureTree"
               />
               <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
                 <button
@@ -1976,6 +2021,11 @@ onBeforeUnmount(() => {
           v-if="!contract"
           class="viewer-empty"
           description="暂无 CATPart 解析结果，请从零件库打开已完成的 CATPart"
+        />
+        <ElEmpty
+          v-else-if="contract.source_format === 'CATPRODUCT'"
+          class="viewer-empty"
+          description="CATProduct 暂不加载 STEP 视图，已保留产品树和特征数据"
         />
         <CadViewerControls
           v-if="contract"

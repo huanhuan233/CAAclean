@@ -201,7 +201,8 @@ async def component_build_viewer_asset(
     urls.extend(value for key, value in (contract.get("feature_center") or {}).items() if key.endswith("_url") and value)
     urls.extend(value for key, value in (contract.get("native_semantics") or {}).items() if key.endswith("_url") and value)
     requested_suffix = f"/viewer/assets/{asset_path}"
-    if not any(str(url).endswith(requested_suffix) for url in urls):
+    is_part_feature_tree_asset = asset_path.startswith("native-caa/part-feature-trees/")
+    if not is_part_feature_tree_asset and not any(str(url).endswith(requested_suffix) for url in urls):
         raise HTTPException(status_code=404, detail={"code": "VIEWER_ASSET_NOT_LISTED", "message": "资产不在发布清单中"})
     path = safe_asset_path(Path(settings.cad_work_dir) / contract["task_id"], asset_path)
     if not path.is_file():

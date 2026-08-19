@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [node: FeatureTreeNode];
   properties: [node: FeatureTreeNode];
+  expand: [node: FeatureTreeNode];
 }>();
 
 interface TreeNodeState {
@@ -73,10 +74,10 @@ const KIND_LABELS: Partial<Record<FeatureTreeKind, string>> = {
   chamfer: 'Chamfer'
 };
 
-// 用途：只默认展开业务骨架，避免 941 个节点首次渲染时全部展开。
+// 用途：只默认展开最外层业务节点，避免大型模型首次渲染整棵特征树。
 function defaultExpandedKeys() {
-  return flattenFeatureTree(sourceTree.value)
-    .filter(node => node.children.length && ['catpart', 'part', 'datum_group', 'body'].includes(node.kind))
+  return sourceTree.value
+    .filter(node => node.children.length)
     .map(node => node.id);
 }
 
@@ -101,6 +102,7 @@ async function syncTreeState() {
 }
 
 function handleExpand(node: FeatureTreeNode) {
+  emit('expand', node);
   if (query.value || category.value !== 'all') return;
   userExpandedKeys.value = [...new Set([...userExpandedKeys.value, node.id])];
 }

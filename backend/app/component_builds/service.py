@@ -456,6 +456,7 @@ class ComponentBuildService:
             "product_references",
             "product_instances",
             "product_feature_tree",
+            "part_feature_tree_index",
             "capabilities",
         ):
             payload[f"{key}_url"] = asset_base + native[key] if native.get(key) else None

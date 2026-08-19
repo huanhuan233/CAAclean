@@ -246,11 +246,13 @@ export function retryCadSpecExtraction(taskId: string) {
 interface ComponentBuildQueryOptions {
   signal?: AbortSignal;
   silent?: boolean;
+  timeout?: number;
 }
 
 function componentBuildQueryConfig(options?: ComponentBuildQueryOptions) {
   return {
     signal: options?.signal,
+    timeout: options?.timeout,
     headers: options?.silent ? { 'X-Client-Silent-Error': '1' } : undefined
   };
 }

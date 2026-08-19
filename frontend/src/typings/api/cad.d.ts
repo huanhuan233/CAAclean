@@ -492,6 +492,7 @@ declare namespace Api {
         product_references_url?: string | null;
         product_instances_url?: string | null;
         product_feature_tree_url?: string | null;
+        part_feature_tree_index_url?: string | null;
         capabilities_url?: string | null;
       };
       error_code: string | null;
