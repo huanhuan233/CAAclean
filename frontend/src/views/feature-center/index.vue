@@ -116,6 +116,7 @@ interface ProcessStep {
   description: string;
   name?: string;
   specification?: string;
+  version?: string;
   category?: string;
   quantity?: string;
   basis?: string;
@@ -132,14 +133,16 @@ const prototypeProcessSteps: ProcessStep[] = [
     category: 'M',
     quantity: '按需',
     description: '按工程数模 5621C02000G23 及 CPS1000、HPGC919-2781-250003，对旅客观察窗窗框与弹簧夹支架贴合面涂覆聚硫密封剂底涂。',
-    basis: 'CPS1000',
-    remark: '涂覆前需清洗、干燥；处理后室温干燥至少 30 分钟。'
+    basis: 'CPS1000、HPGC919-2781-250003',
+    remark:
+      '按工程数模 5621C02000G23 及 CPS1000、HPGC919-2781-250003，对旅客观察窗窗框与弹簧夹支架贴合面涂覆聚硫密封剂底涂；5621C01005G71 的贴合面涂覆聚硫密封剂，并将参数记录于“非金属材料施工记录表”中。注：涂覆聚硫密封剂前，需要清洗、干燥并使用 CMS-SL-908 聚硫密封剂刷涂底涂；将 CMS-SL-908 聚硫密封剂涂刷在 CPM 6520 搭布上，或倒在待处理的表面上，停留合适的时间后，用搭布单向擦拭，尽可能均匀且厚薄一致地涂覆底胶；在 CMS-SL-908 聚硫密封剂还湿润的时候，用清洁干燥的 CPM 6520 搭布从已经处理的表面上将其擦掉；处理后的表面在施加密封剂前应在室温条件下至少干燥 30 分钟；在处理后的 24 小时内涂密封剂，否则表面需要重新用 CMS-SL-908 聚硫密封剂处理。'
   },
   {
     sequence: '010',
     type: '铆装检验工',
     description: '按 CPS1000 检查聚硫密封剂底涂的涂覆质量。',
-    basis: 'CPS1000'
+    basis: 'CPS1000',
+    remark: '按 CPS1000 检查聚硫密封剂底涂的涂覆质量。'
   },
   {
     sequence: '015',
@@ -149,23 +152,28 @@ const prototypeProcessSteps: ProcessStep[] = [
     category: 'M',
     quantity: '按需',
     description: '按工程数模 5621C02000G23 及 CPS1000，对观察窗窗框与弹簧夹支架贴合面涂覆密封胶。',
-    basis: 'HPGC919-2781-250003'
+    basis: '5621C02000G23、CPS1000、HPGC919-2781-250003',
+    remark:
+      '按工程数模 5621C02000G23、CPS1000、HPGC919-2781-250003，对旅客观察窗窗框与弹簧夹支架贴合面涂覆密封胶；5621C01005G71 的贴合面涂覆密封胶，并将参数记录于“非金属材料施工记录表”中。'
   },
   {
     sequence: '020',
     type: '铆装检验工',
     description: '按 CPS1000 检查密封胶涂覆质量。',
-    basis: 'CPS1000'
+    basis: 'CPS1000',
+    remark: '按 CPS1000 检查密封胶涂覆质量。'
   },
   {
     sequence: '025',
     type: '铆装钳工',
     name: '实心铆钉',
     specification: 'MS20470T4-6',
+    version: '—',
     category: 'B',
     quantity: '240',
     description: '按工程数模 5621C02000G23、CPS2100 湿安装弹簧夹支架与窗框连接的紧固件，并记录相关工艺参数。',
-    basis: 'CPS2100'
+    basis: '5621C02000G23、CPS2100',
+    remark: '按工程数模 5621C02000G23、CPS2100 湿安装弹簧夹支架与窗框连接的紧固件，并将相关工艺参数记录于“非金属材料施工记录表”中。'
   },
   {
     sequence: '030',
@@ -178,7 +186,8 @@ const prototypeProcessSteps: ProcessStep[] = [
     sequence: '035',
     type: '铆装钳工',
     description: '按 HPG/MJ-2781-250018 清除多余物。',
-    basis: 'HPG/MJ-2781-250018'
+    basis: 'HPG/MJ-2781-250018',
+    remark: '按 HPG/MJ-2781-250018 清除多余物。'
   }
 ];
 
@@ -1715,7 +1724,6 @@ onBeforeUnmount(() => {
                 <span class="process-sequence">{{ step.sequence }}</span>
                 <div>
                   <strong>{{ step.type }}</strong>
-                  <small>{{ step.description }}</small>
                 </div>
               </div>
             </template>
@@ -1724,24 +1732,25 @@ onBeforeUnmount(() => {
                 <template v-if="step.name">
                   <dt>名称</dt><dd>{{ step.name }}</dd>
                 </template>
-                <template v-if="step.basis">
-                  <dt>依据</dt><dd>{{ step.basis }}</dd>
-                </template>
                 <template v-if="step.specification">
                   <dt>图号/规格</dt><dd>{{ step.specification }}</dd>
+                </template>
+                <template v-if="step.version">
+                  <dt>版次</dt><dd>{{ step.version }}</dd>
+                </template>
+                <template v-if="step.category">
+                  <dt>分类</dt><dd>{{ step.category }}</dd>
                 </template>
                 <template v-if="step.quantity">
                   <dt>数量</dt><dd>{{ step.quantity }}</dd>
                 </template>
+                <template v-if="step.basis">
+                  <dt>依据</dt><dd>{{ step.basis }}</dd>
+                </template>
                 <template v-if="step.remark">
-                  <dt>备注</dt><dd>{{ step.remark }}</dd>
+                  <dt>{{ ['005', '010', '015', '020', '025', '030', '035'].includes(step.sequence) ? '工作内容说明' : '备注' }}</dt><dd>{{ step.remark }}</dd>
                 </template>
               </dl>
-              <div class="process-item-actions">
-                <button type="button" @click.stop="showProcessStep(step.sequence)">查看详情</button>
-                <button type="button" @click.stop="showProcessStep(step.sequence)">定位</button>
-                <button type="button" @click.stop="showProcessStep(step.sequence)">视图显示</button>
-              </div>
             </div>
           </ElCollapseItem>
         </ElCollapse>
@@ -2452,12 +2461,12 @@ button:disabled {
 }
 .process-list :deep(.el-collapse-item__header) {
   height: auto;
-  min-height: 72px;
-  align-items: flex-start;
+  min-height: 40px;
+  align-items: center;
   border-bottom: 0;
   background: var(--el-bg-color);
   border-radius: 8px;
-  padding: 10px 8px;
+  padding: 7px 8px;
   line-height: 1.25;
 }
 .process-list :deep(.el-collapse-item__wrap) {
@@ -2471,7 +2480,7 @@ button:disabled {
 .process-item-title {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  align-items: center;
   gap: 9px;
 }
 .process-sequence {
