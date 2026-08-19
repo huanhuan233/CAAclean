@@ -137,8 +137,8 @@ function isSelected(id: string) {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #fff;
-  border: 1px solid #e5eaf2;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 12px;
 }
 
@@ -152,13 +152,13 @@ function isSelected(id: string) {
 .catalog-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--el-text-color-primary);
 }
 
 .catalog-expand-button {
   border: 0;
   background: transparent;
-  color: #7d8796;
+  color: var(--el-text-color-secondary);
   cursor: pointer;
   font-size: 11px;
 }
@@ -178,47 +178,47 @@ function isSelected(id: string) {
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
-  color: #5a6a7e;
+  color: var(--el-text-color-regular);
   transition: background-color 0.15s;
 }
 
 .catalog-item:hover {
-  background-color: #f0f2f6;
+  background-color: var(--el-fill-color-light);
 }
 
 .catalog-item.active {
-  background-color: #f0edff;
-  color: #6c5ce7;
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
   font-weight: 500;
 }
 
 .catalog-item.active .catalog-item-icon {
-  color: #6c5ce7;
+  color: var(--el-color-primary);
 }
 
 .catalog-item-icon.child-icon {
-  color: #9aa6b5;
+  color: var(--el-text-color-placeholder);
 }
 
 .catalog-item.active .catalog-item-icon.child-icon {
-  color: #6c5ce7;
+  color: var(--el-color-primary);
 }
 
 .catalog-item.root-item {
   margin-top: 4px;
   font-weight: 600;
-  color: #1a2332;
-  border-top: 1px solid #edf0f5;
+  color: var(--el-text-color-primary);
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .catalog-item-icon {
   display: inline-flex;
   flex-shrink: 0;
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
 }
 
 .catalog-item.active .catalog-item-icon {
-  color: #6c5ce7;
+  color: var(--el-color-primary);
 }
 
 .catalog-item-label {
@@ -233,14 +233,14 @@ function isSelected(id: string) {
   min-width: 20px;
   text-align: right;
   font-size: 12px;
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .catalog-divider {
   height: 1px;
   margin: 4px 10px;
-  background: #e5eaf2;
+  background: var(--el-border-color-lighter);
 }
 
 .catalog-footer {
@@ -250,8 +250,8 @@ function isSelected(id: string) {
   padding: 10px 14px;
   font-size: 11px;
   line-height: 1.5;
-  color: #8e99aa;
-  border-top: 1px solid #e5eaf2;
+  color: var(--el-text-color-secondary);
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .catalog-footer svg {
@@ -262,7 +262,7 @@ function isSelected(id: string) {
 .expand-icon {
   display: inline-flex;
   flex-shrink: 0;
-  color: #9aa6b5;
+  color: var(--el-text-color-placeholder);
   transition: transform 0.2s;
 }
 

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     postgres_db: str = "postgres"
 
     freecad_cmd: str = "freecadcmd"
-    freecad_timeout: int = 600
+    freecad_timeout: int = 1800
     cad_script_dir: Path = Path("backend/freecad_scripts")
     cad_work_dir: Path = Path("cad-work")
     cad_max_upload_mb: int = 200

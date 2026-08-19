@@ -334,8 +334,8 @@ export default { name: 'ComponentLibraryTable' }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #fff;
-  border: 1px solid #e5eaf2;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 12px;
 }
 
@@ -356,8 +356,8 @@ export default { name: 'ComponentLibraryTable' }
 
 .table-search :deep(.el-input__wrapper) {
   border-radius: 9px;
-  background: #fff;
-  border: 1px solid #e5eaf2;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
   box-shadow: none;
 }
 
@@ -368,7 +368,7 @@ export default { name: 'ComponentLibraryTable' }
 .total-count {
   flex-shrink: 0;
   font-size: 12px;
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
 }
 
 .table-body {
@@ -379,15 +379,15 @@ export default { name: 'ComponentLibraryTable' }
 
 .table-body :deep(.el-table) {
   --el-table-border-color: transparent;
-  --el-table-header-background-color: #f7f9fc;
-  border-top: 1px solid #e5eaf2;
+  --el-table-header-background-color: var(--el-fill-color-lighter);
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .table-body :deep(.el-table th) {
   font-size: 12px;
   font-weight: 600;
-  color: #5a6a7e;
-  background-color: #f7f9fc;
+  color: var(--el-text-color-regular);
+  background-color: var(--el-fill-color-lighter);
   padding: 8px 12px;
 }
 
@@ -402,11 +402,11 @@ export default { name: 'ComponentLibraryTable' }
 }
 
 .table-body :deep(.el-table__row:hover) {
-  background-color: #f7f9fc;
+  background-color: var(--el-fill-color-lighter);
 }
 
 .table-body :deep(.el-table__body tr.current-row > td) {
-  background-color: #f0edff;
+  background-color: var(--el-color-primary-light-9);
 }
 
 .component-cell {
@@ -418,8 +418,8 @@ export default { name: 'ComponentLibraryTable' }
 .component-icon {
   display: inline-flex;
   flex-shrink: 0;
-  color: #6c5ce7;
-  background: #f0edff;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
   width: 32px;
   height: 32px;
   align-items: center;
@@ -435,7 +435,7 @@ export default { name: 'ComponentLibraryTable' }
 
 .component-name {
   font-weight: 500;
-  color: #1a2332;
+  color: var(--el-text-color-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -443,7 +443,7 @@ export default { name: 'ComponentLibraryTable' }
 
 .component-sub {
   font-size: 12px;
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -458,13 +458,13 @@ export default { name: 'ComponentLibraryTable' }
 .code-primary {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  color: #6c5ce7;
+  color: var(--el-color-primary);
   font-weight: 500;
 }
 
 .code-secondary {
   font-size: 12px;
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
 }
 
 .params-cell {
@@ -488,13 +488,13 @@ export default { name: 'ComponentLibraryTable' }
 .version-text {
   font-size: 13px;
   font-weight: 500;
-  color: #1a2332;
+  color: var(--el-text-color-primary);
 }
 
 .call-volume {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: #5a6a7e;
+  color: var(--el-text-color-regular);
 }
 
 .action-cell {
@@ -508,7 +508,7 @@ export default { name: 'ComponentLibraryTable' }
 }
 
 .action-cell .el-button:hover {
-  color: #6c5ce7;
-  background: #f0edff;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
 }
 </style>

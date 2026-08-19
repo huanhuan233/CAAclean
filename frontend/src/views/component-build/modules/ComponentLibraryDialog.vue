@@ -707,7 +707,7 @@ export default { name: 'ComponentLibraryDialog' }
 .library-dialog :deep(.el-dialog__header) {
   margin-right: 0;
   padding: 16px 24px 8px;
-  border-bottom: 1px solid #e5eaf2;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .library-dialog :deep(.el-dialog__body) {
@@ -744,14 +744,14 @@ export default { name: 'ComponentLibraryDialog' }
 
 .upload-label {
   font-size: 13px;
-  color: #1a2332;
+  color: var(--el-text-color-primary);
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .upload-label small {
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
@@ -759,17 +759,17 @@ export default { name: 'ComponentLibraryDialog' }
   display: block;
   position: relative;
   overflow: hidden;
-  border: 1px dashed #d0d5dd;
+  border: 1px dashed var(--el-border-color);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
-  color: #5a6a7e;
+  color: var(--el-text-color-regular);
   cursor: pointer;
-  background: #f7f9fc;
+  background: var(--el-fill-color-lighter);
 }
 
 .file-input:hover {
-  border-color: #6c5ce7;
+  border-color: var(--el-color-primary);
 }
 
 .file-input input {
@@ -792,7 +792,7 @@ export default { name: 'ComponentLibraryDialog' }
 }
 
 .status-card {
-  border: 1px solid #e5eaf2;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 10px;
   padding: 14px;
 }
@@ -803,12 +803,12 @@ export default { name: 'ComponentLibraryDialog' }
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--el-text-color-primary);
   margin-bottom: 10px;
 }
 
 .status-card-header svg {
-  color: #6c5ce7;
+  color: var(--el-color-primary);
 }
 
 .status-card-body {
@@ -823,13 +823,13 @@ export default { name: 'ComponentLibraryDialog' }
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
-  color: #5a6a7e;
+  color: var(--el-text-color-regular);
 }
 
 .status-row code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  color: #6c5ce7;
+  color: var(--el-color-primary);
 }
 
 .status-card-actions {
@@ -859,7 +859,7 @@ export default { name: 'ComponentLibraryDialog' }
   margin-bottom: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #5a6a7e;
+  color: var(--el-text-color-regular);
 }
 
 .section-actions {
@@ -870,7 +870,7 @@ export default { name: 'ComponentLibraryDialog' }
 .spec-fields-scroll {
   flex: 1;
   overflow-y: auto;
-  border: 1px solid #e5eaf2;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 12px;
 }

@@ -355,7 +355,23 @@ def _prepare_catia_source(source_path: Path, task_root: Path) -> Path:
         )
     if not candidates:
         raise IngestStageError("catia_source_missing", "running_caa", "ZIP 内未找到 CATProduct 或 CATPart")
-    return candidates[0]
+    return _select_entry_catproduct(candidates, source_path)
+
+
+def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path:
+    """选择 ZIP 中的最外层 Product；子 CATProduct 由 CAA 产品树递归读取。"""
+    archive_stem = "".join(character for character in archive_path.stem.casefold() if character.isalnum())
+    return min(
+        candidates,
+        key=lambda path: (
+            0
+            if archive_stem
+            and "".join(character for character in path.stem.casefold() if character.isalnum()) == archive_stem
+            else 1,
+            len(path.parts),
+            str(path).casefold(),
+        ),
+    )
 
 
 async def _append_catpart_feature_trees(

@@ -113,7 +113,7 @@ defineExpose({ showCurrent })
 }
 
 .yaml-title {
-  color: #344054;
+  color: var(--el-text-color-regular);
   font-size: 12px;
   font-weight: 600;
 }
@@ -138,24 +138,24 @@ defineExpose({ showCurrent })
 }
 
 .yaml-filename {
-  color: #1a2332;
+  color: var(--el-text-color-primary);
   font-size: 12px;
   font-weight: 500;
 }
 
 .yaml-state {
-  color: #8e99aa;
+  color: var(--el-text-color-secondary);
   font-size: 11px;
 }
 
 .yaml-content {
   margin: 0;
   overflow: auto;
-  border: 1px solid #e5eaf2;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 14px;
-  background: #f7f9fc;
-  color: #1a2332;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.65;

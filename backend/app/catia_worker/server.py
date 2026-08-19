@@ -212,18 +212,32 @@ def _resolve_job_source(job_root: Path) -> Path:
         catproducts = sorted(
             path for path in bundle_root.rglob("*") if path.is_file() and path.suffix.lower() == ".catproduct"
         )
-        if len(catproducts) != 1:
-            raise WorkerExecutionError(
-                "catia_source_bundle_invalid",
-                "queued_caa",
-                "CATProduct ZIP 必须包含且只能包含一个入口 CATProduct",
-            )
-        return catproducts[0]
+        if catproducts:
+            return _select_entry_catproduct(catproducts, job_root / "source.zip")
     if (job_root / "source.CATProduct").is_file():
         return job_root / "source.CATProduct"
     if (job_root / "source.CATPart").is_file():
         return job_root / "source.CATPart"
     raise WorkerExecutionError("catia_source_missing", "queued_caa", "CATIA 源文件不存在")
+
+
+def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path:
+    """选择 ZIP 中的最外层 Product；子 CATProduct 由 CAA 的产品树递归读取。"""
+    archive_stem = "".join(character for character in archive_path.stem.casefold() if character.isalnum())
+
+    # ZIP 通常保留装配目录层级；优先与 ZIP 名称相符的入口，其次选路径最浅的 Product。
+    return min(
+        candidates,
+        key=lambda path: (
+            0
+            if archive_stem
+            and "".join(character for character in path.stem.casefold() if character.isalnum())
+            == archive_stem
+            else 1,
+            len(path.parts),
+            str(path).casefold(),
+        ),
+    )
 
 
 async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServerSettings) -> None:
