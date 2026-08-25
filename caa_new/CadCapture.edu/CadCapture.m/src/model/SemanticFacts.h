@@ -15,6 +15,7 @@ struct SemanticFacet
   std::string decode_level;
   std::string decode_status;
   std::string payload_extraction_status;
+  std::string payload_json_property;
   std::string source_api;
   std::string read_status;
 

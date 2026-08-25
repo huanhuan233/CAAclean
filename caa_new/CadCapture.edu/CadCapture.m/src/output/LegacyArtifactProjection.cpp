@@ -293,6 +293,8 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                     << JsonQuote("payload_extraction_status") << ":" << JsonQuote(facet.payload_extraction_status) << ","
                     << JsonQuote("source_api") << ":" << JsonQuote(facet.source_api) << ","
                     << JsonQuote("read_status") << ":" << JsonQuote(facet.read_status)
+                    << (facet.payload_json_property.empty() ? "" : ",")
+                    << facet.payload_json_property
                     << "}\n";
     if (!native_features)
     {
@@ -676,10 +678,20 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!WriteLegacyText(output_dir + "\\fta_topology_links.jsonl", "", error))
     return false;
 
+  bool has_typed_native_payload = false;
+  for (i = 0; i < package.semantic_facets.size(); ++i)
+  {
+    if (!package.semantic_facets[i].payload_json_property.empty())
+    {
+      has_typed_native_payload = true;
+      break;
+    }
+  }
+
   std::ostringstream capabilities;
   capabilities << "{"
                << JsonQuote("spec_tree_extraction") << ":" << JsonQuote(package.occurrence_graph.object_occurrences.empty() ? "not_available" : "partial") << ","
-               << JsonQuote("native_feature_extraction") << ":" << JsonQuote(package.semantic_facets.empty() ? "not_available" : "type_only") << ","
+               << JsonQuote("native_feature_extraction") << ":" << JsonQuote(package.semantic_facets.empty() ? "not_available" : (has_typed_native_payload ? "typed_payloads" : "type_only")) << ","
                << JsonQuote("topology_extraction") << ":" << JsonQuote(package.topology.empty() ? "not_available" : "partial") << ","
                << JsonQuote("mesh_face_mapping") << ":" << JsonQuote(package.geometry.empty() ? "not_available" : "partial") << ","
                << JsonQuote("fta_extraction") << ":" << JsonQuote(package.pmi.empty() ? "set_scan_complete_zero_sets_or_unavailable" : "set_level_counts") << ","

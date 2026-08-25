@@ -29,8 +29,8 @@
     "implementation_status": "partially_migrated",
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
-    "semantic_parity_status": "not_passed",
-    "reason": "New code preserves native feature family/status, but dedicated Hole typed payload fields are not emitted yet."
+    "semantic_parity_status": "artifact_presence_passed",
+    "reason": "CATIAHole typed payloads emit type, diameter, origin, direction, and bottom limit for verified R21 Hole fixtures; optional head/thread/alias fields are explicit not_attempted until the remaining legacy calls are migrated."
   },
   {
     "capability_id": "native_feature.pad_pocket_payload",
@@ -61,11 +61,11 @@
       "semantic_facets.jsonl",
       "native_features.jsonl"
     ],
-    "implementation_status": "partially_migrated",
+    "implementation_status": "migrated",
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
-    "semantic_parity_status": "not_passed",
-    "reason": "Pad/Pocket family detection exists only as semantic facet evidence; typed payload parity is still missing."
+    "semantic_parity_status": "artifact_presence_passed",
+    "reason": "CATIAPad/CATIAPocket typed Prism payloads emit material operation, direction/orientation, thin/symmetric flags, neutral/merge status, and first/second limits for verified fixtures."
   },
   {
     "capability_id": "knowledgeware.parameters",

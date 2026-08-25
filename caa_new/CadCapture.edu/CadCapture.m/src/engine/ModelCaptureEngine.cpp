@@ -310,7 +310,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   }
   linked_document_resolver.Resolve(document_handle, ids, package);
   property_extractors.Extract(ids, broker, package);
-  native_feature_extractors.Extract(ids, package);
+  native_feature_extractors.Extract(ids, broker, package);
   sketch_extractor.Extract(package);
   topology_extractor.Extract(document_handle, ids, package);
   geometry_extractor.Extract(package);
