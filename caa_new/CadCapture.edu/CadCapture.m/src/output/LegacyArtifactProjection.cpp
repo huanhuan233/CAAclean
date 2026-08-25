@@ -63,6 +63,30 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
   }
   size_t i;
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    const ProductOccurrence& occurrence = package.product_occurrences[i];
+    features << "{"
+             << JsonQuote("feature_id") << ":" << JsonQuote(occurrence.occurrence_id) << ","
+             << JsonQuote("node_kind") << ":" << JsonQuote("product_instance") << ","
+             << JsonQuote("parent_id") << ":" << JsonQuote(occurrence.parent_occurrence_id) << ","
+             << JsonQuote("reference_id") << ":" << JsonQuote(occurrence.reference_id) << ","
+             << JsonQuote("referenced_document_id") << ":" << JsonQuote(occurrence.referenced_document_id) << ","
+             << JsonQuote("instance_name") << ":" << JsonQuote(occurrence.instance_name) << ","
+             << JsonQuote("part_number") << ":" << JsonQuote(occurrence.part_number) << ","
+             << JsonQuote("tree_path") << ":" << JsonQuote(occurrence.tree_path) << ","
+             << JsonQuote("occurrence_path") << ":" << JsonQuote(occurrence.occurrence_path) << ","
+             << JsonQuote("source_index") << ":" << occurrence.source_index << ","
+             << JsonQuote("transform_status") << ":" << JsonQuote(occurrence.transform_status) << ","
+             << JsonQuote("load_status") << ":" << JsonQuote(occurrence.load_status) << ","
+             << JsonQuote("decode_status") << ":" << JsonQuote(occurrence.capture_status)
+             << "}\n";
+    if (!features)
+    {
+      error = "failed to write output file: " + features_path;
+      return false;
+    }
+  }
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)
   {
     const ObjectOccurrence& occurrence = package.occurrence_graph.object_occurrences[i];
@@ -74,6 +98,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     }
     features << "{"
              << JsonQuote("feature_id") << ":" << JsonQuote(occurrence.occurrence_id) << ","
+             << JsonQuote("node_kind") << ":" << JsonQuote(occurrence.occurrence_kind.empty() ? "native_feature" : occurrence.occurrence_kind) << ","
              << JsonQuote("source_object_id") << ":" << JsonQuote(occurrence.object_id) << ","
              << JsonQuote("parent_id") << ":" << JsonQuote(occurrence.parent_occurrence_id) << ","
              << JsonQuote("document_id") << ":" << JsonQuote(occurrence.document_id) << ","
@@ -124,6 +149,27 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
       return false;
     }
   }
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    const ProductOccurrence& occurrence = package.product_occurrences[i];
+    if (occurrence.parent_occurrence_id.empty())
+      continue;
+    relations << "{"
+              << JsonQuote("kind") << ":" << JsonQuote("parent_of") << ","
+              << JsonQuote("from_id") << ":" << JsonQuote(occurrence.parent_occurrence_id) << ","
+              << JsonQuote("to_id") << ":" << JsonQuote(occurrence.occurrence_id)
+              << "}\n";
+    relations << "{"
+              << JsonQuote("kind") << ":" << JsonQuote("contains") << ","
+              << JsonQuote("from_id") << ":" << JsonQuote(occurrence.parent_occurrence_id) << ","
+              << JsonQuote("to_id") << ":" << JsonQuote(occurrence.occurrence_id)
+              << "}\n";
+    if (!relations)
+    {
+      error = "failed to write output file: " + relations_path;
+      return false;
+    }
+  }
   if (!FinishLegacyStream(relations, relations_path, error))
     return false;
 
@@ -137,11 +183,25 @@ bool LegacyArtifactProjection::ValidateRelationEndpoints(const ReconstructionPac
 {
   std::map<std::string, bool> feature_ids;
   size_t i;
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+    feature_ids[package.product_occurrences[i].occurrence_id] = true;
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)
     feature_ids[package.occurrence_graph.object_occurrences[i].occurrence_id] = true;
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)
   {
     const ObjectOccurrence& occurrence = package.occurrence_graph.object_occurrences[i];
+    if (occurrence.parent_occurrence_id.empty())
+      continue;
+    if (feature_ids.find(occurrence.parent_occurrence_id) == feature_ids.end() ||
+        feature_ids.find(occurrence.occurrence_id) == feature_ids.end())
+    {
+      error = "legacy_relation_endpoint_missing";
+      return false;
+    }
+  }
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    const ProductOccurrence& occurrence = package.product_occurrences[i];
     if (occurrence.parent_occurrence_id.empty())
       continue;
     if (feature_ids.find(occurrence.parent_occurrence_id) == feature_ids.end() ||

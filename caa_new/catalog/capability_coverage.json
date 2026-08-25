@@ -51,11 +51,61 @@
       "reconstruction_verified": false
     },
     {
-      "capability_id": "product.bootstrap.root",
-      "family": "product",
-      "status": "indexed",
+      "capability_id": "document.multi_document_graph",
+      "family": "document",
+      "status": "compile_verified",
       "headers": [],
       "frameworks": [],
+      "extractor": "DocumentGraph",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "product.native_bom",
+      "family": "product",
+      "status": "fixture_verified",
+      "headers": ["CATIDocRoots.h", "CATIProduct.h", "CATLISTV_CATBaseUnknown.h"],
+      "frameworks": ["System", "ObjectModelerBase", "ProductStructure"],
+      "extractor": "CaaProductEnumerator",
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "product.reference_instance_separation",
+      "family": "product",
+      "status": "fixture_verified",
+      "headers": ["CATIProduct.h"],
+      "frameworks": ["ProductStructure"],
+      "extractor": "CaaProductEnumerator",
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "product.absolute_transform",
+      "family": "product",
+      "status": "fixture_verified",
+      "headers": ["CATIMovable.h", "CATMathTransformation.h"],
+      "frameworks": ["ProductStructure", "Mathematics"],
+      "extractor": "CaaProductEnumerator",
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "product.linked_document_resolution",
+      "family": "product",
+      "status": "indexed",
+      "headers": ["CATILinkableObject.h", "CATDocument.h"],
+      "frameworks": ["ObjectModelerBase"],
+      "extractor": "CaaLinkedDocumentResolver",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "product.part_definition_projection",
+      "family": "product",
+      "status": "indexed",
+      "headers": ["CATIProduct.h", "CATISpecObject.h"],
+      "frameworks": ["ProductStructure", "ObjectSpecsModeler"],
       "extractor": "CaaProductEnumerator",
       "fixture_verified": false,
       "reconstruction_verified": false

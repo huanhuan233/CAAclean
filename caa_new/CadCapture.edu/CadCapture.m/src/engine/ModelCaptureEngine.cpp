@@ -24,7 +24,7 @@ static void UpdateReportCounts(const ReconstructionPackage& package, CaptureRepo
   report.document_count = static_cast<int>(package.document_graph.documents.size());
   report.object_count = static_cast<int>(package.objects.size());
   report.occurrence_count = static_cast<int>(package.occurrence_graph.object_occurrences.size() +
-                                             package.occurrence_graph.product_occurrences.size());
+                                             package.product_occurrences.size());
   report.property_count = static_cast<int>(package.properties.size());
 }
 
@@ -181,7 +181,14 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     SyncReportDiagnostics(package, report);
     return false;
   }
-  product_enumerator.Enumerate(package);
+  if (!product_enumerator.Enumerate(document_handle, package, error))
+  {
+    report.message = error;
+    report.exit_code = 1;
+    UpdateReportCounts(package, report);
+    SyncReportDiagnostics(package, report);
+    return false;
+  }
   linked_document_resolver.Resolve(package);
   property_extractors.Extract(package);
   native_feature_extractors.Extract(package);

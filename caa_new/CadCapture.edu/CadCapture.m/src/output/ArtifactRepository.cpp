@@ -77,6 +77,9 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     "reconstruction_plan.json",
     "object_entities.jsonl",
     "tree_occurrences.jsonl",
+    "product_references.jsonl",
+    "product_occurrences.jsonl",
+    "document_links.jsonl",
     "features.jsonl",
     "relations.jsonl"
   };
@@ -101,9 +104,28 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     return false;
   }
   if (CountLines(JoinPath(staging, "features.jsonl")) !=
-      static_cast<long>(package.occurrence_graph.object_occurrences.size()))
+      static_cast<long>(package.occurrence_graph.object_occurrences.size() +
+                        package.product_occurrences.size()))
   {
     error = "features.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "product_references.jsonl")) !=
+      static_cast<long>(package.product_references.size()))
+  {
+    error = "product_references.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "product_occurrences.jsonl")) !=
+      static_cast<long>(package.product_occurrences.size()))
+  {
+    error = "product_occurrences.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "document_links.jsonl")) !=
+      static_cast<long>(package.document_graph.links.size()))
+  {
+    error = "document_links.jsonl line count mismatch";
     return false;
   }
   LegacyArtifactProjection legacy;

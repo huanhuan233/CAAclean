@@ -10,7 +10,14 @@ win_b64/
 selftest_output/
 phase1a_output/
 phase1a_old_output/
+phase1a_part_old_output/
+phase1a_part_new_output/
+phase1b_product_output/
+phase1b_product_old_output/
+phase1b_product_new_output/
 tree_comparison.json
+catpart_comparison.json
+catproduct_comparison.json
 *.log
 CATIAV5Level.lvl
 Install_config_*

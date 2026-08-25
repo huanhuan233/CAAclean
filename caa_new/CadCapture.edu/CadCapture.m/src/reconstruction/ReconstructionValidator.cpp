@@ -1,5 +1,7 @@
 #include "reconstruction/ReconstructionValidator.h"
+#include <float.h>
 #include <map>
+#include <sstream>
 #include <set>
 
 namespace cadcapture {
@@ -25,6 +27,41 @@ static bool ParentChainHasCycle(const std::string& start_id,
     current = found->second;
   }
   return false;
+}
+
+static bool IsFiniteDouble(double value)
+{
+  return _finite(value) != 0;
+}
+
+static bool ValidateTransform(const ProductOccurrence& occurrence, std::string& error)
+{
+  if (occurrence.transform_4x4.size() != 16)
+  {
+    error = "product transform does not contain 16 values: " + occurrence.occurrence_id;
+    return false;
+  }
+  size_t i;
+  for (i = 0; i < occurrence.transform_4x4.size(); ++i)
+  {
+    if (!IsFiniteDouble(occurrence.transform_4x4[i]))
+    {
+      error = "product transform contains non-finite value: " + occurrence.occurrence_id;
+      return false;
+    }
+  }
+  if (occurrence.depth > 0 && occurrence.transform_status == "identity_root")
+  {
+    error = "non-root product occurrence cannot use identity_root transform status: " + occurrence.occurrence_id;
+    return false;
+  }
+  if (occurrence.depth > 0 && occurrence.transform_status == "resolved_absolute" &&
+      occurrence.transform_source.empty())
+  {
+    error = "resolved product transform is missing source: " + occurrence.occurrence_id;
+    return false;
+  }
+  return true;
 }
 
 bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std::string& error) const
@@ -72,6 +109,29 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
       return false;
     }
     object_ids[object.object_id] = true;
+  }
+
+  std::map<std::string, bool> reference_ids;
+  for (i = 0; i < package.product_references.size(); ++i)
+  {
+    const ProductReferenceEntity& reference = package.product_references[i];
+    if (reference.reference_id.empty())
+    {
+      error = "product reference_id is empty";
+      return false;
+    }
+    if (HasKey(reference_ids, reference.reference_id))
+    {
+      error = "duplicate product reference_id: " + reference.reference_id;
+      return false;
+    }
+    if (!reference.referenced_document_id.empty() &&
+        !HasKey(document_ids, reference.referenced_document_id))
+    {
+      error = "product reference points to missing document_id: " + reference.referenced_document_id;
+      return false;
+    }
+    reference_ids[reference.reference_id] = true;
   }
 
   std::map<std::string, bool> occurrence_ids;
@@ -145,6 +205,57 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
   }
 
+  std::map<std::string, bool> product_paths;
+  int product_root_count = 0;
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    const ProductOccurrence& occurrence = package.product_occurrences[i];
+    if (occurrence.occurrence_id.empty())
+    {
+      error = "product occurrence_id is empty";
+      return false;
+    }
+    if (HasKey(occurrence_ids, occurrence.occurrence_id))
+    {
+      error = "duplicate occurrence_id across product/object nodes: " + occurrence.occurrence_id;
+      return false;
+    }
+    if (!HasKey(reference_ids, occurrence.reference_id))
+    {
+      error = "product occurrence references missing reference_id: " + occurrence.reference_id;
+      return false;
+    }
+    if (!occurrence.referenced_document_id.empty() &&
+        !HasKey(document_ids, occurrence.referenced_document_id))
+    {
+      error = "product occurrence references missing document_id: " + occurrence.referenced_document_id;
+      return false;
+    }
+    if (occurrence.occurrence_path.empty())
+    {
+      error = "product occurrence_path is empty: " + occurrence.occurrence_id;
+      return false;
+    }
+    if (HasKey(occurrence_paths, occurrence.occurrence_path) ||
+        HasKey(product_paths, occurrence.occurrence_path))
+    {
+      error = "duplicate product occurrence_path: " + occurrence.occurrence_path;
+      return false;
+    }
+    if (occurrence.source_index < 0)
+    {
+      error = "product source_index is negative: " + occurrence.occurrence_id;
+      return false;
+    }
+    if (!ValidateTransform(occurrence, error))
+      return false;
+    product_paths[occurrence.occurrence_path] = true;
+    occurrence_ids[occurrence.occurrence_id] = true;
+    parent_by_occurrence[occurrence.occurrence_id] = occurrence.parent_occurrence_id;
+    if (occurrence.parent_occurrence_id.empty())
+      ++product_root_count;
+  }
+
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)
   {
     const ObjectOccurrence& occurrence = package.occurrence_graph.object_occurrences[i];
@@ -160,8 +271,29 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
       return false;
     }
   }
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    const ProductOccurrence& occurrence = package.product_occurrences[i];
+    if (!occurrence.parent_occurrence_id.empty() &&
+        !HasKey(occurrence_ids, occurrence.parent_occurrence_id))
+    {
+      error = "product occurrence references missing parent_occurrence_id: " + occurrence.parent_occurrence_id;
+      return false;
+    }
+    if (ParentChainHasCycle(occurrence.occurrence_id, parent_by_occurrence))
+    {
+      error = "mixed occurrence parent cycle detected at: " + occurrence.occurrence_id;
+      return false;
+    }
+  }
 
-  if (primary_root_count > 1)
+  if (product_root_count > 1)
+  {
+    error = "product tree has multiple root product occurrences";
+    return false;
+  }
+
+  if (package.product_occurrences.empty() && primary_root_count > 1)
   {
     error = "primary_tree has multiple root occurrences";
     return false;
@@ -169,9 +301,26 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
 
   for (i = 0; i < package.document_graph.documents.size(); ++i)
   {
-    if (package.document_graph.documents[i].document_kind == "catpart" && document_root_count != 1)
+    if (package.product_occurrences.empty() &&
+        package.document_graph.documents[i].document_kind == "catpart" && document_root_count != 1)
     {
       error = "CATPart document does not have exactly one document root";
+      return false;
+    }
+  }
+
+  for (i = 0; i < package.document_graph.links.size(); ++i)
+  {
+    const DocumentLink& link = package.document_graph.links[i];
+    if (!HasKey(document_ids, link.from_document_id) ||
+        (!link.to_document_id.empty() && !HasKey(document_ids, link.to_document_id)))
+    {
+      error = "document link has dangling endpoint: " + link.link_id;
+      return false;
+    }
+    if (!link.reference_id.empty() && !HasKey(reference_ids, link.reference_id))
+    {
+      error = "document link references missing reference_id: " + link.reference_id;
       return false;
     }
   }

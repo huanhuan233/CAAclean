@@ -8,4 +8,7 @@ LINK_WITH = \
   JS0GROUP \
   CATObjectModelerBase \
   CATObjectSpecsModeler \
-  CATMecModInterfaces
+  CATMecModInterfaces \
+  CATProductStructure1 \
+  ProductStructureUUID \
+  CATMathematics

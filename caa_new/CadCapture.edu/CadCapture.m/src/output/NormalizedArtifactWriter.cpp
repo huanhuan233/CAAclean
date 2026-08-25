@@ -79,6 +79,112 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
                            const std::string& output_dir,
                            std::string& error)
 {
+  size_t i;
+  const std::string references_path = output_dir + "\\product_references.jsonl";
+  std::ofstream references(references_path.c_str(), std::ios::out | std::ios::binary);
+  if (!references)
+  {
+    error = "failed to open output file: " + references_path;
+    return false;
+  }
+  for (i = 0; i < package.product_references.size(); ++i)
+  {
+    const ProductReferenceEntity& reference = package.product_references[i];
+    references << "{"
+               << JsonQuote("reference_id") << ":" << JsonQuote(reference.reference_id) << ","
+               << JsonQuote("referenced_document_id") << ":" << JsonQuote(reference.referenced_document_id) << ","
+               << JsonQuote("part_number") << ":" << JsonQuote(reference.part_number) << ","
+               << JsonQuote("display_name") << ":" << JsonQuote(reference.display_name) << ","
+               << JsonQuote("reference_document_name") << ":" << JsonQuote(reference.reference_document_name) << ","
+               << JsonQuote("reference_document_kind") << ":" << JsonQuote(reference.reference_document_kind) << ","
+               << JsonQuote("definition_status") << ":" << JsonQuote(reference.definition_status) << ","
+               << JsonQuote("identity_method") << ":" << JsonQuote(reference.identity_method) << ","
+               << JsonQuote("value_source") << ":" << JsonQuote(reference.value_source)
+               << "}\n";
+    if (!references)
+    {
+      error = "failed to write output file: " + references_path;
+      return false;
+    }
+  }
+  if (!FinishStream(references, references_path, error))
+    return false;
+
+  const std::string product_occurrences_path = output_dir + "\\product_occurrences.jsonl";
+  std::ofstream product_occurrences(product_occurrences_path.c_str(), std::ios::out | std::ios::binary);
+  if (!product_occurrences)
+  {
+    error = "failed to open output file: " + product_occurrences_path;
+    return false;
+  }
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    const ProductOccurrence& occurrence = package.product_occurrences[i];
+    product_occurrences << "{"
+                        << JsonQuote("occurrence_id") << ":" << JsonQuote(occurrence.occurrence_id) << ","
+                        << JsonQuote("parent_occurrence_id") << ":" << JsonQuote(occurrence.parent_occurrence_id) << ","
+                        << JsonQuote("reference_id") << ":" << JsonQuote(occurrence.reference_id) << ","
+                        << JsonQuote("referenced_document_id") << ":" << JsonQuote(occurrence.referenced_document_id) << ","
+                        << JsonQuote("instance_name") << ":" << JsonQuote(occurrence.instance_name) << ","
+                        << JsonQuote("part_number") << ":" << JsonQuote(occurrence.part_number) << ","
+                        << JsonQuote("tree_path") << ":" << JsonQuote(occurrence.tree_path) << ","
+                        << JsonQuote("occurrence_path") << ":" << JsonQuote(occurrence.occurrence_path) << ","
+                        << JsonQuote("depth") << ":" << occurrence.depth << ","
+                        << JsonQuote("source_index") << ":" << occurrence.source_index << ","
+                        << JsonQuote("child_count") << ":" << occurrence.child_count << ","
+                        << JsonQuote("transform_4x4") << ":[";
+    size_t j;
+    for (j = 0; j < occurrence.transform_4x4.size(); ++j)
+    {
+      if (j != 0)
+        product_occurrences << ",";
+      product_occurrences << occurrence.transform_4x4[j];
+    }
+    product_occurrences << "],"
+                        << JsonQuote("transform_status") << ":" << JsonQuote(occurrence.transform_status) << ","
+                        << JsonQuote("transform_source") << ":" << JsonQuote(occurrence.transform_source) << ","
+                        << JsonQuote("load_status") << ":" << JsonQuote(occurrence.load_status) << ","
+                        << JsonQuote("capture_status") << ":" << JsonQuote(occurrence.capture_status) << ","
+                        << JsonQuote("presentation_status") << ":" << JsonQuote(occurrence.presentation_status) << ","
+                        << JsonQuote("feature_definition_root_id") << ":" << JsonQuote(occurrence.feature_definition_root_id)
+                        << "}\n";
+    if (!product_occurrences)
+    {
+      error = "failed to write output file: " + product_occurrences_path;
+      return false;
+    }
+  }
+  if (!FinishStream(product_occurrences, product_occurrences_path, error))
+    return false;
+
+  const std::string links_path = output_dir + "\\document_links.jsonl";
+  std::ofstream links(links_path.c_str(), std::ios::out | std::ios::binary);
+  if (!links)
+  {
+    error = "failed to open output file: " + links_path;
+    return false;
+  }
+  for (i = 0; i < package.document_graph.links.size(); ++i)
+  {
+    const DocumentLink& link = package.document_graph.links[i];
+    links << "{"
+          << JsonQuote("link_id") << ":" << JsonQuote(link.link_id) << ","
+          << JsonQuote("from_document_id") << ":" << JsonQuote(link.from_document_id) << ","
+          << JsonQuote("to_document_id") << ":" << JsonQuote(link.to_document_id) << ","
+          << JsonQuote("reference_id") << ":" << JsonQuote(link.reference_id) << ","
+          << JsonQuote("link_role") << ":" << JsonQuote(link.link_role) << ","
+          << JsonQuote("link_status") << ":" << JsonQuote(link.link_status) << ","
+          << JsonQuote("value_source") << ":" << JsonQuote(link.value_source)
+          << "}\n";
+    if (!links)
+    {
+      error = "failed to write output file: " + links_path;
+      return false;
+    }
+  }
+  if (!FinishStream(links, links_path, error))
+    return false;
+
   const std::string object_path = output_dir + "\\object_entities.jsonl";
   std::ofstream objects(object_path.c_str(), std::ios::out | std::ios::binary);
   if (!objects)
@@ -86,7 +192,6 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     error = "failed to open output file: " + object_path;
     return false;
   }
-  size_t i;
   for (i = 0; i < package.objects.size(); ++i)
   {
     const ObjectEntity& object = package.objects[i];
@@ -138,6 +243,10 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
                 << JsonQuote("occurrence_role") << ":" << JsonQuote(occurrence.occurrence_role) << ","
                 << JsonQuote("enumeration_source") << ":" << JsonQuote(occurrence.enumeration_source) << ","
                 << JsonQuote("presentation_status") << ":" << JsonQuote(occurrence.presentation_status) << ","
+                << JsonQuote("occurrence_kind") << ":" << JsonQuote(occurrence.occurrence_kind) << ","
+                << JsonQuote("product_occurrence_id") << ":" << JsonQuote(occurrence.product_occurrence_id) << ","
+                << JsonQuote("reference_id") << ":" << JsonQuote(occurrence.reference_id) << ","
+                << JsonQuote("referenced_document_id") << ":" << JsonQuote(occurrence.referenced_document_id) << ","
                 << JsonQuote("capture_status") << ":" << JsonQuote(occurrence.capture_status)
                 << "}\n";
     if (!occurrences)
@@ -166,12 +275,15 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
   const std::string nl = NewLine(pretty);
   const std::string i1 = Indent(pretty, 1);
   manifest << "{" << nl
-           << i1 << JsonQuote("schema_version") << ":" << (pretty ? " " : "") << JsonQuote("caa_capture_new_v0") << "," << nl
-           << i1 << JsonQuote("parser_version") << ":" << (pretty ? " " : "") << JsonQuote("0.1.0") << "," << nl
-           << i1 << JsonQuote("architecture") << ":" << (pretty ? " " : "") << JsonQuote("deep_module_bootstrap") << "," << nl
+           << i1 << JsonQuote("schema_version") << ":" << (pretty ? " " : "") << JsonQuote("caa_capture_v1") << "," << nl
+           << i1 << JsonQuote("parser_version") << ":" << (pretty ? " " : "") << JsonQuote("0.2.0") << "," << nl
+           << i1 << JsonQuote("architecture") << ":" << (pretty ? " " : "") << JsonQuote("deep_module_capture") << "," << nl
            << i1 << JsonQuote("document_count") << ":" << (pretty ? " " : "") << report.document_count << "," << nl
            << i1 << JsonQuote("object_count") << ":" << (pretty ? " " : "") << report.object_count << "," << nl
            << i1 << JsonQuote("occurrence_count") << ":" << (pretty ? " " : "") << report.occurrence_count << "," << nl
+           << i1 << JsonQuote("product_reference_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.product_references.size()) << "," << nl
+           << i1 << JsonQuote("product_occurrence_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.product_occurrences.size()) << "," << nl
+           << i1 << JsonQuote("document_link_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.document_graph.links.size()) << "," << nl
            << i1 << JsonQuote("property_count") << ":" << (pretty ? " " : "") << report.property_count << "," << nl
            << i1 << JsonQuote("selected_reconstruction_route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
            << i1 << JsonQuote("capture_status") << ":" << (pretty ? " " : "") << JsonQuote(package.capture_status) << "," << nl
@@ -191,7 +303,7 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
   std::ostringstream plan_json;
   plan_json << "{" << nl
             << i1 << JsonQuote("route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
-            << i1 << JsonQuote("status") << ":" << (pretty ? " " : "") << JsonQuote("bootstrap_minimal") << nl
+            << i1 << JsonQuote("status") << ":" << (pretty ? " " : "") << JsonQuote("partial_tree_capture") << nl
             << "}" << nl;
 
   if (!WriteText(output_dir + "\\manifest.json", manifest.str(), error))

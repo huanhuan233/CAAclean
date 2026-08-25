@@ -52,6 +52,9 @@ Normal Phase 1A mode writes through a staging directory and commits the output t
 - `reconstruction_plan.json`
 - `object_entities.jsonl`
 - `tree_occurrences.jsonl`
+- `product_references.jsonl`
+- `product_occurrences.jsonl`
+- `document_links.jsonl`
 - `features.jsonl`
 - `relations.jsonl`
 
@@ -70,6 +73,22 @@ powershell -ExecutionPolicy Bypass -File tools\compare_catpart_tree.ps1 `
   -NewOutput "H:\output\new_tree" `
   -ReportOutput "H:\output\tree_comparison.json"
 ```
+
+## CATProduct Tree Comparison
+
+Compare a real CATProduct against the legacy parser without comparing unstable IDs:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\compare_catproduct_tree.ps1 `
+  -OldExe "H:\PXY2\3Djiexi\freecadCAA\3DjiexiCAA\win_b64\code\bin\CadParseMvp.exe" `
+  -NewExe "H:\PXY2\3Djiexi\freecadCAA\caa_new\win_b64\code\bin\CadCapture.exe" `
+  -Input "H:\model\assembly.CATProduct" `
+  -OldOutput "H:\output\old_product" `
+  -NewOutput "H:\output\new_product" `
+  -ReportOutput "H:\output\product_comparison.json"
+```
+
+The Phase 1B comparison checks instance path coverage, duplicate paths, instance names, transform availability, product reference links, and legacy relation endpoint validity. It does not yet require linked CATPart definitions below every product instance because that capability is not fixture-verified.
 
 ## Catalog Tools
 

@@ -27,6 +27,7 @@ if exist "%OBJ1%" del /q "%OBJ1%"
 if exist "%OBJ2%" del /q "%OBJ2%"
 if exist "%OBJ3%" del /q "%OBJ3%"
 if exist "%OUT%\SdkCatalog.obj" del /q "%OUT%\SdkCatalog.obj"
+if exist "%OUT%\CaptureIdRegistry.obj" del /q "%OUT%\CaptureIdRegistry.obj"
 if exist "%OUT%\ArtifactRepository.obj" del /q "%OUT%\ArtifactRepository.obj"
 if exist "%OUT%\NormalizedArtifactWriter.obj" del /q "%OUT%\NormalizedArtifactWriter.obj"
 if exist "%OUT%\LegacyArtifactProjection.obj" del /q "%OUT%\LegacyArtifactProjection.obj"
@@ -39,6 +40,8 @@ cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionValidator.cpp"
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\SdkCatalog.cpp" /Fo"%OUT%\SdkCatalog.obj"
 if errorlevel 1 exit /b 4
+cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\CaptureIdRegistry.cpp" /Fo"%OUT%\CaptureIdRegistry.obj"
+if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\ArtifactRepository.cpp" /Fo"%OUT%\ArtifactRepository.obj"
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\NormalizedArtifactWriter.cpp" /Fo"%OUT%\NormalizedArtifactWriter.obj"
@@ -46,7 +49,7 @@ if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\LegacyArtifactProjection.cpp" /Fo"%OUT%\LegacyArtifactProjection.obj"
 if errorlevel 1 exit /b 4
 
-link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\SdkCatalog.obj" "%OUT%\ArtifactRepository.obj" "%OUT%\NormalizedArtifactWriter.obj" "%OUT%\LegacyArtifactProjection.obj" /OUT:"%EXE%"
+link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\SdkCatalog.obj" "%OUT%\CaptureIdRegistry.obj" "%OUT%\ArtifactRepository.obj" "%OUT%\NormalizedArtifactWriter.obj" "%OUT%\LegacyArtifactProjection.obj" /OUT:"%EXE%"
 if errorlevel 1 exit /b 4
 
 "%EXE%"

@@ -89,3 +89,13 @@ Each CATIA object is persisted as an `ObjectEntity`; each place it appears in th
 Primary tree traversal uses the active recursion path only to stop cycles; it does not globally suppress a second legal occurrence of the same entity. `CATIContainer::ListMembersHere` is supplemental discovery. Objects already present in the primary tree receive supplemental evidence on the entity; newly discovered objects are attached under the PartSpecContainer as `supplemental_discovery` with `presentation_status=non_primary`, never as extra roots.
 
 Unknown objects are preserved with explicit status instead of being dropped. Normal output includes `object_entities.jsonl` and `tree_occurrences.jsonl`; `LegacyArtifactProjection` also emits compatible `features.jsonl` and `relations.jsonl`. Legacy features are occurrence projections so relation endpoints are referentially valid.
+
+## Phase 1B CATProduct Tree
+
+Phase 1B keeps CATProduct structure as first-class model data instead of flattening it into object features. `ProductReferenceEntity` records the shared reference identity and `ProductOccurrence` records each instance placement, parent occurrence, source index, tree path, occurrence path, child count, load status, and absolute 4x4 transform.
+
+The CAA-facing implementation opens the real CATProduct document read-only, obtains roots through `CATIDocRoots::GiveDocRoots`, queries `CATIProduct`, walks `CATIProduct::GetChildren("CATIProduct")`, and reads instance transforms through `CATIMovable::GetAbsPosition`. This is implemented inside `CaaProductEnumerator`; no external layer sees `CATIProduct`, `CATIMovable`, or other concrete `CATI*` interfaces.
+
+`product_references.jsonl`, `product_occurrences.jsonl`, and `document_links.jsonl` are normalized outputs. `LegacyArtifactProjection` projects product occurrences into compatible `features.jsonl` and writes parent relations, while preserving referential validity.
+
+Current verified coverage is native same-document CATProduct BOM capture, reference/instance separation, and absolute transforms. External linked-document resolution and CATPart feature-definition projection under product instances are indexed for later work but are not fixture-verified and must not be declared implemented.

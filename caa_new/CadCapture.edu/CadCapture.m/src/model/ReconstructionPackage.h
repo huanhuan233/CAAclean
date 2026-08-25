@@ -4,6 +4,7 @@
 #include "model/DocumentGraph.h"
 #include "model/ObjectIdentity.h"
 #include "model/OccurrenceGraph.h"
+#include "model/ProductStructure.h"
 #include "model/PropertyFacts.h"
 #include "model/SemanticFacts.h"
 #include "model/GeometryIR.h"
@@ -18,6 +19,8 @@ namespace cadcapture {
 struct ReconstructionPackage
 {
   DocumentGraph document_graph;
+  std::vector<ProductReferenceEntity> product_references;
+  std::vector<ProductOccurrence> product_occurrences;
   std::vector<ObjectEntity> objects;
   OccurrenceGraph occurrence_graph;
   std::vector<PropertyFact> properties;

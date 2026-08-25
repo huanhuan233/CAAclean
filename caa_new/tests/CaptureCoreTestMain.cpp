@@ -6,6 +6,7 @@
 #include "model/PropertyFacts.h"
 #include "model/ReconstructionPackage.h"
 #include "model/SdkCatalog.h"
+#include "model/CaptureIdRegistry.h"
 #include "output/ArtifactRepository.h"
 #include "output/JsonSupport.h"
 #include "output/LegacyArtifactProjection.h"
@@ -146,6 +147,118 @@ static long CountLines(const std::string& path)
   return count;
 }
 
+static ProductReferenceEntity MakeReference(const std::string& reference_id,
+                                            const std::string& document_id,
+                                            const std::string& part_number)
+{
+  ProductReferenceEntity reference;
+  reference.reference_id = reference_id;
+  reference.referenced_document_id = document_id;
+  reference.part_number = part_number;
+  reference.display_name = part_number;
+  reference.reference_document_kind = "catpart";
+  reference.definition_status = "captured";
+  reference.value_source = "test";
+  reference.identity_method = "session_reference_identity";
+  return reference;
+}
+
+static ProductOccurrence MakeProductOccurrence(const std::string& occurrence_id,
+                                               const std::string& parent_id,
+                                               const std::string& reference_id,
+                                               const std::string& document_id,
+                                               const std::string& instance_name,
+                                               long depth,
+                                               long source_index)
+{
+  ProductOccurrence occurrence;
+  occurrence.occurrence_id = occurrence_id;
+  occurrence.parent_occurrence_id = parent_id;
+  occurrence.reference_id = reference_id;
+  occurrence.referenced_document_id = document_id;
+  occurrence.instance_name = instance_name;
+  occurrence.part_number = "PartA";
+  occurrence.tree_path = parent_id.empty() ? ("/" + instance_name) : ("/Root/" + instance_name);
+  occurrence.occurrence_path = parent_id.empty() ? ("/0:" + instance_name) : ("/0:Root/" + instance_name);
+  occurrence.depth = depth;
+  occurrence.source_index = source_index;
+  occurrence.child_count = 0;
+  occurrence.transform_status = depth == 0 ? "identity_root" : "resolved_absolute";
+  occurrence.transform_source = depth == 0 ? "CATProduct.root" : "CATIMovable.GetAbsPosition";
+  occurrence.load_status = "loaded";
+  occurrence.capture_status = "available";
+  occurrence.presentation_status = "visible";
+  return occurrence;
+}
+
+static ReconstructionPackage MakeProductPackage()
+{
+  ReconstructionPackage package;
+  DocumentEntity product_document;
+  product_document.document_id = "doc_product";
+  product_document.document_kind = "catproduct";
+  product_document.source_file_name = "Root.CATProduct";
+  product_document.load_status = "loaded";
+  product_document.capture_status = "partial";
+  package.document_graph.AddDocument(product_document);
+
+  DocumentEntity part_document;
+  part_document.document_id = "doc_part_a";
+  part_document.document_kind = "catpart";
+  part_document.source_file_name = "PartA.CATPart";
+  part_document.load_status = "loaded";
+  part_document.capture_status = "partial";
+  part_document.definition_status = "captured_once";
+  package.document_graph.AddDocument(part_document);
+
+  package.product_references.push_back(MakeReference("ref_root", "doc_product", "Root"));
+  package.product_references.push_back(MakeReference("ref_part_a", "doc_part_a", "PartA"));
+
+  package.product_occurrences.push_back(MakeProductOccurrence("product_occurrence_1", "", "ref_root", "doc_product", "Root", 0, 0));
+  package.product_occurrences.push_back(MakeProductOccurrence("product_occurrence_2", "product_occurrence_1", "ref_part_a", "doc_part_a", "PartA.1", 1, 1));
+  package.product_occurrences.push_back(MakeProductOccurrence("product_occurrence_3", "product_occurrence_1", "ref_part_a", "doc_part_a", "PartA.2", 1, 2));
+
+  ObjectEntity feature;
+  feature.object_id = "object_part_feature_1";
+  feature.document_id = "doc_part_a";
+  feature.object_kind = "catia_spec_object";
+  feature.display_name = "PartBody";
+  feature.internal_name = "MechanicalTool.1";
+  feature.startup_type = "MechanicalTool";
+  feature.update_status = "up_to_date";
+  feature.capture_status = "available";
+  package.objects.push_back(feature);
+
+  ObjectOccurrence feature_a;
+  feature_a.occurrence_id = "occurrence_feature_1";
+  feature_a.object_id = feature.object_id;
+  feature_a.parent_occurrence_id = "product_occurrence_2";
+  feature_a.document_id = "doc_part_a";
+  feature_a.tree_path = "/Root/PartA.1/PartBody";
+  feature_a.occurrence_path = "/0:Root/1:PartA.1/1:PartBody";
+  feature_a.source_index = 1;
+  feature_a.occurrence_role = "primary_tree";
+  feature_a.enumeration_source = "definition_projection";
+  feature_a.presentation_status = "visible";
+  feature_a.occurrence_kind = "native_feature";
+  feature_a.product_occurrence_id = "product_occurrence_2";
+  feature_a.reference_id = "ref_part_a";
+  feature_a.referenced_document_id = "doc_part_a";
+  feature_a.capture_status = "available";
+  package.occurrence_graph.object_occurrences.push_back(feature_a);
+
+  ObjectOccurrence feature_b = feature_a;
+  feature_b.occurrence_id = "occurrence_feature_2";
+  feature_b.parent_occurrence_id = "product_occurrence_3";
+  feature_b.tree_path = "/Root/PartA.2/PartBody";
+  feature_b.occurrence_path = "/0:Root/2:PartA.2/1:PartBody";
+  feature_b.product_occurrence_id = "product_occurrence_3";
+  package.occurrence_graph.object_occurrences.push_back(feature_b);
+
+  package.diagnostics.push_back(MakeDiagnostic("info", "test_product", "doc_product", "valid product package", "test"));
+  return package;
+}
+
 int main()
 {
   CapturePolicy policy;
@@ -159,6 +272,10 @@ int main()
   document.document_id = "doc_a";
   graph.AddDocument(document);
   Check(graph.documents.size() == 1, "DocumentGraph AddDocument");
+
+  CaptureIdRegistry ids;
+  Check(ids.NextDocumentId() != ids.NextDocumentId(), "CaptureIdRegistry document ids are unique");
+  Check(ids.NextProductReferenceId().find("product_reference_") == 0, "CaptureIdRegistry product reference ids");
 
   ObjectEntity object;
   object.object_id = "object_a";
@@ -284,6 +401,41 @@ int main()
   Check(catalog.CapabilityAtLeast("document.native_open", "fixture_verified"), "native open capability status");
   Check(catalog.CapabilityAtLeast("part.native_spec_tree", "fixture_verified"), "native spec tree capability status");
 
+  ReconstructionPackage product_package = MakeProductPackage();
+  planner.Plan(product_package);
+  Check(validator.Validate(product_package, error), "ReconstructionValidator accepts valid product package");
+  Check(product_package.product_references.size() == 2, "ProductReference stores definition once");
+  Check(product_package.product_occurrences.size() == 3, "ProductOccurrence keeps multiple instances");
+  Check(product_package.product_occurrences[1].reference_id == product_package.product_occurrences[2].reference_id,
+        "two instances share one reference");
+  Check(product_package.occurrence_graph.object_occurrences[0].object_id ==
+        product_package.occurrence_graph.object_occurrences[1].object_id,
+        "two projected feature occurrences reuse one ObjectEntity");
+  Check(product_package.occurrence_graph.object_occurrences[0].occurrence_id !=
+        product_package.occurrence_graph.object_occurrences[1].occurrence_id,
+        "two projected feature occurrences have unique occurrence ids");
+  Check(legacy.ValidateRelationEndpoints(product_package, error), "Legacy product relation endpoints exist");
+
+  invalid = MakeProductPackage();
+  invalid.product_occurrences[1].reference_id = "missing_reference";
+  planner.Plan(invalid);
+  Check(!validator.Validate(invalid, error), "ReconstructionValidator rejects dangling product reference");
+
+  invalid = MakeProductPackage();
+  invalid.product_occurrences[1].referenced_document_id = "missing_doc";
+  planner.Plan(invalid);
+  Check(!validator.Validate(invalid, error), "ReconstructionValidator rejects dangling referenced_document_id");
+
+  invalid = MakeProductPackage();
+  invalid.product_occurrences[2].occurrence_path = invalid.product_occurrences[1].occurrence_path;
+  planner.Plan(invalid);
+  Check(!validator.Validate(invalid, error), "ReconstructionValidator rejects duplicate product occurrence_path");
+
+  invalid = MakeProductPackage();
+  invalid.product_occurrences[1].transform_4x4.pop_back();
+  planner.Plan(invalid);
+  Check(!validator.Validate(invalid, error), "ReconstructionValidator rejects malformed transform matrix");
+
   ArtifactRepository repository;
   CaptureReport output_report;
   output_report.success = true;
@@ -300,6 +452,23 @@ int main()
   Check(CountLines(output_dir + "\\object_entities.jsonl") ==
         static_cast<long>(package.objects.size()),
         "Object entities JSONL line count");
+  output_report.document_count = static_cast<int>(product_package.document_graph.documents.size());
+  output_report.object_count = static_cast<int>(product_package.objects.size());
+  output_report.occurrence_count = static_cast<int>(product_package.occurrence_graph.object_occurrences.size() +
+                                                    product_package.product_occurrences.size());
+  const std::string product_output_dir = "build_core\\product_transaction_output";
+  Check(repository.Commit(product_package, output_report, product_output_dir, true, error),
+        "ArtifactRepository commits product package");
+  Check(CountLines(product_output_dir + "\\product_references.jsonl") ==
+        static_cast<long>(product_package.product_references.size()),
+        "Product references JSONL line count");
+  Check(CountLines(product_output_dir + "\\product_occurrences.jsonl") ==
+        static_cast<long>(product_package.product_occurrences.size()),
+        "Product occurrences JSONL line count");
+  Check(CountLines(product_output_dir + "\\features.jsonl") ==
+        static_cast<long>(product_package.occurrence_graph.object_occurrences.size() +
+                          product_package.product_occurrences.size()),
+        "Legacy product features include product and feature nodes");
   {
     std::ofstream marker("build_core\\not_a_dir", std::ios::out | std::ios::binary);
     marker << "file parent";

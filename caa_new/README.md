@@ -1,6 +1,6 @@
 # CadCapture CAA New Architecture
 
-CadCapture is a new CATIA V5R21 CAA parser built under `caa_new`. Phase 1A opens CATPart/CATProduct documents through CAA in read-only mode and captures a lossless CATPart object tree without migrating feature, topology, tessellation, FTA, product-recursion, or sketch extraction.
+CadCapture is a new CATIA V5R21 CAA parser built under `caa_new`. Phase 1A opens native CATPart/CATProduct documents through CAA in read-only mode and captures a lossless CATPart object tree. Phase 1B adds native CATProduct product-tree capture for verified BOM instances, references, and absolute transforms without migrating attributes, B-Rep, Hole/Pad/Pocket, FTA, frontend work, or Sketch extraction.
 
 ## Build
 
@@ -36,18 +36,22 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - CATPart tree enumeration from the real `CATDocument` using `CATInit`, `CATIPrtContainer`, `CATIPrtContainer::GetPart`, `CATISpecObject::ListComponents`, and `CATIContainer::ListMembersHere`.
 - Lossless object and occurrence preservation for recognized and unknown CATIA objects.
 - Primary tree and supplemental discovery are separated; supplemental nodes are preserved but not promoted to extra roots.
-- Normalized JSON artifact writing for manifest, capture report, reconstruction plan, `object_entities.jsonl`, and `tree_occurrences.jsonl`.
-- Legacy tree projection writing for compatible `features.jsonl` and `relations.jsonl` with occurrence IDs as feature IDs.
+- CATProduct traversal from the real `CATDocument` through `CATIDocRoots`, `CATIProduct::GetReferenceProduct`, `GetPrdInstanceName`, `GetPartNumber`, `GetChildren`, and `CATIMovable::GetAbsPosition`.
+- Product reference and product occurrence are stored separately, so multiple instances can share one reference while retaining unique occurrence paths.
+- Normalized JSON artifact writing for manifest, capture report, reconstruction plan, `object_entities.jsonl`, `tree_occurrences.jsonl`, `product_references.jsonl`, `product_occurrences.jsonl`, and `document_links.jsonl`.
+- Legacy tree projection writing for compatible `features.jsonl` and `relations.jsonl` with occurrence IDs as feature IDs. CATProduct parent relations are also projected as `contains`.
 - Transactional artifact commit through `ArtifactRepository`.
 - New/old CATPart tree comparison with `tools\compare_catpart_tree.ps1`.
+- New/old CATProduct tree comparison with `tools\compare_catproduct_tree.ps1`.
 - API-independent VS2008 core tests.
 
 ## Not Implemented Yet
 
-- Product recursion.
-- Product Reference / Instance, full properties, native Feature parameters, Pad, Pocket, Hole, Sketch, FTA, topology, B-Rep, and tessellation extraction.
+- External linked-document resolution for product references.
+- CATPart feature-definition projection under product instances.
+- Full properties, native Feature parameters, Pad, Pocket, Hole, Sketch, FTA, topology, B-Rep, and tessellation extraction.
 
-All unavailable native capabilities are reported as Phase 1A `not_implemented`; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.
+Unavailable native capabilities remain explicit in diagnostics or capability coverage; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.
 
 All headers are indexed. Only verified capabilities are compiled. Only fixture-verified capabilities may be declared implemented. Catalog indexing does not add Frameworks to `IdentityCard` or `Imakefile`; build dependencies stay limited to capabilities used in this stage.
 
@@ -55,6 +59,7 @@ All headers are indexed. Only verified capabilities are compiled. Only fixture-v
 
 1. Verify more real CATPart fixtures against the old parser node count.
 2. Add document-level metadata extraction.
-3. Add product occurrence traversal.
-4. Add part feature identity and property facts.
-5. Add geometry/topology extraction behind stable model-layer IR.
+3. Resolve external linked product documents.
+4. Project CATPart feature definitions below product instances without parsing the same reference repeatedly.
+5. Add part feature identity and property facts.
+6. Add geometry/topology extraction behind stable model-layer IR.
