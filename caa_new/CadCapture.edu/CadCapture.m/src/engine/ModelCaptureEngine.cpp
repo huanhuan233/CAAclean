@@ -315,7 +315,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   topology_extractor.Extract(document_handle, ids, package);
   geometry_extractor.Extract(package);
   tessellation_extractor.Extract(package);
-  fta_extractor.Extract(document_handle, ids, package);
+  fta_extractor.Extract(document_handle, ids, broker, package);
   identity_resolver.Resolve(ids, package);
 
   planner.Plan(package);

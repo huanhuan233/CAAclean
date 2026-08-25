@@ -2,6 +2,44 @@
 
 namespace cadcapture {
 
+CaaCapabilityLease::CaaCapabilityLease()
+  : _value(0),
+    _status(CapabilityUnavailable)
+{
+}
+
+CaaCapabilityLease::~CaaCapabilityLease()
+{
+  Release();
+}
+
+bool CaaCapabilityLease::IsAvailable() const
+{
+  return _status == CapabilityAvailable && _value != 0;
+}
+
+CapabilityStatus CaaCapabilityLease::Status() const
+{
+  return _status;
+}
+
+void CaaCapabilityLease::Reset(CATBaseUnknown* value, CapabilityStatus status)
+{
+  Release();
+  _value = value;
+  _status = status;
+}
+
+void CaaCapabilityLease::Release()
+{
+  if (_value)
+  {
+    _value->Release();
+    _value = 0;
+  }
+  _status = CapabilityUnavailable;
+}
+
 static const char* StatusText(CapabilityStatus status)
 {
   switch (status)

@@ -76,6 +76,7 @@ static long SafeGeometryListCount(CATITPSGeometryList* list,
 
 bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
                               CaptureIdRegistry& ids,
+                              CaaCapabilityBroker& broker,
                               ReconstructionPackage& package)
 {
   CATDocument* document = static_cast<CATDocument*>(document_handle.NativeDocumentForCaaOnly());
@@ -88,27 +89,13 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
     return true;
   }
 
-  CATITPSDocument* tps_document = 0;
-  try
-  {
-    if (FAILED(document->QueryInterface(IID_CATITPSDocument,
-                                        reinterpret_cast<void**>(&tps_document))) ||
-        !tps_document)
-    {
-      package.diagnostics.push_back(MakeDiagnostic("info", "tps_document_unsupported", document_id,
-                                                   "CATDocument does not expose CATITPSDocument",
-                                                   "fta_extractor"));
-      return true;
-    }
-  }
-  catch (...)
-  {
-    package.diagnostics.push_back(MakeDiagnostic("warning", "tps_document_query_exception", document_id,
-                                                 "CATITPSDocument QueryInterface raised an exception",
-                                                 "fta_extractor"));
+  CaaCapabilityLease tps_document_lease;
+  broker.Acquire<CATITPSDocument>(document, IID_CATITPSDocument,
+                                  "fta.CATITPSDocument", document_id,
+                                  package, tps_document_lease);
+  if (!tps_document_lease.IsAvailable())
     return true;
-  }
-  CaaInterfaceGuard<CATITPSDocument> tps_document_guard(tps_document);
+  CATITPSDocument* tps_document = tps_document_lease.As<CATITPSDocument>();
 
   CATITPSList* sets = 0;
   try
@@ -158,29 +145,13 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
     }
     CaaInterfaceGuard<CATITPSComponent> component_guard(component);
 
-    CATITPSSet* set_interface = 0;
-    try
-    {
-      if (FAILED(component->QueryInterface(IID_CATITPSSet,
-                                           reinterpret_cast<void**>(&set_interface))) ||
-          !set_interface)
-      {
-        package.diagnostics.push_back(MakeDiagnostic("warning", "tps_set_query_failed",
-                                                     document_id,
-                                                     "TPS set item does not expose CATITPSSet",
-                                                     "fta_extractor"));
-        continue;
-      }
-    }
-    catch (...)
-    {
-      package.diagnostics.push_back(MakeDiagnostic("warning", "tps_set_query_exception",
-                                                   document_id,
-                                                   "CATITPSSet QueryInterface raised an exception",
-                                                   "fta_extractor"));
+    CaaCapabilityLease set_lease;
+    broker.Acquire<CATITPSSet>(reinterpret_cast<CATBaseUnknown*>(component), IID_CATITPSSet,
+                               "fta.CATITPSSet", document_id,
+                               package, set_lease);
+    if (!set_lease.IsAvailable())
       continue;
-    }
-    CaaInterfaceGuard<CATITPSSet> set_guard(set_interface);
+    CATITPSSet* set_interface = set_lease.As<CATITPSSet>();
 
     PmiEntity pmi;
     pmi.pmi_id = ids.NextPmiId();
