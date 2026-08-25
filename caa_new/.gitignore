@@ -20,6 +20,7 @@ phase*_output/
 tree_comparison.json
 catpart_comparison.json
 catproduct_comparison.json
+phase*_comparison.json
 *.log
 CATIAV5Level.lvl
 Install_config_*

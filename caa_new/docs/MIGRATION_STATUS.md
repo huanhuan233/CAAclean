@@ -1,0 +1,61 @@
+# Legacy Parser Migration Status
+
+This document records the CAA legacy parser migration status for `caa_new`. It is intentionally conservative: a capability is marked implemented only when it is compiled in the new architecture, exercised through a real CATIA R21 fixture, and represented in normalized plus legacy-compatible artifacts.
+
+## Verified And Migrated
+
+| Capability | New module | Evidence | Outputs |
+| --- | --- | --- | --- |
+| Native read-only document open | `CaaDocumentHandle`, `CaaDocumentScanner` | `CATDocumentServices::OpenDocument` on CATPart and CATProduct fixtures | `manifest.json`, `capture_report.json`, `document_links.jsonl` |
+| CATPart object tree preservation | `CaaPartEnumerator` | `CATInit`, `CATIPrtContainer`, `CATISpecObject::ListComponents`, `CATIContainer::ListMembersHere` | `object_entities.jsonl`, `tree_occurrences.jsonl`, legacy `features.jsonl`, `relations.jsonl` |
+| CATProduct instance tree | `CaaProductEnumerator` | `CATIDocRoots`, `CATIProduct`, `CATIMovable::GetAbsPosition` | `product_references.jsonl`, `product_occurrences.jsonl`, `document_links.jsonl` |
+| Linked CATPart definition projection | `ModelCaptureEngine`, `CaaPartEnumerator` | linked CATParts exposed by `CATILinkableObject::GetDocument` are captured once and projected under each instance | projected `tree_occurrences.jsonl`, `features.jsonl`, `relations.jsonl` |
+| Basic property facts | `CaaPropertyExtractors` | captured document/object/occurrence/product status and identity fields | `property_facts.jsonl`, legacy `parameters.jsonl` |
+| Native feature type semantics | `CaaNativeFeatureExtractors` | captured `startup_type` mapped by the legacy canonical startup decoder | `semantic_facets.jsonl`, legacy `native_features.jsonl` |
+| Final CATPart body topology | `CaaTopologyExtractor` | `CATIPrtPart::GetSolid`, `CATBody::GetCellNumbers`, `CATBody::GetAllCells`, `CATCell` dimensions/domains/centers, face area, edge length | `topology_entities.jsonl`, legacy `native_topology.jsonl` |
+| Face tessellation ranges | `CaaTopologyExtractor` | `CATICGMBodyTessellator::GetFace` on final body faces | `geometry_entities.jsonl`, legacy `native_mesh_face_map.jsonl` |
+| Shape feature ResultOUT body identity | `CaaTopologyExtractor` | `CATIShapeFeatureBody::GetResultOUT`, `CATIGeometricalElement::GetBodyResult` | `feature_dependencies.jsonl`, legacy `native_feature_results.jsonl` |
+| FTA/TPS set-level evidence | `CaaFtaExtractor` | `CATITPSDocument::GetSets`, `CATITPSSet::GetTPSs`, `CATITPSSet::GetGeometries` | `pmi_entities.jsonl`, legacy `fta_sets.jsonl` |
+| Artifact parity | `NormalizedArtifactWriter`, `LegacyArtifactProjection`, `ArtifactRepository` | transaction verifies required normalized and legacy-compatible artifacts | all required JSON/JSONL sidecars, including empty explicit files |
+
+## Evidence-Level Only
+
+These capabilities are intentionally partial. They are useful reconstruction evidence, but they are not yet full semantic reconstruction:
+
+| Capability | Current status |
+| --- | --- |
+| CATPart path parity with legacy display paths | Object and occurrence counts match the legacy fixture. Some legacy display paths differ for static document/container nodes and supplemental HoleLimit presentation paths. Parent, source order, display name, startup type, duplicate primary path, invalid parent, and relation endpoint checks pass. |
+| ResultOUT to final-body topology | ResultOUT bodies are linked to feature object IDs. ResultOUT cell-to-final-face mapping is not declared implemented. |
+| FTA/TPS | TPS set counts and geometry reference counts are recorded. Detailed GD&T semantics and FTA-to-topology links are not declared implemented. |
+| Tessellation | Face-level triangle range summaries are recorded. Triangle coordinate sidecars are not declared implemented. |
+| Exact geometry | Cell centers, face areas, edge lengths, and tessellation summaries are captured. Exact analytic surface/curve parameter decoding remains unimplemented. |
+
+## Not Migrated Yet
+
+- Hole/Pad/Pocket dedicated parameter payload decoders.
+- Sketch and constraint extraction.
+- Knowledgeware parameter graph and `CATIInertia` mechanical properties.
+- Full B-Rep wire/coedge/adjacency graph.
+- ResultOUT cell-to-final-face authoritative mapping.
+- FTA semantic parameter decoding and FTA-to-topology associations.
+- Triangle coordinate payload sidecar.
+- Recursive parsing of linked CATProduct definitions beyond the root product tree.
+- Broken or unloaded external link recovery beyond documents exposed by CATIA Public APIs.
+
+## Regression Gate
+
+`tools\validate_phase7_parity.ps1` runs the old parser and `caa_new` parser against:
+
+- `3DjiexiCAA\tests\fixtures\catia_r21\partdesign_holes_updated.CATPart`
+- `.runtime\catia-worker\188fc547-f929-4609-b36b-c4eb2403ed4a\source-bundle\catProduct\GT4.1000.D.500.000 A.CATProduct`
+
+The gate asserts:
+
+- CATPart object and occurrence counts equal the old parser count.
+- CATPart duplicate primary paths, parent mismatches, source-order mismatches, display-name mismatches, startup-type mismatches, invalid parents, and legacy relation endpoint misses are zero.
+- CATProduct old/new instance counts match, all instance paths match, transforms are valid, broken reference count is zero, and legacy relation endpoints are valid.
+- Required normalized and legacy-compatible artifacts exist for both CATPart and CATProduct outputs.
+
+## Build Boundary
+
+All headers remain indexed in the SDK catalog. Only verified capabilities are compiled. Only fixture-verified capabilities may be declared implemented. `IdentityCard` and `Imakefile` include only Frameworks required by capabilities compiled in this stage.

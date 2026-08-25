@@ -1,6 +1,8 @@
 # CadCapture CAA New Architecture
 
-CadCapture is a new CATIA V5R21 CAA parser built under `caa_new`. Phase 1A opens native CATPart/CATProduct documents through CAA in read-only mode and captures a lossless CATPart object tree. Phase 1B adds native CATProduct product-tree capture for verified BOM instances, references, and absolute transforms without migrating attributes, B-Rep, Hole/Pad/Pocket, FTA, frontend work, or Sketch extraction.
+CadCapture is a new CATIA V5R21 CAA parser built under `caa_new`. It opens native CATPart/CATProduct documents through CAA in read-only mode, preserves CATPart trees, captures CATProduct product structure, and migrates the verified evidence-level topology, tessellation, ResultOUT, property, and FTA/TPS set paths from the legacy parser.
+
+Current legacy migration status is tracked in `docs\MIGRATION_STATUS.md`.
 
 ## Build
 
@@ -49,6 +51,7 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - Transactional artifact commit through `ArtifactRepository`.
 - New/old CATPart tree comparison with `tools\compare_catpart_tree.ps1`.
 - New/old CATProduct tree comparison with `tools\compare_catproduct_tree.ps1`.
+- Phase 7 regression wrapper with `tools\validate_phase7_parity.ps1`.
 - API-independent VS2008 core tests.
 
 ## Not Implemented Yet
