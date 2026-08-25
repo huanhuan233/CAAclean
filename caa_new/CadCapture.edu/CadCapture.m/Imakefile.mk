@@ -9,9 +9,17 @@ LINK_WITH = \
   CATObjectModelerBase \
   CATObjectSpecsModeler \
   CATMecModInterfaces \
-  CATProductStructure1 \
-  ProductStructureUUID \
+  CATSketcherInterfaces \
   CATMathematics \
   CATGMModelInterfaces \
+  CATGeometricObjects \
+  GeometricObjectsUUID \
   CATTPSItf \
-  CATTPSUUID
+  CATTPSUUID \
+  KnowledgeItf \
+  CATPartInterfaces \
+  PartInterfacesUUID \
+  CATProductStructure1 \
+  CATProductStructureInterfaces \
+  ProductStructureUUID \
+  CATSaiSpaceAnalysisItf

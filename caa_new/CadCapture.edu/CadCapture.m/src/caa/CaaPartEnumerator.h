@@ -37,7 +37,8 @@ public:
                          CaptureIdRegistry& ids,
                          PartDefinition& definition,
                          ReconstructionPackage& package,
-                         std::string& error);
+                         std::string& error,
+                         bool register_native_objects);
 
   bool ProjectDefinition(const PartDefinition& definition,
                          const ProjectionContext& context,

@@ -147,7 +147,7 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
     PartDefinition definition;
     definition.document_id = reference.referenced_document_id;
     std::string capture_error;
-    if (!part_enumerator.CaptureDefinition(linked_handle, ids, definition, package, capture_error))
+    if (!part_enumerator.CaptureDefinition(linked_handle, ids, definition, package, capture_error, false))
     {
       reference.definition_status = "definition_capture_failed";
       package.diagnostics.push_back(MakeDiagnostic("warning", "linked_catpart_definition_failed",
@@ -309,7 +309,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     return false;
   }
   linked_document_resolver.Resolve(document_handle, ids, package);
-  property_extractors.Extract(ids, package);
+  property_extractors.Extract(ids, broker, package);
   native_feature_extractors.Extract(ids, package);
   sketch_extractor.Extract(package);
   topology_extractor.Extract(document_handle, ids, package);

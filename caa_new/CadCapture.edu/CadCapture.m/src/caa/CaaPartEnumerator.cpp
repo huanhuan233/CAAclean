@@ -200,8 +200,10 @@ public:
   PartDefinitionCrawler(ReconstructionPackage& package,
                         CaptureIdRegistry& ids,
                         PartDefinition& definition,
-                        const std::string& document_id)
-    : _package(package), _ids(ids), _definition(definition), _document_id(document_id), _next_template_index(1)
+                        const std::string& document_id,
+                        bool register_native_objects)
+    : _package(package), _ids(ids), _definition(definition), _document_id(document_id),
+      _register_native_objects(register_native_objects), _next_template_index(1)
   {
   }
 
@@ -241,6 +243,13 @@ public:
       object_id = object.object_id;
       _entity_ids[spec] = object_id;
       _package.objects.push_back(object);
+      if (_register_native_objects)
+      {
+        NativeObjectBinding binding;
+        binding.object_id = object_id;
+        binding.native_spec_object = spec;
+        _package.native_object_bindings.push_back(binding);
+      }
     }
     else
     {
@@ -364,6 +373,7 @@ private:
   CaptureIdRegistry& _ids;
   PartDefinition& _definition;
   std::string _document_id;
+  bool _register_native_objects;
   long _next_template_index;
   std::map<CATISpecObject*, std::string> _entity_ids;
   std::map<std::string, std::string> _primary_occurrence_by_entity;
@@ -382,7 +392,8 @@ bool CaaPartEnumerator::CaptureDefinition(CaaDocumentHandle& document_handle,
                                           CaptureIdRegistry& ids,
                                           PartDefinition& definition,
                                           ReconstructionPackage& package,
-                                          std::string& error)
+                                          std::string& error,
+                                          bool register_native_objects)
 {
   const std::string document_id = RootDocumentId(package);
   if (definition.document_id.empty())
@@ -435,7 +446,7 @@ bool CaaPartEnumerator::CaptureDefinition(CaaDocumentHandle& document_handle,
                                                                    "/0:document/1:PartSpecContainer",
                                                                    1, 1, "primary_tree", "definition.static", "visible"));
 
-  PartDefinitionCrawler crawler(package, ids, definition, definition.document_id);
+  PartDefinitionCrawler crawler(package, ids, definition, definition.document_id, register_native_objects);
   CATISpecObject_var part = NULL_var;
   try
   {
@@ -569,7 +580,7 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   }
 
   PartDefinition definition;
-  if (!CaptureDefinition(document_handle, ids, definition, package, error))
+  if (!CaptureDefinition(document_handle, ids, definition, package, error, true))
     return false;
 
   ProjectionContext context;

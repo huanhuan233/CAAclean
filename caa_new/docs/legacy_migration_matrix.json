@@ -99,8 +99,8 @@
     "implementation_status": "partially_migrated",
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
-    "semantic_parity_status": "not_passed",
-    "reason": "Generic property facts are emitted, but CATICke typed parameter normalization is not migrated."
+    "semantic_parity_status": "artifact_presence_passed",
+    "reason": "CATICke string parameter kind/name/value facts are emitted from live CATIA Public interfaces; normalized numeric/unit fields and legacy owner aggregation still need parity validation."
   },
   {
     "capability_id": "mechanical.mass_properties",
@@ -117,13 +117,14 @@
     ],
     "new_module": "src\\caa\\CaaPropertyExtractors",
     "new_outputs": [
-      "property_facts.jsonl"
+      "property_facts.jsonl",
+      "parameters.jsonl"
     ],
-    "implementation_status": "not_migrated",
+    "implementation_status": "migrated",
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
-    "semantic_parity_status": "not_passed",
-    "reason": "No CATIInertia-backed density/volume/area/mass/COG/inertia matrix output is present in caa_new."
+    "semantic_parity_status": "artifact_presence_passed",
+    "reason": "CATIInertia-backed density, mass, volume, area, center, inertia matrix, principal axes, and principal moments are emitted as property facts and legacy parameter rows."
   },
   {
     "capability_id": "topology.complete_brep_graph",

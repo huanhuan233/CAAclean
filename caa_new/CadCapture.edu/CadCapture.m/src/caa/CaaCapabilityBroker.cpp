@@ -61,7 +61,9 @@ static bool IsCompiledCapability(const std::string& capability)
          capability == "product.reference_instance_separation" ||
          capability == "product.absolute_transform" ||
          capability == "product.linked_document_resolution" ||
-         capability == "product.part_definition_projection";
+         capability == "product.part_definition_projection" ||
+         capability == "mechanical.CATIInertia" ||
+         capability == "knowledgeware.CATICkeParm";
 }
 
 CapabilityStatus CaaCapabilityBroker::Check(const std::string& capability,

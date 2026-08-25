@@ -16,12 +16,21 @@
 
 namespace cadcapture {
 
+struct NativeObjectBinding
+{
+  std::string object_id;
+  void* native_spec_object;
+
+  NativeObjectBinding() : native_spec_object(0) {}
+};
+
 struct ReconstructionPackage
 {
   DocumentGraph document_graph;
   std::vector<ProductReferenceEntity> product_references;
   std::vector<ProductOccurrence> product_occurrences;
   std::vector<ObjectEntity> objects;
+  std::vector<NativeObjectBinding> native_object_bindings;
   OccurrenceGraph occurrence_graph;
   std::vector<PropertyFact> properties;
   std::vector<SemanticFacet> semantic_facets;
