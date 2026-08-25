@@ -390,6 +390,88 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     semantic_facet_ids[facet.facet_id] = true;
   }
 
+  std::map<std::string, bool> topology_ids;
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& entity = package.topology[i];
+    if (entity.topology_id.empty())
+    {
+      error = "topology_id is empty";
+      return false;
+    }
+    if (HasKey(topology_ids, entity.topology_id))
+    {
+      error = "duplicate topology_id: " + entity.topology_id;
+      return false;
+    }
+    if (!HasKey(document_ids, entity.subject_id) &&
+        !HasKey(object_ids, entity.subject_id) &&
+        !HasKey(occurrence_ids, entity.subject_id) &&
+        !HasKey(reference_ids, entity.subject_id))
+    {
+      error = "topology references missing subject_id: " + entity.subject_id;
+      return false;
+    }
+    if (entity.topology_kind.empty() || entity.read_status.empty())
+    {
+      error = "topology entity missing kind/status: " + entity.topology_id;
+      return false;
+    }
+    topology_ids[entity.topology_id] = true;
+  }
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& entity = package.topology[i];
+    if (!entity.parent_topology_id.empty() &&
+        !HasKey(topology_ids, entity.parent_topology_id))
+    {
+      error = "topology references missing parent_topology_id: " + entity.parent_topology_id;
+      return false;
+    }
+  }
+
+  std::map<std::string, bool> geometry_ids;
+  for (i = 0; i < package.geometry.size(); ++i)
+  {
+    const GeometryEntity& entity = package.geometry[i];
+    if (entity.geometry_id.empty())
+    {
+      error = "geometry_id is empty";
+      return false;
+    }
+    if (HasKey(geometry_ids, entity.geometry_id))
+    {
+      error = "duplicate geometry_id: " + entity.geometry_id;
+      return false;
+    }
+    if (!HasKey(document_ids, entity.subject_id) &&
+        !HasKey(object_ids, entity.subject_id) &&
+        !HasKey(occurrence_ids, entity.subject_id) &&
+        !HasKey(reference_ids, entity.subject_id))
+    {
+      error = "geometry references missing subject_id: " + entity.subject_id;
+      return false;
+    }
+    if (!entity.body_topology_id.empty() &&
+        !HasKey(topology_ids, entity.body_topology_id))
+    {
+      error = "geometry references missing body_topology_id: " + entity.body_topology_id;
+      return false;
+    }
+    if (!entity.topology_id.empty() &&
+        !HasKey(topology_ids, entity.topology_id))
+    {
+      error = "geometry references missing topology_id: " + entity.topology_id;
+      return false;
+    }
+    if (entity.geometry_kind.empty() || entity.representation_status.empty())
+    {
+      error = "geometry entity missing kind/status: " + entity.geometry_id;
+      return false;
+    }
+    geometry_ids[entity.geometry_id] = true;
+  }
+
   if (package.reconstruction_plan.empty())
   {
     error = "reconstruction route is empty";

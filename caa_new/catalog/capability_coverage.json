@@ -162,6 +162,28 @@
       "notes": "Type-only canonical family mapping from captured startup_type. Dedicated native parameter payload extraction remains unavailable."
     },
     {
+      "capability_id": "topology.final_body_cells",
+      "family": "topology",
+      "status": "fixture_verified",
+      "headers": ["CATIPrtPart.h", "CATBody.h", "CATCell.h", "CATFace.h", "CATEdge.h", "ListPOfCATCell.h"],
+      "frameworks": ["MecModInterfaces", "GMModelInterfaces", "Mathematics"],
+      "extractor": "CaaTopologyExtractor",
+      "fixture_verified": true,
+      "reconstruction_verified": false,
+      "notes": "Root CATPart final CATBody counts and cell summaries. IDs are parser-revision local."
+    },
+    {
+      "capability_id": "tessellation.face_triangle_ranges",
+      "family": "tessellation",
+      "status": "fixture_verified",
+      "headers": ["CATICGMBodyTessellator.h", "CATCGMTessPointIter.h", "CATCGMTessStripeIter.h", "CATCGMTessFanIter.h", "CATCGMTessPolyIter.h", "CATCGMTessTrianIter.h"],
+      "frameworks": ["GMModelInterfaces"],
+      "extractor": "CaaTopologyExtractor",
+      "fixture_verified": true,
+      "reconstruction_verified": false,
+      "notes": "Face to tessellated triangle range summaries. Triangle coordinate sidecar is not migrated in this stage."
+    },
+    {
       "capability_id": "geometry.native_exact",
       "family": "geometry",
       "status": "indexed",

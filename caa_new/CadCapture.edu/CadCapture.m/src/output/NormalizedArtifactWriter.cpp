@@ -328,6 +328,91 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
   }
   if (!FinishStream(semantic, semantic_path, error))
     return false;
+
+  const std::string topology_path = output_dir + "\\topology_entities.jsonl";
+  std::ofstream topology(topology_path.c_str(), std::ios::out | std::ios::binary);
+  if (!topology)
+  {
+    error = "failed to open output file: " + topology_path;
+    return false;
+  }
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& entity = package.topology[i];
+    topology << "{"
+             << JsonQuote("topology_id") << ":" << JsonQuote(entity.topology_id) << ","
+             << JsonQuote("subject_id") << ":" << JsonQuote(entity.subject_id) << ","
+             << JsonQuote("topology_kind") << ":" << JsonQuote(entity.topology_kind) << ","
+             << JsonQuote("parent_topology_id") << ":" << JsonQuote(entity.parent_topology_id) << ","
+             << JsonQuote("source_kind") << ":" << JsonQuote(entity.source_kind) << ","
+             << JsonQuote("value_source") << ":" << JsonQuote(entity.value_source) << ","
+             << JsonQuote("stable_id_method") << ":" << JsonQuote(entity.stable_id_method) << ","
+             << JsonQuote("stability_scope") << ":" << JsonQuote(entity.stability_scope) << ","
+             << JsonQuote("topology_index") << ":" << entity.topology_index << ","
+             << JsonQuote("dimension") << ":" << entity.dimension << ","
+             << JsonQuote("vertex_count") << ":" << entity.vertex_count << ","
+             << JsonQuote("edge_count") << ":" << entity.edge_count << ","
+             << JsonQuote("face_count") << ":" << entity.face_count << ","
+             << JsonQuote("volume_count") << ":" << entity.volume_count << ","
+             << JsonQuote("domain_count") << ":" << entity.domain_count << ","
+             << JsonQuote("internal_domain_count") << ":" << entity.internal_domain_count << ","
+             << JsonQuote("has_center") << ":" << (entity.has_center ? "true" : "false") << ","
+             << JsonQuote("center_mm") << ":[" << entity.center_mm[0] << "," << entity.center_mm[1] << "," << entity.center_mm[2] << "],"
+             << JsonQuote("area_mm2_available") << ":" << (entity.area_mm2_available ? "true" : "false") << ","
+             << JsonQuote("area_mm2") << ":" << entity.area_mm2 << ","
+             << JsonQuote("length_mm_available") << ":" << (entity.length_mm_available ? "true" : "false") << ","
+             << JsonQuote("length_mm") << ":" << entity.length_mm << ","
+             << JsonQuote("geometry_status") << ":" << JsonQuote(entity.geometry_status) << ","
+             << JsonQuote("measure_status") << ":" << JsonQuote(entity.measure_status) << ","
+             << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status)
+             << "}\n";
+    if (!topology)
+    {
+      error = "failed to write output file: " + topology_path;
+      return false;
+    }
+  }
+  if (!FinishStream(topology, topology_path, error))
+    return false;
+
+  const std::string geometry_path = output_dir + "\\geometry_entities.jsonl";
+  std::ofstream geometry(geometry_path.c_str(), std::ios::out | std::ios::binary);
+  if (!geometry)
+  {
+    error = "failed to open output file: " + geometry_path;
+    return false;
+  }
+  for (i = 0; i < package.geometry.size(); ++i)
+  {
+    const GeometryEntity& entity = package.geometry[i];
+    geometry << "{"
+             << JsonQuote("geometry_id") << ":" << JsonQuote(entity.geometry_id) << ","
+             << JsonQuote("subject_id") << ":" << JsonQuote(entity.subject_id) << ","
+             << JsonQuote("body_topology_id") << ":" << JsonQuote(entity.body_topology_id) << ","
+             << JsonQuote("topology_id") << ":" << JsonQuote(entity.topology_id) << ","
+             << JsonQuote("geometry_kind") << ":" << JsonQuote(entity.geometry_kind) << ","
+             << JsonQuote("value_source") << ":" << JsonQuote(entity.value_source) << ","
+             << JsonQuote("primitive_index") << ":" << entity.primitive_index << ","
+             << JsonQuote("triangle_start") << ":" << entity.triangle_start << ","
+             << JsonQuote("triangle_count") << ":" << entity.triangle_count << ","
+             << JsonQuote("point_count") << ":" << entity.point_count << ","
+             << JsonQuote("isolated_triangle_count") << ":" << entity.isolated_triangle_count << ","
+             << JsonQuote("strip_count") << ":" << entity.strip_count << ","
+             << JsonQuote("fan_count") << ":" << entity.fan_count << ","
+             << JsonQuote("polygon_count") << ":" << entity.polygon_count << ","
+             << JsonQuote("estimated_triangle_count") << ":" << entity.estimated_triangle_count << ","
+             << JsonQuote("face_orientation_side") << ":" << entity.face_orientation_side << ","
+             << JsonQuote("planar") << ":" << (entity.planar ? "true" : "false") << ","
+             << JsonQuote("representation_status") << ":" << JsonQuote(entity.representation_status)
+             << "}\n";
+    if (!geometry)
+    {
+      error = "failed to write output file: " + geometry_path;
+      return false;
+    }
+  }
+  if (!FinishStream(geometry, geometry_path, error))
+    return false;
   return true;
 }
 
@@ -356,6 +441,8 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
            << i1 << JsonQuote("document_link_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.document_graph.links.size()) << "," << nl
            << i1 << JsonQuote("property_count") << ":" << (pretty ? " " : "") << report.property_count << "," << nl
            << i1 << JsonQuote("semantic_facet_count") << ":" << (pretty ? " " : "") << report.semantic_facet_count << "," << nl
+           << i1 << JsonQuote("topology_count") << ":" << (pretty ? " " : "") << report.topology_count << "," << nl
+           << i1 << JsonQuote("geometry_count") << ":" << (pretty ? " " : "") << report.geometry_count << "," << nl
            << i1 << JsonQuote("selected_reconstruction_route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
            << i1 << JsonQuote("capture_status") << ":" << (pretty ? " " : "") << JsonQuote(package.capture_status) << "," << nl
            << i1 << JsonQuote("native_document_open_status") << ":" << (pretty ? " " : "") << JsonQuote(package.document_graph.documents.empty() ? "unavailable" : package.document_graph.documents[0].native_document_open_status) << "," << nl
@@ -369,6 +456,8 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
               << i1 << JsonQuote("stage") << ":" << (pretty ? " " : "") << JsonQuote(report.stage) << "," << nl
               << i1 << JsonQuote("message") << ":" << (pretty ? " " : "") << JsonQuote(report.message) << "," << nl
               << i1 << JsonQuote("semantic_facet_count") << ":" << (pretty ? " " : "") << report.semantic_facet_count << "," << nl
+              << i1 << JsonQuote("topology_count") << ":" << (pretty ? " " : "") << report.topology_count << "," << nl
+              << i1 << JsonQuote("geometry_count") << ":" << (pretty ? " " : "") << report.geometry_count << "," << nl
               << i1 << JsonQuote("diagnostic_count") << ":" << (pretty ? " " : "") << static_cast<int>(report.diagnostics.size()) << nl
               << "}" << nl;
 

@@ -92,6 +92,14 @@ Unknown objects are preserved with explicit status instead of being dropped. Nor
 
 Native feature semantics are additive. `CaaNativeFeatureExtractors` maps captured `startup_type` values into type-only `SemanticFacet` records when the family is known and into opaque semantic records otherwise. This stage does not claim feature parameter payload extraction; `payload_extraction_status` records that boundary explicitly.
 
+## Final Body Topology And Tessellation
+
+For a root CATPart, `CaaTopologyExtractor` reopens the already loaded native document boundary and reads the final main solid through `CATIPrtPart::GetSolid`. It persists `TopologyEntity` rows for the final body and for each enumerated face, edge, vertex, and volume from `CATBody::GetAllCells`. The records keep revision-local identity, counts, dimensions, domain counts, available centers, face area, and edge length as pure data.
+
+Face tessellation is recorded as `GeometryEntity` range summaries produced by `CATICGMBodyTessellator`. This stage captures point/strip/fan/polygon/triangle counts and Face to triangle-range evidence, but not triangle coordinate payloads.
+
+Exact analytic surface/curve parameter decoding, full B-Rep adjacency/wire/coedge graph, and feature-result to final-body topology links remain separate capabilities until their fixtures are migrated and verified.
+
 ## Phase 1B CATProduct Tree
 
 Phase 1B keeps CATProduct structure as first-class model data instead of flattening it into object features. `ProductReferenceEntity` records the shared reference identity and `ProductOccurrence` records each instance placement, parent occurrence, source index, tree path, occurrence path, child count, load status, and absolute 4x4 transform.

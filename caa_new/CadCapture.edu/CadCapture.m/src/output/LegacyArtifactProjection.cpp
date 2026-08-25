@@ -236,6 +236,86 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(native_features, native_features_path, error))
     return false;
 
+  const std::string native_topology_path = output_dir + "\\native_topology.jsonl";
+  std::ofstream native_topology(native_topology_path.c_str(), std::ios::out | std::ios::binary);
+  if (!native_topology)
+  {
+    error = "failed to open output file: " + native_topology_path;
+    return false;
+  }
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& entity = package.topology[i];
+    native_topology << "{"
+                    << JsonQuote("topology_id") << ":" << JsonQuote(entity.topology_id) << ","
+                    << JsonQuote("source_feature_id") << ":" << JsonQuote(entity.subject_id) << ","
+                    << JsonQuote("body_id") << ":" << JsonQuote(entity.topology_kind == "body" ? entity.topology_id : entity.parent_topology_id) << ","
+                    << JsonQuote("topology_kind") << ":" << JsonQuote(entity.topology_kind) << ","
+                    << JsonQuote("dimension") << ":" << entity.dimension << ","
+                    << JsonQuote("topology_index") << ":" << entity.topology_index << ","
+                    << JsonQuote("vertex_count") << ":" << entity.vertex_count << ","
+                    << JsonQuote("edge_count") << ":" << entity.edge_count << ","
+                    << JsonQuote("face_count") << ":" << entity.face_count << ","
+                    << JsonQuote("volume_count") << ":" << entity.volume_count << ","
+                    << JsonQuote("domain_count") << ":" << entity.domain_count << ","
+                    << JsonQuote("internal_domain_count") << ":" << entity.internal_domain_count << ","
+                    << JsonQuote("has_center") << ":" << (entity.has_center ? "true" : "false") << ","
+                    << JsonQuote("center_mm") << ":[" << entity.center_mm[0] << "," << entity.center_mm[1] << "," << entity.center_mm[2] << "],"
+                    << JsonQuote("area_mm2_available") << ":" << (entity.area_mm2_available ? "true" : "false") << ","
+                    << JsonQuote("area_mm2") << ":" << entity.area_mm2 << ","
+                    << JsonQuote("length_mm_available") << ":" << (entity.length_mm_available ? "true" : "false") << ","
+                    << JsonQuote("length_mm") << ":" << entity.length_mm << ","
+                    << JsonQuote("geometry_status") << ":" << JsonQuote(entity.geometry_status) << ","
+                    << JsonQuote("measure_status") << ":" << JsonQuote(entity.measure_status) << ","
+                    << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status) << ","
+                    << JsonQuote("value_source") << ":" << JsonQuote(entity.value_source)
+                    << "}\n";
+    if (!native_topology)
+    {
+      error = "failed to write output file: " + native_topology_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(native_topology, native_topology_path, error))
+    return false;
+
+  const std::string native_mesh_path = output_dir + "\\native_mesh_face_map.jsonl";
+  std::ofstream native_mesh(native_mesh_path.c_str(), std::ios::out | std::ios::binary);
+  if (!native_mesh)
+  {
+    error = "failed to open output file: " + native_mesh_path;
+    return false;
+  }
+  for (i = 0; i < package.geometry.size(); ++i)
+  {
+    const GeometryEntity& entity = package.geometry[i];
+    native_mesh << "{"
+                << JsonQuote("mesh_map_id") << ":" << JsonQuote(entity.geometry_id) << ","
+                << JsonQuote("body_id") << ":" << JsonQuote(entity.body_topology_id) << ","
+                << JsonQuote("face_cell_id") << ":" << JsonQuote(entity.topology_id) << ","
+                << JsonQuote("primitive_index") << ":" << entity.primitive_index << ","
+                << JsonQuote("triangle_start") << ":" << entity.triangle_start << ","
+                << JsonQuote("triangle_count") << ":" << entity.triangle_count << ","
+                << JsonQuote("point_count") << ":" << entity.point_count << ","
+                << JsonQuote("isolated_triangle_count") << ":" << entity.isolated_triangle_count << ","
+                << JsonQuote("strip_count") << ":" << entity.strip_count << ","
+                << JsonQuote("fan_count") << ":" << entity.fan_count << ","
+                << JsonQuote("polygon_count") << ":" << entity.polygon_count << ","
+                << JsonQuote("estimated_triangle_count") << ":" << entity.estimated_triangle_count << ","
+                << JsonQuote("face_orientation_side") << ":" << entity.face_orientation_side << ","
+                << JsonQuote("planar") << ":" << (entity.planar ? "true" : "false") << ","
+                << JsonQuote("tessellation_status") << ":" << JsonQuote(entity.representation_status) << ","
+                << JsonQuote("value_source") << ":" << JsonQuote(entity.value_source)
+                << "}\n";
+    if (!native_mesh)
+    {
+      error = "failed to write output file: " + native_mesh_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(native_mesh, native_mesh_path, error))
+    return false;
+
   if (!ValidateRelationEndpoints(package, error))
     return false;
   return true;

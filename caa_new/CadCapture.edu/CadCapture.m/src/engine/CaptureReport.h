@@ -18,6 +18,8 @@ struct CaptureReport
   int occurrence_count;
   int property_count;
   int semantic_facet_count;
+  int topology_count;
+  int geometry_count;
   std::vector<Diagnostic> diagnostics;
 
   CaptureReport()
@@ -27,7 +29,9 @@ struct CaptureReport
       object_count(0),
       occurrence_count(0),
       property_count(0),
-      semantic_facet_count(0)
+      semantic_facet_count(0),
+      topology_count(0),
+      geometry_count(0)
   {
   }
 
