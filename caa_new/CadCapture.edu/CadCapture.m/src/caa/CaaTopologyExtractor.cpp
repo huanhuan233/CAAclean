@@ -3,6 +3,7 @@
 
 #include <CATBaseUnknown.h>
 #include <CATBoundaryIterator.h>
+#include <CATBoundedCellsIterator.h>
 #include <CATBody.h>
 #include <CATCell.h>
 #include <CATDomain.h>
@@ -48,10 +49,12 @@
 #include <CATMathVector.h>
 #include <CATUnicodeString.h>
 #include <ListPOfCATCell.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -312,6 +315,19 @@ private:
   BoundaryIteratorGuard(const BoundaryIteratorGuard&);
   BoundaryIteratorGuard& operator=(const BoundaryIteratorGuard&);
   CATBoundaryIterator* _iterator;
+};
+
+class BoundedCellsIteratorGuard
+{
+public:
+  explicit BoundedCellsIteratorGuard(CATBoundedCellsIterator* iterator) : _iterator(iterator) {}
+  ~BoundedCellsIteratorGuard() { delete _iterator; }
+  CATBoundedCellsIterator* Get() const { return _iterator; }
+
+private:
+  BoundedCellsIteratorGuard(const BoundedCellsIteratorGuard&);
+  BoundedCellsIteratorGuard& operator=(const BoundedCellsIteratorGuard&);
+  CATBoundedCellsIterator* _iterator;
 };
 
 static void BuildTessPointMap(CATCGMTessPointIter* points, std::map<int, TessPointData>& out_points)
@@ -1133,6 +1149,101 @@ static std::string LookupCellId(CATCell* cell, const std::map<CATCell*, std::str
   return found->second;
 }
 
+static void AddUniqueString(std::vector<std::string>& values, const std::string& value)
+{
+  if (value.empty())
+    return;
+  if (std::find(values.begin(), values.end(), value) == values.end())
+    values.push_back(value);
+}
+
+static std::string CatSideName(CATSide side)
+{
+  if (side == CATSideLeft)
+    return "left";
+  if (side == CATSideRight)
+    return "right";
+  if (side == CATSideFull)
+    return "full";
+  return "unknown";
+}
+
+static void FillBoundaryCellIds(CATCell* cell,
+                                const std::map<CATCell*, std::string>& cell_ids,
+                                TopologyEntity& entity)
+{
+  if (!cell)
+    return;
+  CATBoundaryIterator* raw_iterator = 0;
+  try { raw_iterator = cell->CreateBoundaryIterator(); }
+  catch (...) { raw_iterator = 0; }
+  BoundaryIteratorGuard iterator_guard(raw_iterator);
+  CATBoundaryIterator* iterator = iterator_guard.Get();
+  if (!iterator)
+    return;
+
+  try
+  {
+    CATSide side = CATSideUnknown;
+    CATDomain* domain = 0;
+    short new_domain = 0;
+    CATCell* boundary = 0;
+    while ((boundary = iterator->Next(&side, &domain, &new_domain)) != 0)
+      AddUniqueString(entity.boundary_cell_ids, LookupCellId(boundary, cell_ids));
+  }
+  catch (...)
+  {
+    entity.geometry_status = "boundary_partial";
+    entity.read_status = "partial";
+  }
+}
+
+static void FillAdjacentCellIds(CATBody* body,
+                                CATCell* cell,
+                                const std::map<CATCell*, std::string>& cell_ids,
+                                TopologyEntity& entity)
+{
+  if (!body || !cell)
+    return;
+  try
+  {
+    ListPOfCATCell neighbours;
+    if (SUCCEEDED(cell->CellNeighbours(body, neighbours)))
+    {
+      int index = 1;
+      for (index = 1; index <= neighbours.Size(); ++index)
+        AddUniqueString(entity.adjacent_cell_ids, LookupCellId(neighbours[index], cell_ids));
+    }
+  }
+  catch (...)
+  {
+  }
+}
+
+static void FillMaterialSide(CATBody* body, CATCell* cell, TopologyEntity& entity)
+{
+  if (!body || !cell || entity.dimension != 2)
+    return;
+  CATBoundedCellsIterator* raw_iterator = 0;
+  try { raw_iterator = cell->CreateBoundedCellsIterator(body); }
+  catch (...) { raw_iterator = 0; }
+  BoundedCellsIteratorGuard iterator_guard(raw_iterator);
+  CATBoundedCellsIterator* iterator = iterator_guard.Get();
+  if (!iterator)
+    return;
+  try
+  {
+    CATSide side = CATSideUnknown;
+    CATDomain* domain = 0;
+    CATCell* bounded = iterator->Next(&side, &domain);
+    if (bounded)
+      entity.material_side = CatSideName(side);
+  }
+  catch (...)
+  {
+  }
+}
+
 static void AppendFaceWires(ReconstructionPackage& package,
                             CATFace* face,
                             const std::string& body_id,
@@ -1238,15 +1349,140 @@ static void AppendFaceWires(ReconstructionPackage& package,
   }
 }
 
-static void AppendCellEntity(CaptureIdRegistry& ids,
-                             ReconstructionPackage& package,
+static TopologyEntity* FindTopologyEntity(ReconstructionPackage& package, const std::string& topology_id)
+{
+  size_t i;
+  for (i = 0; i < package.topology.size(); ++i)
+    if (package.topology[i].topology_id == topology_id)
+      return &package.topology[i];
+  return 0;
+}
+
+static NativeTopologyWireEntity* FindTopologyWire(ReconstructionPackage& package,
+                                                  const std::string& wire_id)
+{
+  size_t i;
+  for (i = 0; i < package.topology_wires.size(); ++i)
+    if (package.topology_wires[i].wire_id == wire_id)
+      return &package.topology_wires[i];
+  return 0;
+}
+
+static bool EdgesShareVertex(const std::string& first_edge,
+                             const std::string& second_edge,
+                             const std::map<std::string, std::set<std::string> >& edge_vertices)
+{
+  std::map<std::string, std::set<std::string> >::const_iterator first = edge_vertices.find(first_edge);
+  std::map<std::string, std::set<std::string> >::const_iterator second = edge_vertices.find(second_edge);
+  if (first == edge_vertices.end() || second == edge_vertices.end())
+    return false;
+  std::set<std::string>::const_iterator vertex = first->second.begin();
+  for (; vertex != first->second.end(); ++vertex)
+    if (second->second.find(*vertex) != second->second.end())
+      return true;
+  return false;
+}
+
+static void FinalizeBrepTopologyGraph(ReconstructionPackage& package)
+{
+  std::map<std::string, std::vector<size_t> > coedges_by_wire;
+  std::map<std::string, std::set<std::string> > edge_to_faces;
+  std::map<std::string, std::set<std::string> > edge_to_vertices;
+
+  size_t i;
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& cell = package.topology[i];
+    if (cell.dimension != 1)
+      continue;
+    size_t j;
+    for (j = 0; j < cell.boundary_cell_ids.size(); ++j)
+      edge_to_vertices[cell.topology_id].insert(cell.boundary_cell_ids[j]);
+  }
+
+  for (i = 0; i < package.topology_coedges.size(); ++i)
+  {
+    NativeTopologyCoedgeEntity& coedge = package.topology_coedges[i];
+    coedges_by_wire[coedge.wire_id].push_back(i);
+    if (!coedge.edge_cell_id.empty() && !coedge.owning_face_id.empty())
+      edge_to_faces[coedge.edge_cell_id].insert(coedge.owning_face_id);
+    TopologyEntity* face = FindTopologyEntity(package, coedge.owning_face_id);
+    if (face)
+      AddUniqueString(face->boundary_cell_ids, coedge.edge_cell_id);
+  }
+
+  std::map<std::string, std::vector<size_t> >::iterator wire_group = coedges_by_wire.begin();
+  for (; wire_group != coedges_by_wire.end(); ++wire_group)
+  {
+    std::vector<size_t>& indices = wire_group->second;
+    if (indices.empty())
+      continue;
+    const size_t count = indices.size();
+    std::vector<std::string> edge_ids;
+    size_t j;
+    for (j = 0; j < count; ++j)
+    {
+      NativeTopologyCoedgeEntity& coedge = package.topology_coedges[indices[j]];
+      coedge.previous_coedge_id = package.topology_coedges[indices[(j + count - 1) % count]].coedge_id;
+      coedge.next_coedge_id = package.topology_coedges[indices[(j + 1) % count]].coedge_id;
+      if (coedge.orientation_status.empty() || coedge.orientation_status == "unknown")
+        coedge.orientation_status = "from_cat_boundary_iterator_side";
+      AddUniqueString(edge_ids, coedge.edge_cell_id);
+    }
+
+    NativeTopologyWireEntity* wire = FindTopologyWire(package, wire_group->first);
+    if (wire)
+    {
+      bool closed_by_vertices = !edge_ids.empty();
+      for (j = 0; j < edge_ids.size(); ++j)
+      {
+        const std::string& edge_id = edge_ids[j];
+        const std::string& next_edge_id = edge_ids[(j + 1) % edge_ids.size()];
+        if (!EdgesShareVertex(edge_id, next_edge_id, edge_to_vertices))
+        {
+          closed_by_vertices = false;
+          break;
+        }
+      }
+      wire->closed_status = closed_by_vertices ?
+        "closed_by_edge_vertex_continuity" : "ordered_by_cat_boundary_iterator_unverified";
+      wire->edge_count = static_cast<long>(edge_ids.size());
+    }
+  }
+
+  std::map<std::string, std::set<std::string> >::iterator edge_faces = edge_to_faces.begin();
+  for (; edge_faces != edge_to_faces.end(); ++edge_faces)
+  {
+    TopologyEntity* edge = FindTopologyEntity(package, edge_faces->first);
+    if (!edge)
+      continue;
+    std::set<std::string>::const_iterator face = edge_faces->second.begin();
+    for (; face != edge_faces->second.end(); ++face)
+      AddUniqueString(edge->adjacent_cell_ids, *face);
+    for (face = edge_faces->second.begin(); face != edge_faces->second.end(); ++face)
+    {
+      TopologyEntity* face_cell = FindTopologyEntity(package, *face);
+      if (!face_cell)
+        continue;
+      std::set<std::string>::const_iterator other = edge_faces->second.begin();
+      for (; other != edge_faces->second.end(); ++other)
+        if (*other != *face)
+          AddUniqueString(face_cell->adjacent_cell_ids, *other);
+    }
+  }
+}
+
+static void AppendCellEntity(ReconstructionPackage& package,
                              CATCell* cell,
+                             CATBody* body,
+                             const std::map<CATCell*, std::string>& cell_ids,
+                             const std::string& topology_id,
                              const std::string& body_id,
                              const std::string& subject_id,
                              long topology_index)
 {
   TopologyEntity entity;
-  entity.topology_id = ids.NextTopologyId();
+  entity.topology_id = topology_id;
   entity.subject_id = subject_id;
   entity.parent_topology_id = body_id;
   entity.topology_index = topology_index;
@@ -1338,6 +1574,9 @@ static void AppendCellEntity(CaptureIdRegistry& ids,
                                                  "topology_extractor"));
   }
   DecodeExactCellGeometry(package, cell, entity);
+  FillBoundaryCellIds(cell, cell_ids, entity);
+  FillAdjacentCellIds(body, cell, cell_ids, entity);
+  FillMaterialSide(body, cell, entity);
 
   package.topology.push_back(entity);
 }
@@ -1915,41 +2154,36 @@ bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
   long next_triangle = 0;
   std::map<CATCell*, std::string> cell_ids;
   std::vector<std::string> face_ids;
+  for (i = 0; i < faces.size(); ++i)
+  {
+    const std::string cell_id = ids.NextTopologyId();
+    cell_ids[faces[i]] = cell_id;
+    face_ids.push_back(cell_id);
+  }
+  for (i = 0; i < edges.size(); ++i)
+    cell_ids[edges[i]] = ids.NextTopologyId();
+  for (i = 0; i < vertices.size(); ++i)
+    cell_ids[vertices[i]] = ids.NextTopologyId();
+  for (i = 0; i < volumes.size(); ++i)
+    cell_ids[volumes[i]] = ids.NextTopologyId();
+
   for (i = 0; i < faces.size(); ++i, ++primitive_index)
   {
-    const size_t before = package.topology.size();
-    AppendCellEntity(ids, package, faces[i], body_id, subject_id, primitive_index);
-    const std::string face_id = package.topology.size() > before ? package.topology[before].topology_id : "";
-    if (!face_id.empty())
-    {
-      cell_ids[faces[i]] = face_id;
-      face_ids.push_back(face_id);
-    }
+    const std::string face_id = LookupCellId(faces[i], cell_ids);
+    AppendCellEntity(package, faces[i], body, cell_ids, face_id, body_id, subject_id, primitive_index);
     CATFace* face = static_cast<CATFace*>(faces[i]);
     AppendFaceTessellation(ids, package, tessellator_guard.Get(), face,
                            body_id, face_id, subject_id, primitive_index, next_triangle);
   }
   for (i = 0; i < edges.size(); ++i)
-  {
-    const size_t before = package.topology.size();
-    AppendCellEntity(ids, package, edges[i], body_id, subject_id, static_cast<long>(i + 1));
-    if (package.topology.size() > before)
-      cell_ids[edges[i]] = package.topology[before].topology_id;
-  }
+    AppendCellEntity(package, edges[i], body, cell_ids, LookupCellId(edges[i], cell_ids),
+                     body_id, subject_id, static_cast<long>(i + 1));
   for (i = 0; i < vertices.size(); ++i)
-  {
-    const size_t before = package.topology.size();
-    AppendCellEntity(ids, package, vertices[i], body_id, subject_id, static_cast<long>(i + 1));
-    if (package.topology.size() > before)
-      cell_ids[vertices[i]] = package.topology[before].topology_id;
-  }
+    AppendCellEntity(package, vertices[i], body, cell_ids, LookupCellId(vertices[i], cell_ids),
+                     body_id, subject_id, static_cast<long>(i + 1));
   for (i = 0; i < volumes.size(); ++i)
-  {
-    const size_t before = package.topology.size();
-    AppendCellEntity(ids, package, volumes[i], body_id, subject_id, static_cast<long>(i + 1));
-    if (package.topology.size() > before)
-      cell_ids[volumes[i]] = package.topology[before].topology_id;
-  }
+    AppendCellEntity(package, volumes[i], body, cell_ids, LookupCellId(volumes[i], cell_ids),
+                     body_id, subject_id, static_cast<long>(i + 1));
 
   long next_wire_index = 0;
   long next_coedge_index = 0;
@@ -1959,6 +2193,7 @@ bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
     AppendFaceWires(package, face, body_id, face_ids[i], static_cast<long>(i + 1),
                     cell_ids, next_wire_index, next_coedge_index);
   }
+  FinalizeBrepTopologyGraph(package);
 
   FeatureSubjectMatcher matcher(package);
   TraverseResultOutSpecs(part_spec, ids, package, matcher);

@@ -85,6 +85,19 @@ static const char* RawJsonOrNull(const std::string& json)
   return json.empty() ? "null" : json.c_str();
 }
 
+static void NormalizedWriteStringArray(std::ofstream& out, const std::vector<std::string>& values)
+{
+  out << "[";
+  size_t i;
+  for (i = 0; i < values.size(); ++i)
+  {
+    if (i)
+      out << ",";
+    out << JsonQuote(values[i]);
+  }
+  out << "]";
+}
+
 static bool WriteJsonLines(const ReconstructionPackage& package,
                            const std::string& output_dir,
                            std::string& error)
@@ -387,6 +400,13 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
              << JsonQuote("geometry_parameters") << ":" << RawJsonOrObject(entity.geometry_parameters_json) << ","
              << JsonQuote("parameter_domain") << ":" << RawJsonOrNull(entity.parameter_domain_json) << ","
              << JsonQuote("bounding_box_mm") << ":" << RawJsonOrNull(entity.bounding_box_json) << ","
+             << JsonQuote("material_side") << ":" << JsonQuote(entity.material_side.empty() ? "unknown" : entity.material_side) << ","
+             << JsonQuote("boundary_cell_ids") << ":";
+    NormalizedWriteStringArray(topology, entity.boundary_cell_ids);
+    topology << ","
+             << JsonQuote("adjacent_cell_ids") << ":";
+    NormalizedWriteStringArray(topology, entity.adjacent_cell_ids);
+    topology << ","
              << JsonQuote("geometry_status") << ":" << JsonQuote(entity.geometry_status) << ","
              << JsonQuote("measure_status") << ":" << JsonQuote(entity.measure_status) << ","
              << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status)

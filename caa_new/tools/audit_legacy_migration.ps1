@@ -76,8 +76,8 @@ $rows = @(
     legacy_fixtures = @("partdesign_holes_updated.CATPart")
     new_module = "src\caa\CaaNativeFeatureExtractors"
     new_outputs = @("semantic_facets.jsonl", "native_features.jsonl")
-    status = "partially_migrated"
-    reason = "New code preserves native feature family/status, but dedicated Hole typed payload fields are not emitted yet."
+    status = "migrated"
+    reason = "CATIAHole typed payloads emit type, diameter, origin, direction, bottom limit, hole head fields, threading fields, and automation alias for verified R21 Hole fixtures."
   },
   [ordered]@{
     capability_id = "native_feature.pad_pocket_payload"
@@ -88,8 +88,8 @@ $rows = @(
     legacy_fixtures = @("partdesign_holes_updated.CATPart", "kuang.CATPart")
     new_module = "src\caa\CaaNativeFeatureExtractors"
     new_outputs = @("semantic_facets.jsonl", "native_features.jsonl")
-    status = "partially_migrated"
-    reason = "Pad/Pocket family detection exists only as semantic facet evidence; typed payload parity is still missing."
+    status = "migrated"
+    reason = "CATIAPad/CATIAPocket typed Prism payloads emit material operation, direction/orientation, thin/symmetric flags, neutral/merge status, and first/second limits for verified fixtures."
   },
   [ordered]@{
     capability_id = "knowledgeware.parameters"
@@ -101,7 +101,7 @@ $rows = @(
     new_module = "src\caa\CaaPropertyExtractors"
     new_outputs = @("property_facts.jsonl", "parameters.jsonl")
     status = "partially_migrated"
-    reason = "Generic property facts are emitted, but CATICke typed parameter normalization is not migrated."
+    reason = "CATICke string parameter kind/name/value, Show text, read-only state, hidden state, and additive normalization metadata are emitted from live CATIA Public interfaces; legacy owner aggregation still needs parity validation."
   },
   [ordered]@{
     capability_id = "mechanical.mass_properties"
@@ -112,20 +112,20 @@ $rows = @(
     legacy_fixtures = @("kuang.CATPart")
     new_module = "src\caa\CaaPropertyExtractors"
     new_outputs = @("property_facts.jsonl")
-    status = "not_migrated"
-    reason = "No CATIInertia-backed density/volume/area/mass/COG/inertia matrix output is present in caa_new."
+    status = "migrated"
+    reason = "CATIInertia-backed density, mass, volume, area, center, inertia matrix, principal axes, and principal moments are emitted as property facts and legacy parameter rows."
   },
   [ordered]@{
     capability_id = "topology.complete_brep_graph"
     patterns = @("CATBoundaryIterator", "CellNeighbours", "AppendFaceWires", "FinalizeBrepTopologyGraph")
-    legacy_headers = @("CATBoundaryIterator.h")
+    legacy_headers = @("CATBoundaryIterator.h", "CATBoundedCellsIterator.h")
     legacy_frameworks = @("GMModelInterfaces", "MecModInterfaces")
     legacy_outputs = @("native_topology.jsonl")
     legacy_fixtures = @("partdesign_holes_updated.CATPart", "kuang.CATPart")
     new_module = "src\caa\CaaTopologyExtractor"
     new_outputs = @("topology_entities.jsonl", "topology_relations.jsonl", "native_topology.jsonl")
-    status = "partially_migrated"
-    reason = "Body/Face/Edge/Vertex summaries exist, but Wire/Coedge previous-next and adjacency parity are not complete."
+    status = "migrated"
+    reason = "Body/Face/Edge/Vertex summaries, material side, boundary cell ids, adjacent cell ids, and Wire/Coedge previous-next closure are emitted for verified CATPart fixtures."
   },
   [ordered]@{
     capability_id = "geometry.exact_surfaces_curves"
@@ -136,8 +136,8 @@ $rows = @(
     legacy_fixtures = @("kuang.CATPart")
     new_module = "src\caa\CaaGeometryExtractor"
     new_outputs = @("geometry_entities.jsonl")
-    status = "not_migrated"
-    reason = "Exact analytic/NURBS curve and surface parameters are not emitted by caa_new."
+    status = "migrated"
+    reason = "CATCell geometry orientation, bounding boxes, surface/curve parameter domains, analytic plane/cylinder/cone/sphere/torus/line/circle payloads, and NURBS control/knot payloads are emitted in topology artifacts for verified CATPart fixtures."
   },
   [ordered]@{
     capability_id = "tessellation.triangle_payload"
@@ -148,8 +148,8 @@ $rows = @(
     legacy_fixtures = @("partdesign_holes_updated.CATPart", "kuang.CATPart")
     new_module = "src\caa\CaaTessellationExtractor"
     new_outputs = @("geometry_entities.jsonl", "native_mesh_face_map.jsonl")
-    status = "partially_migrated"
-    reason = "Face-to-mesh ranges exist, but triangle coordinate records are not migrated."
+    status = "migrated"
+    reason = "Face-to-mesh ranges and triangle coordinate records are emitted for `partdesign_holes_updated.CATPart` and `kuang.CATPart` with matching legacy record counts."
   },
   [ordered]@{
     capability_id = "resultout.cells_and_links"
@@ -161,7 +161,7 @@ $rows = @(
     new_module = "src\caa\CaaTopologyExtractor"
     new_outputs = @("native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl")
     status = "partially_migrated"
-    reason = "ResultOUT body summaries exist, but cell records and final-face candidate links are still empty."
+    reason = "ResultOUT body summaries, result cells, and geometry-fingerprint candidate links are emitted with matching legacy record counts; authoritative persistent naming remains unavailable."
   },
   [ordered]@{
     capability_id = "fta.component_semantics"

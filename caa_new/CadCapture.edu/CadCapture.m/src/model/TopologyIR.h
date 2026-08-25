@@ -2,6 +2,7 @@
 #define CADCAPTURE_MODEL_TOPOLOGYIR_H
 
 #include <string>
+#include <vector>
 
 namespace cadcapture {
 
@@ -34,6 +35,9 @@ struct TopologyEntity
   std::string geometry_parameters_json;
   std::string parameter_domain_json;
   std::string bounding_box_json;
+  std::string material_side;
+  std::vector<std::string> boundary_cell_ids;
+  std::vector<std::string> adjacent_cell_ids;
   std::string geometry_status;
   std::string measure_status;
   std::string read_status;
