@@ -7,6 +7,7 @@
 #include <CATIInertia.h>
 #include <CATISpecObject.h>
 #include <CATUnicodeString.h>
+#include <cstdlib>
 #include <sstream>
 #include <vector>
 
@@ -39,22 +40,22 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
-static void AddFact(CaptureIdRegistry& ids,
-                    ReconstructionPackage& package,
-                    const std::string& subject_id,
-                    const std::string& tab_id,
-                    const std::string& tab_label,
-                    const std::string& group_id,
-                    const std::string& group_label,
-                    const std::string& key,
-                    const std::string& display_name,
-                    const std::string& value,
-                    const std::string& value_type,
-                    const std::string& source_api,
-                    long display_order)
+static PropertyFact* AddFact(CaptureIdRegistry& ids,
+                             ReconstructionPackage& package,
+                             const std::string& subject_id,
+                             const std::string& tab_id,
+                             const std::string& tab_label,
+                             const std::string& group_id,
+                             const std::string& group_label,
+                             const std::string& key,
+                             const std::string& display_name,
+                             const std::string& value,
+                             const std::string& value_type,
+                             const std::string& source_api,
+                             long display_order)
 {
   if (value.empty())
-    return;
+    return 0;
   PropertyFact fact;
   fact.property_id = ids.NextPropertyFactId();
   fact.subject_id = subject_id;
@@ -66,14 +67,33 @@ static void AddFact(CaptureIdRegistry& ids,
   fact.key = key;
   fact.display_name = display_name;
   fact.raw_value = value;
+  fact.raw_display_text = value;
   fact.display_value = value;
   fact.value_type = value_type;
+  if (value_type == "number" || value_type == "integer")
+  {
+    char* end = 0;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end && *end == 0)
+    {
+      fact.has_normalized_numeric_value = true;
+      fact.normalized_numeric_value = parsed;
+      fact.normalization_status = "already_normalized";
+    }
+  }
   fact.source_api = source_api;
   fact.read_status = "available";
   fact.authority = "captured_native_tree";
   fact.display_order = display_order;
   fact.read_only = true;
   package.properties.push_back(fact);
+  return &package.properties.back();
+}
+
+static std::string ParameterLeafName(const std::string& qualified_name)
+{
+  const std::string::size_type separator = qualified_name.find_last_of("/\\");
+  return separator == std::string::npos ? qualified_name : qualified_name.substr(separator + 1);
 }
 
 static CATISpecObject* FindNativeSpecObject(const ReconstructionPackage& package,
@@ -232,16 +252,40 @@ static void AddKnowledgeParameterFacts(CaptureIdRegistry& ids,
               "string", "CATICkeParm.Value", 2000);
       return;
     }
+    std::string parameter_name = object.display_name.empty() ? object.internal_name : object.display_name;
+    std::string raw_display_text;
+    bool read_only = true;
+    std::string hidden_status = "unknown";
+    try { parameter_name = ParameterLeafName(UnicodeToUtf8Local(parameter->Name())); }
+    catch (...) {}
+    try { raw_display_text = UnicodeToUtf8Local(parameter->Show()); }
+    catch (...) {}
+    try { read_only = static_cast<int>(parameter->IsReadOnly()) == 0 ? false : true; }
+    catch (...) { read_only = true; }
+    try { hidden_status = static_cast<int>(parameter->IsHidden()) == 0 ? "false" : "true"; }
+    catch (...) { hidden_status = "unknown"; }
+
     AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
             "catia_parameter_kind", "Parameter kind", "string",
             "string", "CATICkeParm.Type", 2010);
-    AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-            "catia_parameter_name", "Parameter name",
-            object.display_name.empty() ? object.internal_name : object.display_name,
-            "string", "CATISpecObject.GetDisplayName", 2020);
-    AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-            "catia_parameter_value_text", "Parameter value", UnicodeToUtf8Local(value->AsString()),
-            "string", "CATICkeParm.Value.AsString", 2030);
+    PropertyFact* name_fact = AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
+                                      "catia_parameter_name", "Parameter name", parameter_name,
+                                      "string", "CATICkeParm.Name", 2020);
+    if (name_fact)
+    {
+      name_fact->raw_display_text = raw_display_text;
+      name_fact->read_only = read_only;
+      name_fact->hidden_status = hidden_status;
+    }
+    PropertyFact* value_fact = AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
+                                       "catia_parameter_value_text", "Parameter value", UnicodeToUtf8Local(value->AsString()),
+                                       "string", "CATICkeParm.Value.AsString", 2030);
+    if (value_fact)
+    {
+      value_fact->raw_display_text = raw_display_text;
+      value_fact->read_only = read_only;
+      value_fact->hidden_status = hidden_status;
+    }
   }
   catch (...)
   {

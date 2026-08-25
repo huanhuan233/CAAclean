@@ -26,11 +26,11 @@
       "semantic_facets.jsonl",
       "native_features.jsonl"
     ],
-    "implementation_status": "partially_migrated",
+    "implementation_status": "migrated",
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
     "semantic_parity_status": "artifact_presence_passed",
-    "reason": "CATIAHole typed payloads emit type, diameter, origin, direction, and bottom limit for verified R21 Hole fixtures; optional head/thread/alias fields are explicit not_attempted until the remaining legacy calls are migrated."
+    "reason": "CATIAHole typed payloads emit type, diameter, origin, direction, bottom limit, hole head fields, threading fields, and automation alias for verified R21 Hole fixtures."
   },
   {
     "capability_id": "native_feature.pad_pocket_payload",
@@ -100,7 +100,7 @@
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
     "semantic_parity_status": "artifact_presence_passed",
-    "reason": "CATICke string parameter kind/name/value facts are emitted from live CATIA Public interfaces; normalized numeric/unit fields and legacy owner aggregation still need parity validation."
+    "reason": "CATICke string parameter kind/name/value, Show text, read-only state, hidden state, and additive normalization metadata are emitted from live CATIA Public interfaces; legacy owner aggregation still needs parity validation."
   },
   {
     "capability_id": "mechanical.mass_properties",

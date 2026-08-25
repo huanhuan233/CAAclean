@@ -272,11 +272,22 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                << JsonQuote("display_name") << ":" << JsonQuote(fact.display_name) << ","
                << JsonQuote("raw_value") << ":" << JsonQuote(fact.raw_value) << ","
                << JsonQuote("raw_unit") << ":" << JsonQuote(fact.raw_unit) << ","
+               << JsonQuote("raw_display_text") << ":" << JsonQuote(fact.raw_display_text) << ","
+               << JsonQuote("normalized_numeric_value") << ":";
+    if (fact.has_normalized_numeric_value)
+      parameters << fact.normalized_numeric_value;
+    else
+      parameters << "null";
+    parameters << ","
+               << JsonQuote("normalized_unit") << ":" << JsonQuote(fact.normalized_unit) << ","
+               << JsonQuote("normalization_status") << ":" << JsonQuote(fact.normalization_status) << ","
                << JsonQuote("display_value") << ":" << JsonQuote(fact.display_value) << ","
                << JsonQuote("display_unit") << ":" << JsonQuote(fact.display_unit) << ","
                << JsonQuote("value_type") << ":" << JsonQuote(fact.value_type) << ","
                << JsonQuote("source_api") << ":" << JsonQuote(fact.source_api) << ","
-               << JsonQuote("read_status") << ":" << JsonQuote(fact.read_status)
+               << JsonQuote("read_status") << ":" << JsonQuote(fact.read_status) << ","
+               << JsonQuote("is_read_only") << ":" << JsonQuote(fact.read_only ? "true" : "false") << ","
+               << JsonQuote("is_hidden") << ":" << JsonQuote(fact.hidden_status)
                << "}\n";
     if (!parameters)
     {

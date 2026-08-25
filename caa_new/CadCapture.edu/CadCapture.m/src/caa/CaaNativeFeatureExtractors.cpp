@@ -7,13 +7,17 @@
 #include <CATIAPad.h>
 #include <CATIAPocket.h>
 #include <CATIAPrism.h>
+#include <CATIAStrParam.h>
+#include <CATBSTR.h>
 #include <CATISpecObject.h>
 #include <CATLimitDefs.h>
 #include <CATHoleDefs.h>
 #include <CATPrismDefs.h>
 #include <CATSafeArray.h>
+#include <windows.h>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 namespace cadcapture {
 
@@ -31,6 +35,20 @@ private:
   CaaInterfaceGuard(const CaaInterfaceGuard&);
   CaaInterfaceGuard& operator=(const CaaInterfaceGuard&);
   T* _ptr;
+};
+
+class CaaBstrGuard
+{
+public:
+  CaaBstrGuard() : _value(0) {}
+  ~CaaBstrGuard() { if (_value) CATFreeString(_value); }
+  CATBSTR& Out() { return _value; }
+  CATBSTR Get() const { return _value; }
+
+private:
+  CaaBstrGuard(const CaaBstrGuard&);
+  CaaBstrGuard& operator=(const CaaBstrGuard&);
+  CATBSTR _value;
 };
 
 static std::string JsonEscape(const std::string& value)
@@ -59,6 +77,19 @@ static std::string JsonEscape(const std::string& value)
     }
   }
   return out.str();
+}
+
+static std::string BstrToUtf8(const CATBSTR value)
+{
+  if (!value) return "";
+  const int wide_length = static_cast<int>(SysStringLen(value));
+  if (wide_length == 0) return "";
+  const int byte_length = WideCharToMultiByte(CP_UTF8, 0, value, wide_length,
+                                             0, 0, 0, 0);
+  if (byte_length <= 0) return "";
+  std::vector<char> buffer(static_cast<size_t>(byte_length));
+  WideCharToMultiByte(CP_UTF8, 0, value, wide_length, &buffer[0], byte_length, 0, 0);
+  return std::string(&buffer[0], static_cast<size_t>(byte_length));
 }
 
 static CATISpecObject* FindNativeSpecObject(const ReconstructionPackage& package,
@@ -107,6 +138,11 @@ static const char* CanonicalFromStartupType(const std::string& startup_type)
 static bool ReadLengthValue(CATIALength* length, double& value)
 {
   return length && SUCCEEDED(length->get_Value(value));
+}
+
+static bool ReadAngleValue(CATIAAngle* angle, double& value)
+{
+  return angle && SUCCEEDED(angle->get_Value(value));
 }
 
 static bool VariantToDouble(const CATVariant& value, double& output)
@@ -231,6 +267,13 @@ static std::string OptionalNumberJson(bool available, double value)
   return out.str();
 }
 
+static std::string OptionalStringJson(bool available, const std::string& value)
+{
+  if (!available)
+    return "null";
+  return "\"" + JsonEscape(value) + "\"";
+}
+
 static bool ReadLimit(CATIALimit* limit,
                       std::string& mode,
                       int& mode_raw,
@@ -343,6 +386,119 @@ static bool TryBuildHolePayload(CATISpecObject* spec,
 
   bool known_type = false;
   const std::string hole_type = HoleTypeName(raw_type, known_type);
+
+  std::string head_kind = "none";
+  bool head_diameter_available = false;
+  bool head_depth_available = false;
+  bool head_angle_available = false;
+  double head_diameter = 0.0;
+  double head_depth = 0.0;
+  double head_angle = 0.0;
+  std::string head_diameter_status = "not_applicable";
+  std::string head_depth_status = "not_applicable";
+  std::string head_angle_status = "not_applicable";
+  if (raw_type == catCounterboredHole || raw_type == catCounterdrilledHole)
+  {
+    CaaInterfaceGuard<CATIALength> head_diameter_guard;
+    CaaInterfaceGuard<CATIALength> head_depth_guard;
+    if (FAILED(hole->get_HeadDiameter(head_diameter_guard.Out())) || !head_diameter_guard.Get() ||
+        !ReadLengthValue(head_diameter_guard.Get(), head_diameter) ||
+        FAILED(hole->get_HeadDepth(head_depth_guard.Out())) || !head_depth_guard.Get() ||
+        !ReadLengthValue(head_depth_guard.Get(), head_depth))
+      return false;
+    head_kind = raw_type == catCounterboredHole ? "counterbore" : "counterdrill";
+    head_diameter_available = true;
+    head_depth_available = true;
+    head_diameter_status = "success";
+    head_depth_status = "success";
+  }
+  if (raw_type == catTaperedHole || raw_type == catCounterdrilledHole ||
+      raw_type == catCountersunkHole)
+  {
+    CaaInterfaceGuard<CATIAAngle> head_angle_guard;
+    if (FAILED(hole->get_HeadAngle(head_angle_guard.Out())) || !head_angle_guard.Get() ||
+        !ReadAngleValue(head_angle_guard.Get(), head_angle))
+      return false;
+    if (raw_type == catTaperedHole)
+      head_kind = "taper";
+    else if (raw_type == catCountersunkHole)
+      head_kind = "countersink";
+    head_angle_available = true;
+    head_angle_status = "typed_caa_angle_value";
+  }
+  if (raw_type == catCountersunkHole)
+  {
+    CaaInterfaceGuard<CATIALength> head_depth_guard;
+    if (FAILED(hole->get_HeadDepth(head_depth_guard.Out())) || !head_depth_guard.Get() ||
+        !ReadLengthValue(head_depth_guard.Get(), head_depth))
+      return false;
+    head_depth_available = true;
+    head_depth_status = "success";
+  }
+
+  CatHoleThreadingMode raw_threading_mode = catSmoothHoleThreading;
+  if (FAILED(hole->get_ThreadingMode(raw_threading_mode)))
+    return false;
+  const bool thread_enabled = raw_threading_mode == catThreadedHoleThreading;
+  const std::string thread_mode_status =
+    (raw_threading_mode == catThreadedHoleThreading || raw_threading_mode == catSmoothHoleThreading) ?
+    "success" : "unknown_enum";
+  bool thread_description_available = false;
+  bool thread_diameter_available = false;
+  bool thread_depth_available = false;
+  bool thread_pitch_available = false;
+  std::string thread_description;
+  double thread_diameter = 0.0;
+  double thread_depth = 0.0;
+  double thread_pitch = 0.0;
+  std::string thread_description_status = thread_enabled ? "unavailable" : "not_applicable";
+  std::string thread_diameter_status = thread_enabled ? "unavailable" : "not_applicable";
+  std::string thread_depth_status = thread_enabled ? "unavailable" : "not_applicable";
+  std::string thread_pitch_status = thread_enabled ? "unavailable" : "not_applicable";
+  if (thread_enabled)
+  {
+    CaaInterfaceGuard<CATIALength> thread_diameter_guard;
+    CaaInterfaceGuard<CATIALength> thread_depth_guard;
+    CaaInterfaceGuard<CATIALength> thread_pitch_guard;
+    CaaInterfaceGuard<CATIAStrParam> description_guard;
+    if (FAILED(hole->get_ThreadDiameter(thread_diameter_guard.Out())) ||
+        !thread_diameter_guard.Get() ||
+        FAILED(hole->get_ThreadDepth(thread_depth_guard.Out())) ||
+        !thread_depth_guard.Get() ||
+        FAILED(hole->get_ThreadPitch(thread_pitch_guard.Out())) ||
+        !thread_pitch_guard.Get() ||
+        FAILED(hole->get_HoleThreadDescription(description_guard.Out())) ||
+        !description_guard.Get())
+      return false;
+    if (!ReadLengthValue(thread_diameter_guard.Get(), thread_diameter) ||
+        !ReadLengthValue(thread_depth_guard.Get(), thread_depth) ||
+        !ReadLengthValue(thread_pitch_guard.Get(), thread_pitch))
+      return false;
+    CaaBstrGuard description;
+    if (FAILED(description_guard.Get()->get_Value(description.Out())))
+      return false;
+    thread_description = BstrToUtf8(description.Get());
+    thread_diameter_available = true;
+    thread_depth_available = true;
+    thread_pitch_available = true;
+    thread_description_available = true;
+    thread_diameter_status = "success";
+    thread_depth_status = "success";
+    thread_pitch_status = "success";
+    thread_description_status = "success";
+  }
+
+  bool alias_available = false;
+  std::string automation_alias;
+  std::string automation_alias_status = "automation_alias_unavailable";
+  CaaBstrGuard alias;
+  if (SUCCEEDED(hole->get_Name(alias.Out())))
+  {
+    alias_available = true;
+    automation_alias = BstrToUtf8(alias.Get());
+    automation_alias_status = "success";
+  }
+
   std::ostringstream out;
   out << "\"native_hole\":{\"semantic_kind\":\"part_design_hole\","
       << "\"value_source\":\"typed_caa_value\","
@@ -354,18 +510,29 @@ static bool TryBuildHolePayload(CATISpecObject* spec,
       << "\"direction\":" << VectorJson(direction) << ","
       << "\"bottom_limit\":" << LimitJson(limit_mode, limit_mode_raw, depth_available, depth,
                                            depth_status, limiting_element_status, true) << ","
-      << "\"head\":{\"kind\":\"none\",\"diameter_mm\":null,\"diameter_status\":\"not_attempted\","
-      << "\"depth_mm\":null,\"depth_status\":\"not_attempted\","
-      << "\"angle_deg\":null,\"angle_status\":\"not_attempted\"},"
-      << "\"thread\":{\"enabled\":false,\"mode_raw\":-1,\"description\":null,"
-      << "\"description_status\":\"not_attempted\",\"diameter_mm\":null,"
-      << "\"diameter_status\":\"not_attempted\",\"depth_mm\":null,"
-      << "\"depth_status\":\"not_attempted\",\"pitch_mm\":null,"
-      << "\"pitch_status\":\"not_attempted\"},"
-      << "\"automation_alias\":null,\"automation_alias_status\":\"not_attempted\","
+      << "\"head\":{\"kind\":\"" << JsonEscape(head_kind)
+      << "\",\"diameter_mm\":" << OptionalNumberJson(head_diameter_available, head_diameter)
+      << ",\"diameter_status\":\"" << JsonEscape(head_diameter_status)
+      << "\",\"depth_mm\":" << OptionalNumberJson(head_depth_available, head_depth)
+      << ",\"depth_status\":\"" << JsonEscape(head_depth_status)
+      << "\",\"angle_deg\":" << OptionalNumberJson(head_angle_available, head_angle)
+      << ",\"angle_status\":\"" << JsonEscape(head_angle_status) << "\"},"
+      << "\"thread\":{\"enabled\":" << (thread_enabled ? "true" : "false")
+      << ",\"mode_raw\":" << static_cast<int>(raw_threading_mode)
+      << ",\"description\":" << OptionalStringJson(thread_description_available, thread_description)
+      << ",\"description_status\":\"" << JsonEscape(thread_description_status)
+      << "\",\"diameter_mm\":" << OptionalNumberJson(thread_diameter_available, thread_diameter)
+      << ",\"diameter_status\":\"" << JsonEscape(thread_diameter_status)
+      << "\",\"depth_mm\":" << OptionalNumberJson(thread_depth_available, thread_depth)
+      << ",\"depth_status\":\"" << JsonEscape(thread_depth_status)
+      << "\",\"pitch_mm\":" << OptionalNumberJson(thread_pitch_available, thread_pitch)
+      << ",\"pitch_status\":\"" << JsonEscape(thread_pitch_status) << "\"},"
+      << "\"automation_alias\":" << OptionalStringJson(alias_available, automation_alias)
+      << ",\"automation_alias_status\":\"" << JsonEscape(automation_alias_status) << "\","
       << "\"field_status\":{\"hole_type\":\"" << (known_type ? "success" : "unknown_enum")
       << "\",\"diameter_mm\":\"success\",\"origin_mm\":\"success\","
-      << "\"direction\":\"success\",\"bottom_limit.mode\":\"success\"}}";
+      << "\"direction\":\"success\",\"bottom_limit.mode\":\"success\","
+      << "\"thread.mode\":\"" << JsonEscape(thread_mode_status) << "\"}}";
   payload_json = out.str();
   return true;
 }
