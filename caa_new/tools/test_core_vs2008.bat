@@ -1,0 +1,41 @@
+@echo off
+setlocal
+
+set "WORKSPACE=%~dp0.."
+set "SRC=%WORKSPACE%\CadCapture.edu\CadCapture.m\src"
+set "OUT=%WORKSPACE%\build_core"
+set "EXE=%OUT%\CaptureCoreTests.exe"
+
+if not exist "%OUT%" mkdir "%OUT%"
+
+if "%VS90COMNTOOLS%"=="" if exist "%WORKSPACE%\..\.caa_toolchain_links\vs90\Common7\Tools\" set "VS90COMNTOOLS=%WORKSPACE%\..\.caa_toolchain_links\vs90\Common7\Tools\"
+set "VSVARS=%VS90COMNTOOLS%vsvars32.bat"
+if not exist "%VSVARS%" (
+  echo VS2008 vsvars32.bat not found. Set VS90COMNTOOLS.
+  exit /b 2
+)
+
+call "%VSVARS%" >nul
+if errorlevel 1 exit /b 3
+
+if exist "%EXE%" del /q "%EXE%"
+
+set "OBJ1=%OUT%\CaptureCoreTestMain.obj"
+set "OBJ2=%OUT%\ReconstructionPlanner.obj"
+set "OBJ3=%OUT%\ReconstructionValidator.obj"
+if exist "%OBJ1%" del /q "%OBJ1%"
+if exist "%OBJ2%" del /q "%OBJ2%"
+if exist "%OBJ3%" del /q "%OBJ3%"
+
+cl /nologo /EHsc /I"%SRC%" /c "%WORKSPACE%\tests\CaptureCoreTestMain.cpp" /Fo"%OBJ1%"
+if errorlevel 1 exit /b 4
+cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionPlanner.cpp" /Fo"%OBJ2%"
+if errorlevel 1 exit /b 4
+cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionValidator.cpp" /Fo"%OBJ3%"
+if errorlevel 1 exit /b 4
+
+link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" /OUT:"%EXE%"
+if errorlevel 1 exit /b 4
+
+"%EXE%"
+exit /b %errorlevel%
