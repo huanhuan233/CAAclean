@@ -13,6 +13,8 @@ public:
   bool Write(const ReconstructionPackage& package,
              const std::string& output_dir,
              std::string& error) const;
+  bool ValidateRelationEndpoints(const ReconstructionPackage& package,
+                                 std::string& error) const;
 };
 
 }

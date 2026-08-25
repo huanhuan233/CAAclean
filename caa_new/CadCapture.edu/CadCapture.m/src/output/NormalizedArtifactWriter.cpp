@@ -1,18 +1,32 @@
 #include "output/NormalizedArtifactWriter.h"
 #include "output/JsonSupport.h"
 #include <direct.h>
+#include <errno.h>
 #include <fstream>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace cadcapture {
 
-static bool EnsureDirectory(const std::string& path)
+static bool DirectoryExists(const std::string& path)
+{
+  struct _stat info;
+  return _stat(path.c_str(), &info) == 0 && (info.st_mode & _S_IFDIR);
+}
+
+static bool EnsureDirectory(const std::string& path, std::string& error)
 {
   if (path.empty())
+  {
+    error = "output directory is empty";
     return false;
+  }
   if (_mkdir(path.c_str()) == 0)
     return true;
-  return true;
+  if (errno == EEXIST && DirectoryExists(path))
+    return true;
+  error = "failed to create output directory: " + path;
+  return false;
 }
 
 static std::string Indent(bool pretty, int depth)
@@ -44,11 +58,34 @@ static bool WriteText(const std::string& path, const std::string& text, std::str
   return true;
 }
 
+static bool FinishStream(std::ofstream& out, const std::string& path, std::string& error)
+{
+  out.flush();
+  if (!out)
+  {
+    error = "failed to write output file: " + path;
+    return false;
+  }
+  out.close();
+  if (!out)
+  {
+    error = "failed to close output file: " + path;
+    return false;
+  }
+  return true;
+}
+
 static bool WriteJsonLines(const ReconstructionPackage& package,
                            const std::string& output_dir,
                            std::string& error)
 {
-  std::ostringstream objects;
+  const std::string object_path = output_dir + "\\object_entities.jsonl";
+  std::ofstream objects(object_path.c_str(), std::ios::out | std::ios::binary);
+  if (!objects)
+  {
+    error = "failed to open output file: " + object_path;
+    return false;
+  }
   size_t i;
   for (i = 0; i < package.objects.size(); ++i)
   {
@@ -61,11 +98,31 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
             << JsonQuote("internal_name") << ":" << JsonQuote(object.internal_name) << ","
             << JsonQuote("startup_type") << ":" << JsonQuote(object.startup_type) << ","
             << JsonQuote("update_status") << ":" << JsonQuote(object.update_status) << ","
+            << JsonQuote("supplemental_sources") << ":" << JsonQuote(object.supplemental_sources) << ","
+            << JsonQuote("identity") << ":{"
+            << JsonQuote("capture_id") << ":" << JsonQuote(object.identity.capture_id) << ","
+            << JsonQuote("native_identity") << ":" << JsonQuote(object.identity.native_identity) << ","
+            << JsonQuote("identity_method") << ":" << JsonQuote(object.identity.identity_method) << ","
+            << JsonQuote("read_status") << ":" << JsonQuote(object.identity.read_status)
+            << "},"
             << JsonQuote("capture_status") << ":" << JsonQuote(object.capture_status)
             << "}\n";
+    if (!objects)
+    {
+      error = "failed to write output file: " + object_path;
+      return false;
+    }
   }
+  if (!FinishStream(objects, object_path, error))
+    return false;
 
-  std::ostringstream occurrences;
+  const std::string occurrence_path = output_dir + "\\tree_occurrences.jsonl";
+  std::ofstream occurrences(occurrence_path.c_str(), std::ios::out | std::ios::binary);
+  if (!occurrences)
+  {
+    error = "failed to open output file: " + occurrence_path;
+    return false;
+  }
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)
   {
     const ObjectOccurrence& occurrence = package.occurrence_graph.object_occurrences[i];
@@ -78,13 +135,19 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
                 << JsonQuote("occurrence_path") << ":" << JsonQuote(occurrence.occurrence_path) << ","
                 << JsonQuote("source_index") << ":" << occurrence.source_index << ","
                 << JsonQuote("container_index") << ":" << occurrence.container_index << ","
+                << JsonQuote("occurrence_role") << ":" << JsonQuote(occurrence.occurrence_role) << ","
+                << JsonQuote("enumeration_source") << ":" << JsonQuote(occurrence.enumeration_source) << ","
+                << JsonQuote("presentation_status") << ":" << JsonQuote(occurrence.presentation_status) << ","
                 << JsonQuote("capture_status") << ":" << JsonQuote(occurrence.capture_status)
                 << "}\n";
+    if (!occurrences)
+    {
+      error = "failed to write output file: " + occurrence_path;
+      return false;
+    }
   }
 
-  if (!WriteText(output_dir + "\\object_entities.jsonl", objects.str(), error))
-    return false;
-  if (!WriteText(output_dir + "\\tree_occurrences.jsonl", occurrences.str(), error))
+  if (!FinishStream(occurrences, occurrence_path, error))
     return false;
   return true;
 }
@@ -96,11 +159,8 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
                                      const std::string& legacy_projection_status,
                                      std::string& error)
 {
-  if (!EnsureDirectory(output_dir))
-  {
-    error = "failed to create output directory";
+  if (!EnsureDirectory(output_dir, error))
     return false;
-  }
 
   std::ostringstream manifest;
   const std::string nl = NewLine(pretty);
