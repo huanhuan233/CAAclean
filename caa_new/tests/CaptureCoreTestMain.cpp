@@ -322,6 +322,58 @@ int main()
   planner.Plan(package);
   Check(package.reconstruction_plan == "tree_properties", "ReconstructionPlanner tree_properties");
 
+  ReconstructionPackage geometry_only_package;
+  GeometryEntity mesh_range;
+  mesh_range.geometry_id = "geometry_range_only";
+  mesh_range.geometry_kind = "tessellation";
+  mesh_range.kind = GeometryTessellation;
+  mesh_range.triangle_start = 0;
+  mesh_range.triangle_count = 12;
+  mesh_range.representation_status = "range_only";
+  geometry_only_package.geometry.push_back(mesh_range);
+  planner.Plan(geometry_only_package);
+  Check(geometry_only_package.reconstruction_plan == "opaque_preservation",
+        "ReconstructionPlanner does not treat mesh ranges as exact_brep");
+
+  ReconstructionPackage tessellation_package;
+  mesh_range.representation_status = "triangles_available";
+  tessellation_package.geometry.push_back(mesh_range);
+  planner.Plan(tessellation_package);
+  Check(tessellation_package.reconstruction_plan == "tessellation",
+        "ReconstructionPlanner selects tessellation only when triangle coordinates are available");
+
+  ReconstructionPackage exact_package;
+  TopologyEntity body;
+  body.topology_id = "body_1";
+  body.topology_kind = "body";
+  exact_package.topology.push_back(body);
+  TopologyEntity face;
+  face.topology_id = "face_1";
+  face.topology_kind = "face";
+  face.geometry_status = "exact_surface";
+  exact_package.topology.push_back(face);
+  TopologyEntity edge;
+  edge.topology_id = "edge_1";
+  edge.topology_kind = "edge";
+  exact_package.topology.push_back(edge);
+  TopologyEntity vertex;
+  vertex.topology_id = "vertex_1";
+  vertex.topology_kind = "vertex";
+  exact_package.topology.push_back(vertex);
+  TopologyEntity wire;
+  wire.topology_id = "wire_1";
+  wire.topology_kind = "wire";
+  exact_package.topology.push_back(wire);
+  TopologyRelation boundary;
+  boundary.from_topology_id = "face_1";
+  boundary.to_topology_id = "wire_1";
+  boundary.relation_kind = "boundary";
+  boundary.read_status = "available";
+  exact_package.topology_relations.push_back(boundary);
+  planner.Plan(exact_package);
+  Check(exact_package.reconstruction_plan == "exact_brep",
+        "ReconstructionPlanner exact_brep requires complete topology evidence");
+
   ReconstructionValidator validator;
   std::string error;
   Check(validator.Validate(package, error), "ReconstructionValidator accepts valid package");
