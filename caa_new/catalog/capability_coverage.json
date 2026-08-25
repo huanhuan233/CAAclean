@@ -123,12 +123,43 @@
     {
       "capability_id": "property.native_open_status",
       "family": "property",
-      "status": "extractor_implemented",
+      "status": "fixture_verified",
       "headers": [],
       "frameworks": [],
       "extractor": "CaaPropertyExtractors",
-      "fixture_verified": false,
+      "fixture_verified": true,
       "reconstruction_verified": false
+    },
+    {
+      "capability_id": "property.basic_identity_facts",
+      "family": "property",
+      "status": "fixture_verified",
+      "headers": ["CATISpecObject.h"],
+      "frameworks": ["ObjectSpecsModeler"],
+      "extractor": "CaaPartEnumerator;CaaPropertyExtractors",
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "property.product_instance_facts",
+      "family": "property",
+      "status": "fixture_verified",
+      "headers": ["CATIProduct.h"],
+      "frameworks": ["ProductStructure"],
+      "extractor": "CaaProductEnumerator;CaaPropertyExtractors",
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "feature.startup_type_semantics",
+      "family": "feature",
+      "status": "fixture_verified",
+      "headers": ["CATISpecObject.h"],
+      "frameworks": ["ObjectSpecsModeler"],
+      "extractor": "CaaPartEnumerator;CaaNativeFeatureExtractors",
+      "fixture_verified": true,
+      "reconstruction_verified": false,
+      "notes": "Type-only canonical family mapping from captured startup_type. Dedicated native parameter payload extraction remains unavailable."
     },
     {
       "capability_id": "geometry.native_exact",

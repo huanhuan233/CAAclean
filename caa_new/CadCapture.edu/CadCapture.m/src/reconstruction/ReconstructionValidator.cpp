@@ -325,6 +325,71 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
   }
 
+  std::map<std::string, bool> property_ids;
+  for (i = 0; i < package.properties.size(); ++i)
+  {
+    const PropertyFact& fact = package.properties[i];
+    if (fact.property_id.empty())
+    {
+      error = "property_id is empty";
+      return false;
+    }
+    if (HasKey(property_ids, fact.property_id))
+    {
+      error = "duplicate property_id: " + fact.property_id;
+      return false;
+    }
+    if (!HasKey(document_ids, fact.subject_id) &&
+        !HasKey(object_ids, fact.subject_id) &&
+        !HasKey(occurrence_ids, fact.subject_id) &&
+        !HasKey(reference_ids, fact.subject_id))
+    {
+      error = "property references missing subject_id: " + fact.subject_id;
+      return false;
+    }
+    if (fact.tab_id.empty() || fact.group_id.empty() || fact.key.empty())
+    {
+      error = "property is missing tab/group/key: " + fact.property_id;
+      return false;
+    }
+    property_ids[fact.property_id] = true;
+  }
+
+  std::map<std::string, bool> semantic_facet_ids;
+  for (i = 0; i < package.semantic_facets.size(); ++i)
+  {
+    const SemanticFacet& facet = package.semantic_facets[i];
+    if (facet.facet_id.empty())
+    {
+      error = "semantic facet_id is empty";
+      return false;
+    }
+    if (HasKey(semantic_facet_ids, facet.facet_id))
+    {
+      error = "duplicate semantic facet_id: " + facet.facet_id;
+      return false;
+    }
+    if (!HasKey(document_ids, facet.subject_id) &&
+        !HasKey(object_ids, facet.subject_id) &&
+        !HasKey(occurrence_ids, facet.subject_id) &&
+        !HasKey(reference_ids, facet.subject_id))
+    {
+      error = "semantic facet references missing subject_id: " + facet.subject_id;
+      return false;
+    }
+    if (facet.facet_kind.empty() ||
+        facet.canonical_family.empty() ||
+        facet.decoder_id.empty() ||
+        facet.decode_level.empty() ||
+        facet.decode_status.empty() ||
+        facet.payload_extraction_status.empty())
+    {
+      error = "semantic facet missing required classification fields: " + facet.facet_id;
+      return false;
+    }
+    semantic_facet_ids[facet.facet_id] = true;
+  }
+
   if (package.reconstruction_plan.empty())
   {
     error = "reconstruction route is empty";

@@ -10,6 +10,12 @@ struct SemanticFacet
   std::string facet_id;
   std::string subject_id;
   std::string facet_kind;
+  std::string canonical_family;
+  std::string decoder_id;
+  std::string decode_level;
+  std::string decode_status;
+  std::string payload_extraction_status;
+  std::string source_api;
   std::string read_status;
 
   SemanticFacet() : read_status("unavailable") {}

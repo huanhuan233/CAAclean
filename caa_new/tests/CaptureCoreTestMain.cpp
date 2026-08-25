@@ -299,6 +299,11 @@ int main()
   Check(occurrence_a.source_index == 3, "ObjectOccurrence preserves source index");
 
   PropertyFact fact;
+  fact.property_id = "property_test_value";
+  fact.subject_id = "object_a";
+  fact.tab_id = "mechanical";
+  fact.group_id = "dimension";
+  fact.key = "length";
   fact.raw_value = "25.4";
   fact.raw_unit = "mm";
   fact.display_value = "1.0";
@@ -307,7 +312,10 @@ int main()
 
   ReconstructionPackage package = MakeValidPackage();
   PropertyFact package_fact;
+  package_fact.property_id = "property_fixture_name";
   package_fact.subject_id = "object_1";
+  package_fact.tab_id = "attributes";
+  package_fact.group_id = "identity";
   package_fact.key = "name";
   package.properties.push_back(package_fact);
   ReconstructionPlanner planner;

@@ -7,7 +7,12 @@ namespace cadcapture {
 
 struct PropertyFact
 {
+  std::string property_id;
   std::string subject_id;
+  std::string tab_id;
+  std::string tab_label;
+  std::string group_id;
+  std::string group_label;
   std::string group;
   std::string key;
   std::string display_name;
@@ -18,8 +23,11 @@ struct PropertyFact
   std::string value_type;
   std::string source_api;
   std::string read_status;
+  std::string authority;
+  long display_order;
+  bool read_only;
 
-  PropertyFact() : value_type("string"), read_status("unavailable") {}
+  PropertyFact() : value_type("string"), read_status("unavailable"), display_order(0), read_only(true) {}
 };
 
 }

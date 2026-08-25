@@ -80,8 +80,12 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     "product_references.jsonl",
     "product_occurrences.jsonl",
     "document_links.jsonl",
+    "property_facts.jsonl",
+    "semantic_facets.jsonl",
     "features.jsonl",
-    "relations.jsonl"
+    "relations.jsonl",
+    "parameters.jsonl",
+    "native_features.jsonl"
   };
   int i;
   for (i = 0; i < static_cast<int>(sizeof(required) / sizeof(required[0])); ++i)
@@ -126,6 +130,30 @@ static bool VerifyStaging(const ReconstructionPackage& package,
       static_cast<long>(package.document_graph.links.size()))
   {
     error = "document_links.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "property_facts.jsonl")) !=
+      static_cast<long>(package.properties.size()))
+  {
+    error = "property_facts.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "parameters.jsonl")) !=
+      static_cast<long>(package.properties.size()))
+  {
+    error = "parameters.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "semantic_facets.jsonl")) !=
+      static_cast<long>(package.semantic_facets.size()))
+  {
+    error = "semantic_facets.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "native_features.jsonl")) !=
+      static_cast<long>(package.semantic_facets.size()))
+  {
+    error = "native_features.jsonl line count mismatch";
     return false;
   }
   LegacyArtifactProjection legacy;

@@ -173,6 +173,69 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(relations, relations_path, error))
     return false;
 
+  const std::string parameters_path = output_dir + "\\parameters.jsonl";
+  std::ofstream parameters(parameters_path.c_str(), std::ios::out | std::ios::binary);
+  if (!parameters)
+  {
+    error = "failed to open output file: " + parameters_path;
+    return false;
+  }
+  for (i = 0; i < package.properties.size(); ++i)
+  {
+    const PropertyFact& fact = package.properties[i];
+    parameters << "{"
+               << JsonQuote("parameter_id") << ":" << JsonQuote(fact.property_id) << ","
+               << JsonQuote("feature_id") << ":" << JsonQuote(fact.subject_id) << ","
+               << JsonQuote("name") << ":" << JsonQuote(fact.key) << ","
+               << JsonQuote("display_name") << ":" << JsonQuote(fact.display_name) << ","
+               << JsonQuote("raw_value") << ":" << JsonQuote(fact.raw_value) << ","
+               << JsonQuote("raw_unit") << ":" << JsonQuote(fact.raw_unit) << ","
+               << JsonQuote("display_value") << ":" << JsonQuote(fact.display_value) << ","
+               << JsonQuote("display_unit") << ":" << JsonQuote(fact.display_unit) << ","
+               << JsonQuote("value_type") << ":" << JsonQuote(fact.value_type) << ","
+               << JsonQuote("source_api") << ":" << JsonQuote(fact.source_api) << ","
+               << JsonQuote("read_status") << ":" << JsonQuote(fact.read_status)
+               << "}\n";
+    if (!parameters)
+    {
+      error = "failed to write output file: " + parameters_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(parameters, parameters_path, error))
+    return false;
+
+  const std::string native_features_path = output_dir + "\\native_features.jsonl";
+  std::ofstream native_features(native_features_path.c_str(), std::ios::out | std::ios::binary);
+  if (!native_features)
+  {
+    error = "failed to open output file: " + native_features_path;
+    return false;
+  }
+  for (i = 0; i < package.semantic_facets.size(); ++i)
+  {
+    const SemanticFacet& facet = package.semantic_facets[i];
+    native_features << "{"
+                    << JsonQuote("native_feature_id") << ":" << JsonQuote(facet.facet_id) << ","
+                    << JsonQuote("feature_id") << ":" << JsonQuote(facet.subject_id) << ","
+                    << JsonQuote("facet_kind") << ":" << JsonQuote(facet.facet_kind) << ","
+                    << JsonQuote("canonical_family") << ":" << JsonQuote(facet.canonical_family) << ","
+                    << JsonQuote("decoder_id") << ":" << JsonQuote(facet.decoder_id) << ","
+                    << JsonQuote("decode_level") << ":" << JsonQuote(facet.decode_level) << ","
+                    << JsonQuote("decode_status") << ":" << JsonQuote(facet.decode_status) << ","
+                    << JsonQuote("payload_extraction_status") << ":" << JsonQuote(facet.payload_extraction_status) << ","
+                    << JsonQuote("source_api") << ":" << JsonQuote(facet.source_api) << ","
+                    << JsonQuote("read_status") << ":" << JsonQuote(facet.read_status)
+                    << "}\n";
+    if (!native_features)
+    {
+      error = "failed to write output file: " + native_features_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(native_features, native_features_path, error))
+    return false;
+
   if (!ValidateRelationEndpoints(package, error))
     return false;
   return true;

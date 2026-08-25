@@ -2,13 +2,14 @@
 #define CADCAPTURE_CAA_CAAPROPERTYEXTRACTORS_H
 
 #include "model/ReconstructionPackage.h"
+#include "model/CaptureIdRegistry.h"
 
 namespace cadcapture {
 
 class CaaPropertyExtractors
 {
 public:
-  bool Extract(ReconstructionPackage& package);
+  bool Extract(CaptureIdRegistry& ids, ReconstructionPackage& package);
 };
 
 }

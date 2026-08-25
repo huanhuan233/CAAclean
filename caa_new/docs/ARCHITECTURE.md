@@ -90,6 +90,8 @@ Primary tree traversal uses the active recursion path only to stop cycles; it do
 
 Unknown objects are preserved with explicit status instead of being dropped. Normal output includes `object_entities.jsonl` and `tree_occurrences.jsonl`; `LegacyArtifactProjection` also emits compatible `features.jsonl` and `relations.jsonl`. Legacy features are occurrence projections so relation endpoints are referentially valid.
 
+Native feature semantics are additive. `CaaNativeFeatureExtractors` maps captured `startup_type` values into type-only `SemanticFacet` records when the family is known and into opaque semantic records otherwise. This stage does not claim feature parameter payload extraction; `payload_extraction_status` records that boundary explicitly.
+
 ## Phase 1B CATProduct Tree
 
 Phase 1B keeps CATProduct structure as first-class model data instead of flattening it into object features. `ProductReferenceEntity` records the shared reference identity and `ProductOccurrence` records each instance placement, parent occurrence, source index, tree path, occurrence path, child count, load status, and absolute 4x4 transform.

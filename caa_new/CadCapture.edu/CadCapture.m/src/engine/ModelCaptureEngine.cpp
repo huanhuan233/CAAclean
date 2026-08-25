@@ -28,6 +28,7 @@ static void UpdateReportCounts(const ReconstructionPackage& package, CaptureRepo
   report.occurrence_count = static_cast<int>(package.occurrence_graph.object_occurrences.size() +
                                              package.product_occurrences.size());
   report.property_count = static_cast<int>(package.properties.size());
+  report.semantic_facet_count = static_cast<int>(package.semantic_facets.size());
 }
 
 static void SyncReportDiagnostics(const ReconstructionPackage& package, CaptureReport& report)
@@ -61,7 +62,12 @@ static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& 
   package.occurrence_graph.object_occurrences.push_back(occurrence);
 
   PropertyFact fact;
+  fact.property_id = "property_self_test";
   fact.subject_id = object.object_id;
+  fact.tab_id = "attributes";
+  fact.tab_label = "Attributes";
+  fact.group_id = "self_test";
+  fact.group_label = "Self test";
   fact.group = "self_test";
   fact.key = "status";
   fact.display_name = "Status";
@@ -70,7 +76,23 @@ static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& 
   fact.value_type = "string";
   fact.source_api = "core";
   fact.read_status = "available";
+  fact.authority = "self_test";
+  fact.display_order = 1;
+  fact.read_only = true;
   package.properties.push_back(fact);
+
+  SemanticFacet facet;
+  facet.facet_id = "semantic_facet_self_test";
+  facet.subject_id = object.object_id;
+  facet.facet_kind = "native_feature_type";
+  facet.canonical_family = "self_test";
+  facet.decoder_id = "self_test";
+  facet.decode_level = "type_only";
+  facet.decode_status = "available";
+  facet.payload_extraction_status = "not_required";
+  facet.source_api = "core";
+  facet.read_status = "available";
+  package.semantic_facets.push_back(facet);
 
   package.capture_status = "complete";
   package.diagnostics.push_back(MakeDiagnostic("info", "self_test_package", document.document_id,
@@ -284,8 +306,8 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     return false;
   }
   linked_document_resolver.Resolve(document_handle, ids, package);
-  property_extractors.Extract(package);
-  native_feature_extractors.Extract(package);
+  property_extractors.Extract(ids, package);
+  native_feature_extractors.Extract(ids, package);
   sketch_extractor.Extract(package);
   topology_extractor.Extract(package);
   geometry_extractor.Extract(package);

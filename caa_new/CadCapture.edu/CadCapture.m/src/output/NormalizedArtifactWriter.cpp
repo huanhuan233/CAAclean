@@ -258,6 +258,76 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
 
   if (!FinishStream(occurrences, occurrence_path, error))
     return false;
+
+  const std::string properties_path = output_dir + "\\property_facts.jsonl";
+  std::ofstream properties(properties_path.c_str(), std::ios::out | std::ios::binary);
+  if (!properties)
+  {
+    error = "failed to open output file: " + properties_path;
+    return false;
+  }
+  for (i = 0; i < package.properties.size(); ++i)
+  {
+    const PropertyFact& fact = package.properties[i];
+    properties << "{"
+               << JsonQuote("property_id") << ":" << JsonQuote(fact.property_id) << ","
+               << JsonQuote("subject_id") << ":" << JsonQuote(fact.subject_id) << ","
+               << JsonQuote("tab_id") << ":" << JsonQuote(fact.tab_id) << ","
+               << JsonQuote("tab_label") << ":" << JsonQuote(fact.tab_label) << ","
+               << JsonQuote("group_id") << ":" << JsonQuote(fact.group_id) << ","
+               << JsonQuote("group_label") << ":" << JsonQuote(fact.group_label) << ","
+               << JsonQuote("key") << ":" << JsonQuote(fact.key) << ","
+               << JsonQuote("display_name") << ":" << JsonQuote(fact.display_name) << ","
+               << JsonQuote("raw_value") << ":" << JsonQuote(fact.raw_value) << ","
+               << JsonQuote("raw_unit") << ":" << JsonQuote(fact.raw_unit) << ","
+               << JsonQuote("display_value") << ":" << JsonQuote(fact.display_value) << ","
+               << JsonQuote("display_unit") << ":" << JsonQuote(fact.display_unit) << ","
+               << JsonQuote("value_type") << ":" << JsonQuote(fact.value_type) << ","
+               << JsonQuote("source_api") << ":" << JsonQuote(fact.source_api) << ","
+               << JsonQuote("read_status") << ":" << JsonQuote(fact.read_status) << ","
+               << JsonQuote("authority") << ":" << JsonQuote(fact.authority) << ","
+               << JsonQuote("display_order") << ":" << fact.display_order << ","
+               << JsonQuote("read_only") << ":" << (fact.read_only ? "true" : "false")
+               << "}\n";
+    if (!properties)
+    {
+      error = "failed to write output file: " + properties_path;
+      return false;
+    }
+  }
+  if (!FinishStream(properties, properties_path, error))
+    return false;
+
+  const std::string semantic_path = output_dir + "\\semantic_facets.jsonl";
+  std::ofstream semantic(semantic_path.c_str(), std::ios::out | std::ios::binary);
+  if (!semantic)
+  {
+    error = "failed to open output file: " + semantic_path;
+    return false;
+  }
+  for (i = 0; i < package.semantic_facets.size(); ++i)
+  {
+    const SemanticFacet& facet = package.semantic_facets[i];
+    semantic << "{"
+             << JsonQuote("facet_id") << ":" << JsonQuote(facet.facet_id) << ","
+             << JsonQuote("subject_id") << ":" << JsonQuote(facet.subject_id) << ","
+             << JsonQuote("facet_kind") << ":" << JsonQuote(facet.facet_kind) << ","
+             << JsonQuote("canonical_family") << ":" << JsonQuote(facet.canonical_family) << ","
+             << JsonQuote("decoder_id") << ":" << JsonQuote(facet.decoder_id) << ","
+             << JsonQuote("decode_level") << ":" << JsonQuote(facet.decode_level) << ","
+             << JsonQuote("decode_status") << ":" << JsonQuote(facet.decode_status) << ","
+             << JsonQuote("payload_extraction_status") << ":" << JsonQuote(facet.payload_extraction_status) << ","
+             << JsonQuote("source_api") << ":" << JsonQuote(facet.source_api) << ","
+             << JsonQuote("read_status") << ":" << JsonQuote(facet.read_status)
+             << "}\n";
+    if (!semantic)
+    {
+      error = "failed to write output file: " + semantic_path;
+      return false;
+    }
+  }
+  if (!FinishStream(semantic, semantic_path, error))
+    return false;
   return true;
 }
 
@@ -285,6 +355,7 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
            << i1 << JsonQuote("product_occurrence_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.product_occurrences.size()) << "," << nl
            << i1 << JsonQuote("document_link_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.document_graph.links.size()) << "," << nl
            << i1 << JsonQuote("property_count") << ":" << (pretty ? " " : "") << report.property_count << "," << nl
+           << i1 << JsonQuote("semantic_facet_count") << ":" << (pretty ? " " : "") << report.semantic_facet_count << "," << nl
            << i1 << JsonQuote("selected_reconstruction_route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
            << i1 << JsonQuote("capture_status") << ":" << (pretty ? " " : "") << JsonQuote(package.capture_status) << "," << nl
            << i1 << JsonQuote("native_document_open_status") << ":" << (pretty ? " " : "") << JsonQuote(package.document_graph.documents.empty() ? "unavailable" : package.document_graph.documents[0].native_document_open_status) << "," << nl
@@ -297,6 +368,7 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
               << i1 << JsonQuote("exit_code") << ":" << (pretty ? " " : "") << report.exit_code << "," << nl
               << i1 << JsonQuote("stage") << ":" << (pretty ? " " : "") << JsonQuote(report.stage) << "," << nl
               << i1 << JsonQuote("message") << ":" << (pretty ? " " : "") << JsonQuote(report.message) << "," << nl
+              << i1 << JsonQuote("semantic_facet_count") << ":" << (pretty ? " " : "") << report.semantic_facet_count << "," << nl
               << i1 << JsonQuote("diagnostic_count") << ":" << (pretty ? " " : "") << static_cast<int>(report.diagnostics.size()) << nl
               << "}" << nl;
 
