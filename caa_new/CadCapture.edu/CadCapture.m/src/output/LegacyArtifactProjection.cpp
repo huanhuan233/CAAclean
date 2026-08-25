@@ -377,6 +377,35 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(feature_results, feature_results_path, error))
     return false;
 
+  if (!WriteLegacyText(output_dir + "\\native_feature_result_cells.jsonl", "", error))
+    return false;
+  if (!WriteLegacyText(output_dir + "\\native_feature_topology_links.jsonl", "", error))
+    return false;
+  if (!WriteLegacyText(output_dir + "\\fta_semantics.jsonl", "", error))
+    return false;
+  if (!WriteLegacyText(output_dir + "\\fta_topology_links.jsonl", "", error))
+    return false;
+
+  std::ostringstream capabilities;
+  capabilities << "{"
+               << JsonQuote("spec_tree_extraction") << ":" << JsonQuote(package.occurrence_graph.object_occurrences.empty() ? "not_available" : "partial") << ","
+               << JsonQuote("native_feature_extraction") << ":" << JsonQuote(package.semantic_facets.empty() ? "not_available" : "type_only") << ","
+               << JsonQuote("topology_extraction") << ":" << JsonQuote(package.topology.empty() ? "not_available" : "partial") << ","
+               << JsonQuote("mesh_face_mapping") << ":" << JsonQuote(package.geometry.empty() ? "not_available" : "partial") << ","
+               << JsonQuote("fta_extraction") << ":" << JsonQuote(package.pmi.empty() ? "set_scan_complete_zero_sets_or_unavailable" : "set_level_counts") << ","
+               << JsonQuote("feature_result_extraction") << ":" << JsonQuote(package.feature_dependencies.empty() ? "not_available" : "resultout_body_counts") << ","
+               << JsonQuote("product_instance_extraction") << ":" << JsonQuote(package.product_occurrences.empty() ? "not_available" : "complete") << ","
+               << JsonQuote("native_feature_record_count") << ":" << package.semantic_facets.size() << ","
+               << JsonQuote("native_topology_cell_count") << ":" << package.topology.size() << ","
+               << JsonQuote("native_mesh_face_map_count") << ":" << package.geometry.size() << ","
+               << JsonQuote("fta_set_count") << ":" << package.pmi.size() << ","
+               << JsonQuote("product_reference_count") << ":" << package.product_references.size() << ","
+               << JsonQuote("product_instance_count") << ":" << package.product_occurrences.size() << ","
+               << JsonQuote("native_feature_result_count") << ":" << package.feature_dependencies.size()
+               << "}\n";
+  if (!WriteLegacyText(output_dir + "\\capabilities.json", capabilities.str(), error))
+    return false;
+
   if (!ValidateRelationEndpoints(package, error))
     return false;
   return true;

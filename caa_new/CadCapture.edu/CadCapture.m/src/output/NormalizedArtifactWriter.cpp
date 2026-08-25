@@ -468,6 +468,82 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
   }
   if (!FinishStream(dependencies, dependencies_path, error))
     return false;
+
+  const std::string topology_relations_path = output_dir + "\\topology_relations.jsonl";
+  std::ofstream topology_relations(topology_relations_path.c_str(), std::ios::out | std::ios::binary);
+  if (!topology_relations)
+  {
+    error = "failed to open output file: " + topology_relations_path;
+    return false;
+  }
+  for (i = 0; i < package.topology_relations.size(); ++i)
+  {
+    const TopologyRelation& relation = package.topology_relations[i];
+    topology_relations << "{"
+                       << JsonQuote("from_topology_id") << ":" << JsonQuote(relation.from_topology_id) << ","
+                       << JsonQuote("to_topology_id") << ":" << JsonQuote(relation.to_topology_id) << ","
+                       << JsonQuote("relation_kind") << ":" << JsonQuote(relation.relation_kind) << ","
+                       << JsonQuote("read_status") << ":" << JsonQuote(relation.read_status)
+                       << "}\n";
+    if (!topology_relations)
+    {
+      error = "failed to write output file: " + topology_relations_path;
+      return false;
+    }
+  }
+  if (!FinishStream(topology_relations, topology_relations_path, error))
+    return false;
+
+  const std::string pmi_associations_path = output_dir + "\\pmi_associations.jsonl";
+  std::ofstream pmi_associations(pmi_associations_path.c_str(), std::ios::out | std::ios::binary);
+  if (!pmi_associations)
+  {
+    error = "failed to open output file: " + pmi_associations_path;
+    return false;
+  }
+  for (i = 0; i < package.pmi_associations.size(); ++i)
+  {
+    const PmiAssociation& association = package.pmi_associations[i];
+    pmi_associations << "{"
+                     << JsonQuote("pmi_id") << ":" << JsonQuote(association.pmi_id) << ","
+                     << JsonQuote("target_id") << ":" << JsonQuote(association.target_id) << ","
+                     << JsonQuote("association_kind") << ":" << JsonQuote(association.association_kind) << ","
+                     << JsonQuote("read_status") << ":" << JsonQuote(association.read_status)
+                     << "}\n";
+    if (!pmi_associations)
+    {
+      error = "failed to write output file: " + pmi_associations_path;
+      return false;
+    }
+  }
+  if (!FinishStream(pmi_associations, pmi_associations_path, error))
+    return false;
+
+  const std::string diagnostics_path = output_dir + "\\diagnostics.jsonl";
+  std::ofstream diagnostics(diagnostics_path.c_str(), std::ios::out | std::ios::binary);
+  if (!diagnostics)
+  {
+    error = "failed to open output file: " + diagnostics_path;
+    return false;
+  }
+  for (i = 0; i < package.diagnostics.size(); ++i)
+  {
+    const Diagnostic& diagnostic = package.diagnostics[i];
+    diagnostics << "{"
+                << JsonQuote("severity") << ":" << JsonQuote(diagnostic.severity) << ","
+                << JsonQuote("code") << ":" << JsonQuote(diagnostic.code) << ","
+                << JsonQuote("subject_id") << ":" << JsonQuote(diagnostic.subject_id) << ","
+                << JsonQuote("message") << ":" << JsonQuote(diagnostic.message) << ","
+                << JsonQuote("stage") << ":" << JsonQuote(diagnostic.stage)
+                << "}\n";
+    if (!diagnostics)
+    {
+      error = "failed to write output file: " + diagnostics_path;
+      return false;
+    }
+  }
+  if (!FinishStream(diagnostics, diagnostics_path, error))
+    return false;
   return true;
 }
 
@@ -499,6 +575,9 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
            << i1 << JsonQuote("topology_count") << ":" << (pretty ? " " : "") << report.topology_count << "," << nl
            << i1 << JsonQuote("geometry_count") << ":" << (pretty ? " " : "") << report.geometry_count << "," << nl
            << i1 << JsonQuote("pmi_count") << ":" << (pretty ? " " : "") << report.pmi_count << "," << nl
+           << i1 << JsonQuote("feature_dependency_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.feature_dependencies.size()) << "," << nl
+           << i1 << JsonQuote("topology_relation_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.topology_relations.size()) << "," << nl
+           << i1 << JsonQuote("pmi_association_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.pmi_associations.size()) << "," << nl
            << i1 << JsonQuote("selected_reconstruction_route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
            << i1 << JsonQuote("capture_status") << ":" << (pretty ? " " : "") << JsonQuote(package.capture_status) << "," << nl
            << i1 << JsonQuote("native_document_open_status") << ":" << (pretty ? " " : "") << JsonQuote(package.document_graph.documents.empty() ? "unavailable" : package.document_graph.documents[0].native_document_open_status) << "," << nl

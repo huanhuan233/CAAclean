@@ -86,6 +86,9 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     "geometry_entities.jsonl",
     "pmi_entities.jsonl",
     "feature_dependencies.jsonl",
+    "topology_relations.jsonl",
+    "pmi_associations.jsonl",
+    "diagnostics.jsonl",
     "features.jsonl",
     "relations.jsonl",
     "parameters.jsonl",
@@ -93,7 +96,12 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     "native_topology.jsonl",
     "native_mesh_face_map.jsonl",
     "fta_sets.jsonl",
-    "native_feature_results.jsonl"
+    "native_feature_results.jsonl",
+    "native_feature_result_cells.jsonl",
+    "native_feature_topology_links.jsonl",
+    "fta_semantics.jsonl",
+    "fta_topology_links.jsonl",
+    "capabilities.json"
   };
   int i;
   for (i = 0; i < static_cast<int>(sizeof(required) / sizeof(required[0])); ++i)
@@ -204,6 +212,24 @@ static bool VerifyStaging(const ReconstructionPackage& package,
       static_cast<long>(package.feature_dependencies.size()))
   {
     error = "feature_dependencies.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "topology_relations.jsonl")) !=
+      static_cast<long>(package.topology_relations.size()))
+  {
+    error = "topology_relations.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "pmi_associations.jsonl")) !=
+      static_cast<long>(package.pmi_associations.size()))
+  {
+    error = "pmi_associations.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "diagnostics.jsonl")) !=
+      static_cast<long>(package.diagnostics.size()))
+  {
+    error = "diagnostics.jsonl line count mismatch";
     return false;
   }
   long result_body_count = 0;
