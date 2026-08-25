@@ -17,6 +17,7 @@ phase1b_product_old_output/
 phase1b_product_new_output/
 phase2_product_output/
 phase*_output/
+full_legacy_parity_output/
 tree_comparison.json
 catpart_comparison.json
 catproduct_comparison.json

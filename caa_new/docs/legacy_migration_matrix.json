@@ -1,0 +1,319 @@
+﻿[
+    {
+        "capability_id":  "native_feature.hole_payload",
+        "legacy_functions":  [
+                                 "NativeHoleDecoder",
+                                 "CATIAHole",
+                                 "CATHoleDefs"
+                             ],
+        "legacy_headers":  [
+                               "CATIAHole.h",
+                               "CATHoleDefs.h"
+                           ],
+        "legacy_frameworks":  [
+                                  "MecModInterfaces",
+                                  "PartInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "features.jsonl",
+                               "native_features.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "partdesign_holes_updated.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaNativeFeatureExtractors",
+        "new_outputs":  [
+                            "semantic_facets.jsonl",
+                            "native_features.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "New code preserves native feature family/status, but dedicated Hole typed payload fields are not emitted yet."
+    },
+    {
+        "capability_id":  "native_feature.pad_pocket_payload",
+        "legacy_functions":  [
+                                 "NativePadDecoder",
+                                 "NativePocketDecoder",
+                                 "CATIAPad",
+                                 "CATIAPocket"
+                             ],
+        "legacy_headers":  [
+                               "CATIAPad.h",
+                               "CATIAPocket.h"
+                           ],
+        "legacy_frameworks":  [
+                                  "MecModInterfaces",
+                                  "PartInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "features.jsonl",
+                               "native_features.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "partdesign_holes_updated.CATPart",
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaNativeFeatureExtractors",
+        "new_outputs":  [
+                            "semantic_facets.jsonl",
+                            "native_features.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "Pad/Pocket family detection exists only as semantic facet evidence; typed payload parity is still missing."
+    },
+    {
+        "capability_id":  "knowledgeware.parameters",
+        "legacy_functions":  [
+                                 "CATICkeParm",
+                                 "CATICkeType",
+                                 "CATICkeInst",
+                                 "KnowledgewareStringParameterDecoder",
+                                 "ParameterRecordBuilder"
+                             ],
+        "legacy_headers":  [
+                               "CATICkeParm.h",
+                               "CATICkeType.h",
+                               "CATICkeInst.h"
+                           ],
+        "legacy_frameworks":  [
+                                  "KnowledgeInterfaces",
+                                  "KnowledgeModeler"
+                              ],
+        "legacy_outputs":  [
+                               "parameters.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaPropertyExtractors",
+        "new_outputs":  [
+                            "property_facts.jsonl",
+                            "parameters.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "Generic property facts are emitted, but CATICke typed parameter normalization is not migrated."
+    },
+    {
+        "capability_id":  "mechanical.mass_properties",
+        "legacy_functions":  "CATIInertia",
+        "legacy_headers":  "CATIInertia.h",
+        "legacy_frameworks":  [
+                                  "SpaceAnalysisInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "parameters.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaPropertyExtractors",
+        "new_outputs":  [
+                            "property_facts.jsonl"
+                        ],
+        "implementation_status":  "not_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "No CATIInertia-backed density/volume/area/mass/COG/inertia matrix output is present in caa_new."
+    },
+    {
+        "capability_id":  "topology.complete_brep_graph",
+        "legacy_functions":  [
+                                 "CATBoundaryIterator",
+                                 "CellNeighbours",
+                                 "AppendFaceWires",
+                                 "FinalizeBrepTopologyGraph"
+                             ],
+        "legacy_headers":  "CATBoundaryIterator.h",
+        "legacy_frameworks":  [
+                                  "GMModelInterfaces",
+                                  "MecModInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "native_topology.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "partdesign_holes_updated.CATPart",
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaTopologyExtractor",
+        "new_outputs":  [
+                            "topology_entities.jsonl",
+                            "topology_relations.jsonl",
+                            "native_topology.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "Body/Face/Edge/Vertex summaries exist, but Wire/Coedge previous-next and adjacency parity are not complete."
+    },
+    {
+        "capability_id":  "geometry.exact_surfaces_curves",
+        "legacy_functions":  [
+                                 "NURBS",
+                                 "CATSurface",
+                                 "CATCurve"
+                             ],
+        "legacy_headers":  [
+                               "CATSurface.h",
+                               "CATCurve.h"
+                           ],
+        "legacy_frameworks":  [
+                                  "GeometricObjects",
+                                  "GMModelInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "native_topology.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaGeometryExtractor",
+        "new_outputs":  [
+                            "geometry_entities.jsonl"
+                        ],
+        "implementation_status":  "not_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "Exact analytic/NURBS curve and surface parameters are not emitted by caa_new."
+    },
+    {
+        "capability_id":  "tessellation.triangle_payload",
+        "legacy_functions":  "native_mesh_triangles",
+        "legacy_headers":  {
+
+                           },
+        "legacy_frameworks":  [
+                                  "Tessellation",
+                                  "Visualization"
+                              ],
+        "legacy_outputs":  [
+                               "native_mesh_face_map.jsonl",
+                               "native_mesh_triangles.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "partdesign_holes_updated.CATPart",
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaTessellationExtractor",
+        "new_outputs":  [
+                            "geometry_entities.jsonl",
+                            "native_mesh_face_map.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "Face-to-mesh ranges exist, but triangle coordinate records are not migrated."
+    },
+    {
+        "capability_id":  "resultout.cells_and_links",
+        "legacy_functions":  [
+                                 "native_feature_result_cells",
+                                 "native_feature_topology_links"
+                             ],
+        "legacy_headers":  [
+                               "CATIShapeFeatureBody.h",
+                               "CATBoundaryIterator.h"
+                           ],
+        "legacy_frameworks":  [
+                                  "MecModInterfaces",
+                                  "GMModelInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "native_feature_results.jsonl",
+                               "native_feature_result_cells.jsonl",
+                               "native_feature_topology_links.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "partdesign_holes_updated.CATPart",
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaTopologyExtractor",
+        "new_outputs":  [
+                            "native_feature_results.jsonl",
+                            "native_feature_result_cells.jsonl",
+                            "native_feature_topology_links.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "ResultOUT body summaries exist, but cell records and final-face candidate links are still empty."
+    },
+    {
+        "capability_id":  "fta.component_semantics",
+        "legacy_functions":  [
+                                 "AppendFtaSemanticRecord",
+                                 "CATITPS",
+                                 "CATITPSSemanticValidity",
+                                 "CATITPSText",
+                                 "CATITPSTextContent"
+                             ],
+        "legacy_headers":  [
+                               "CATITPS.h",
+                               "CATITPSSemanticValidity.h",
+                               "CATITPSText.h",
+                               "CATITPSTextContent.h"
+                           ],
+        "legacy_frameworks":  [
+                                  "CATTPSInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "fta_sets.jsonl",
+                               "fta_semantics.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "kuang.CATPart"
+                            ],
+        "new_module":  "src\\caa\\CaaFtaExtractor",
+        "new_outputs":  [
+                            "pmi_entities.jsonl",
+                            "fta_sets.jsonl",
+                            "fta_semantics.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "TPS set counts exist, but component-level semantic fields are not emitted."
+    },
+    {
+        "capability_id":  "product.recursive_linked_catproduct",
+        "legacy_functions":  "CATProduct",
+        "legacy_headers":  "CATIProduct.h",
+        "legacy_frameworks":  [
+                                  "ProductStructure",
+                                  "ProductStructureInterfaces"
+                              ],
+        "legacy_outputs":  [
+                               "features.jsonl",
+                               "relations.jsonl"
+                           ],
+        "legacy_fixtures":  [
+                                "GT4.1000.D.500.000 A.CATProduct"
+                            ],
+        "new_module":  "src\\caa\\CaaLinkedDocumentResolver",
+        "new_outputs":  [
+                            "product_references.jsonl",
+                            "product_occurrences.jsonl",
+                            "document_links.jsonl"
+                        ],
+        "implementation_status":  "partially_migrated",
+        "compile_status":  "compile_verified",
+        "fixture_status":  "fixture_verified",
+        "semantic_parity_status":  "not_passed",
+        "reason":  "Loaded CATPart definitions are cached and projected; recursive linked CATProduct definitions and broken-link recovery remain open."
+    }
+]

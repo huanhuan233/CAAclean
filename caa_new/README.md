@@ -6,7 +6,7 @@ Current legacy migration status is tracked in `docs\MIGRATION_STATUS.md`.
 
 ## Build
 
-Use the R21 x86 tools from this directory:
+Use the R21 x64 tools from this directory:
 
 ```bat
 cd /d H:\PXY2\3Djiexi\freecadCAA\caa_new
@@ -52,6 +52,8 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - New/old CATPart tree comparison with `tools\compare_catpart_tree.ps1`.
 - New/old CATProduct tree comparison with `tools\compare_catproduct_tree.ps1`.
 - Phase 7 regression wrapper with `tools\validate_phase7_parity.ps1`.
+- Legacy migration audit matrix with `tools\audit_legacy_migration.ps1`.
+- Full legacy parity gate with `tools\validate_full_legacy_parity.ps1`; this gate fails while old non-empty semantic artifacts still map to missing or empty `caa_new` artifacts.
 - API-independent VS2008 core tests.
 
 ## Not Implemented Yet
