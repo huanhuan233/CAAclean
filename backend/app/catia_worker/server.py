@@ -48,6 +48,7 @@ class CatiaWorkerServerSettings(BaseSettings):
     job_timeout_seconds: int = Field(default=1800, validation_alias=AliasChoices("CATIA_WORKER_JOB_TIMEOUT", "job_timeout_seconds"))
     caa_rade_root: str = Field(default="", validation_alias=AliasChoices("CAA_RADE_ROOT", "caa_rade_root"))
     caa_prereq_root: str = Field(default="", validation_alias=AliasChoices("CAA_PREREQ_ROOT", "caa_prereq_root"))
+    caa_run_script: str = Field(default="run_r21_x86.bat", validation_alias=AliasChoices("CATIA_WORKER_CAA_RUN_SCRIPT", "caa_run_script"))
 
 
 @dataclass
@@ -254,9 +255,10 @@ async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServ
     if not settings.caa_rade_root or not settings.caa_prereq_root:
         raise WorkerExecutionError("catia_worker_unavailable", "running_caa", "Worker 未配置 CAA/RADE 环境")
     _set_stage(job, settings, "running_caa", 20)
+    caa_run_script = Path(settings.caa_run_script).name
     await _run_process(
         [
-            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x64_host_intel_a.bat"),
+            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / caa_run_script),
             "--input", str(source), "--output", str(native), "--read-only",
         ],
         job,

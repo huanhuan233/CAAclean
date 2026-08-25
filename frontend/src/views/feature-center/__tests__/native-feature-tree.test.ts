@@ -60,6 +60,34 @@ test('开启系统节点后保留原始类型且不改变业务节点顺序', ()
   );
 });
 
+test('参数记录归并到所属特征，不参与业务树父子嵌套', () => {
+  const source = buildNativeFeatureTree([
+    { feature_id: 'F1', traversal_index: 1, startup_type: 'MechanicalPart', display_name: 'Part1' },
+    { feature_id: 'F2', parent_id: 'F1', traversal_index: 2, startup_type: 'Pocket', display_name: 'Pocket.1' },
+    { feature_id: 'G1', parent_id: 'F2', traversal_index: 3, startup_type: 'GSMTool', display_name: '特征属性' },
+    {
+      feature_id: 'P1',
+      parent_id: 'G1',
+      traversal_index: 4,
+      startup_type: 'String',
+      display_name: '底面标识',
+      parameter: { value: '16333' }
+    },
+    {
+      feature_id: 'P2',
+      parent_id: 'P1',
+      traversal_index: 5,
+      startup_type: 'String',
+      display_name: '侧壁类型',
+      parameter: { value: '开角' }
+    }
+  ], 'source.CATPart');
+  const nodes = flattenFeatureTree(source);
+  assert.deepEqual(nodes.map(node => node.id), ['source:source.CATPart', 'F1', 'F2', 'P1', 'P2']);
+  assert.deepEqual(nodes.find(node => node.id === 'F2')?.children.map(node => node.id), ['P1', 'P2']);
+  assert.deepEqual(nodes.find(node => node.id === 'F2')?.parameters, { 底面标识: '16333', 侧壁类型: '开角' });
+});
+
 test('搜索名称、类型和稳定编号时保留祖先并返回自动展开键', () => {
   const source = buildNativeFeatureTree(records, 'source.CATPart');
   const byName = projectFeatureTree(source, { showSystem: false, query: '凹槽' });

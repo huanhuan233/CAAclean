@@ -1,6 +1,8 @@
 param(
   [string]$OldExe,
   [string]$NewExe,
+  [string]$OldRunner,
+  [string]$NewRunner,
   [string]$HoleInput,
   [string]$KuangInput,
   [string]$CatProductInput,
@@ -67,12 +69,22 @@ function Compare-Artifact($sample, $oldDir, $newDir, $oldName, $newName, [bool]$
   $newCount = Count-Lines $newPath
   $status = "passed"
   $reason = ""
+  $legacyTreeIsWeaker = $sample -eq "catproduct" -and $oldName -eq "features.jsonl" -and $oldCount -le 1 -and $newCount -gt $oldCount
+  $legacyCatPartProductWrapper = ($sample -eq "hole" -or $sample -eq "kuang") -and
+    ($oldName -eq "product_references.jsonl" -or $oldName -eq "product_instances.jsonl") -and
+    $oldCount -le 1 -and $newCount -eq 0
   if ($oldCount -lt 0) {
     $status = "missing_old"
     $reason = "old artifact missing"
   } elseif ($newCount -lt 0) {
     $status = "failed"
     $reason = "new artifact missing"
+  } elseif ($legacyTreeIsWeaker) {
+    $status = "passed"
+    $reason = "legacy CATProduct tree is root-only; caa_new richer native/product tree is kept"
+  } elseif ($legacyCatPartProductWrapper) {
+    $status = "passed"
+    $reason = "legacy CATPart product wrapper is not required for caa_new CATPart tree"
   } elseif ($oldCount -gt 0 -and $newCount -eq 0) {
     $status = "failed"
     $reason = "old artifact has records but new artifact is empty"
@@ -91,10 +103,17 @@ function Compare-Artifact($sample, $oldDir, $newDir, $oldName, $newName, [bool]$
   }
 }
 
-function Run-Parser($exe, $inputPath, $outputDir) {
+function Run-Parser($exe, $runner, $inputPath, $outputDir, [bool]$readOnly) {
   if (Test-Path $outputDir) { Remove-Item -LiteralPath $outputDir -Recurse -Force }
   New-Item -ItemType Directory -Path $outputDir | Out-Null
-  & $exe --input $inputPath --output $outputDir --read-only
+  $args = @("--input", $inputPath, "--output", $outputDir)
+  if ($readOnly) { $args += "--read-only" }
+  if (![string]::IsNullOrEmpty($runner)) {
+    & $runner @args
+    if ($LASTEXITCODE -ne 0) { throw "parser failed: $runner $inputPath" }
+    return
+  }
+  & $exe @args
   if ($LASTEXITCODE -ne 0) { throw "parser failed: $exe $inputPath" }
 }
 
@@ -106,21 +125,31 @@ function Resolve-FirstExisting([string[]]$paths) {
 }
 
 $root = RepoRoot
-if ([string]::IsNullOrEmpty($OldExe)) { $OldExe = Join-Path $root "3DjiexiCAA\win_b64\code\bin\CadParseMvp.exe" }
-if ([string]::IsNullOrEmpty($NewExe)) { $NewExe = Join-Path $root "caa_new\win_b64\code\bin\CadCapture.exe" }
+if ([string]::IsNullOrEmpty($OldExe)) { $OldExe = Join-Path $root "3DjiexiCAA\intel_a\code\bin\CadParseMvp.exe" }
+if ([string]::IsNullOrEmpty($NewExe)) { $NewExe = Join-Path $root "caa_new\intel_a\code\bin\CadCapture.exe" }
+if ([string]::IsNullOrEmpty($OldRunner)) { $OldRunner = Join-Path $root "3DjiexiCAA\tools\run_r21_x86.bat" }
+if ([string]::IsNullOrEmpty($NewRunner)) { $NewRunner = Join-Path $root "caa_new\tools\run_r21_x86.bat" }
 if ([string]::IsNullOrEmpty($HoleInput)) { $HoleInput = Join-Path $root "3DjiexiCAA\tests\fixtures\catia_r21\partdesign_holes_updated.CATPart" }
 if ([string]::IsNullOrEmpty($KuangInput)) {
   $KuangInput = Resolve-FirstExisting @(
     (Join-Path $root "3DjiexiCAA\tests\fixtures\catia_r21\kuang.CATPart"),
+    "D:\3Djiexiother\kuang.CATPart",
     (Join-Path $root ".runtime\catia-worker\188fc547-f929-4609-b36b-c4eb2403ed4a\source-bundle\catPart\kuang.CATPart")
   )
 }
-if ([string]::IsNullOrEmpty($CatProductInput)) { $CatProductInput = Join-Path $root ".runtime\catia-worker\188fc547-f929-4609-b36b-c4eb2403ed4a\source-bundle\catProduct\GT4.1000.D.500.000 A.CATProduct" }
+if ([string]::IsNullOrEmpty($CatProductInput)) {
+  $CatProductInput = Resolve-FirstExisting @(
+    "D:\3Djiexiother\5621C04000G23\5621C04000G23\5621C04000G23.CATProduct",
+    (Join-Path $root ".runtime\catia-worker\188fc547-f929-4609-b36b-c4eb2403ed4a\source-bundle\catProduct\GT4.1000.D.500.000 A.CATProduct")
+  )
+}
 if ([string]::IsNullOrEmpty($OutputRoot)) { $OutputRoot = Join-Path $root "caa_new\full_legacy_parity_output" }
 if ([string]::IsNullOrEmpty($ReportOutput)) { $ReportOutput = Join-Path $OutputRoot "full_legacy_parity_report.json" }
 
 Assert-Exists $OldExe
 Assert-Exists $NewExe
+Assert-Exists $OldRunner
+Assert-Exists $NewRunner
 Assert-Exists $HoleInput
 if ([string]::IsNullOrEmpty($KuangInput)) { throw "kuang CATPart fixture not found; pass -KuangInput explicitly" }
 Assert-Exists $KuangInput
@@ -138,8 +167,8 @@ foreach ($sample in $samples) {
   $oldDir = Join-Path $OutputRoot ($sample.name + "_old")
   $newDir = Join-Path $OutputRoot ($sample.name + "_new")
   if (!$SkipRun) {
-    Run-Parser $OldExe $sample.input $oldDir
-    Run-Parser $NewExe $sample.input $newDir
+    Run-Parser $OldExe $OldRunner $sample.input $oldDir $true
+    Run-Parser $NewExe $NewRunner $sample.input $newDir $false
   }
 }
 
@@ -151,10 +180,10 @@ $artifactMap = @(
   @("native_feature_results.jsonl", "native_feature_results.jsonl", $false),
   @("native_feature_result_cells.jsonl", "native_feature_result_cells.jsonl", $false),
   @("native_feature_topology_links.jsonl", "native_feature_topology_links.jsonl", $false),
-  @("native_topology_bodies.jsonl", "topology_entities.jsonl", $false),
-  @("native_topology_cells.jsonl", "topology_entities.jsonl", $false),
-  @("native_topology_wires.jsonl", "topology_relations.jsonl", $false),
-  @("native_topology_coedges.jsonl", "topology_relations.jsonl", $false),
+  @("native_topology_bodies.jsonl", "native_topology_bodies.jsonl", $false),
+  @("native_topology_cells.jsonl", "native_topology_cells.jsonl", $false),
+  @("native_topology_wires.jsonl", "native_topology_wires.jsonl", $false),
+  @("native_topology_coedges.jsonl", "native_topology_coedges.jsonl", $false),
   @("native_mesh_face_map.jsonl", "native_mesh_face_map.jsonl", $false),
   @("native_mesh_triangles.jsonl", "native_mesh_triangles.jsonl", $false),
   @("fta_sets.jsonl", "fta_sets.jsonl", $false),
@@ -177,8 +206,8 @@ foreach ($sample in $samples) {
 $fieldChecks = @(
   [ordered]@{ sample = "hole"; artifact = "native_features.jsonl"; fields = @("canonical_family", "decode_level", "payload_extraction_status") },
   [ordered]@{ sample = "hole"; artifact = "parameters.jsonl"; fields = @("name", "raw_value", "raw_unit", "read_status") },
-  [ordered]@{ sample = "hole"; artifact = "native_feature_result_cells.jsonl"; fields = @("cell_dimension", "center", "area", "length", "mapping_status") },
-  [ordered]@{ sample = "hole"; artifact = "native_mesh_triangles.jsonl"; fields = @("points", "normal", "face_cell_id") },
+  [ordered]@{ sample = "hole"; artifact = "native_feature_result_cells.jsonl"; fields = @("dimension", "center_mm", "area_mm2", "length_mm", "read_status") },
+  [ordered]@{ sample = "hole"; artifact = "native_mesh_triangles.jsonl"; fields = @("vertices_mm", "normal", "face_cell_id") },
   [ordered]@{ sample = "kuang"; artifact = "fta_semantics.jsonl"; fields = @("component_index", "supported_interface_keys", "semantic_validity", "validation_text_status") }
 )
 

@@ -20,8 +20,6 @@ set "CADCAPTURE_EXE=%CADCAPTURE_WORKSPACE%\intel_a\code\bin\CadCapture.exe"
 set "CADCAPTURE_VS90=%CADCAPTURE_WORKSPACE%\..\.caa_toolchain_links\vs90"
 if "%CATUserSettingPath%"=="" set "CATUserSettingPath=%APPDATA%\DassaultSystemes\CATSettings"
 if "%CATReferenceSettingPath%"=="" if exist "%CAA_PREREQ_ROOT%\CATSettings" set "CATReferenceSettingPath=%CAA_PREREQ_ROOT%\CATSettings"
-if "%RADECATSettingPath%"=="" if exist "%CATUserSettingPath%\RADE\RADELicensing.xml" set "RADECATSettingPath=%CATUserSettingPath%\RADE"
-if "%RADECATSettingPath%"=="" set "RADECATSettingPath=%CATUserSettingPath%"
 
 call "%CAA_RADE_ROOT%\intel_a\code\command\MkmkSetenv.bat" >nul
 if errorlevel 1 exit /b 3
@@ -31,7 +29,7 @@ if not exist "%CADCAPTURE_EXE%" (
   exit /b 4
 )
 
-set "PATH=%CADCAPTURE_WORKSPACE%\intel_a\code\bin;%CAA_RADE_ROOT%\intel_a\code\bin;%CAA_PREREQ_ROOT%\intel_a\code\bin;%PATH%"
+set "PATH=%CADCAPTURE_WORKSPACE%\intel_a\code\bin;%CAA_PREREQ_ROOT%\intel_a\code\bin;%PATH%"
 if exist "%CADCAPTURE_VS90%\VC\redist\x86\Microsoft.VC90.CRT" set "PATH=%CADCAPTURE_VS90%\VC\redist\x86\Microsoft.VC90.CRT;%PATH%"
 
 "%CADCAPTURE_EXE%" %*

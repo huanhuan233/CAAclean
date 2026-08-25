@@ -13,6 +13,7 @@ import type { DetailGroup } from './modules/detail-panel';
 import CadViewerControls from './modules/CadViewerControls.vue';
 import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
+import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
@@ -380,13 +381,6 @@ const selectedNativeTreeParent = computed(() => {
   const parentId = selectedNativeTreeNode.value?.parentId;
   return parentId ? (nativeTreeNodeIndex.value.get(parentId) ?? null) : null;
 });
-const selectedNativeParameters = computed(() =>
-  Object.entries(
-    selectedNativeFeature.value?.native_feature_parameters ||
-      selectedNativeFeature.value?.attributes ||
-      {}
-  )
-);
 const selectedNativeParameterFamily = computed(() => {
   const payload = selectedNativeFeature.value?.native_feature_parameters as Record<string, unknown> | undefined;
   return String(payload?.family || selectedNativeFeature.value?.payload_type || '');
@@ -489,11 +483,6 @@ const catiaPropertyTitle = computed(() => {
   return `${node.displayName}${node.nativeType ? ` · ${node.nativeType}` : ''}`;
 });
 const catiaPropertyTabs = computed(() => buildCatiaPropertyTabs(catiaPropertyNode.value));
-
-// 用途：模板只查询已计算的业务分组，BOM 的展开或隐藏不会改变右侧属性语义。
-function hasDetailGroup(group: DetailGroup) {
-  return detailLayout.value.groups.includes(group);
-}
 
 // 用途：详情区只格式化真实解析值；对象和数组保留 JSON 结构，不补默认参数。
 function formatNativeAttribute(value: unknown) {
@@ -1564,6 +1553,15 @@ function toggleDetails() {
   void nextTick(resizeViewer);
 }
 
+async function copyDetailValue(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    window.$message?.success('已复制');
+  } catch {
+    window.$message?.error('复制失败');
+  }
+}
+
 function openProcessPanel() {
   processPanelOpen.value = true;
   processGenerating.value = true;
@@ -2014,210 +2012,35 @@ onBeforeUnmount(() => {
       </section>
 
       <aside class="details" :class="{ open: detailsOpen }">
-        <div class="panel-heading">
-          <strong>对象详情</strong>
-          <button type="button" @click="toggleDetails">×</button>
-        </div>
-        <div class="details-scroll">
-          <div v-if="contract" class="object-card">
-            <span class="object-icon">◇</span>
-            <div>
-              <strong>{{ selectedTitle }}</strong>
-              <small>{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</small>
-            </div>
-          </div>
-          <section v-if="hasDetailGroup('part')" class="detail-section">
-            <h4>零件属性</h4>
-            <dl>
-              <dt>零件号</dt>
-              <dd>{{ contract?.summary.part_number || detailNode?.part_number || '—' }}</dd>
-              <dt>零件名称</dt>
-              <dd>{{ contract?.summary.part_name || detailNode?.name || '—' }}</dd>
-              <dt>文件类型</dt>
-              <dd>{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : sourceFormat === 'CATPART' ? 'CATPart' : 'STEP' }}</dd>
-              <dt>版本</dt>
-              <dd>{{ detailNode?.version || contract?.summary.version || '—' }}</dd>
-              <template v-if="detailNode?.material || contract?.summary.material">
-                <dt>材料</dt>
-                <dd>{{ detailNode?.material || contract?.summary.material }}</dd>
-              </template>
-            </dl>
-          </section>
-          <section v-if="hasDetailGroup('assembly_instance') && detailNode" class="detail-section">
-            <h4>装配实例属性</h4>
-            <dl>
-              <dt>实例标识</dt>
-              <dd>{{ detailNode.instance_name || '—' }}</dd>
-              <dt>所属组件</dt>
-              <dd>{{ detailParentNode?.name || '—' }}</dd>
-              <dt>数量</dt>
-              <dd>{{ detailNode.quantity }}</dd>
-              <dt>装配层级</dt>
-              <dd>{{ detailNode.level }}</dd>
-              <dt>装配路径</dt>
-              <dd>{{ detailNode.assembly_path || '—' }}</dd>
-            </dl>
-          </section>
-          <section v-if="hasDetailGroup('assembly') && detailNode" class="detail-section">
-            <h4>装配属性</h4>
-            <dl>
-              <dt>装配号</dt>
-              <dd>{{ detailNode.part_number || '—' }}</dd>
-              <dt>装配名称</dt>
-              <dd>{{ detailNode.name }}</dd>
-              <dt>类型</dt>
-              <dd>{{ detailNode.node_type === 'subassembly' ? '子装配' : '总装' }}</dd>
-              <dt>子项数量</dt>
-              <dd>{{ detailNode.children.length }}</dd>
-              <dt>装配层级</dt>
-              <dd>{{ detailNode.level }}</dd>
-            </dl>
-          </section>
-          <section v-if="hasDetailGroup('assembly_statistics') && detailNode" class="detail-section">
-            <h4>装配统计</h4>
-            <dl>
-              <dt>直接子项</dt>
-              <dd>{{ detailNode.children.length }}</dd>
-              <dt>Solid</dt>
-              <dd>{{ detailNode.solid_count || '—' }}</dd>
-              <dt>体积</dt>
-              <dd>{{ detailNode.volume == null ? '—' : `${detailNode.volume} mm³` }}</dd>
-            </dl>
-          </section>
-          <section v-if="hasDetailGroup('source')" class="detail-section">
-            <h4>{{ isCatiaNativeSource(sourceFormat) ? '来源与特征' : '来源与识别结果' }}</h4>
-            <dl>
-              <dt>源文件</dt>
-              <dd>{{ contract?.summary.source_file_name || '—' }}</dd>
-              <template v-if="isCatiaNativeSource(sourceFormat)">
-                <dt>原生特征</dt>
-                <dd>{{ contract?.native_semantics?.available ? contract.summary.native_feature_count : '不可用' }}</dd>
-              </template>
-              <dt>识别特征</dt>
-              <dd>{{ contract?.summary.recognized_feature_count ?? 0 }}</dd>
-              <dt>Feature–Face 映射</dt>
-              <dd :class="mappingAvailable ? 'available' : 'muted'">{{ mappingAvailable ? '可用' : '不可用' }}</dd>
-            </dl>
-          </section>
-          <section v-if="primarySelection" class="detail-section">
-            <h4>选择映射证据</h4>
-            <dl>
-              <dt>主对象</dt>
-              <dd>{{ primarySelection.kind }} / {{ primarySelection.id }}</dd>
-              <dt>映射状态</dt>
-              <dd>{{ selectionContext.mappingStatus }}</dd>
-              <dt>Authority</dt>
-              <dd>{{ selectionContext.mappingAuthority || 'unavailable' }}</dd>
-              <dt>Primitive</dt>
-              <dd>{{ selectionContext.primitiveIds.length }}</dd>
-              <dt>Render Face</dt>
-              <dd>{{ selectionContext.renderFaceIds.join(', ') || '—' }}</dd>
-              <dt>关联 Feature</dt>
-              <dd>{{ selectionContext.recognizedFeatureIds.join(', ') || '—' }}</dd>
-            </dl>
-            <p v-if="selectionContext.edgeIds.length || selectionContext.vertexIds.length" class="muted">
-              当前轻量化资产未提供独立边线/顶点渲染，已高亮可追溯的相邻 Face。
-            </p>
-            <p v-if="selectionContext.diagnostics.length" class="muted">
-              {{ selectionContext.diagnostics.join('; ') }}
-            </p>
-          </section>
-          <section v-if="hasDetailGroup('positioning') && detailNode" class="detail-section">
-            <h4>装配定位</h4>
-            <dl v-if="detailNode.instance_name || detailNode.constraint_status || detailNode.constraint_count != null">
-              <dt>实例标识</dt>
-              <dd>{{ detailNode.instance_name || '—' }}</dd>
-              <dt>约束状态</dt>
-              <dd>{{ detailNode.constraint_status || '未知' }}</dd>
-              <dt v-if="detailNode.constraint_count != null">装配约束</dt>
-              <dd v-if="detailNode.constraint_count != null">{{ detailNode.constraint_count }}</dd>
-            </dl>
-            <p v-else class="muted">当前实例未提供定位数据</p>
-          </section>
-          <section v-if="hasDetailGroup('feature') && selectedNativeFeature" class="detail-section">
-            <h4>特征详情</h4>
-            <dl>
-              <dt>名称</dt>
-              <dd>{{ selectedNativeTreeNode?.displayName || selectedNativeFeature.feature_id }}</dd>
-              <dt>原生类型</dt>
-              <dd>{{ selectedNativeTreeNode?.nativeType || '未提供' }}</dd>
-              <dt>所属容器</dt>
-              <dd>{{ selectedNativeTreeParent?.displayName || '未提供' }}</dd>
-              <dt>建模顺序</dt>
-              <dd>{{ selectedNativeFeature.traversal_index ?? '未提供' }}</dd>
-              <dt>更新状态</dt>
-              <dd>{{ selectedNativeFeature.update_status || '未提供' }}</dd>
-              <dt>Decoder</dt>
-              <dd>{{ selectedNativeFeature.decoder_status || selectedNativeFeature.decode_status || '未提供' }}</dd>
-              <dt>Payload</dt>
-              <dd>{{ selectedNativeFeature.payload_extraction_status || selectedNativeFeature.decode_level || '未提供' }}</dd>
-              <dt>参数族</dt>
-              <dd>{{ selectedNativeParameterFamily || '未提供' }}</dd>
-            </dl>
-            <h5>特征参数</h5>
-            <dl v-if="selectedNativeParameters.length" class="parameter-list">
-              <template v-for="entry in selectedNativeParameters" :key="entry[0]">
-                <dt>{{ entry[0] }}</dt>
-                <dd>{{ formatNativeAttribute(entry[1]) }}</dd>
-              </template>
-            </dl>
-            <p v-else class="muted">暂无可用参数</p>
-            <h5>关联几何</h5>
-            <div v-if="selectedNativeFaces.length" class="face-links">
-              <button v-for="faceId in selectedNativeFaces" :key="faceId" type="button" @click="openNativeFace(faceId)">
-                {{ faceId }}
-              </button>
-            </div>
-            <p v-else class="muted">未建立关联面</p>
-          </section>
-          <section v-if="hasDetailGroup('feature') && selectedFeature" class="detail-section">
-            <h4>特征属性</h4>
-            <dl>
-              <dt>识别类型</dt>
-              <dd>{{ selectedFeature.family }} / {{ selectedFeature.subtype }}</dd>
-              <dt>复核状态</dt>
-              <dd>{{ selectedFeature.review_state }}</dd>
-              <dt>关联面</dt>
-              <dd>{{ selectedFeature.geometry_refs.face_ids.join(', ') || '—' }}</dd>
-              <dt>原生来源</dt>
-              <dd>{{ selectedFeature.native_feature_ids.join(', ') || '—' }}</dd>
-            </dl>
-          </section>
-          <section v-if="hasDetailGroup('geometry') && selectedFace" class="detail-section">
-            <h4>几何属性</h4>
-            <dl>
-              <dt>Face ID</dt>
-              <dd>{{ selectedFace.face_id }}</dd>
-              <dt>曲面类型</dt>
-              <dd>{{ faceTypeLabel(selectedFace.surface_type) }}</dd>
-              <dt>面积</dt>
-              <dd>{{ selectedFace.area == null ? '—' : `${selectedFace.area} mm²` }}</dd>
-              <dt>关联特征</dt>
-              <dd>{{ faceFeatureIds.join(', ') || '无' }}</dd>
-            </dl>
-          </section>
-          <section v-if="hasDetailGroup('operations')" class="detail-section actions">
-            <h4>快捷操作</h4>
-            <button type="button" @click="applyVisualState">高亮</button>
-            <button type="button" @click="isolated = !isolated">隔离</button>
-            <button type="button" @click="transparent = !transparent">透明</button>
-            <button type="button" disabled>设为测量对象</button>
-            <button
-              v-if="hasDetailGroup('source')"
-              type="button"
-              class="feature-link"
-              :disabled="!detailLayout.featureLinkEnabled"
-              @click="openFeatureLinks"
-            >
-              {{ detailLayout.featureLinkLabel }}
-            </button>
-          </section>
-          <ElCollapse v-if="hasDetailGroup('topology')" class="advanced">
-            <ElCollapseItem title="高级拓扑信息" name="topology">
-              <pre>{{ selectedFace || selectedNativeFeature || selectedFeature || detailNode || '—' }}</pre>
-            </ElCollapseItem>
-          </ElCollapse>
-        </div>
+        <ObjectDetailPanel
+          :contract="contract"
+          :source-format="sourceFormat"
+          :selected-title="selectedTitle"
+          :detail-layout="detailLayout"
+          :primary-selection="primarySelection"
+          :selection-context="selectionContext"
+          :detail-node="detailNode"
+          :detail-parent-node="detailParentNode"
+          :selected-native-feature="selectedNativeFeature"
+          :selected-native-tree-node="selectedNativeTreeNode"
+          :selected-native-tree-parent="selectedNativeTreeParent"
+          :selected-native-parameter-family="selectedNativeParameterFamily"
+          :selected-native-faces="selectedNativeFaces"
+          :selected-feature="selectedFeature"
+          :selected-face="selectedFace"
+          :face-feature-ids="faceFeatureIds"
+          :selected-measurements="selectedMeasurements"
+          :mapping-available="mappingAvailable"
+          :isolated="isolated"
+          :transparent="transparent"
+          @close="toggleDetails"
+          @copy="copyDetailValue"
+          @highlight="applyVisualState"
+          @open-feature-links="openFeatureLinks"
+          @open-native-face="openNativeFace"
+          @toggle-isolated="isolated = !isolated"
+          @toggle-transparent="transparent = !transparent"
+        />
       </aside>
     </main>
 
@@ -2572,12 +2395,12 @@ button:disabled {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 330px;
+  grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) clamp(360px, 28vw, 420px);
   gap: 10px;
   transition: grid-template-columns 0.2s ease;
 }
 .workspace.bom-collapsed {
-  grid-template-columns: 56px minmax(0, 1fr) 330px;
+  grid-template-columns: 56px minmax(0, 1fr) clamp(360px, 28vw, 420px);
 }
 .workspace.details-collapsed {
   grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 0;
@@ -2603,6 +2426,16 @@ button:disabled {
   align-items: center;
   padding: 10px 5px;
   gap: 10px;
+}
+.navigation.collapsed .panel-heading,
+.navigation.collapsed .semantic-tabs,
+.navigation.collapsed .panel-scroll,
+.navigation.collapsed .panel-hint,
+.navigation.collapsed .navigation-resizer {
+  display: none;
+}
+.navigation.collapsed .rail-button {
+  flex: 0 0 42px;
 }
 .panel-heading {
   display: flex;
@@ -2633,8 +2466,7 @@ button:disabled {
   border-bottom-color: var(--el-color-primary);
   color: var(--el-color-primary);
 }
-.panel-scroll,
-.details-scroll {
+.panel-scroll {
   min-height: 0;
   flex: 1;
   overflow: auto;
@@ -2805,7 +2637,7 @@ button:disabled {
 }
 .viewer-shell {
   position: relative;
-  background: #f7f8fb;
+  background: var(--el-fill-color-light);
 }
 .viewer {
   position: absolute;
@@ -2851,51 +2683,6 @@ button:disabled {
 .details-collapsed .details {
   pointer-events: none;
   opacity: 0;
-}
-.object-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  padding: 12px;
-}
-.object-icon {
-  color: var(--el-color-primary);
-  font-size: 30px;
-}
-.object-card div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-.object-card small {
-  color: var(--el-text-color-secondary);
-}
-.detail-section {
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  padding: 8px 0 12px;
-}
-.detail-section h4 {
-  margin: 7px 0 10px;
-}
-.detail-section h5 {
-  margin: 13px 0 8px;
-  font-size: 13px;
-}
-.detail-section dl {
-  display: grid;
-  grid-template-columns: 95px 1fr;
-  gap: 8px;
-  margin: 0;
-  font-size: 13px;
-}
-.detail-section dt {
-  color: var(--el-text-color-secondary);
-}
-.detail-section dd {
-  margin: 0;
-  overflow-wrap: anywhere;
 }
 :global(.catia-property-dialog .el-dialog__body) {
   padding-top: 8px;
@@ -2965,46 +2752,15 @@ button:disabled {
   font-size: 12px;
   margin: 2px 0 0;
 }
-.parameter-list dd {
-  white-space: pre-wrap;
-}
-.face-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.face-links button {
-  font-size: 12px;
-  padding: 4px 7px;
-}
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.actions h4 {
-  width: 100%;
-}
-.actions .feature-link {
-  width: 100%;
-  margin-top: 2px;
-  text-align: left;
-}
-.advanced pre {
-  max-height: 230px;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-size: 11px;
-}
 .details-trigger {
   display: none;
 }
 @media (max-width: 1439px) {
   .workspace {
-    grid-template-columns: min(var(--navigation-width, 300px), 300px) minmax(0, 1fr) 290px;
+    grid-template-columns: min(var(--navigation-width, 300px), 300px) minmax(0, 1fr) 360px;
   }
   .workspace.bom-collapsed {
-    grid-template-columns: 54px minmax(0, 1fr) 290px;
+    grid-template-columns: 54px minmax(0, 1fr) 360px;
   }
   .summary-main {
     gap: 9px;
@@ -3027,7 +2783,7 @@ button:disabled {
     top: 70px;
     right: 10px;
     bottom: 10px;
-    width: min(340px, calc(100vw - 40px));
+    width: min(420px, calc(100vw - 40px));
     box-shadow: var(--el-box-shadow-dark);
     transform: translateX(calc(100% + 24px));
     transition: transform 0.2s ease;

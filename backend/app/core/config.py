@@ -23,8 +23,9 @@ class Settings(BaseSettings):
     )
 
     app_host: str = "0.0.0.0"
-    app_port: int = 8000
-    cors_origins: str = "http://localhost:9527,http://localhost:5173"
+    app_port: int = 5181
+    cors_origins: str = "http://localhost:9998,http://127.0.0.1:9998"
+    init_database_on_startup: bool = True
 
     database_url_value: Optional[str] = Field(
         default=None,

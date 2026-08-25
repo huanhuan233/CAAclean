@@ -53,6 +53,34 @@ struct GeometryEntity
   }
 };
 
+struct MeshTriangleEntity
+{
+  std::string triangle_id;
+  std::string mesh_map_id;
+  std::string body_id;
+  std::string face_cell_id;
+  long triangle_index;
+  long triangle_index_in_face;
+  int vertex_ranks[3];
+  double vertices_mm[9];
+  bool normal_available;
+  double normal[3];
+  std::string source_primitive;
+  std::string value_source;
+
+  MeshTriangleEntity()
+    : triangle_index(0),
+      triangle_index_in_face(0),
+      normal_available(false)
+  {
+    vertex_ranks[0] = vertex_ranks[1] = vertex_ranks[2] = 0;
+    int i;
+    for (i = 0; i < 9; ++i)
+      vertices_mm[i] = 0.0;
+    normal[0] = normal[1] = normal[2] = 0.0;
+  }
+};
+
 }
 
 #endif

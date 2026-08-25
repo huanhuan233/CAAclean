@@ -4,6 +4,7 @@
 #include <CATSession.h>
 #include <CATSessionServices.h>
 #include <CATErrorDef.h>
+#include <sstream>
 
 namespace cadcapture {
 
@@ -13,14 +14,16 @@ CaaRuntime::~CaaRuntime()
 {
   Close();
 }
-
 bool CaaRuntime::Open(std::string& error)
 {
   CATSession* session = 0;
   const HRESULT result = Create_Session(const_cast<char*>(_session_name.c_str()), session);
   if (FAILED(result) || !session)
   {
-    error = "CAA session initialization failed";
+    std::ostringstream message;
+    message << "CAA session initialization failed (HRESULT=0x" << std::hex
+            << static_cast<unsigned long>(result) << ")";
+    error = message.str();
     return false;
   }
   _open = true;
@@ -47,3 +50,4 @@ const std::string& CaaRuntime::SessionName() const
 }
 
 }
+

@@ -145,6 +145,11 @@ function parameterValueOf(record: NativeFeatureRecord) {
   return String(value ?? '');
 }
 
+function isParameterGroupRecord(record: NativeFeatureRecord) {
+  const name = String(record.display_name || record.internal_name || '').trim().toLocaleLowerCase();
+  return name === '特征属性' || name === '属性' || name === 'parameters' || name === 'properties';
+}
+
 function sortNodes(nodes: FeatureTreeNode[]) {
   nodes.sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
   nodes.forEach(node => sortNodes(node.children));
@@ -157,11 +162,22 @@ export function buildNativeFeatureTree(
   faceRefsByFeatureId: Record<string, string[]> = {}
 ): FeatureTreeNode[] {
   const nodes = new Map<string, FeatureTreeNode>();
+  const parameterRecords: NativeFeatureRecord[] = [];
+  const parameterGroupIds = new Set<string>();
+  const recordsById = new Map(records.map(record => [record.feature_id, record]));
   const ordered = [...records].sort(
     (left, right) => sequenceOf(left) - sequenceOf(right) || left.feature_id.localeCompare(right.feature_id)
   );
   ordered.forEach(record => {
     const kind = featureKind(record);
+    if (kind === 'parameter') {
+      parameterRecords.push(record);
+      return;
+    }
+    if (isParameterGroupRecord(record)) {
+      parameterGroupIds.add(record.feature_id);
+      return;
+    }
     const rawName = String(record.display_name || record.internal_name || record.feature_id);
     const displayName = kind === 'catpart' ? baseName(sourceFileName || rawName) : baseName(rawName);
     nodes.set(record.feature_id, {
@@ -183,9 +199,47 @@ export function buildNativeFeatureTree(
     });
   });
 
+  // CAA 会把部分属性导出成带 parent_id 的 String/Length 等记录。
+  // 它们是特征参数，不是可展开的业务树节点；归并到真实父特征，避免参数记录形成伪层级。
+  const realNodeIds = new Set(nodes.keys());
+  parameterRecords.forEach(record => {
+    let parentId = record.parent_id || '';
+    while (parentId && (!realNodeIds.has(parentId) || parameterGroupIds.has(parentId))) {
+      parentId = recordsById.get(parentId)?.parent_id || '';
+    }
+    const parent = parentId ? nodes.get(parentId) : undefined;
+    if (!parent) return;
+    const name = String(record.display_name || record.internal_name || record.feature_id);
+    parent.parameters = {
+      ...(parent.parameters || {}),
+      [name]: parameterValueOf(record)
+    };
+    const parameterNode: FeatureTreeNode = {
+      id: record.feature_id,
+      parentId: parent.id,
+      name,
+      displayName: name,
+      kind: 'parameter',
+      nativeType: String(record.startup_type || record.native_type || '') || undefined,
+      sourceRef: String(record.tree_path || record.internal_name || '') || undefined,
+      sequence: sequenceOf(record),
+      children: [],
+      isSystem: false,
+      isContainer: false,
+      faceRefs: [],
+      parameters: record.attributes,
+      parameterValue: parameterValueOf(record),
+      raw: record
+    };
+    nodes.set(parameterNode.id, parameterNode);
+    parent.children.push(parameterNode);
+  });
+
   const roots: FeatureTreeNode[] = [];
   ordered.forEach(record => {
-    const node = nodes.get(record.feature_id)!;
+    const node = nodes.get(record.feature_id);
+    if (!node) return;
+    if (featureKind(record) === 'parameter' || parameterGroupIds.has(record.feature_id)) return;
     const parent = record.parent_id ? nodes.get(record.parent_id) : undefined;
     if (parent && parent.id !== node.id) parent.children.push(node);
     else roots.push(node);

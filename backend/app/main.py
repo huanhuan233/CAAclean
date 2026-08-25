@@ -18,14 +18,13 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if app.state.init_database_on_startup:
+    if settings.init_database_on_startup:
         await init_db()
-    await recover_interrupted_revisions(settings)
+        await recover_interrupted_revisions(settings)
     yield
 
 
 app = FastAPI(title="STEP/CAD 3D Parser", lifespan=lifespan)
-app.state.init_database_on_startup = True
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

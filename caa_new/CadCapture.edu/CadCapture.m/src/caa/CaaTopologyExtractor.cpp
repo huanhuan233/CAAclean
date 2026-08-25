@@ -2,8 +2,10 @@
 #include "caa/CaaGuards.h"
 
 #include <CATBaseUnknown.h>
+#include <CATBoundaryIterator.h>
 #include <CATBody.h>
 #include <CATCell.h>
+#include <CATDomain.h>
 #include <CATEdge.h>
 #include <CATFace.h>
 #include <CATICGMBodyTessellator.h>
@@ -23,7 +25,10 @@
 #include <CATMathPoint.h>
 #include <CATUnicodeString.h>
 #include <ListPOfCATCell.h>
+#include <cmath>
 #include <cstring>
+#include <map>
+#include <sstream>
 #include <vector>
 
 namespace cadcapture {
@@ -262,6 +267,328 @@ static long EstimateTrianglesFromPointGroups(CATLONG32 group_count, CATLONG32 po
     static_cast<long>(point_count - 2 * group_count) : 0;
 }
 
+struct TessPointData
+{
+  TessPointData()
+  {
+    xyz[0] = xyz[1] = xyz[2] = 0.0;
+  }
+
+  double xyz[3];
+};
+
+class BoundaryIteratorGuard
+{
+public:
+  explicit BoundaryIteratorGuard(CATBoundaryIterator* iterator) : _iterator(iterator) {}
+  ~BoundaryIteratorGuard() { delete _iterator; }
+  CATBoundaryIterator* Get() const { return _iterator; }
+
+private:
+  BoundaryIteratorGuard(const BoundaryIteratorGuard&);
+  BoundaryIteratorGuard& operator=(const BoundaryIteratorGuard&);
+  CATBoundaryIterator* _iterator;
+};
+
+static void BuildTessPointMap(CATCGMTessPointIter* points, std::map<int, TessPointData>& out_points)
+{
+  if (!points)
+    return;
+  try
+  {
+    points->Reset();
+    while (!points->IsExhausted())
+    {
+      TessPointData data;
+      const double* xyz = points->GetPointXyz();
+      if (xyz)
+      {
+        data.xyz[0] = xyz[0];
+        data.xyz[1] = xyz[1];
+        data.xyz[2] = xyz[2];
+      }
+      out_points[static_cast<int>(points->GetPointNu())] = data;
+      points->GoToNext();
+    }
+  }
+  catch (...)
+  {
+  }
+}
+
+static bool LookupTessPoint(const std::map<int, TessPointData>& points, int rank, double* out_xyz)
+{
+  std::map<int, TessPointData>::const_iterator found = points.find(rank);
+  if (found == points.end())
+    return false;
+  out_xyz[0] = found->second.xyz[0];
+  out_xyz[1] = found->second.xyz[1];
+  out_xyz[2] = found->second.xyz[2];
+  return true;
+}
+
+static void ComputeTriangleNormal(MeshTriangleEntity& triangle)
+{
+  const double* vertices = triangle.vertices_mm;
+  const double ux = vertices[3] - vertices[0];
+  const double uy = vertices[4] - vertices[1];
+  const double uz = vertices[5] - vertices[2];
+  const double vx = vertices[6] - vertices[0];
+  const double vy = vertices[7] - vertices[1];
+  const double vz = vertices[8] - vertices[2];
+  double nx = uy * vz - uz * vy;
+  double ny = uz * vx - ux * vz;
+  double nz = ux * vy - uy * vx;
+  const double norm = std::sqrt(nx * nx + ny * ny + nz * nz);
+  if (norm <= 1.0e-12)
+    return;
+  triangle.normal[0] = nx / norm;
+  triangle.normal[1] = ny / norm;
+  triangle.normal[2] = nz / norm;
+  triangle.normal_available = true;
+}
+
+static std::string MakeIndexedId(const std::string& prefix, long index)
+{
+  std::ostringstream out;
+  out << prefix << "_" << index;
+  return out.str();
+}
+
+static bool AppendMeshTriangle(ReconstructionPackage& package,
+                               const GeometryEntity& geometry,
+                               const std::map<int, TessPointData>& points,
+                               int a,
+                               int b,
+                               int c,
+                               const char* source_primitive,
+                               long& next_triangle,
+                               long& triangle_in_face)
+{
+  double p0[3] = { 0.0, 0.0, 0.0 };
+  double p1[3] = { 0.0, 0.0, 0.0 };
+  double p2[3] = { 0.0, 0.0, 0.0 };
+  if (!LookupTessPoint(points, a, p0) ||
+      !LookupTessPoint(points, b, p1) ||
+      !LookupTessPoint(points, c, p2))
+    return false;
+
+  ++next_triangle;
+  ++triangle_in_face;
+  MeshTriangleEntity triangle;
+  triangle.triangle_id = MakeIndexedId("mesh_triangle", next_triangle);
+  triangle.mesh_map_id = geometry.geometry_id;
+  triangle.body_id = geometry.body_topology_id;
+  triangle.face_cell_id = geometry.topology_id;
+  triangle.triangle_index = next_triangle;
+  triangle.triangle_index_in_face = triangle_in_face;
+  triangle.vertex_ranks[0] = a;
+  triangle.vertex_ranks[1] = b;
+  triangle.vertex_ranks[2] = c;
+  int i;
+  for (i = 0; i < 3; ++i)
+  {
+    triangle.vertices_mm[i] = p0[i];
+    triangle.vertices_mm[3 + i] = p1[i];
+    triangle.vertices_mm[6 + i] = p2[i];
+  }
+  ComputeTriangleNormal(triangle);
+  triangle.source_primitive = source_primitive ? source_primitive : "unknown";
+  triangle.value_source = "typed_caa_public_body_tessellator_triangle_payload";
+  package.mesh_triangles.push_back(triangle);
+  return true;
+}
+
+static double Distance3(const double a[3], const double b[3])
+{
+  const double dx = a[0] - b[0];
+  const double dy = a[1] - b[1];
+  const double dz = a[2] - b[2];
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+static void AppendFeatureTopologyLink(ReconstructionPackage& package,
+                                      const NativeFeatureResultCellEntity& result_cell)
+{
+  if (result_cell.dimension != 2)
+    return;
+
+  NativeFeatureTopologyLinkEntity link;
+  link.link_id = MakeIndexedId("feature_topology_link", static_cast<long>(package.native_feature_topology_links.size() + 1));
+  link.source_feature_id = result_cell.source_feature_id;
+  link.result_id = result_cell.result_id;
+  link.result_cell_id = result_cell.result_cell_id;
+  link.mapping_direction = "result_cell_to_final_face";
+  link.mapping_method = "caa_resultout_to_final_face_geometry_fingerprint_candidate";
+  link.mapping_status = "unmatched";
+
+  if (!result_cell.has_center || !result_cell.area_mm2_available)
+  {
+    link.mapping_status = "insufficient_result_fingerprint";
+    package.native_feature_topology_links.push_back(link);
+    return;
+  }
+
+  double best_center = 0.0;
+  double best_area = 0.0;
+  size_t i;
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& cell = package.topology[i];
+    if (cell.dimension != 2 || !cell.has_center || !cell.area_mm2_available)
+      continue;
+    if (cell.source_kind != "cat_body_cell")
+      continue;
+    const double center_residual = Distance3(result_cell.center_mm, cell.center_mm);
+    const double area_residual = std::fabs(result_cell.area_mm2 - cell.area_mm2);
+    const double area_tolerance = std::fabs(result_cell.area_mm2) * 0.000001 > 0.001 ?
+      std::fabs(result_cell.area_mm2) * 0.000001 : 0.001;
+    if (center_residual <= 0.001 && area_residual <= area_tolerance)
+    {
+      if (link.candidate_count == 0 || center_residual < best_center ||
+          (center_residual == best_center && area_residual < best_area))
+      {
+        best_center = center_residual;
+        best_area = area_residual;
+        link.final_cell_id = cell.topology_id;
+        link.final_body_id = cell.parent_topology_id;
+        link.center_residual_mm = center_residual;
+        link.measure_residual = area_residual;
+      }
+      ++link.candidate_count;
+    }
+  }
+
+  if (link.candidate_count == 1)
+  {
+    link.mapping_status = "candidate";
+    link.authority = "geometry_fingerprint";
+    link.relation_kind = "candidate_survives_to_final";
+    link.confidence = 0.75;
+  }
+  else if (link.candidate_count > 1)
+  {
+    link.mapping_status = "ambiguous";
+    link.authority = "ambiguous";
+    link.relation_kind = "candidate_survives_to_final";
+    link.confidence = 0.35;
+  }
+  package.native_feature_topology_links.push_back(link);
+}
+
+static std::string LookupCellId(CATCell* cell, const std::map<CATCell*, std::string>& cell_ids)
+{
+  std::map<CATCell*, std::string>::const_iterator found = cell_ids.find(cell);
+  if (found == cell_ids.end())
+    return "";
+  return found->second;
+}
+
+static void AppendFaceWires(ReconstructionPackage& package,
+                            CATFace* face,
+                            const std::string& body_id,
+                            const std::string& face_id,
+                            long face_index,
+                            const std::map<CATCell*, std::string>& cell_ids,
+                            long& next_wire_index,
+                            long& next_coedge_index)
+{
+  if (!face)
+    return;
+  CATBoundaryIterator* raw_iterator = 0;
+  try { raw_iterator = face->CreateBoundaryIterator(); }
+  catch (...) { raw_iterator = 0; }
+  BoundaryIteratorGuard iterator_guard(raw_iterator);
+  CATBoundaryIterator* iterator = iterator_guard.Get();
+  if (!iterator)
+    return;
+
+  NativeTopologyWireEntity current;
+  bool has_current = false;
+  long coedge_index_in_wire = 0;
+  long current_wire_first_coedge = 0;
+  long loop_index_in_face = 0;
+  try
+  {
+    CATSide side = CATSideUnknown;
+    CATDomain* domain = 0;
+    short new_domain = 0;
+    CATCell* boundary = 0;
+    while ((boundary = iterator->Next(&side, &domain, &new_domain)) != 0)
+    {
+      if (!has_current || new_domain)
+      {
+        if (has_current)
+        {
+          current.edge_count = coedge_index_in_wire;
+          package.topology_wires.push_back(current);
+        }
+        current = NativeTopologyWireEntity();
+        ++next_wire_index;
+        ++loop_index_in_face;
+        current.wire_id = MakeIndexedId(body_id + "_wire", next_wire_index);
+        current.body_id = body_id;
+        current.wire_index = next_wire_index;
+        current.wire_kind = loop_index_in_face == 1 ? "outer_loop" : "inner_loop";
+        current.owning_face_id = face_id;
+        current.owning_face_topology_index = face_index;
+        current.value_source = "typed_caa_public_boundary_iterator";
+        has_current = true;
+        coedge_index_in_wire = 0;
+        current_wire_first_coedge = next_coedge_index + 1;
+      }
+      const std::string edge_id = LookupCellId(boundary, cell_ids);
+      if (!edge_id.empty())
+      {
+        NativeTopologyCoedgeEntity coedge;
+        ++next_coedge_index;
+        ++coedge_index_in_wire;
+        coedge.coedge_id = MakeIndexedId(body_id + "_coedge", next_coedge_index);
+        coedge.body_id = body_id;
+        coedge.wire_id = current.wire_id;
+        coedge.owning_face_id = face_id;
+        coedge.edge_cell_id = edge_id;
+        coedge.coedge_index = next_coedge_index;
+        coedge.coedge_index_in_wire = coedge_index_in_wire;
+        coedge.edge_orientation_side = static_cast<short>(side);
+        coedge.orientation_status = side == CATSideUnknown ? "unknown" : "from_cat_boundary_iterator_side";
+        coedge.value_source = "typed_caa_public_boundary_iterator";
+        if (coedge_index_in_wire > 1 && !package.topology_coedges.empty())
+        {
+          coedge.previous_coedge_id = package.topology_coedges.back().coedge_id;
+          package.topology_coedges.back().next_coedge_id = coedge.coedge_id;
+        }
+        package.topology_coedges.push_back(coedge);
+      }
+    }
+    if (has_current)
+    {
+      current.edge_count = coedge_index_in_wire;
+      current.closed_status = coedge_index_in_wire > 0 ? "closed_by_boundary_iterator_loop" : "empty";
+      if (coedge_index_in_wire > 1)
+      {
+        const std::string first_id = MakeIndexedId(body_id + "_coedge", current_wire_first_coedge);
+        const std::string last_id = MakeIndexedId(body_id + "_coedge", next_coedge_index);
+        if (!package.topology_coedges.empty())
+          package.topology_coedges.back().next_coedge_id = first_id;
+        size_t i;
+        for (i = 0; i < package.topology_coedges.size(); ++i)
+        {
+          if (package.topology_coedges[i].coedge_id == first_id)
+          {
+            package.topology_coedges[i].previous_coedge_id = last_id;
+            break;
+          }
+        }
+      }
+      package.topology_wires.push_back(current);
+    }
+  }
+  catch (...)
+  {
+  }
+}
+
 static void AppendCellEntity(CaptureIdRegistry& ids,
                              ReconstructionPackage& package,
                              CATCell* cell,
@@ -428,9 +755,97 @@ static void AppendFaceTessellation(CaptureIdRegistry& ids,
       geometry.estimated_triangle_count += EstimateTrianglesFromPointGroups(geometry.polygon_count, polygon_points);
     }
     geometry.estimated_triangle_count += geometry.isolated_triangle_count;
-    geometry.triangle_count = geometry.estimated_triangle_count;
-    next_triangle += geometry.triangle_count;
+    std::map<int, TessPointData> point_map;
+    BuildTessPointMap(points, point_map);
+    long triangle_in_face = 0;
+    long failed_triangle_count = 0;
+    if (triangles)
+    {
+      triangles->Reset();
+      while (!triangles->IsExhausted())
+      {
+        int ranks[3] = { 0, 0, 0 };
+        triangles->GetTrianNuPts(ranks);
+        if (!AppendMeshTriangle(package, geometry, point_map, ranks[0], ranks[1], ranks[2],
+                                "triangle", next_triangle, triangle_in_face))
+          ++failed_triangle_count;
+        triangles->GoToNext();
+      }
+    }
+    if (strips)
+    {
+      strips->Reset();
+      while (!strips->IsExhausted())
+      {
+        const CATLONG32 count = strips->GetStriNbPts();
+        if (count >= 3)
+        {
+          std::vector<int> ranks(static_cast<size_t>(count), 0);
+          strips->GetStriNuPts(&ranks[0]);
+          CATLONG32 strip_index = 0;
+          for (strip_index = 0; strip_index < count - 2; ++strip_index)
+          {
+            const int a = (strip_index % 2 == 0) ? ranks[static_cast<size_t>(strip_index)] : ranks[static_cast<size_t>(strip_index + 1)];
+            const int b = (strip_index % 2 == 0) ? ranks[static_cast<size_t>(strip_index + 1)] : ranks[static_cast<size_t>(strip_index)];
+            const int c = ranks[static_cast<size_t>(strip_index + 2)];
+            if (!AppendMeshTriangle(package, geometry, point_map, a, b, c,
+                                    "strip", next_triangle, triangle_in_face))
+              ++failed_triangle_count;
+          }
+        }
+        strips->GoToNext();
+      }
+    }
+    if (fans)
+    {
+      fans->Reset();
+      while (!fans->IsExhausted())
+      {
+        const CATLONG32 count = fans->GetFanNbPts();
+        if (count >= 3)
+        {
+          std::vector<int> ranks(static_cast<size_t>(count), 0);
+          fans->GetFanNuPts(&ranks[0]);
+          CATLONG32 fan_index = 1;
+          for (; fan_index < count - 1; ++fan_index)
+          {
+            if (!AppendMeshTriangle(package, geometry, point_map, ranks[0],
+                                    ranks[static_cast<size_t>(fan_index)],
+                                    ranks[static_cast<size_t>(fan_index + 1)],
+                                    "fan", next_triangle, triangle_in_face))
+              ++failed_triangle_count;
+          }
+        }
+        fans->GoToNext();
+      }
+    }
+    if (polygons)
+    {
+      polygons->Reset();
+      while (!polygons->IsExhausted())
+      {
+        const CATLONG32 count = polygons->GetPolyNbPts();
+        if (count >= 3)
+        {
+          std::vector<int> ranks(static_cast<size_t>(count), 0);
+          polygons->GetPolyNuPts(&ranks[0]);
+          CATLONG32 polygon_index = 1;
+          for (; polygon_index < count - 1; ++polygon_index)
+          {
+            if (!AppendMeshTriangle(package, geometry, point_map, ranks[0],
+                                    ranks[static_cast<size_t>(polygon_index)],
+                                    ranks[static_cast<size_t>(polygon_index + 1)],
+                                    "polygon", next_triangle, triangle_in_face))
+              ++failed_triangle_count;
+          }
+        }
+        polygons->GoToNext();
+      }
+    }
+    geometry.triangle_count = triangle_in_face;
     geometry.representation_status = "success";
+    if (failed_triangle_count > 0)
+      geometry.representation_status = "partial";
   }
   catch (...)
   {
@@ -481,13 +896,88 @@ static void AppendResultOutBody(CaptureIdRegistry& ids,
                                                  "topology_extractor"));
   }
   package.topology.push_back(entity);
+  const std::string result_id = entity.topology_id;
 
   FeatureDependency dependency;
   dependency.from_feature_id = feature_subject_id;
-  dependency.to_feature_id = entity.topology_id;
+  dependency.to_feature_id = result_id;
   dependency.dependency_kind = "has_resultout_body";
   dependency.read_status = entity.read_status;
   package.feature_dependencies.push_back(dependency);
+
+  std::vector<CATCell*> result_faces;
+  std::vector<CATCell*> result_edges;
+  std::vector<CATCell*> result_vertices;
+  std::vector<CATCell*> result_volumes;
+  try { LoadCellsByDimension(body, 2, result_faces); } catch (...) {}
+  try { LoadCellsByDimension(body, 1, result_edges); } catch (...) {}
+  try { LoadCellsByDimension(body, 0, result_vertices); } catch (...) {}
+  try { LoadCellsByDimension(body, 3, result_volumes); } catch (...) {}
+
+  std::vector<CATCell*> all_cells;
+  size_t i;
+  for (i = 0; i < result_faces.size(); ++i) all_cells.push_back(result_faces[i]);
+  for (i = 0; i < result_edges.size(); ++i) all_cells.push_back(result_edges[i]);
+  for (i = 0; i < result_vertices.size(); ++i) all_cells.push_back(result_vertices[i]);
+  for (i = 0; i < result_volumes.size(); ++i) all_cells.push_back(result_volumes[i]);
+
+  for (i = 0; i < all_cells.size(); ++i)
+  {
+    CATCell* cell = all_cells[i];
+    NativeFeatureResultCellEntity result_cell;
+    result_cell.result_cell_id = MakeIndexedId(result_id + "_cell", static_cast<long>(i + 1));
+    result_cell.result_id = result_id;
+    result_cell.source_feature_id = feature_subject_id;
+    result_cell.result_cell_index = static_cast<long>(i + 1);
+    result_cell.read_status = "success";
+    result_cell.stable_id_method = "cat_feature_result_dimension_order_revision_local";
+    result_cell.value_source = "typed_caa_public_shape_feature_body_resultout";
+    try
+    {
+      const short dimension = cell ? cell->GetDimension() : -1;
+      result_cell.dimension = static_cast<long>(dimension);
+      result_cell.cell_kind = TopologyCellKind(dimension);
+    }
+    catch (...)
+    {
+      result_cell.read_status = "partial";
+      result_cell.cell_kind = "unknown";
+    }
+    try
+    {
+      if (cell)
+      {
+        CATMathPoint center;
+        cell->EstimateCenter(center);
+        center.GetCoord(result_cell.center_mm);
+        result_cell.has_center = true;
+      }
+    }
+    catch (...)
+    {
+    }
+    try
+    {
+      if (result_cell.dimension == 2)
+      {
+        CATFace* face = static_cast<CATFace*>(cell);
+        result_cell.area_mm2 = face->CalcArea();
+        result_cell.area_mm2_available = true;
+      }
+      else if (result_cell.dimension == 1)
+      {
+        CATEdge* edge = static_cast<CATEdge*>(cell);
+        result_cell.length_mm = edge->CalcLength();
+        result_cell.length_mm_available = true;
+      }
+    }
+    catch (...)
+    {
+      result_cell.read_status = "partial";
+    }
+    package.native_feature_result_cells.push_back(result_cell);
+    AppendFeatureTopologyLink(package, result_cell);
+  }
 }
 
 static void CaptureResultOutForSpec(CATISpecObject* spec,
@@ -773,21 +1263,52 @@ bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
   size_t i;
   long primitive_index = 1;
   long next_triangle = 0;
+  std::map<CATCell*, std::string> cell_ids;
+  std::vector<std::string> face_ids;
   for (i = 0; i < faces.size(); ++i, ++primitive_index)
   {
     const size_t before = package.topology.size();
     AppendCellEntity(ids, package, faces[i], body_id, subject_id, primitive_index);
     const std::string face_id = package.topology.size() > before ? package.topology[before].topology_id : "";
+    if (!face_id.empty())
+    {
+      cell_ids[faces[i]] = face_id;
+      face_ids.push_back(face_id);
+    }
     CATFace* face = static_cast<CATFace*>(faces[i]);
     AppendFaceTessellation(ids, package, tessellator_guard.Get(), face,
                            body_id, face_id, subject_id, primitive_index, next_triangle);
   }
   for (i = 0; i < edges.size(); ++i)
+  {
+    const size_t before = package.topology.size();
     AppendCellEntity(ids, package, edges[i], body_id, subject_id, static_cast<long>(i + 1));
+    if (package.topology.size() > before)
+      cell_ids[edges[i]] = package.topology[before].topology_id;
+  }
   for (i = 0; i < vertices.size(); ++i)
+  {
+    const size_t before = package.topology.size();
     AppendCellEntity(ids, package, vertices[i], body_id, subject_id, static_cast<long>(i + 1));
+    if (package.topology.size() > before)
+      cell_ids[vertices[i]] = package.topology[before].topology_id;
+  }
   for (i = 0; i < volumes.size(); ++i)
+  {
+    const size_t before = package.topology.size();
     AppendCellEntity(ids, package, volumes[i], body_id, subject_id, static_cast<long>(i + 1));
+    if (package.topology.size() > before)
+      cell_ids[volumes[i]] = package.topology[before].topology_id;
+  }
+
+  long next_wire_index = 0;
+  long next_coedge_index = 0;
+  for (i = 0; i < faces.size() && i < face_ids.size(); ++i)
+  {
+    CATFace* face = static_cast<CATFace*>(faces[i]);
+    AppendFaceWires(package, face, body_id, face_ids[i], static_cast<long>(i + 1),
+                    cell_ids, next_wire_index, next_coedge_index);
+  }
 
   FeatureSubjectMatcher matcher(package);
   TraverseResultOutSpecs(part_spec, ids, package, matcher);

@@ -27,8 +27,13 @@ struct ReconstructionPackage
   std::vector<SemanticFacet> semantic_facets;
   std::vector<FeatureDependency> feature_dependencies;
   std::vector<GeometryEntity> geometry;
+  std::vector<MeshTriangleEntity> mesh_triangles;
   std::vector<TopologyEntity> topology;
   std::vector<TopologyRelation> topology_relations;
+  std::vector<NativeTopologyWireEntity> topology_wires;
+  std::vector<NativeTopologyCoedgeEntity> topology_coedges;
+  std::vector<NativeFeatureResultCellEntity> native_feature_result_cells;
+  std::vector<NativeFeatureTopologyLinkEntity> native_feature_topology_links;
   std::vector<PmiEntity> pmi;
   std::vector<PmiAssociation> pmi_associations;
   std::vector<Diagnostic> diagnostics;

@@ -1,0 +1,805 @@
+<script setup lang="ts">
+import { computed, defineComponent, h, resolveComponent } from 'vue';
+import { ElTag, ElTooltip } from 'element-plus';
+import type { CanonicalFeatureRecord } from './feature-center-bundle';
+import type { FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
+import type { DetailPanelLayout } from './detail-panel';
+import type { SelectionContext, SelectionTarget } from './viewer-selection';
+import {
+  bomRows,
+  detailRowsFromRecord,
+  faceRows,
+  formatDetailValue,
+  geometryLinksFor,
+  nativeFeatureRows,
+  normalizeParameterRows,
+  parameterSourceFor,
+  recognizedFeatureRows,
+  selectionEvidenceRows,
+  type DetailField,
+  type GeometryLink,
+  type ParameterField
+} from './object-detail-panel';
+
+defineOptions({ name: 'ObjectDetailPanel' });
+
+const props = defineProps<{
+  contract: Api.ComponentBuild.ViewerContract | null;
+  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT' | undefined;
+  selectedTitle: string;
+  detailLayout: DetailPanelLayout;
+  primarySelection: SelectionTarget | null;
+  selectionContext: SelectionContext;
+  detailNode: Api.ComponentBuild.ViewerBomNode | null;
+  detailParentNode: Api.ComponentBuild.ViewerBomNode | null;
+  selectedNativeFeature: NativeFeatureRecord | null;
+  selectedNativeTreeNode: FeatureTreeNode | null;
+  selectedNativeTreeParent: FeatureTreeNode | null;
+  selectedNativeParameterFamily: string;
+  selectedNativeFaces: string[];
+  selectedFeature: CanonicalFeatureRecord | null;
+  selectedFace: Record<string, unknown> | null;
+  faceFeatureIds: string[];
+  selectedMeasurements: Array<Record<string, unknown>>;
+  mappingAvailable: boolean;
+  isolated: boolean;
+  transparent: boolean;
+}>();
+
+const emit = defineEmits<{
+  close: [];
+  highlight: [];
+  toggleIsolated: [];
+  toggleTransparent: [];
+  openFeatureLinks: [];
+  openNativeFace: [faceId: string];
+  copy: [value: string];
+}>();
+
+const sourceTypeLabel = computed(() => {
+  if (props.sourceFormat === 'CATPRODUCT') return 'CATProduct';
+  if (props.sourceFormat === 'CATPART') return 'CATPart';
+  if (props.sourceFormat === 'STEP') return 'STEP';
+  return '未加载';
+});
+
+const sourceTagLabel = computed(() => {
+  if (props.primarySelection?.kind === 'native_feature') return '原生特征';
+  if (props.primarySelection?.kind === 'recognized_feature') return '识别特征';
+  if (props.primarySelection?.kind === 'face') return '几何拓扑';
+  if (props.primarySelection?.kind) return '模型对象';
+  return props.contract?.native_semantics?.available ? '原生特征' : '模型对象';
+});
+
+const statusValue = computed(() => formatDetailValue(props.contract?.status || 'ready', 'status'));
+
+const evidenceRows = computed(() => selectionEvidenceRows(props.primarySelection, props.selectionContext));
+
+const featureRows = computed<DetailField[]>(() => {
+  if (props.selectedNativeFeature) {
+    return nativeFeatureRows(
+      props.selectedNativeFeature,
+      props.selectedNativeTreeNode?.displayName,
+      props.selectedNativeTreeParent?.displayName,
+      props.selectedNativeParameterFamily
+    );
+  }
+  if (props.selectedFeature) return recognizedFeatureRows(props.selectedFeature);
+  if (props.selectedFace) return faceRows(props.selectedFace);
+  return bomRows(props.detailNode as unknown as Record<string, unknown> | null);
+});
+
+const parameterRows = computed<ParameterField[]>(() => {
+  const rows = normalizeParameterRows(parameterSourceFor(props.selectedNativeFeature, props.selectedFeature));
+  if (rows.length || !props.selectedMeasurements.length) return rows;
+  return props.selectedMeasurements.flatMap((measurement, index) =>
+    detailRowsFromRecord(measurement, ['name', 'value', 'unit', 'source', 'method', 'validity']).map(row => ({
+      ...row,
+      key: `measurement_${index}_${row.key}`,
+      label: `${measurement.name || `测量 ${index + 1}`} · ${row.label}`
+    }))
+  );
+});
+
+const geometryRows = computed<GeometryLink[]>(() =>
+  geometryLinksFor({
+    nativeFaceIds: props.selectedNativeFaces,
+    recognizedFaceIds: props.selectedFeature?.geometry_refs?.face_ids || [],
+    faceFeatureIds: props.faceFeatureIds,
+    selectedFace: props.selectedFace as { boundary_edge_ids?: string[]; adjacent_face_ids?: string[] } | null
+  })
+);
+
+const advancedRows = computed(() =>
+  detailRowsFromRecord(
+    (props.selectedFace ||
+      props.selectedNativeFeature ||
+      props.selectedFeature ||
+      props.detailNode) as Record<string, unknown> | null,
+    []
+  )
+);
+
+function hasGroup(group: string) {
+  return props.detailLayout.groups.includes(group as never);
+}
+
+function copyValue(value: string) {
+  emit('copy', value);
+}
+
+const StatusValue = defineComponent({
+  name: 'StatusValue',
+  props: {
+    field: {
+      type: Object as () => DetailField,
+      required: true
+    }
+  },
+  setup(props) {
+    return () => {
+      const value = props.field.value;
+      const content = value.fullText;
+      const inner = value.statusTone
+        ? h(ElTag, { type: value.statusTone === 'primary' ? undefined : value.statusTone, effect: 'light', size: 'small' }, () => value.text)
+        : h('span', { class: ['field-value-text', { empty: value.empty }] }, value.text);
+      return h(ElTooltip, { content, placement: 'top', showAfter: 450 }, { default: () => h('span', { class: 'field-value' }, [inner]) });
+    };
+  }
+});
+
+const DetailSection = defineComponent({
+  name: 'DetailSection',
+  props: {
+    icon: {
+      type: String,
+      default: 'lucide:square-plus'
+    },
+    title: {
+      type: String,
+      default: ''
+    },
+    rows: {
+      type: Array as () => DetailField[],
+      required: true
+    },
+    emptyText: {
+      type: String,
+      required: true
+    },
+    embedded: {
+      type: Boolean,
+      default: false
+    }
+  },
+  setup(props) {
+    const SvgIconComponent = resolveComponent('SvgIcon');
+    return () =>
+      h('section', { class: ['detail-section-v2', { embedded: props.embedded }] }, [
+        h('details', { open: !props.embedded }, [
+          props.title
+            ? h('summary', { class: 'section-heading' }, [
+                h('span', { class: 'section-title' }, [
+                  h(SvgIconComponent, { icon: props.icon }),
+                  h('span', props.title),
+                  h('span', { class: 'section-count' }, String(props.rows.length))
+                ]),
+                h(SvgIconComponent, { class: 'section-chevron', icon: 'lucide:chevron-down' })
+              ])
+            : null,
+          h('div', { class: 'section-content' }, [
+            props.rows.length
+              ? h('div', { class: 'field-list' }, props.rows.map(row =>
+                  h('div', { key: row.key, class: 'field-row' }, [
+                    h(ElTooltip, { content: row.label, placement: 'top', showAfter: 450 }, {
+                      default: () => h('span', { class: 'field-label' }, row.label)
+                    }),
+                    h(StatusValue, { field: row })
+                  ])
+                ))
+              : h('div', { class: 'compact-empty' }, props.emptyText)
+          ])
+        ])
+      ]);
+  }
+});
+</script>
+
+<template>
+  <div class="object-detail-panel">
+    <header class="object-detail-header">
+      <strong>对象详情</strong>
+      <ElTooltip content="关闭详情" placement="left">
+        <ElButton class="header-icon-button" circle text aria-label="关闭详情" @click="emit('close')">
+          <SvgIcon icon="lucide:x" />
+        </ElButton>
+      </ElTooltip>
+    </header>
+
+    <ElScrollbar class="object-detail-scrollbar">
+      <div class="object-detail-body">
+        <section v-if="contract" class="object-summary-card">
+          <span class="summary-icon">
+            <SvgIcon icon="lucide:box" />
+          </span>
+          <div class="summary-copy">
+            <ElTooltip :content="selectedTitle || contract.summary.model_name" placement="top" :show-after="350">
+              <strong>{{ selectedTitle || contract.summary.model_name }}</strong>
+            </ElTooltip>
+            <span>{{ sourceTypeLabel }}</span>
+          </div>
+          <div class="summary-tags">
+            <ElTag effect="light" size="small">{{ sourceTagLabel }}</ElTag>
+            <ElTag :type="statusValue.statusTone === 'success' ? 'success' : 'info'" effect="light" size="small">
+              {{ statusValue.text }}
+            </ElTag>
+          </div>
+        </section>
+        <div v-else class="compact-empty">当前对象不存在</div>
+
+        <DetailSection
+          v-if="primarySelection"
+          title="选择映射证据"
+          icon="lucide:square-plus"
+          :rows="evidenceRows"
+          empty-text="暂无映射证据"
+        />
+
+        <DetailSection title="特征详情" icon="lucide:square-plus" :rows="featureRows" empty-text="暂无特征详情" />
+
+        <section class="detail-section-v2">
+          <details open>
+            <summary class="section-heading">
+              <span class="section-title">
+                <SvgIcon icon="lucide:hexagon" />
+                <span>特征参数</span>
+                <span class="section-count">{{ parameterRows.length }}</span>
+              </span>
+              <SvgIcon class="section-chevron" icon="lucide:chevron-down" />
+            </summary>
+            <div class="section-content">
+              <div v-if="parameterRows.length" class="parameter-list-v2">
+                <div v-for="row in parameterRows" :key="row.key" class="parameter-row">
+                  <ElTooltip :content="row.label" placement="top" :show-after="450">
+                    <span class="field-label">{{ row.label }}</span>
+                  </ElTooltip>
+                  <StatusValue :field="row" />
+                  <ElTooltip content="复制完整值" placement="top">
+                    <ElButton class="copy-button" text circle aria-label="复制参数值" @click="copyValue(row.value.fullText)">
+                      <SvgIcon icon="lucide:copy" />
+                    </ElButton>
+                  </ElTooltip>
+                </div>
+              </div>
+              <div v-else class="compact-empty">暂无特征参数</div>
+            </div>
+          </details>
+        </section>
+
+        <section class="detail-section-v2">
+          <details>
+            <summary class="section-heading">
+              <span class="section-title">
+                <SvgIcon icon="lucide:square-plus" />
+                <span>关联几何</span>
+                <span v-if="geometryRows.length" class="section-count">{{ geometryRows.length }}</span>
+              </span>
+              <SvgIcon class="section-chevron" icon="lucide:chevron-down" />
+            </summary>
+            <div class="section-content">
+              <div v-if="geometryRows.length" class="geometry-link-list">
+                <button
+                  v-for="link in geometryRows"
+                  :key="`${link.kind}-${link.id}`"
+                  type="button"
+                  class="geometry-link"
+                  :disabled="!link.clickable"
+                  @click="link.clickable && emit('openNativeFace', link.id)"
+                >
+                  <span>{{ link.kind }}</span>
+                  <strong>{{ link.id }}</strong>
+                </button>
+              </div>
+              <div v-else class="geometry-empty">未建立关联面</div>
+            </div>
+          </details>
+        </section>
+
+        <section v-if="hasGroup('operations')" class="detail-section-v2 actions-v2">
+          <details open>
+            <summary class="section-heading">
+              <span class="section-title">
+                <SvgIcon icon="lucide:bolt" />
+                <span>快捷操作</span>
+              </span>
+              <SvgIcon class="section-chevron" icon="lucide:chevron-down" />
+            </summary>
+            <div class="section-content">
+              <div class="action-grid">
+                <ElButton size="small" @click="emit('highlight')">
+                  <template #icon><SvgIcon icon="lucide:sparkles" /></template>
+                  高亮
+                </ElButton>
+                <ElButton size="small" :type="isolated ? 'primary' : 'default'" @click="emit('toggleIsolated')">
+                  <template #icon><SvgIcon icon="lucide:focus" /></template>
+                  隔离
+                </ElButton>
+                <ElButton size="small" :type="transparent ? 'primary' : 'default'" @click="emit('toggleTransparent')">
+                  <template #icon><SvgIcon icon="lucide:blend" /></template>
+                  透明
+                </ElButton>
+                <ElButton
+                  v-if="hasGroup('source')"
+                  size="small"
+                  :disabled="!detailLayout.featureLinkEnabled"
+                  @click="emit('openFeatureLinks')"
+                >
+                  <template #icon><SvgIcon icon="lucide:waypoints" /></template>
+                  {{ detailLayout.featureLinkLabel }}
+                </ElButton>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <ElCollapse v-if="hasGroup('topology')" class="advanced-v2">
+          <ElCollapseItem title="高级拓扑信息" name="topology">
+            <DetailSection title="" :rows="advancedRows" empty-text="暂无高级拓扑信息" embedded />
+          </ElCollapseItem>
+        </ElCollapse>
+      </div>
+    </ElScrollbar>
+  </div>
+</template>
+
+<style>
+.object-detail-panel {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  flex-direction: column;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
+}
+
+.object-detail-header {
+  display: flex;
+  min-height: 64px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--el-border-color-light);
+  background: var(--el-bg-color);
+  padding: 0 14px 0 18px;
+}
+
+.object-detail-header strong {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 30px;
+}
+
+.header-icon-button {
+  color: var(--el-text-color-secondary);
+}
+
+.header-icon-button:hover,
+.header-icon-button:focus-visible {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.object-detail-scrollbar {
+  min-height: 0;
+  flex: 1;
+}
+
+.object-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 14px 16px;
+}
+
+.object-summary-card,
+.detail-section-v2 {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-bg-color-overlay);
+}
+
+.object-summary-card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 6px 14px;
+  padding: 16px;
+}
+
+.summary-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  font-size: 30px;
+  place-items: center;
+}
+
+.summary-copy {
+  min-width: 0;
+}
+
+.summary-copy strong,
+.summary-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-copy strong {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 25px;
+}
+
+.summary-copy span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.summary-tags {
+  display: flex;
+  min-width: 0;
+  grid-column: 2;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.summary-tags :deep(.el-tag:first-child) {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.summary-tags :deep(.el-tag) {
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.detail-section-v2 {
+  padding: 0;
+}
+
+.detail-section-v2.embedded {
+  border: 0;
+  padding: 0;
+}
+
+.detail-section-v2 details {
+  min-width: 0;
+}
+
+.detail-section-v2 summary {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  list-style: none;
+}
+
+.detail-section-v2 summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-section-v2 summary::marker {
+  content: '';
+}
+
+.section-heading {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--el-border-color-light);
+  cursor: pointer;
+  padding: 0 18px;
+  user-select: none;
+}
+
+.section-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 24px;
+}
+
+.section-title :deep(.svg-icon) {
+  flex: 0 0 auto;
+  color: var(--el-color-primary);
+  font-size: 18px;
+}
+
+.section-count {
+  display: inline-flex;
+  min-width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
+.section-chevron {
+  flex: 0 0 auto;
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  transition: transform 0.16s ease;
+}
+
+.detail-section-v2 details:not([open]) .section-heading {
+  border-bottom-color: transparent;
+}
+
+.detail-section-v2 details:not([open]) .section-chevron {
+  transform: rotate(-90deg);
+}
+
+.section-content {
+  min-width: 0;
+  padding: 12px 20px 15px;
+}
+
+.field-list,
+.parameter-list-v2 {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.field-row,
+.parameter-row {
+  display: grid;
+  min-height: 48px;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.field-row {
+  grid-template-columns: minmax(122px, 37%) minmax(0, 1fr);
+  column-gap: 28px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.parameter-row {
+  grid-template-columns: minmax(132px, 38%) minmax(0, 1fr) 36px;
+  gap: 0;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+  overflow: hidden;
+}
+
+.field-row:last-child {
+  border-bottom: 0;
+}
+
+.field-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-value {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+}
+
+.field-value-text {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-value-text.empty {
+  color: var(--el-text-color-secondary);
+}
+
+.parameter-row .field-label,
+.parameter-row .field-value {
+  min-height: 48px;
+  align-items: center;
+  border-right: 1px solid var(--el-border-color-light);
+  padding: 0 12px;
+}
+
+.parameter-row .field-label {
+  color: var(--el-text-color-secondary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 14px;
+}
+
+.parameter-row .field-value-text {
+  font-size: 14px;
+}
+
+.copy-button {
+  width: 100%;
+  height: 48px;
+  border-radius: 0;
+  color: var(--el-text-color-secondary);
+}
+
+.copy-button:hover,
+.copy-button:focus-visible {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.geometry-link-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.geometry-link {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-primary);
+  padding: 4px 7px;
+}
+
+.geometry-link:hover:not(:disabled) {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.geometry-link:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.geometry-link span,
+.geometry-link strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geometry-link span {
+  color: var(--el-text-color-secondary);
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.action-grid :deep(.el-button) {
+  min-width: 0;
+  margin: 0;
+}
+
+.advanced-v2 {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-bg-color-overlay);
+  padding: 0 10px 10px;
+}
+
+.advanced-v2 :deep(.el-collapse-item__header) {
+  min-height: 38px;
+  background: transparent;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+}
+
+.advanced-v2 :deep(.el-collapse-item__content) {
+  padding-bottom: 0;
+}
+
+.compact-empty {
+  border: 1px dashed var(--el-border-color-light);
+  border-radius: 7px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  padding: 12px;
+  text-align: center;
+}
+
+.geometry-empty {
+  color: var(--el-text-color-secondary);
+  font-size: 15px;
+  line-height: 22px;
+  padding: 0 0 0 38px;
+}
+
+@media (max-width: 460px) {
+  .object-detail-header {
+    min-height: 56px;
+    padding-left: 14px;
+  }
+
+  .object-detail-header strong {
+    font-size: 19px;
+  }
+
+  .object-detail-body {
+    padding: 10px;
+  }
+
+  .object-summary-card {
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 16px 14px;
+  }
+
+  .summary-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 28px;
+  }
+
+  .summary-copy strong {
+    font-size: 19px;
+  }
+
+  .section-heading {
+    min-height: 48px;
+    padding: 0 14px;
+  }
+
+  .section-title {
+    font-size: 16px;
+  }
+
+  .section-content {
+    padding: 8px 14px 10px;
+  }
+
+  .field-row {
+    grid-template-columns: minmax(104px, 38%) minmax(0, 1fr);
+  }
+
+  .parameter-row {
+    grid-template-columns: minmax(120px, 40%) minmax(0, 1fr) 34px;
+  }
+}
+</style>
