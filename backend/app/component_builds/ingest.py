@@ -484,6 +484,7 @@ def _product_instance_tree_record(instance: dict) -> dict:
 
 def _matching_product_instance_ids(instances: list[dict], catpart_stem: str) -> list[str]:
     normalized_stem = _normalize_part_name(catpart_stem)
+    stem_keys = _part_name_keys(normalized_stem)
     matches: list[str] = []
     for instance in instances:
         instance_id = str(instance.get("instance_id") or "")
@@ -496,9 +497,30 @@ def _matching_product_instance_ids(instances: list[dict], catpart_stem: str) -> 
             instance.get("reference_id"),
         ]
         normalized_names = [_normalize_part_name(str(name)) for name in names if name]
-        if any(name == normalized_stem or name.startswith(f"{normalized_stem}.") for name in normalized_names):
+        name_keys = {key for name in normalized_names for key in _part_name_keys(name)}
+        if stem_keys & name_keys:
             matches.append(instance_id)
     return matches
+
+
+def _part_name_keys(value: str) -> set[str]:
+    """生成 CATPart 文件名与 Product 实例名的稳定比较键。
+
+    CATIA 常把实例显示名写成 R_<文件名>、P_<文件名> 或 Part_<文件名>，
+    而 CATPart 文件本身没有这个实例前缀。
+    """
+    keys = {value}
+    compact = re.sub(r"[^a-z0-9]", "", value)
+    if compact:
+        keys.add(compact)
+        for prefix in ("r", "p", "part"):
+            if compact.startswith(prefix) and len(compact) > len(prefix):
+                keys.add(compact[len(prefix):])
+    current = value
+    for prefix in ("r_", "p_", "part_"):
+        if current.startswith(prefix) and len(current) > len(prefix):
+            keys.add(current[len(prefix):])
+    return keys
 
 
 def _normalize_part_name(value: str) -> str:

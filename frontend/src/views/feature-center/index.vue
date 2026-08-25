@@ -249,8 +249,6 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
-const partFeatureTreeIndex = ref<Record<string, string>>({});
-const loadedPartFeatureTrees = new Set<string>();
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
 const topologyBodies = ref<TopologySelectionRecord[]>([]);
 const topologySolids = ref<TopologySelectionRecord[]>([]);
@@ -743,11 +741,11 @@ async function loadBuildBundle(buildId: string) {
     }
 
     const viewerAsset = result.data.viewer_asset;
-    const skipStepViewer = result.data.source_format === 'CATPRODUCT';
+    const skipStepViewer = false;
     const canonicalUrl = result.data.feature_center.canonical_features_url;
     const measurementUrl = result.data.feature_center.measurements_url;
     if (!canonicalUrl || !measurementUrl) throw new Error('Feature Center 索引资产缺失');
-    // 大模型不要并行保留多份完整资产；CATProduct 暂不加载 STEP/GLB，避免浏览器和显卡 OOM。
+    // 当前按完整 CATProduct 结果加载 STEP/GLB，确保装配模型和原生特征同时可见。
     const manifestBuffer = await fetchAsset(viewerAsset.scene_manifest_url);
     const canonicalBuffer = await fetchAsset(canonicalUrl);
     const measurementBuffer = await fetchAsset(measurementUrl);
@@ -793,9 +791,7 @@ async function loadBuildBundle(buildId: string) {
     featureMeshMap.value = nextFeatureMap;
     faceMeshMap.value = nextFaceMap;
     if (modelBuffer) await loadGlb(modelBuffer);
-    if (result.data.source_format !== 'CATPRODUCT') {
-      await loadStepCurves(viewerAsset.curves_url, manifest);
-    }
+    await loadStepCurves(viewerAsset.curves_url, manifest);
     await loadOptionalSemanticAssets(result.data);
     clearSelection();
     saveRecentFeatureCenterBuildId(window.localStorage, buildId);
@@ -837,17 +833,12 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   selectionIndex.value = null;
   const productFeatureTreeUrl = viewerContract.native_semantics?.product_feature_tree_url;
   const productInstancesUrl = viewerContract.native_semantics?.product_instances_url;
-  const partFeatureTreeIndexUrl = viewerContract.native_semantics?.part_feature_tree_index_url;
   const nativeUrl = viewerContract.native_semantics?.features_url;
   const shouldLoadProductTree = viewerContract.source_format === 'CATPRODUCT';
   // CATProduct 的选择索引和拓扑资产可能远大于特征树本身，首屏先不加载，避免浏览器 OOM。
   const skipHeavyAssemblySemantics = shouldLoadProductTree;
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
-  if (partFeatureTreeIndexUrl) {
-    const indexBuffer = await fetchAsset(partFeatureTreeIndexUrl);
-    partFeatureTreeIndex.value = JSON.parse(new TextDecoder().decode(indexBuffer)) as Record<string, string>;
-  }
   const loadJsonLines = async <T>(url: string, assign: (records: T[]) => void) => {
     const buffer = await fetchAsset(url);
     const text = new TextDecoder().decode(buffer);
@@ -862,14 +853,14 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     };
     hydrateTopologyFromSelectionIndex(selectionIndex.value);
   }
-  // CATProduct 首屏优先使用轻量装配实例索引；完整特征树体积可能是实例索引的数量级倍数。
-  if (shouldLoadProductTree && productInstancesUrl) {
-    await loadJsonLines<ProductInstanceRecord>(productInstancesUrl, records => {
-      nativeFeatures.value = productInstancesToNativeRecords(records);
-    });
-  } else if (shouldLoadProductTree && productFeatureTreeUrl) {
+  // 使用 4a648b6 的稳定逻辑：优先一次性加载完整产品特征树。
+  if (shouldLoadProductTree && productFeatureTreeUrl) {
     await loadJsonLines<NativeFeatureRecord>(productFeatureTreeUrl, records => {
       nativeFeatures.value = records;
+    });
+  } else if (shouldLoadProductTree && productInstancesUrl) {
+    await loadJsonLines<ProductInstanceRecord>(productInstancesUrl, records => {
+      nativeFeatures.value = productInstancesToNativeRecords(records);
     });
   } else if (nativeUrl) {
     await loadJsonLines<NativeFeatureRecord>(nativeUrl, records => {
@@ -896,31 +887,6 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       mergeNativeFeatureTopologyLinks
     );
   }
-}
-
-// 展开 CATProduct 子 CATPart 时才加载该零件的完整 CAA 原生特征树。
-async function loadPartFeatureTree(node: FeatureTreeNode) {
-  if (loadedPartFeatureTrees.has(node.id)) return;
-  const assetPath = partFeatureTreeIndex.value[node.id];
-  if (!assetPath) return;
-  const buffer = await fetchAsset(assetPath);
-  const records = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
-  const merged = records.map(record => {
-    const featureId = String(record.feature_id || '');
-    const originalParent = String(record.parent_id || '');
-    return {
-      ...record,
-      feature_id: `${node.id}/${featureId}`,
-      parent_id: originalParent ? `${node.id}/${originalParent}` : node.id,
-      tree_path: `${node.id}/${record.tree_path || record.display_name || featureId}`,
-      attributes: {
-        ...(record.attributes || {}),
-        product_instance_id: node.id
-      }
-    };
-  });
-  nativeFeatures.value = [...nativeFeatures.value, ...merged];
-  loadedPartFeatureTrees.add(node.id);
 }
 
 function hydrateTopologyFromSelectionIndex(index: ViewerSelectionIndex | null) {
@@ -1887,7 +1853,6 @@ onBeforeUnmount(() => {
                 :face-refs-by-feature-id="nativeFaceRefs"
                 @select="selectNativeTreeNode"
                 @properties="showNativeTreeNodeProperties"
-                @expand="loadPartFeatureTree"
               />
               <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
                 <button
@@ -2021,11 +1986,6 @@ onBeforeUnmount(() => {
           v-if="!contract"
           class="viewer-empty"
           description="暂无 CATPart 解析结果，请从零件库打开已完成的 CATPart"
-        />
-        <ElEmpty
-          v-else-if="contract.source_format === 'CATPRODUCT'"
-          class="viewer-empty"
-          description="CATProduct 暂不加载 STEP 视图，已保留产品树和特征数据"
         />
         <CadViewerControls
           v-if="contract"

@@ -76,7 +76,39 @@ call tools\build_r21_x64_host_intel_a.bat
 
 ## 5. 启动 CATIA Worker
 
-打开新的 PowerShell：
+推荐使用托盘程序启动：
+
+```text
+双击 3DjiexiCAA\tools\CatiaWorkerTray.exe
+```
+
+托盘程序会自动执行：
+
+```cmd
+conda activate 3dcad
+cd /d D:\path\to\freecadCAA\backend
+python -m uvicorn app.catia_worker.server:app --host 127.0.0.1 --port 5182
+```
+
+前提：
+
+- 普通 CMD 中可以执行 `conda activate 3dcad`
+- `3dcad` 环境已安装后端依赖
+- CATIA、CAA 运行环境和许可证可用
+
+托盘右键菜单：
+
+- 启动 Worker
+- 停止 Worker
+- 打开 Worker 地址
+- 打开日志
+- 退出
+
+检查：`http://127.0.0.1:5182/health`
+
+注意：托盘程序只启动 CATIA Worker，不启动 PostgreSQL、后端和前端。
+
+也可手动启动。打开新的 PowerShell：
 
 ```powershell
 $RepoRoot = 'D:\path\to\freecadCAA'
@@ -87,16 +119,14 @@ $env:CAA_PREREQ_ROOT="$RepoRoot\.caa_toolchain_links\catia21"
 python -m uvicorn app.catia_worker.server:app --host 127.0.0.1 --port 5182
 ```
 
-检查：`http://127.0.0.1:5182/health`
-
-也可编译并双击托盘程序：
+如需重新编译托盘程序：
 
 ```cmd
 cd /d D:\path\to\freecadCAA\3DjiexiCAA
 call tools\build_catia_worker_tray.bat
 ```
 
-生成的 `tools\CatiaWorkerTray.exe` 会自动启动 Worker。
+生成文件：`3DjiexiCAA\tools\CatiaWorkerTray.exe`
 
 ## 6. 启动后端
 

@@ -15,7 +15,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [node: FeatureTreeNode];
   properties: [node: FeatureTreeNode];
-  expand: [node: FeatureTreeNode];
 }>();
 
 interface TreeNodeState {
@@ -74,10 +73,10 @@ const KIND_LABELS: Partial<Record<FeatureTreeKind, string>> = {
   chamfer: 'Chamfer'
 };
 
-// 用途：只默认展开最外层业务节点，避免大型模型首次渲染整棵特征树。
+// 恢复旧版稳定行为：默认展开产品、零件、基准组和几何体业务骨架。
 function defaultExpandedKeys() {
-  return sourceTree.value
-    .filter(node => node.children.length)
+  return flattenFeatureTree(sourceTree.value)
+    .filter(node => node.children.length && ['catpart', 'part', 'datum_group', 'body'].includes(node.kind))
     .map(node => node.id);
 }
 
@@ -102,7 +101,6 @@ async function syncTreeState() {
 }
 
 function handleExpand(node: FeatureTreeNode) {
-  emit('expand', node);
   if (query.value || category.value !== 'all') return;
   userExpandedKeys.value = [...new Set([...userExpandedKeys.value, node.id])];
 }
@@ -137,7 +135,8 @@ function highlightParts(text: string) {
 watch(
   sourceTree,
   () => {
-    userExpandedKeys.value = defaultExpandedKeys();
+    // 数据初始化后保留用户手动展开状态，避免点击节点时整棵树缩回。
+    if (!userExpandedKeys.value.length) userExpandedKeys.value = defaultExpandedKeys();
   },
   { immediate: true }
 );
