@@ -4,12 +4,15 @@
 #include <CATDocument.h>
 #include <CATErrorDef.h>
 #include <CATIDocRoots.h>
+#include <CATILinkableObject.h>
 #include <CATIProduct.h>
 #include <CATIMovable.h>
 #include <CATLISTV_CATBaseUnknown.h>
 #include <CATMathTransformation.h>
 #include <CATUnicodeString.h>
 #include <float.h>
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 #include <sstream>
@@ -56,20 +59,6 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
-static std::string MakeProductReferenceId(long index)
-{
-  std::ostringstream out;
-  out << "product_reference_" << index;
-  return out.str();
-}
-
-static std::string MakeProductOccurrenceId(long index)
-{
-  std::ostringstream out;
-  out << "product_occurrence_" << index;
-  return out.str();
-}
-
 static std::string MachineSegment(long index, const std::string& name)
 {
   std::ostringstream out;
@@ -80,6 +69,23 @@ static std::string MachineSegment(long index, const std::string& name)
 static bool IsFinite(double value)
 {
   return _finite(value) != 0;
+}
+
+static std::string LowerCopy(const std::string& value)
+{
+  std::string lowered = value;
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(), static_cast<int (*)(int)>(::tolower));
+  return lowered;
+}
+
+static std::string DocumentKindFromName(const std::string& name)
+{
+  const std::string lowered = LowerCopy(name);
+  if (lowered.size() >= 8 && lowered.substr(lowered.size() - 8) == ".catpart")
+    return "catpart";
+  if (lowered.size() >= 11 && lowered.substr(lowered.size() - 11) == ".catproduct")
+    return "catproduct";
+  return "unknown";
 }
 
 static bool ReadAbsTransform(CATIProduct* product, ProductOccurrence& occurrence,
@@ -161,8 +167,9 @@ static bool ReadAbsTransform(CATIProduct* product, ProductOccurrence& occurrence
 class ProductCrawler
 {
 public:
-  ProductCrawler(ReconstructionPackage& package, const std::string& document_id)
-    : _package(package), _document_id(document_id), _next_reference(1), _next_occurrence(1)
+  ProductCrawler(ReconstructionPackage& package, CaptureIdRegistry& ids,
+                 CATDocument* root_document, const std::string& document_id)
+    : _package(package), _ids(ids), _root_document(root_document), _document_id(document_id)
   {
   }
 
@@ -176,7 +183,15 @@ public:
     if (!product)
       return true;
 
-    CATIProduct_var reference = product->GetReferenceProduct();
+    CATIProduct_var reference = NULL_var;
+    try { reference = product->GetReferenceProduct(); }
+    catch (...)
+    {
+      _package.diagnostics.push_back(MakeDiagnostic("warning", "product_reference_unavailable",
+                                                    parent_occurrence_id.empty() ? _document_id : parent_occurrence_id,
+                                                    "CATIProduct::GetReferenceProduct failed; instance kept with local product identity",
+                                                    "product_enumerator"));
+    }
     CATIProduct* reference_product = reference;
     if (!reference_product)
       reference_product = product;
@@ -196,8 +211,9 @@ public:
     if (instance_name.empty())
       instance_name = part_number.empty() ? "Product" : part_number;
 
-    std::string reference_id = ReferenceId(reference_product, part_number);
-    std::string occurrence_id = MakeProductOccurrenceId(_next_occurrence++);
+    ProductReferenceEntity* reference_entity = ReferenceEntity(reference_product, part_number);
+    std::string reference_id = reference_entity ? reference_entity->reference_id : "";
+    std::string occurrence_id = _ids.NextProductOccurrenceId();
     const std::string tree_path = parent_tree_path.empty() ? ("/" + instance_name) : (parent_tree_path + "/" + instance_name);
     const std::string occurrence_path = parent_occurrence_path.empty() ? ("/" + MachineSegment(source_index, instance_name)) :
                                       (parent_occurrence_path + "/" + MachineSegment(source_index, instance_name));
@@ -206,14 +222,14 @@ public:
     occurrence.occurrence_id = occurrence_id;
     occurrence.parent_occurrence_id = parent_occurrence_id;
     occurrence.reference_id = reference_id;
-    occurrence.referenced_document_id = _document_id;
+    occurrence.referenced_document_id = reference_entity ? reference_entity->referenced_document_id : "";
     occurrence.instance_name = instance_name;
     occurrence.part_number = part_number;
     occurrence.tree_path = tree_path;
     occurrence.occurrence_path = occurrence_path;
     occurrence.depth = depth;
     occurrence.source_index = source_index;
-    occurrence.load_status = "loaded";
+    occurrence.load_status = (reference_entity && reference_entity->referenced_document_id.empty()) ? "unresolved" : "loaded";
     occurrence.capture_status = "available";
     occurrence.presentation_status = "visible";
     try { occurrence.child_count = product->GetChildrenCount(); }
@@ -264,39 +280,139 @@ public:
   }
 
 private:
-  std::string ReferenceId(CATIProduct* reference_product, const std::string& part_number)
+  std::string PointerKey(const void* pointer) const
   {
-    (void)reference_product;
-    std::string key = _document_id + "|";
-    key += part_number.empty() ? "unnamed_product_reference" : part_number;
+    std::ostringstream out;
+    out << pointer;
+    return out.str();
+  }
+
+  CATDocument* ReferenceDocument(CATIProduct* reference_product) const
+  {
+    if (!reference_product)
+      return 0;
+    CATILinkableObject* linkable = 0;
+    try
+    {
+      if (FAILED(reference_product->QueryInterface(IID_CATILinkableObject,
+          reinterpret_cast<void**>(&linkable))) || !linkable)
+        return 0;
+      CaaInterfaceGuard<CATILinkableObject> linkable_guard(linkable);
+      return linkable->GetDocument();
+    }
+    catch (...)
+    {
+    }
+    return 0;
+  }
+
+  ProductReferenceEntity* ReferenceEntity(CATIProduct* reference_product, const std::string& part_number)
+  {
+    CATDocument* reference_document = ReferenceDocument(reference_product);
+    std::string reference_document_name;
+    if (reference_document)
+      reference_document_name = UnicodeToUtf8Local(reference_document->DisplayName());
+
+    std::string key;
+    if (!reference_document_name.empty())
+      key = "document|" + reference_document_name + "|" + part_number;
+    else
+      key = "session_reference|" + PointerKey(reference_product);
     std::map<std::string, std::string>::iterator found = _references.find(key);
     if (found != _references.end())
-      return found->second;
-    const std::string reference_id = MakeProductReferenceId(_next_reference++);
+      return FindReference(found->second);
+
+    const std::string reference_id = _ids.NextProductReferenceId();
     _references[key] = reference_id;
 
     ProductReferenceEntity reference;
     reference.reference_id = reference_id;
-    reference.referenced_document_id = _document_id;
+    if (reference_document && reference_document == _root_document)
+      reference.referenced_document_id = _document_id;
+    else if (reference_document && !reference_document_name.empty())
+      reference.referenced_document_id = EnsureLinkedDocument(reference_document, reference_document_name, reference_id);
     reference.part_number = part_number;
     reference.display_name = part_number;
-    reference.reference_document_kind = "catproduct";
-    reference.definition_status = "same_document_product_reference";
+    reference.reference_document_name = reference_document_name;
+    if (reference_document && reference_document == _root_document)
+      reference.reference_document_kind = "catproduct";
+    else if (reference_document)
+      reference.reference_document_kind = DocumentKindFromName(reference_document_name);
+    else
+      reference.reference_document_kind = "unresolved";
+    reference.definition_status = reference.referenced_document_id.empty() ? "unresolved_reference_document" : "same_document_product_reference";
     reference.value_source = "CATIProduct";
-    reference.identity_method = part_number.empty() ? "canonical_unknown_identity" : "document_part_number_reference";
+    reference.identity_method = reference_document_name.empty() ? "session_reference_product_object" : "linkable_document_and_part_number";
     _package.product_references.push_back(reference);
-    return reference_id;
+    ProductReferenceEntity* stored = &_package.product_references[_package.product_references.size() - 1];
+
+    if (reference.referenced_document_id.empty())
+    {
+      _package.diagnostics.push_back(MakeDiagnostic("warning", "product_reference_document_unresolved",
+                                                    reference_id,
+                                                    "Reference Product identity is session-local and its owning CATDocument could not be mapped to a captured document",
+                                                    "product_enumerator"));
+    }
+    return stored;
+  }
+
+  std::string EnsureLinkedDocument(CATDocument* document,
+                                   const std::string& document_name,
+                                   const std::string& reference_id)
+  {
+    (void)document;
+    std::map<std::string, std::string>::iterator found = _document_ids_by_name.find(document_name);
+    if (found != _document_ids_by_name.end())
+      return found->second;
+
+    DocumentEntity entity;
+    entity.document_id = _ids.NextDocumentId();
+    entity.document_kind = DocumentKindFromName(document_name);
+    entity.source_file_name = document_name;
+    entity.display_name = document_name;
+    entity.load_status = "loaded";
+    entity.capture_status = "referenced";
+    entity.native_document_open_status = "provided_by_CATILinkableObject";
+    entity.definition_status = "reference_document_not_parsed";
+    entity.identity_method = "CATILinkableObject.GetDocument";
+    _package.document_graph.AddDocument(entity);
+    _document_ids_by_name[document_name] = entity.document_id;
+
+    DocumentLink link;
+    link.link_id = _ids.NextDocumentLinkId();
+    link.from_document_id = _document_id;
+    link.to_document_id = entity.document_id;
+    link.reference_id = reference_id;
+    link.link_role = "product_reference";
+    link.link_status = "loaded";
+    link.value_source = "CATILinkableObject.GetDocument";
+    link.read_status = "available";
+    _package.document_graph.links.push_back(link);
+    return entity.document_id;
+  }
+
+  ProductReferenceEntity* FindReference(const std::string& reference_id)
+  {
+    size_t i;
+    for (i = 0; i < _package.product_references.size(); ++i)
+    {
+      if (_package.product_references[i].reference_id == reference_id)
+        return &_package.product_references[i];
+    }
+    return 0;
   }
 
   ReconstructionPackage& _package;
+  CaptureIdRegistry& _ids;
+  CATDocument* _root_document;
   std::string _document_id;
-  long _next_reference;
-  long _next_occurrence;
   std::map<std::string, std::string> _references;
+  std::map<std::string, std::string> _document_ids_by_name;
   std::set<std::string> _active_references;
 };
 
 bool CaaProductEnumerator::Enumerate(CaaDocumentHandle& document_handle,
+                                     CaptureIdRegistry& ids,
                                      ReconstructionPackage& package,
                                      std::string& error)
 {
@@ -347,9 +463,9 @@ bool CaaProductEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   }
   CaaInterfaceGuard<CATIProduct> root_product_guard(root_product);
 
-  ProductCrawler crawler(package, package.document_graph.documents[0].document_id);
+  ProductCrawler crawler(package, ids, document, package.document_graph.documents[0].document_id);
   crawler.Visit(root_product, "", "", "", 0, 0);
-  package.diagnostics.push_back(MakeDiagnostic("info", "catproduct_bom_captured", "doc_1",
+  package.diagnostics.push_back(MakeDiagnostic("info", "catproduct_bom_captured", package.document_graph.documents[0].document_id,
                                                "CATProduct multi-level BOM captured from native CATDocument",
                                                "product_enumerator"));
   return true;

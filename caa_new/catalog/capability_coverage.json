@@ -53,11 +53,11 @@
     {
       "capability_id": "document.multi_document_graph",
       "family": "document",
-      "status": "compile_verified",
-      "headers": [],
-      "frameworks": [],
-      "extractor": "DocumentGraph",
-      "fixture_verified": false,
+      "status": "fixture_verified",
+      "headers": ["CATDocument.h", "CATILinkableObject.h"],
+      "frameworks": ["System", "ObjectModelerBase"],
+      "extractor": "CaaProductEnumerator",
+      "fixture_verified": true,
       "reconstruction_verified": false
     },
     {
@@ -93,21 +93,21 @@
     {
       "capability_id": "product.linked_document_resolution",
       "family": "product",
-      "status": "indexed",
+      "status": "fixture_verified",
       "headers": ["CATILinkableObject.h", "CATDocument.h"],
       "frameworks": ["ObjectModelerBase"],
-      "extractor": "CaaLinkedDocumentResolver",
-      "fixture_verified": false,
+      "extractor": "CaaProductEnumerator",
+      "fixture_verified": true,
       "reconstruction_verified": false
     },
     {
       "capability_id": "product.part_definition_projection",
       "family": "product",
-      "status": "indexed",
+      "status": "fixture_verified",
       "headers": ["CATIProduct.h", "CATISpecObject.h"],
       "frameworks": ["ProductStructure", "ObjectSpecsModeler"],
-      "extractor": "CaaProductEnumerator",
-      "fixture_verified": false,
+      "extractor": "CaaProductEnumerator;CaaPartEnumerator",
+      "fixture_verified": true,
       "reconstruction_verified": false
     },
     {

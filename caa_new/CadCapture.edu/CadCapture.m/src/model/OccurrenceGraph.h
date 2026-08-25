@@ -82,7 +82,6 @@ struct ProductOccurrence
 struct OccurrenceGraph
 {
   std::vector<ObjectOccurrence> object_occurrences;
-  std::vector<ProductOccurrence> product_occurrences;
 };
 
 }

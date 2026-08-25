@@ -38,6 +38,7 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - Primary tree and supplemental discovery are separated; supplemental nodes are preserved but not promoted to extra roots.
 - CATProduct traversal from the real `CATDocument` through `CATIDocRoots`, `CATIProduct::GetReferenceProduct`, `GetPrdInstanceName`, `GetPartNumber`, `GetChildren`, and `CATIMovable::GetAbsPosition`.
 - Product reference and product occurrence are stored separately, so multiple instances can share one reference while retaining unique occurrence paths.
+- Referenced CATPart documents exposed through `CATILinkableObject::GetDocument` are registered in `DocumentGraph`, captured once as definitions, and projected under each product instance with independent feature occurrences.
 - Normalized JSON artifact writing for manifest, capture report, reconstruction plan, `object_entities.jsonl`, `tree_occurrences.jsonl`, `product_references.jsonl`, `product_occurrences.jsonl`, and `document_links.jsonl`.
 - Legacy tree projection writing for compatible `features.jsonl` and `relations.jsonl` with occurrence IDs as feature IDs. CATProduct parent relations are also projected as `contains`.
 - Transactional artifact commit through `ArtifactRepository`.
@@ -47,8 +48,8 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 
 ## Not Implemented Yet
 
-- External linked-document resolution for product references.
-- CATPart feature-definition projection under product instances.
+- Broken or unloaded external link recovery beyond documents already exposed by CATIA Public APIs.
+- Recursive parsing of linked CATProduct definitions beyond the root product tree.
 - Full properties, native Feature parameters, Pad, Pocket, Hole, Sketch, FTA, topology, B-Rep, and tessellation extraction.
 
 Unavailable native capabilities remain explicit in diagnostics or capability coverage; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.

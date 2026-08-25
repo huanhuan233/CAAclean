@@ -20,4 +20,4 @@ Facets should be added as focused model records such as semantic, geometry, topo
 
 The old schema is produced by `LegacyArtifactProjection`, not by making CAA extractors write legacy files directly. Legacy features are occurrence projections, so `features.jsonl.feature_id` is an `occurrence_id` and `source_object_id` points back to `object_entities.jsonl`.
 
-External linked-document resolution and CATPart definition projection under product instances are separate capabilities. Until they are fixture-verified, CATProduct BOM capture may preserve the instance/reference tree without claiming those definitions are implemented.
+External linked-document resolution and CATPart definition projection under product instances are separate capabilities. Linked CATPart documents exposed by CATIA Public APIs are captured once as definitions and projected many times; broken/unloaded links remain explicit diagnostics instead of being mapped to the root document.

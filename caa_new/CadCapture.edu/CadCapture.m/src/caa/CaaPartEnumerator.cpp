@@ -24,8 +24,6 @@ public:
   CaaInterfaceGuard() : _ptr(0) {}
   explicit CaaInterfaceGuard(T* ptr) : _ptr(ptr) {}
   ~CaaInterfaceGuard() { if (_ptr) _ptr->Release(); }
-  T*& Out() { return _ptr; }
-  T* Get() const { return _ptr; }
 
 private:
   CaaInterfaceGuard(const CaaInterfaceGuard&);
@@ -129,78 +127,86 @@ static std::string MakeMachineSegment(long source_index, const std::string& segm
   return out.str();
 }
 
-static std::string MakeObjectId(long index)
+static std::string JoinDisplayPath(const std::string& prefix, const std::string& segment)
 {
-  std::ostringstream out;
-  out << "object_" << index;
-  return out.str();
+  if (prefix.empty())
+    return "/" + segment;
+  return prefix + "/" + segment;
 }
 
-static std::string MakeOccurrenceId(long index)
+static std::string JoinMachinePath(const std::string& prefix, long source_index, const std::string& segment)
 {
-  std::ostringstream out;
-  out << "occurrence_" << index;
-  return out.str();
+  if (prefix.empty())
+    return "/" + MakeMachineSegment(source_index, segment);
+  return prefix + "/" + MakeMachineSegment(source_index, segment);
 }
 
-static void AddStaticTreeNode(ReconstructionPackage& package,
-                              const std::string& object_id,
-                              const std::string& occurrence_id,
-                              const std::string& parent_occurrence_id,
-                              const std::string& object_kind,
-                              const std::string& display_name,
-                              const std::string& internal_name,
-                              const std::string& startup_type,
-                              const std::string& tree_path,
-                              const std::string& occurrence_path,
-                              long source_index,
-                              long container_index)
+static ObjectEntity MakeStaticObject(CaptureIdRegistry& ids,
+                                     const std::string& document_id,
+                                     const std::string& object_kind,
+                                     const std::string& display_name,
+                                     const std::string& internal_name,
+                                     const std::string& startup_type)
 {
   ObjectEntity object;
-  object.object_id = object_id;
-  object.document_id = "doc_1";
+  object.object_id = ids.NextObjectId();
+  object.document_id = document_id;
   object.object_kind = object_kind;
   object.display_name = display_name;
   object.internal_name = internal_name;
   object.startup_type = startup_type;
   object.update_status = "not_applicable";
   object.capture_status = "available";
-  object.identity.capture_id = object_id;
-  object.identity.native_identity = "";
-  object.identity.identity_method = "static_phase1a_node";
-  object.identity.stable_id = "";
+  object.identity.capture_id = object.object_id;
+  object.identity.identity_method = "static_document_definition_node";
   object.identity.native_label = display_name.empty() ? internal_name : display_name;
   object.identity.scope = IdentitySessionLocal;
   object.identity.read_status = "session_local_only";
-  package.objects.push_back(object);
+  return object;
+}
 
+static ObjectOccurrence MakeTemplateOccurrence(const std::string& template_id,
+                                               const std::string& object_id,
+                                               const std::string& parent_template_id,
+                                               const std::string& document_id,
+                                               const std::string& tree_path,
+                                               const std::string& occurrence_path,
+                                               long source_index,
+                                               long container_index,
+                                               const std::string& occurrence_role,
+                                               const std::string& enumeration_source,
+                                               const std::string& presentation_status)
+{
   ObjectOccurrence occurrence;
-  occurrence.occurrence_id = occurrence_id;
+  occurrence.occurrence_id = template_id;
   occurrence.object_id = object_id;
-  occurrence.parent_occurrence_id = parent_occurrence_id;
-  occurrence.document_id = "doc_1";
+  occurrence.parent_occurrence_id = parent_template_id;
+  occurrence.document_id = document_id;
   occurrence.occurrence_path = occurrence_path;
   occurrence.tree_path = tree_path;
   occurrence.source_index = source_index;
   occurrence.container_index = container_index;
-  occurrence.occurrence_role = "primary_tree";
-  occurrence.enumeration_source = "phase1a.static";
-  occurrence.presentation_status = "visible";
+  occurrence.occurrence_role = occurrence_role;
+  occurrence.enumeration_source = enumeration_source;
+  occurrence.presentation_status = presentation_status;
+  occurrence.occurrence_kind = "native_feature";
   occurrence.capture_status = "available";
-  package.occurrence_graph.object_occurrences.push_back(occurrence);
+  return occurrence;
 }
 
-class PartTreeCrawler
+class PartDefinitionCrawler
 {
 public:
-  explicit PartTreeCrawler(ReconstructionPackage& package)
-    : _package(package), _next_object_index(static_cast<long>(package.objects.size()) + 1),
-      _next_occurrence_index(static_cast<long>(package.occurrence_graph.object_occurrences.size()) + 1)
+  PartDefinitionCrawler(ReconstructionPackage& package,
+                        CaptureIdRegistry& ids,
+                        PartDefinition& definition,
+                        const std::string& document_id)
+    : _package(package), _ids(ids), _definition(definition), _document_id(document_id), _next_template_index(1)
   {
   }
 
   bool Visit(CATISpecObject* spec,
-             const std::string& parent_occurrence_id,
+             const std::string& parent_template_id,
              const std::string& parent_tree_path,
              const std::string& parent_occurrence_path,
              long source_index,
@@ -215,13 +221,12 @@ public:
       return true;
 
     std::string object_id;
-    ObjectEntity* entity = 0;
     std::map<CATISpecObject*, std::string>::iterator found = _entity_ids.find(spec);
     if (found == _entity_ids.end())
     {
       ObjectEntity object;
-      object.object_id = MakeObjectId(_next_object_index++);
-      object.document_id = "doc_1";
+      object.object_id = _ids.NextObjectId();
+      object.document_id = _document_id;
       object.object_kind = "catia_spec_object";
       object.display_name = SafeSpecString(spec, "display");
       object.internal_name = SafeSpecString(spec, "internal");
@@ -229,22 +234,20 @@ public:
       object.update_status = SafeUpdateStatus(spec);
       object.capture_status = "available";
       object.identity.capture_id = object.object_id;
-      object.identity.native_identity = "";
       object.identity.identity_method = "session_object_equivalence";
-      object.identity.stable_id = "";
       object.identity.native_label = object.display_name.empty() ? object.internal_name : object.display_name;
       object.identity.scope = IdentitySessionLocal;
       object.identity.read_status = "session_local_only";
       object_id = object.object_id;
       _entity_ids[spec] = object_id;
       _package.objects.push_back(object);
-      entity = &_package.objects[_package.objects.size() - 1];
     }
     else
     {
       object_id = found->second;
-      entity = FindEntity(object_id);
     }
+
+    ObjectEntity* entity = FindEntity(object_id);
     if (entity && entity->supplemental_sources.find(enumeration_source) == std::string::npos)
     {
       if (!entity->supplemental_sources.empty())
@@ -253,7 +256,7 @@ public:
     }
 
     const std::string segment = DisplaySegment(spec);
-    const std::string base_tree_path = parent_tree_path + "/" + segment;
+    const std::string base_tree_path = JoinDisplayPath(parent_tree_path, segment);
     std::string tree_path = base_tree_path;
     if (occurrence_role == "primary_tree")
     {
@@ -265,24 +268,15 @@ public:
         tree_path = disambiguated.str();
       }
     }
-    const std::string occurrence_path = parent_occurrence_path + "/" + MakeMachineSegment(source_index, segment);
-
-    ObjectOccurrence occurrence;
-    occurrence.occurrence_id = MakeOccurrenceId(_next_occurrence_index++);
-    occurrence.object_id = object_id;
-    occurrence.parent_occurrence_id = parent_occurrence_id;
-    occurrence.document_id = "doc_1";
-    occurrence.occurrence_path = occurrence_path;
-    occurrence.tree_path = tree_path;
-    occurrence.source_index = source_index;
-    occurrence.container_index = container_index;
-    occurrence.occurrence_role = occurrence_role;
-    occurrence.enumeration_source = enumeration_source;
-    occurrence.presentation_status = presentation_status;
-    occurrence.capture_status = "available";
-    _package.occurrence_graph.object_occurrences.push_back(occurrence);
+    const std::string occurrence_path = JoinMachinePath(parent_occurrence_path, source_index, segment);
+    const std::string template_id = NextTemplateId();
+    _definition.occurrence_templates.push_back(MakeTemplateOccurrence(template_id, object_id, parent_template_id,
+                                                                      _document_id, tree_path, occurrence_path,
+                                                                      source_index, container_index,
+                                                                      occurrence_role, enumeration_source,
+                                                                      presentation_status));
     if (presentation_status == "visible")
-      _primary_occurrence_by_entity[object_id] = occurrence.occurrence_id;
+      _primary_occurrence_by_entity[object_id] = template_id;
 
     if (_active_path.find(spec) != _active_path.end())
     {
@@ -306,7 +300,7 @@ public:
           if (child != NULL_var)
           {
             CATISpecObject* child_pointer = child;
-            Visit(child_pointer, occurrence.occurrence_id, tree_path, occurrence_path, index, container_index,
+            Visit(child_pointer, template_id, tree_path, occurrence_path, index, container_index,
                   "primary_tree", "CATISpecObject.ListComponents", "visible", error);
           }
         }
@@ -348,6 +342,13 @@ public:
   }
 
 private:
+  std::string NextTemplateId()
+  {
+    std::ostringstream out;
+    out << "template_occurrence_" << _next_template_index++;
+    return out.str();
+  }
+
   ObjectEntity* FindEntity(const std::string& object_id)
   {
     size_t i;
@@ -360,24 +361,32 @@ private:
   }
 
   ReconstructionPackage& _package;
-  long _next_object_index;
-  long _next_occurrence_index;
+  CaptureIdRegistry& _ids;
+  PartDefinition& _definition;
+  std::string _document_id;
+  long _next_template_index;
   std::map<CATISpecObject*, std::string> _entity_ids;
   std::map<std::string, std::string> _primary_occurrence_by_entity;
   std::map<std::string, long> _primary_tree_path_counts;
   std::set<CATISpecObject*> _active_path;
 };
 
-bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
-                                  ReconstructionPackage& package,
-                                  std::string& error)
+static std::string RootDocumentId(const ReconstructionPackage& package)
 {
-  if (package.document_graph.documents.empty() ||
-      package.document_graph.documents[0].document_kind != "catpart")
-  {
-    return true;
-  }
+  if (package.document_graph.documents.empty())
+    return "";
+  return package.document_graph.documents[0].document_id;
+}
 
+bool CaaPartEnumerator::CaptureDefinition(CaaDocumentHandle& document_handle,
+                                          CaptureIdRegistry& ids,
+                                          PartDefinition& definition,
+                                          ReconstructionPackage& package,
+                                          std::string& error)
+{
+  const std::string document_id = RootDocumentId(package);
+  if (definition.document_id.empty())
+    definition.document_id = document_id;
   CATDocument* document = static_cast<CATDocument*>(document_handle.NativeDocumentForCaaOnly());
   if (!document)
   {
@@ -410,14 +419,23 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   }
   CaaInterfaceGuard<CATIPrtContainer> part_container_guard(part_container);
 
-  AddStaticTreeNode(package, "object_1", "occurrence_1", "", "catia_document",
-                    document_handle.DisplayName(), "CATDocument", "CATDocument",
-                    "/document", "/0:document", 0, 0);
-  AddStaticTreeNode(package, "object_2", "occurrence_2", "occurrence_1", "catia_container",
-                    "PartSpecContainer", "CATIPrtContainer", "CATIPrtContainer",
-                    "/document/PartSpecContainer", "/0:document/1:PartSpecContainer", 1, 1);
+  ObjectEntity document_object = MakeStaticObject(ids, definition.document_id, "catia_document",
+                                                  document_handle.DisplayName(), "CATDocument", "CATDocument");
+  package.objects.push_back(document_object);
+  ObjectEntity container_object = MakeStaticObject(ids, definition.document_id, "catia_container",
+                                                   "PartSpecContainer", "CATIPrtContainer", "CATIPrtContainer");
+  package.objects.push_back(container_object);
 
-  PartTreeCrawler crawler(package);
+  definition.occurrence_templates.push_back(MakeTemplateOccurrence("template_document", document_object.object_id, "",
+                                                                   definition.document_id, "/document", "/0:document",
+                                                                   0, 0, "primary_tree", "definition.static", "visible"));
+  definition.occurrence_templates.push_back(MakeTemplateOccurrence("template_container", container_object.object_id,
+                                                                   "template_document", definition.document_id,
+                                                                   "/document/PartSpecContainer",
+                                                                   "/0:document/1:PartSpecContainer",
+                                                                   1, 1, "primary_tree", "definition.static", "visible"));
+
+  PartDefinitionCrawler crawler(package, ids, definition, definition.document_id);
   CATISpecObject_var part = NULL_var;
   try
   {
@@ -425,7 +443,7 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   }
   catch (...)
   {
-    package.diagnostics.push_back(MakeDiagnostic("warning", "part_entry_exception", "doc_1",
+    package.diagnostics.push_back(MakeDiagnostic("warning", "part_entry_exception", definition.document_id,
                                                  "CATIPrtContainer::GetPart raised an exception",
                                                  "part_enumerator"));
     error = "Part root access failed";
@@ -439,7 +457,7 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   }
 
   CATISpecObject* part_pointer = part;
-  if (!crawler.Visit(part_pointer, "occurrence_2",
+  if (!crawler.Visit(part_pointer, "template_container",
                      "/document/PartSpecContainer",
                      "/0:document/1:PartSpecContainer",
                      1, 1,
@@ -473,7 +491,7 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
           }
           else
           {
-            crawler.Visit(member_spec, "occurrence_2",
+            crawler.Visit(member_spec, "template_container",
                           "/document/PartSpecContainer",
                           "/0:document/1:PartSpecContainer",
                           static_cast<long>(index + 1), 2,
@@ -487,20 +505,80 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
     }
     catch (...)
     {
-      package.diagnostics.push_back(MakeDiagnostic("warning", "container_enumeration_exception", "doc_1",
+      package.diagnostics.push_back(MakeDiagnostic("warning", "container_enumeration_exception", definition.document_id,
                                                    "CATIContainer::ListMembersHere failed; scan continued",
                                                    "part_enumerator"));
     }
   }
   else
   {
-    package.diagnostics.push_back(MakeDiagnostic("info", "applicative_container_unavailable", "doc_1",
+    package.diagnostics.push_back(MakeDiagnostic("info", "applicative_container_unavailable", definition.document_id,
                                                  "root container does not expose CATIContainer",
                                                  "part_enumerator"));
   }
 
-  package.diagnostics.push_back(MakeDiagnostic("info", "catpart_tree_captured", "doc_1",
-                                               "CATPart specification tree captured from native CATDocument",
+  package.diagnostics.push_back(MakeDiagnostic("info", "catpart_definition_captured", definition.document_id,
+                                               "CATPart definition tree captured once from native CATDocument",
+                                               "part_enumerator"));
+  return true;
+}
+
+bool CaaPartEnumerator::ProjectDefinition(const PartDefinition& definition,
+                                          const ProjectionContext& context,
+                                          CaptureIdRegistry& ids,
+                                          ReconstructionPackage& package,
+                                          std::string& error)
+{
+  (void)error;
+  std::map<std::string, std::string> occurrence_id_by_template;
+  size_t i;
+  for (i = 0; i < definition.occurrence_templates.size(); ++i)
+  {
+    const ObjectOccurrence& source = definition.occurrence_templates[i];
+    ObjectOccurrence projected = source;
+    projected.occurrence_id = ids.NextOccurrenceId();
+    occurrence_id_by_template[source.occurrence_id] = projected.occurrence_id;
+    if (source.parent_occurrence_id.empty())
+      projected.parent_occurrence_id = context.parent_occurrence_id;
+    else
+      projected.parent_occurrence_id = occurrence_id_by_template[source.parent_occurrence_id];
+
+    projected.product_occurrence_id = context.product_occurrence_id;
+    projected.reference_id = context.reference_id;
+    projected.referenced_document_id = context.referenced_document_id.empty() ? definition.document_id : context.referenced_document_id;
+
+    if (!context.tree_path_prefix.empty())
+      projected.tree_path = context.tree_path_prefix + source.tree_path;
+    if (!context.occurrence_path_prefix.empty())
+      projected.occurrence_path = context.occurrence_path_prefix + source.occurrence_path;
+
+    package.occurrence_graph.object_occurrences.push_back(projected);
+  }
+  return true;
+}
+
+bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
+                                  CaptureIdRegistry& ids,
+                                  ReconstructionPackage& package,
+                                  std::string& error)
+{
+  if (package.document_graph.documents.empty() ||
+      package.document_graph.documents[0].document_kind != "catpart")
+  {
+    return true;
+  }
+
+  PartDefinition definition;
+  if (!CaptureDefinition(document_handle, ids, definition, package, error))
+    return false;
+
+  ProjectionContext context;
+  context.referenced_document_id = definition.document_id;
+  if (!ProjectDefinition(definition, context, ids, package, error))
+    return false;
+
+  package.diagnostics.push_back(MakeDiagnostic("info", "catpart_tree_captured", definition.document_id,
+                                               "CATPart specification tree projected from captured definition",
                                                "part_enumerator"));
   return true;
 }

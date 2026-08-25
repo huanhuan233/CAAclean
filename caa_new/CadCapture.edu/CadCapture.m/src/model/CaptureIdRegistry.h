@@ -16,6 +16,12 @@ public:
   std::string NextProductReferenceId();
   std::string NextProductOccurrenceId();
   std::string NextDocumentLinkId();
+  std::string NextPropertyFactId();
+  std::string NextSemanticFacetId();
+  std::string NextGeometryId();
+  std::string NextTopologyId();
+  std::string NextPmiId();
+  std::string NextDiagnosticId();
 
 private:
   std::string Next(const char* prefix, long& value);
@@ -26,6 +32,12 @@ private:
   long _product_reference_index;
   long _product_occurrence_index;
   long _document_link_index;
+  long _property_fact_index;
+  long _semantic_facet_index;
+  long _geometry_index;
+  long _topology_index;
+  long _pmi_index;
+  long _diagnostic_index;
 };
 
 }

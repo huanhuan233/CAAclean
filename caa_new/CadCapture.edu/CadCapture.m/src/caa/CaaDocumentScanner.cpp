@@ -25,6 +25,7 @@ static std::string CaptureExtension(const std::string& path)
 
 bool CaaDocumentScanner::Scan(const std::string& input_path,
                               CaaDocumentHandle& document_handle,
+                              CaptureIdRegistry& ids,
                               ReconstructionPackage& package,
                               std::string& error)
 {
@@ -32,9 +33,15 @@ bool CaaDocumentScanner::Scan(const std::string& input_path,
     return false;
 
   DocumentEntity document;
-  document.document_id = "doc_1";
+  document.document_id = ids.NextDocumentId();
   document.source_file_name = CaptureBaseName(input_path);
+  document.display_name = document_handle.DisplayName();
+  if (document.display_name.empty())
+    document.display_name = document.source_file_name;
+  document.load_status = "loaded";
   document.native_document_open_status = "opened_read_only";
+  document.definition_status = "root_document";
+  document.identity_method = "opened_document_handle";
 
   const std::string ext = CaptureExtension(input_path);
   if (ext == ".catpart")

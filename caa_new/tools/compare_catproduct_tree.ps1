@@ -19,7 +19,7 @@ function RepoRoot {
 function Read-JsonLines($path) {
   $items = @()
   if (!(Test-Path $path)) { return $items }
-  Get-Content $path | ForEach-Object {
+  Get-Content $path -Encoding UTF8 | ForEach-Object {
     if ($_.Trim().Length -gt 0) { $items += ($_ | ConvertFrom-Json) }
   }
   return $items

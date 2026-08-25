@@ -98,4 +98,4 @@ The CAA-facing implementation opens the real CATProduct document read-only, obta
 
 `product_references.jsonl`, `product_occurrences.jsonl`, and `document_links.jsonl` are normalized outputs. `LegacyArtifactProjection` projects product occurrences into compatible `features.jsonl` and writes parent relations, while preserving referential validity.
 
-Current verified coverage is native same-document CATProduct BOM capture, reference/instance separation, and absolute transforms. External linked-document resolution and CATPart feature-definition projection under product instances are indexed for later work but are not fixture-verified and must not be declared implemented.
+Current verified coverage is native CATProduct BOM capture, reference/instance separation, absolute transforms, linked CATPart/CATProduct document graph evidence exposed by `CATILinkableObject`, and CATPart definition projection under product instances. Recovery of broken/unloaded external links and recursive parsing of linked CATProduct definitions remain separate future capabilities unless a fixture proves the Public API path.

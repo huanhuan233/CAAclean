@@ -13,9 +13,11 @@
 #include "caa/CaaSketchExtractor.h"
 #include "caa/CaaTessellationExtractor.h"
 #include "caa/CaaTopologyExtractor.h"
+#include "model/CaptureIdRegistry.h"
 #include "output/ArtifactRepository.h"
 #include "reconstruction/ReconstructionPlanner.h"
 #include "reconstruction/ReconstructionValidator.h"
+#include <map>
 
 namespace cadcapture {
 
@@ -74,6 +76,89 @@ static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& 
   package.diagnostics.push_back(MakeDiagnostic("info", "self_test_package", document.document_id,
                                                "self-test package constructed", "self_test"));
   SyncReportDiagnostics(package, report);
+}
+
+static ProductReferenceEntity* FindProductReference(ReconstructionPackage& package,
+                                                    const std::string& reference_id)
+{
+  size_t i;
+  for (i = 0; i < package.product_references.size(); ++i)
+  {
+    if (package.product_references[i].reference_id == reference_id)
+      return &package.product_references[i];
+  }
+  return 0;
+}
+
+static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
+                                            CaptureIdRegistry& ids,
+                                            ReconstructionPackage& package,
+                                            std::string& error)
+{
+  std::map<std::string, PartDefinition> definitions_by_document;
+  size_t i;
+  for (i = 0; i < package.product_references.size(); ++i)
+  {
+    ProductReferenceEntity& reference = package.product_references[i];
+    if (reference.reference_document_kind != "catpart" ||
+        reference.referenced_document_id.empty() ||
+        reference.reference_document_name.empty())
+      continue;
+    if (definitions_by_document.find(reference.referenced_document_id) != definitions_by_document.end())
+      continue;
+
+    CaaDocumentHandle linked_handle;
+    std::string open_error;
+    if (!linked_handle.OpenReadOnly(reference.reference_document_name, open_error))
+    {
+      reference.definition_status = "broken_reference_document";
+      package.diagnostics.push_back(MakeDiagnostic("warning", "linked_catpart_open_failed",
+                                                   reference.reference_id,
+                                                   open_error,
+                                                   "model_capture_engine"));
+      continue;
+    }
+
+    PartDefinition definition;
+    definition.document_id = reference.referenced_document_id;
+    std::string capture_error;
+    if (!part_enumerator.CaptureDefinition(linked_handle, ids, definition, package, capture_error))
+    {
+      reference.definition_status = "definition_capture_failed";
+      package.diagnostics.push_back(MakeDiagnostic("warning", "linked_catpart_definition_failed",
+                                                   reference.reference_id,
+                                                   capture_error,
+                                                   "model_capture_engine"));
+      continue;
+    }
+    reference.definition_status = "definition_captured";
+    definitions_by_document[reference.referenced_document_id] = definition;
+  }
+
+  for (i = 0; i < package.product_occurrences.size(); ++i)
+  {
+    ProductOccurrence& occurrence = package.product_occurrences[i];
+    ProductReferenceEntity* reference = FindProductReference(package, occurrence.reference_id);
+    if (!reference || reference->reference_document_kind != "catpart")
+      continue;
+    std::map<std::string, PartDefinition>::iterator found = definitions_by_document.find(reference->referenced_document_id);
+    if (found == definitions_by_document.end())
+      continue;
+
+    const size_t before = package.occurrence_graph.object_occurrences.size();
+    ProjectionContext context;
+    context.parent_occurrence_id = occurrence.occurrence_id;
+    context.tree_path_prefix = occurrence.tree_path;
+    context.occurrence_path_prefix = occurrence.occurrence_path;
+    context.product_occurrence_id = occurrence.occurrence_id;
+    context.reference_id = occurrence.reference_id;
+    context.referenced_document_id = reference->referenced_document_id;
+    if (!part_enumerator.ProjectDefinition(found->second, context, ids, package, error))
+      return false;
+    if (package.occurrence_graph.object_occurrences.size() > before)
+      occurrence.feature_definition_root_id = package.occurrence_graph.object_occurrences[before].occurrence_id;
+  }
+  return true;
 }
 
 bool ModelCaptureEngine::Capture(const CaptureRequest& request,
@@ -146,8 +231,9 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   }
 
   CaaDocumentHandle document_handle;
+  CaptureIdRegistry ids;
   CaaDocumentScanner scanner;
-  if (!scanner.Scan(request.input_path, document_handle, package, error))
+  if (!scanner.Scan(request.input_path, document_handle, ids, package, error))
   {
     report.message = error;
     report.exit_code = 2;
@@ -173,7 +259,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   ArtifactRepository repository;
 
   broker.Check("native_access", package);
-  if (!part_enumerator.Enumerate(document_handle, package, error))
+  if (!part_enumerator.Enumerate(document_handle, ids, package, error))
   {
     report.message = error;
     report.exit_code = 1;
@@ -181,7 +267,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     SyncReportDiagnostics(package, report);
     return false;
   }
-  if (!product_enumerator.Enumerate(document_handle, package, error))
+  if (!product_enumerator.Enumerate(document_handle, ids, package, error))
   {
     report.message = error;
     report.exit_code = 1;
@@ -189,7 +275,15 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     SyncReportDiagnostics(package, report);
     return false;
   }
-  linked_document_resolver.Resolve(package);
+  if (!ProjectLinkedCatPartDefinitions(part_enumerator, ids, package, error))
+  {
+    report.message = error;
+    report.exit_code = 1;
+    UpdateReportCounts(package, report);
+    SyncReportDiagnostics(package, report);
+    return false;
+  }
+  linked_document_resolver.Resolve(document_handle, ids, package);
   property_extractors.Extract(package);
   native_feature_extractors.Extract(package);
   sketch_extractor.Extract(package);
@@ -197,7 +291,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   geometry_extractor.Extract(package);
   tessellation_extractor.Extract(package);
   fta_extractor.Extract(package);
-  identity_resolver.Resolve(package);
+  identity_resolver.Resolve(ids, package);
 
   planner.Plan(package);
   package.capture_status = "partial";

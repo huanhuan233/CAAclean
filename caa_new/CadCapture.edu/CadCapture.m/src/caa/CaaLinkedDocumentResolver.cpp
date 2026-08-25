@@ -2,10 +2,14 @@
 
 namespace cadcapture {
 
-bool CaaLinkedDocumentResolver::Resolve(ReconstructionPackage& package)
+bool CaaLinkedDocumentResolver::Resolve(CaaDocumentHandle& document_handle,
+                                        CaptureIdRegistry& ids,
+                                        ReconstructionPackage& package)
 {
-  package.diagnostics.push_back(MakeDiagnostic("info", "linked_document_resolution_deferred", "links",
-                                               "Phase 1B records same-document CATProduct references; external linked document opening is deferred unless exposed by the root product traversal",
+  (void)document_handle;
+  (void)ids;
+  package.diagnostics.push_back(MakeDiagnostic("info", "linked_document_resolution_partial", "links",
+                                               "Linked document evidence is recorded from CATIProduct/CATILinkableObject when available; unresolved links remain explicit instead of being mapped to the root document",
                                                "linked_document_resolver"));
   return true;
 }

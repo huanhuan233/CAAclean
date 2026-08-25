@@ -1,6 +1,7 @@
 #ifndef CADCAPTURE_CAA_CAAIDENTITYRESOLVER_H
 #define CADCAPTURE_CAA_CAAIDENTITYRESOLVER_H
 
+#include "model/CaptureIdRegistry.h"
 #include "model/ReconstructionPackage.h"
 
 namespace cadcapture {
@@ -8,7 +9,7 @@ namespace cadcapture {
 class CaaIdentityResolver
 {
 public:
-  bool Resolve(ReconstructionPackage& package);
+  bool Resolve(CaptureIdRegistry& ids, ReconstructionPackage& package);
 };
 
 }
