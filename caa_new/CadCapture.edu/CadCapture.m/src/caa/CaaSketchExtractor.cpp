@@ -4,8 +4,8 @@ namespace cadcapture {
 
 bool CaaSketchExtractor::Extract(ReconstructionPackage& package)
 {
-  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "sketch",
-                                               "Sketch extraction is not implemented in Phase 1A",
+  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "sketch",
+                                               "Sketch evidence extraction is planned until legacy sketch references are migrated",
                                                "sketch_extractor"));
   return true;
 }

@@ -4,8 +4,8 @@ namespace cadcapture {
 
 bool CaaNativeFeatureExtractors::Extract(ReconstructionPackage& package)
 {
-  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "native_features",
-                                               "Native feature extraction is not implemented in Phase 1A",
+  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "native_features",
+                                               "Native feature decoding is planned until legacy feature evidence is migrated",
                                                "native_feature_extractors"));
   return true;
 }

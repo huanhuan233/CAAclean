@@ -4,8 +4,8 @@ namespace cadcapture {
 
 bool CaaTopologyExtractor::Extract(ReconstructionPackage& package)
 {
-  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "topology",
-                                               "Topology extraction is not implemented in Phase 1A",
+  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "topology",
+                                               "Topology extraction is planned until legacy topology evidence is migrated",
                                                "topology_extractor"));
   return true;
 }

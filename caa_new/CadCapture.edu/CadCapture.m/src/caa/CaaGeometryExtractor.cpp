@@ -4,8 +4,8 @@ namespace cadcapture {
 
 bool CaaGeometryExtractor::Extract(ReconstructionPackage& package)
 {
-  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "geometry",
-                                               "Geometry extraction is not implemented in Phase 1A",
+  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "geometry",
+                                               "Geometry extraction is planned until legacy exact geometry evidence is migrated",
                                                "geometry_extractor"));
   return true;
 }

@@ -4,8 +4,8 @@ namespace cadcapture {
 
 bool CaaFtaExtractor::Extract(ReconstructionPackage& package)
 {
-  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "fta",
-                                               "FTA extraction is not implemented in Phase 1A",
+  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "fta",
+                                               "FTA extraction is planned until legacy evidence is migrated",
                                                "fta_extractor"));
   return true;
 }
