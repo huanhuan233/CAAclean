@@ -472,6 +472,69 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     geometry_ids[entity.geometry_id] = true;
   }
 
+  std::map<std::string, bool> pmi_ids;
+  for (i = 0; i < package.pmi.size(); ++i)
+  {
+    const PmiEntity& entity = package.pmi[i];
+    if (entity.pmi_id.empty())
+    {
+      error = "pmi_id is empty";
+      return false;
+    }
+    if (HasKey(pmi_ids, entity.pmi_id))
+    {
+      error = "duplicate pmi_id: " + entity.pmi_id;
+      return false;
+    }
+    if (!HasKey(document_ids, entity.subject_id) &&
+        !HasKey(object_ids, entity.subject_id) &&
+        !HasKey(occurrence_ids, entity.subject_id) &&
+        !HasKey(reference_ids, entity.subject_id))
+    {
+      error = "pmi references missing subject_id: " + entity.subject_id;
+      return false;
+    }
+    if (entity.pmi_kind.empty() ||
+        entity.source_api.empty() ||
+        entity.evidence_status.empty() ||
+        entity.read_status.empty())
+    {
+      error = "pmi entity missing kind/source/status: " + entity.pmi_id;
+      return false;
+    }
+    pmi_ids[entity.pmi_id] = true;
+  }
+
+  for (i = 0; i < package.feature_dependencies.size(); ++i)
+  {
+    const FeatureDependency& dependency = package.feature_dependencies[i];
+    if (dependency.from_feature_id.empty() ||
+        dependency.to_feature_id.empty() ||
+        dependency.dependency_kind.empty() ||
+        dependency.read_status.empty())
+    {
+      error = "feature dependency missing endpoint/kind/status";
+      return false;
+    }
+    if (!HasKey(document_ids, dependency.from_feature_id) &&
+        !HasKey(object_ids, dependency.from_feature_id) &&
+        !HasKey(occurrence_ids, dependency.from_feature_id) &&
+        !HasKey(reference_ids, dependency.from_feature_id))
+    {
+      error = "feature dependency references missing from_feature_id: " + dependency.from_feature_id;
+      return false;
+    }
+    if (!HasKey(document_ids, dependency.to_feature_id) &&
+        !HasKey(object_ids, dependency.to_feature_id) &&
+        !HasKey(occurrence_ids, dependency.to_feature_id) &&
+        !HasKey(reference_ids, dependency.to_feature_id) &&
+        !HasKey(topology_ids, dependency.to_feature_id))
+    {
+      error = "feature dependency references missing to_feature_id: " + dependency.to_feature_id;
+      return false;
+    }
+  }
+
   if (package.reconstruction_plan.empty())
   {
     error = "reconstruction route is empty";

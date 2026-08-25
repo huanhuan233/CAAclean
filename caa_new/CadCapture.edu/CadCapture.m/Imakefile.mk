@@ -12,4 +12,6 @@ LINK_WITH = \
   CATProductStructure1 \
   ProductStructureUUID \
   CATMathematics \
-  CATGMModelInterfaces
+  CATGMModelInterfaces \
+  CATTPSItf \
+  CATTPSUUID

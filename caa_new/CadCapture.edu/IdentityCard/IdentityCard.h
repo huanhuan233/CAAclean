@@ -5,3 +5,4 @@ AddPrereqComponent("MecModInterfaces", Public);
 AddPrereqComponent("ProductStructure", Public);
 AddPrereqComponent("Mathematics", Public);
 AddPrereqComponent("GMModelInterfaces", Public);
+AddPrereqComponent("CATTPSInterfaces", Public);

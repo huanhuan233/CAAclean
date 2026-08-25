@@ -42,6 +42,8 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - `PropertyFact` output for captured document, object, occurrence, and product instance identity/status fields, plus legacy-compatible `parameters.jsonl` projection from those facts.
 - Type-only native feature semantic facets from captured `startup_type` values, with explicit canonical family, decoder ID, decode level, and payload availability; these are also projected to legacy-compatible `native_features.jsonl`.
 - Root CATPart final `CATBody` topology capture through `CATIPrtPart::GetSolid`, including body cell counts, face/edge/vertex/volume cell summaries, face area, edge length, cell center evidence, and face tessellation range summaries.
+- Shape feature ResultOUT body summaries through `CATIShapeFeatureBody::GetResultOUT` and `CATIGeometricalElement::GetBodyResult`, linked back to captured ObjectEntity IDs through `feature_dependencies.jsonl`.
+- FTA/TPS set-level evidence through `CATITPSDocument::GetSets`, with normalized `pmi_entities.jsonl` and legacy-compatible `fta_sets.jsonl`. Empty TPS Set results are preserved as empty files, not failures.
 - Normalized JSON artifact writing for manifest, capture report, reconstruction plan, `object_entities.jsonl`, `tree_occurrences.jsonl`, `product_references.jsonl`, `product_occurrences.jsonl`, and `document_links.jsonl`.
 - Legacy tree projection writing for compatible `features.jsonl` and `relations.jsonl` with occurrence IDs as feature IDs. CATProduct parent relations are also projected as `contains`.
 - Transactional artifact commit through `ArtifactRepository`.
@@ -53,7 +55,7 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 
 - Broken or unloaded external link recovery beyond documents already exposed by CATIA Public APIs.
 - Recursive parsing of linked CATProduct definitions beyond the root product tree.
-- Full properties, native Feature parameter payloads, Pad, Pocket, Hole, Sketch, FTA, exact surface/curve parameter extraction, feature-result topology links, full B-Rep graph, and triangle payload extraction.
+- Full properties, native Feature parameter payloads, Pad, Pocket, Hole, Sketch, detailed FTA semantics, FTA-to-topology links, exact surface/curve parameter extraction, ResultOUT cell-to-final-face mapping, full B-Rep graph, and triangle payload extraction.
 - CATIInertia and Knowledgeware parameter values from legacy code are not yet migrated in this branch; unavailable tabs are not fabricated.
 
 Unavailable native capabilities remain explicit in diagnostics or capability coverage; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.

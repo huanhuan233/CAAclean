@@ -13,12 +13,17 @@
 #include <CATCGMTessStripeIter.h>
 #include <CATCGMTessTrianIter.h>
 #include <CATDocument.h>
+#include <CATIGeometricalElement.h>
 #include <CATIPrtContainer.h>
 #include <CATIPrtPart.h>
 #include <CATISpecObject.h>
+#include <CATIShapeFeatureBody.h>
+#include <CATLISTV_CATISpecObject.h>
 #include <CATInit.h>
 #include <CATMathPoint.h>
+#include <CATUnicodeString.h>
 #include <ListPOfCATCell.h>
+#include <cstring>
 #include <vector>
 
 namespace cadcapture {
@@ -36,6 +41,96 @@ private:
   CgmTessellatorGuard& operator=(const CgmTessellatorGuard&);
 
   CATICGMBodyTessellator* _tessellator;
+};
+
+class SpecListGuard
+{
+public:
+  explicit SpecListGuard(CATListValCATISpecObject_var* list) : _list(list) {}
+  ~SpecListGuard() { delete _list; }
+
+private:
+  SpecListGuard(const SpecListGuard&);
+  SpecListGuard& operator=(const SpecListGuard&);
+  CATListValCATISpecObject_var* _list;
+};
+
+static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
+{
+  const size_t capacity = static_cast<size_t>(value.GetLengthInChar() + 1) * 4 + 1;
+  std::vector<char> buffer(capacity, 0);
+  size_t byte_count = 0;
+  value.ConvertToUTF8(&buffer[0], &byte_count);
+  if (byte_count >= buffer.size())
+    byte_count = buffer.size() - 1;
+  buffer[byte_count] = 0;
+  return std::string(&buffer[0], byte_count);
+}
+
+static std::string SafeSpecString(CATISpecObject* spec, const char* field)
+{
+  if (!spec)
+    return "";
+  try
+  {
+    if (std::strcmp(field, "display") == 0)
+      return UnicodeToUtf8Local(spec->GetDisplayName());
+    if (std::strcmp(field, "internal") == 0)
+      return UnicodeToUtf8Local(spec->GetName());
+    if (std::strcmp(field, "startup") == 0)
+      return UnicodeToUtf8Local(spec->GetType());
+  }
+  catch (...)
+  {
+  }
+  return "";
+}
+
+static std::string ObjectKey(const std::string& display_name,
+                             const std::string& internal_name,
+                             const std::string& startup_type)
+{
+  return display_name + "\n" + internal_name + "\n" + startup_type;
+}
+
+static std::string SpecKey(CATISpecObject* spec)
+{
+  return ObjectKey(SafeSpecString(spec, "display"),
+                   SafeSpecString(spec, "internal"),
+                   SafeSpecString(spec, "startup"));
+}
+
+class FeatureSubjectMatcher
+{
+public:
+  explicit FeatureSubjectMatcher(const ReconstructionPackage& package)
+    : _package(package), _used(package.objects.size(), false)
+  {
+  }
+
+  std::string Match(CATISpecObject* spec)
+  {
+    const std::string key = SpecKey(spec);
+    size_t i;
+    for (i = 0; i < _package.objects.size(); ++i)
+    {
+      if (_used[i])
+        continue;
+      const ObjectEntity& object = _package.objects[i];
+      if (object.object_kind != "catia_spec_object")
+        continue;
+      if (ObjectKey(object.display_name, object.internal_name, object.startup_type) == key)
+      {
+        _used[i] = true;
+        return object.object_id;
+      }
+    }
+    return "";
+  }
+
+private:
+  const ReconstructionPackage& _package;
+  std::vector<bool> _used;
 };
 
 static const char* TopologyCellKind(short dimension)
@@ -348,6 +443,169 @@ static void AppendFaceTessellation(CaptureIdRegistry& ids,
   package.geometry.push_back(geometry);
 }
 
+static void AppendResultOutBody(CaptureIdRegistry& ids,
+                                ReconstructionPackage& package,
+                                CATBody* body,
+                                const std::string& feature_subject_id)
+{
+  if (!body || feature_subject_id.empty())
+    return;
+
+  TopologyEntity entity;
+  entity.topology_id = ids.NextTopologyId();
+  entity.subject_id = feature_subject_id;
+  entity.topology_kind = "feature_result_body";
+  entity.source_kind = "catishapefeaturebody_resultout";
+  entity.value_source = "CATIShapeFeatureBody.GetResultOUT;CATIGeometricalElement.GetBodyResult";
+  entity.stable_id_method = "capture_id_registry";
+  entity.stability_scope = "same_input_same_r21_parser_revision";
+  entity.read_status = "success";
+  try
+  {
+    int vertices = 0;
+    int edges = 0;
+    int faces = 0;
+    int volumes = 0;
+    body->GetCellNumbers(&vertices, &edges, &faces, &volumes);
+    entity.vertex_count = static_cast<long>(vertices);
+    entity.edge_count = static_cast<long>(edges);
+    entity.face_count = static_cast<long>(faces);
+    entity.volume_count = static_cast<long>(volumes);
+  }
+  catch (...)
+  {
+    entity.read_status = "partial";
+    package.diagnostics.push_back(MakeDiagnostic("warning", "feature_result_cell_count_failed",
+                                                 feature_subject_id,
+                                                 "CATBody::GetCellNumbers failed for feature ResultOUT",
+                                                 "topology_extractor"));
+  }
+  package.topology.push_back(entity);
+
+  FeatureDependency dependency;
+  dependency.from_feature_id = feature_subject_id;
+  dependency.to_feature_id = entity.topology_id;
+  dependency.dependency_kind = "has_resultout_body";
+  dependency.read_status = entity.read_status;
+  package.feature_dependencies.push_back(dependency);
+}
+
+static void CaptureResultOutForSpec(CATISpecObject* spec,
+                                    CaptureIdRegistry& ids,
+                                    ReconstructionPackage& package,
+                                    FeatureSubjectMatcher& matcher)
+{
+  if (!spec)
+    return;
+  CATIShapeFeatureBody* shape_body = 0;
+  try
+  {
+    if (FAILED(spec->QueryInterface(IID_CATIShapeFeatureBody,
+                                    reinterpret_cast<void**>(&shape_body))) ||
+        !shape_body)
+      return;
+  }
+  catch (...)
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "shape_feature_body_query_exception",
+                                                 FindRootCatPartSubject(package),
+                                                 "CATIShapeFeatureBody QueryInterface raised an exception",
+                                                 "topology_extractor"));
+    return;
+  }
+  CaaInterfaceGuard<CATIShapeFeatureBody> shape_guard(shape_body);
+
+  const std::string subject_id = matcher.Match(spec);
+  CATISpecObject_var result_out = NULL_var;
+  try
+  {
+    result_out = shape_body->GetResultOUT();
+  }
+  catch (...)
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "feature_resultout_read_failed",
+                                                 subject_id,
+                                                 "CATIShapeFeatureBody::GetResultOUT raised an exception",
+                                                 "topology_extractor"));
+    return;
+  }
+  if (result_out == NULL_var)
+    return;
+
+  CATISpecObject* result_spec = result_out;
+  CATIGeometricalElement* geometry = 0;
+  try
+  {
+    if (FAILED(result_spec->QueryInterface(IID_CATIGeometricalElement,
+                                           reinterpret_cast<void**>(&geometry))) ||
+        !geometry)
+      return;
+  }
+  catch (...)
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "feature_result_geometry_query_exception",
+                                                 subject_id,
+                                                 "CATIGeometricalElement QueryInterface raised an exception for ResultOUT",
+                                                 "topology_extractor"));
+    return;
+  }
+  CaaInterfaceGuard<CATIGeometricalElement> geometry_guard(geometry);
+
+  CATBody_var result_body = NULL_var;
+  try
+  {
+    result_body = geometry->GetBodyResult();
+  }
+  catch (...)
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "feature_result_body_read_failed",
+                                                 subject_id,
+                                                 "CATIGeometricalElement::GetBodyResult raised an exception for ResultOUT",
+                                                 "topology_extractor"));
+    return;
+  }
+  if (result_body == NULL_var)
+    return;
+  CATBody* body = result_body;
+  AppendResultOutBody(ids, package, body, subject_id);
+}
+
+static void TraverseResultOutSpecs(CATISpecObject* spec,
+                                   CaptureIdRegistry& ids,
+                                   ReconstructionPackage& package,
+                                   FeatureSubjectMatcher& matcher)
+{
+  if (!spec)
+    return;
+  CaptureResultOutForSpec(spec, ids, package, matcher);
+  CATListValCATISpecObject_var* children = 0;
+  try
+  {
+    children = spec->ListComponents();
+  }
+  catch (...)
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "feature_result_children_failed",
+                                                 FindRootCatPartSubject(package),
+                                                 "CATISpecObject::ListComponents failed during ResultOUT scan",
+                                                 "topology_extractor"));
+    return;
+  }
+  if (!children)
+    return;
+  SpecListGuard guard(children);
+  int index = 1;
+  for (; index <= children->Size(); ++index)
+  {
+    CATISpecObject_var child = (*children)[index];
+    if (child != NULL_var)
+    {
+      CATISpecObject* child_pointer = child;
+      TraverseResultOutSpecs(child_pointer, ids, package, matcher);
+    }
+  }
+}
+
 bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
                                    CaptureIdRegistry& ids,
                                    ReconstructionPackage& package)
@@ -530,6 +788,9 @@ bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
     AppendCellEntity(ids, package, vertices[i], body_id, subject_id, static_cast<long>(i + 1));
   for (i = 0; i < volumes.size(); ++i)
     AppendCellEntity(ids, package, volumes[i], body_id, subject_id, static_cast<long>(i + 1));
+
+  FeatureSubjectMatcher matcher(package);
+  TraverseResultOutSpecs(part_spec, ids, package, matcher);
 
   package.diagnostics.push_back(MakeDiagnostic("info", "catpart_final_body_topology_captured",
                                                body_id,

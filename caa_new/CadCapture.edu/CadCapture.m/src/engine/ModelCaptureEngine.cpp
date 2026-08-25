@@ -31,6 +31,7 @@ static void UpdateReportCounts(const ReconstructionPackage& package, CaptureRepo
   report.semantic_facet_count = static_cast<int>(package.semantic_facets.size());
   report.topology_count = static_cast<int>(package.topology.size());
   report.geometry_count = static_cast<int>(package.geometry.size());
+  report.pmi_count = static_cast<int>(package.pmi.size());
 }
 
 static void SyncReportDiagnostics(const ReconstructionPackage& package, CaptureReport& report)
@@ -314,7 +315,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   topology_extractor.Extract(document_handle, ids, package);
   geometry_extractor.Extract(package);
   tessellation_extractor.Extract(package);
-  fta_extractor.Extract(package);
+  fta_extractor.Extract(document_handle, ids, package);
   identity_resolver.Resolve(ids, package);
 
   planner.Plan(package);

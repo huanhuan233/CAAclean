@@ -413,6 +413,61 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
   }
   if (!FinishStream(geometry, geometry_path, error))
     return false;
+
+  const std::string pmi_path = output_dir + "\\pmi_entities.jsonl";
+  std::ofstream pmi(pmi_path.c_str(), std::ios::out | std::ios::binary);
+  if (!pmi)
+  {
+    error = "failed to open output file: " + pmi_path;
+    return false;
+  }
+  for (i = 0; i < package.pmi.size(); ++i)
+  {
+    const PmiEntity& entity = package.pmi[i];
+    pmi << "{"
+        << JsonQuote("pmi_id") << ":" << JsonQuote(entity.pmi_id) << ","
+        << JsonQuote("subject_id") << ":" << JsonQuote(entity.subject_id) << ","
+        << JsonQuote("pmi_kind") << ":" << JsonQuote(entity.pmi_kind) << ","
+        << JsonQuote("source_api") << ":" << JsonQuote(entity.source_api) << ","
+        << JsonQuote("evidence_status") << ":" << JsonQuote(entity.evidence_status) << ","
+        << JsonQuote("set_index") << ":" << entity.set_index << ","
+        << JsonQuote("tps_count") << ":" << entity.tps_count << ","
+        << JsonQuote("geometry_reference_count") << ":" << entity.geometry_reference_count << ","
+        << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status)
+        << "}\n";
+    if (!pmi)
+    {
+      error = "failed to write output file: " + pmi_path;
+      return false;
+    }
+  }
+  if (!FinishStream(pmi, pmi_path, error))
+    return false;
+
+  const std::string dependencies_path = output_dir + "\\feature_dependencies.jsonl";
+  std::ofstream dependencies(dependencies_path.c_str(), std::ios::out | std::ios::binary);
+  if (!dependencies)
+  {
+    error = "failed to open output file: " + dependencies_path;
+    return false;
+  }
+  for (i = 0; i < package.feature_dependencies.size(); ++i)
+  {
+    const FeatureDependency& dependency = package.feature_dependencies[i];
+    dependencies << "{"
+                 << JsonQuote("from_feature_id") << ":" << JsonQuote(dependency.from_feature_id) << ","
+                 << JsonQuote("to_feature_id") << ":" << JsonQuote(dependency.to_feature_id) << ","
+                 << JsonQuote("dependency_kind") << ":" << JsonQuote(dependency.dependency_kind) << ","
+                 << JsonQuote("read_status") << ":" << JsonQuote(dependency.read_status)
+                 << "}\n";
+    if (!dependencies)
+    {
+      error = "failed to write output file: " + dependencies_path;
+      return false;
+    }
+  }
+  if (!FinishStream(dependencies, dependencies_path, error))
+    return false;
   return true;
 }
 
@@ -443,6 +498,7 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
            << i1 << JsonQuote("semantic_facet_count") << ":" << (pretty ? " " : "") << report.semantic_facet_count << "," << nl
            << i1 << JsonQuote("topology_count") << ":" << (pretty ? " " : "") << report.topology_count << "," << nl
            << i1 << JsonQuote("geometry_count") << ":" << (pretty ? " " : "") << report.geometry_count << "," << nl
+           << i1 << JsonQuote("pmi_count") << ":" << (pretty ? " " : "") << report.pmi_count << "," << nl
            << i1 << JsonQuote("selected_reconstruction_route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
            << i1 << JsonQuote("capture_status") << ":" << (pretty ? " " : "") << JsonQuote(package.capture_status) << "," << nl
            << i1 << JsonQuote("native_document_open_status") << ":" << (pretty ? " " : "") << JsonQuote(package.document_graph.documents.empty() ? "unavailable" : package.document_graph.documents[0].native_document_open_status) << "," << nl
@@ -458,6 +514,7 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
               << i1 << JsonQuote("semantic_facet_count") << ":" << (pretty ? " " : "") << report.semantic_facet_count << "," << nl
               << i1 << JsonQuote("topology_count") << ":" << (pretty ? " " : "") << report.topology_count << "," << nl
               << i1 << JsonQuote("geometry_count") << ":" << (pretty ? " " : "") << report.geometry_count << "," << nl
+              << i1 << JsonQuote("pmi_count") << ":" << (pretty ? " " : "") << report.pmi_count << "," << nl
               << i1 << JsonQuote("diagnostic_count") << ":" << (pretty ? " " : "") << static_cast<int>(report.diagnostics.size()) << nl
               << "}" << nl;
 

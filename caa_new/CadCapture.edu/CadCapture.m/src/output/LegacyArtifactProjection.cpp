@@ -316,6 +316,67 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(native_mesh, native_mesh_path, error))
     return false;
 
+  const std::string fta_sets_path = output_dir + "\\fta_sets.jsonl";
+  std::ofstream fta_sets(fta_sets_path.c_str(), std::ios::out | std::ios::binary);
+  if (!fta_sets)
+  {
+    error = "failed to open output file: " + fta_sets_path;
+    return false;
+  }
+  for (i = 0; i < package.pmi.size(); ++i)
+  {
+    const PmiEntity& entity = package.pmi[i];
+    fta_sets << "{"
+             << JsonQuote("fta_set_id") << ":" << JsonQuote(entity.pmi_id) << ","
+             << JsonQuote("document_id") << ":" << JsonQuote(entity.subject_id) << ","
+             << JsonQuote("set_index") << ":" << entity.set_index << ","
+             << JsonQuote("tps_count") << ":" << entity.tps_count << ","
+             << JsonQuote("geometry_reference_count") << ":" << entity.geometry_reference_count << ","
+             << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status) << ","
+             << JsonQuote("evidence_status") << ":" << JsonQuote(entity.evidence_status) << ","
+             << JsonQuote("source_api") << ":" << JsonQuote(entity.source_api)
+             << "}\n";
+    if (!fta_sets)
+    {
+      error = "failed to write output file: " + fta_sets_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(fta_sets, fta_sets_path, error))
+    return false;
+
+  const std::string feature_results_path = output_dir + "\\native_feature_results.jsonl";
+  std::ofstream feature_results(feature_results_path.c_str(), std::ios::out | std::ios::binary);
+  if (!feature_results)
+  {
+    error = "failed to open output file: " + feature_results_path;
+    return false;
+  }
+  for (i = 0; i < package.topology.size(); ++i)
+  {
+    const TopologyEntity& entity = package.topology[i];
+    if (entity.source_kind != "catishapefeaturebody_resultout")
+      continue;
+    feature_results << "{"
+                    << JsonQuote("result_id") << ":" << JsonQuote(entity.topology_id) << ","
+                    << JsonQuote("source_feature_id") << ":" << JsonQuote(entity.subject_id) << ","
+                    << JsonQuote("result_kind") << ":" << JsonQuote("resultout_body") << ","
+                    << JsonQuote("vertex_count") << ":" << entity.vertex_count << ","
+                    << JsonQuote("edge_count") << ":" << entity.edge_count << ","
+                    << JsonQuote("face_count") << ":" << entity.face_count << ","
+                    << JsonQuote("volume_count") << ":" << entity.volume_count << ","
+                    << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status) << ","
+                    << JsonQuote("value_source") << ":" << JsonQuote(entity.value_source)
+                    << "}\n";
+    if (!feature_results)
+    {
+      error = "failed to write output file: " + feature_results_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(feature_results, feature_results_path, error))
+    return false;
+
   if (!ValidateRelationEndpoints(package, error))
     return false;
   return true;

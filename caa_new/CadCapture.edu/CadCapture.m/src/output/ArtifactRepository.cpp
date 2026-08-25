@@ -84,12 +84,16 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     "semantic_facets.jsonl",
     "topology_entities.jsonl",
     "geometry_entities.jsonl",
+    "pmi_entities.jsonl",
+    "feature_dependencies.jsonl",
     "features.jsonl",
     "relations.jsonl",
     "parameters.jsonl",
     "native_features.jsonl",
     "native_topology.jsonl",
-    "native_mesh_face_map.jsonl"
+    "native_mesh_face_map.jsonl",
+    "fta_sets.jsonl",
+    "native_feature_results.jsonl"
   };
   int i;
   for (i = 0; i < static_cast<int>(sizeof(required) / sizeof(required[0])); ++i)
@@ -182,6 +186,36 @@ static bool VerifyStaging(const ReconstructionPackage& package,
       static_cast<long>(package.geometry.size()))
   {
     error = "native_mesh_face_map.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "pmi_entities.jsonl")) !=
+      static_cast<long>(package.pmi.size()))
+  {
+    error = "pmi_entities.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "fta_sets.jsonl")) !=
+      static_cast<long>(package.pmi.size()))
+  {
+    error = "fta_sets.jsonl line count mismatch";
+    return false;
+  }
+  if (CountLines(JoinPath(staging, "feature_dependencies.jsonl")) !=
+      static_cast<long>(package.feature_dependencies.size()))
+  {
+    error = "feature_dependencies.jsonl line count mismatch";
+    return false;
+  }
+  long result_body_count = 0;
+  size_t topology_index = 0;
+  for (topology_index = 0; topology_index < package.topology.size(); ++topology_index)
+  {
+    if (package.topology[topology_index].source_kind == "catishapefeaturebody_resultout")
+      ++result_body_count;
+  }
+  if (CountLines(JoinPath(staging, "native_feature_results.jsonl")) != result_body_count)
+  {
+    error = "native_feature_results.jsonl line count mismatch";
     return false;
   }
   LegacyArtifactProjection legacy;

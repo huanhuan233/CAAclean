@@ -98,7 +98,19 @@ For a root CATPart, `CaaTopologyExtractor` reopens the already loaded native doc
 
 Face tessellation is recorded as `GeometryEntity` range summaries produced by `CATICGMBodyTessellator`. This stage captures point/strip/fan/polygon/triangle counts and Face to triangle-range evidence, but not triangle coordinate payloads.
 
-Exact analytic surface/curve parameter decoding, full B-Rep adjacency/wire/coedge graph, and feature-result to final-body topology links remain separate capabilities until their fixtures are migrated and verified.
+Exact analytic surface/curve parameter decoding, full B-Rep adjacency/wire/coedge graph, and ResultOUT cell-to-final-body Face mapping remain separate capabilities until their fixtures are migrated and verified.
+
+## Feature Result Identity
+
+During root CATPart topology extraction, the spec tree is traversed again inside `CaaTopologyExtractor`. Shape features that expose `CATIShapeFeatureBody` are matched back to captured `ObjectEntity` rows by the same display/internal/startup identity tuple captured from the native spec tree. When `GetResultOUT` returns a geometrical result body, the extractor records a `feature_result_body` topology entity and a `has_resultout_body` row in `feature_dependencies.jsonl`.
+
+This is identity evidence for a feature result body, not a claim that ResultOUT cells have been mapped to final-body faces.
+
+## FTA/TPS Evidence
+
+`CaaFtaExtractor` queries `CATITPSDocument` on the native document and records set-level PMI evidence from `CATITPSDocument::GetSets`. For each set that exposes `CATITPSSet`, the extractor records TPS component count and geometry reference count. It does not infer GD&T semantics and does not create FTA-to-topology links without a verified Public API path.
+
+Documents with no TPS sets still produce empty `pmi_entities.jsonl` and `fta_sets.jsonl`; that means the scan completed with no set evidence, not that annotations were dropped.
 
 ## Phase 1B CATProduct Tree
 

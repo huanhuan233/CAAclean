@@ -184,6 +184,28 @@
       "notes": "Face to tessellated triangle range summaries. Triangle coordinate sidecar is not migrated in this stage."
     },
     {
+      "capability_id": "feature.resultout_body_identity",
+      "family": "feature",
+      "status": "fixture_verified",
+      "headers": ["CATIShapeFeatureBody.h", "CATIGeometricalElement.h", "CATBody.h"],
+      "frameworks": ["MecModInterfaces", "GMModelInterfaces"],
+      "extractor": "CaaTopologyExtractor",
+      "fixture_verified": true,
+      "reconstruction_verified": false,
+      "notes": "ResultOUT body counts linked to captured ObjectEntity IDs. ResultOUT cell to final Face mapping remains unavailable."
+    },
+    {
+      "capability_id": "fta.tps_set_counts",
+      "family": "fta",
+      "status": "fixture_verified",
+      "headers": ["CATITPSDocument.h", "CATITPSSet.h", "CATITPSList.h", "CATITPSGeometryList.h"],
+      "frameworks": ["CATTPSInterfaces"],
+      "extractor": "CaaFtaExtractor",
+      "fixture_verified": true,
+      "reconstruction_verified": false,
+      "notes": "Set-level TPS scan and counts only. Detailed GD&T semantics and FTA-to-topology links are not declared implemented."
+    },
+    {
       "capability_id": "geometry.native_exact",
       "family": "geometry",
       "status": "indexed",
