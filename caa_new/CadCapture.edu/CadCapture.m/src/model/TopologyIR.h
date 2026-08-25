@@ -29,6 +29,11 @@ struct TopologyEntity
   double area_mm2;
   bool length_mm_available;
   double length_mm;
+  std::string geometry_orientation;
+  std::string exact_geometry_type;
+  std::string geometry_parameters_json;
+  std::string parameter_domain_json;
+  std::string bounding_box_json;
   std::string geometry_status;
   std::string measure_status;
   std::string read_status;

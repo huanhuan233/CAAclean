@@ -179,15 +179,17 @@
     "legacy_fixtures": [
       "kuang.CATPart"
     ],
-    "new_module": "src\\caa\\CaaGeometryExtractor",
+    "new_module": "src\\caa\\CaaTopologyExtractor",
     "new_outputs": [
-      "geometry_entities.jsonl"
+      "topology_entities.jsonl",
+      "native_topology.jsonl",
+      "native_topology_cells.jsonl"
     ],
-    "implementation_status": "not_migrated",
+    "implementation_status": "migrated",
     "compile_status": "compile_verified",
     "fixture_status": "fixture_verified",
-    "semantic_parity_status": "not_passed",
-    "reason": "Exact analytic/NURBS curve and surface parameters are not emitted by caa_new."
+    "semantic_parity_status": "artifact_presence_passed",
+    "reason": "CATCell geometry orientation, bounding boxes, surface/curve parameter domains, analytic plane/cylinder/cone/sphere/torus/line/circle payloads, and NURBS control/knot payloads are emitted in topology artifacts for verified CATPart fixtures."
   },
   {
     "capability_id": "tessellation.triangle_payload",

@@ -52,6 +52,16 @@ static bool FinishLegacyStream(std::ofstream& out, const std::string& path, std:
   return true;
 }
 
+static const char* LegacyRawJsonOrObject(const std::string& json)
+{
+  return json.empty() ? "{}" : json.c_str();
+}
+
+static const char* LegacyRawJsonOrNull(const std::string& json)
+{
+  return json.empty() ? "null" : json.c_str();
+}
+
 static bool WriteTopologyEntityJson(std::ofstream& out,
                                     const TopologyEntity& entity,
                                     const char* id_key,
@@ -80,6 +90,11 @@ static bool WriteTopologyEntityJson(std::ofstream& out,
       << JsonQuote("area_mm2") << ":" << entity.area_mm2 << ","
       << JsonQuote("length_mm_available") << ":" << (entity.length_mm_available ? "true" : "false") << ","
       << JsonQuote("length_mm") << ":" << entity.length_mm << ","
+      << JsonQuote("orientation") << ":" << JsonQuote(entity.geometry_orientation) << ","
+      << JsonQuote("geometry_type") << ":" << JsonQuote(entity.exact_geometry_type.empty() ? entity.geometry_status : entity.exact_geometry_type) << ","
+      << JsonQuote("geometry_parameters") << ":" << LegacyRawJsonOrObject(entity.geometry_parameters_json) << ","
+      << JsonQuote("parameter_domain") << ":" << LegacyRawJsonOrNull(entity.parameter_domain_json) << ","
+      << JsonQuote("bounding_box_mm") << ":" << LegacyRawJsonOrNull(entity.bounding_box_json) << ","
       << JsonQuote("geometry_status") << ":" << JsonQuote(entity.geometry_status) << ","
       << JsonQuote("measure_status") << ":" << JsonQuote(entity.measure_status) << ","
       << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status) << ","
@@ -334,6 +349,11 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                     << JsonQuote("area_mm2") << ":" << entity.area_mm2 << ","
                     << JsonQuote("length_mm_available") << ":" << (entity.length_mm_available ? "true" : "false") << ","
                     << JsonQuote("length_mm") << ":" << entity.length_mm << ","
+                    << JsonQuote("orientation") << ":" << JsonQuote(entity.geometry_orientation) << ","
+                    << JsonQuote("geometry_type") << ":" << JsonQuote(entity.exact_geometry_type.empty() ? entity.geometry_status : entity.exact_geometry_type) << ","
+                    << JsonQuote("geometry_parameters") << ":" << LegacyRawJsonOrObject(entity.geometry_parameters_json) << ","
+                    << JsonQuote("parameter_domain") << ":" << LegacyRawJsonOrNull(entity.parameter_domain_json) << ","
+                    << JsonQuote("bounding_box_mm") << ":" << LegacyRawJsonOrNull(entity.bounding_box_json) << ","
                     << JsonQuote("geometry_status") << ":" << JsonQuote(entity.geometry_status) << ","
                     << JsonQuote("measure_status") << ":" << JsonQuote(entity.measure_status) << ","
                     << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status) << ","

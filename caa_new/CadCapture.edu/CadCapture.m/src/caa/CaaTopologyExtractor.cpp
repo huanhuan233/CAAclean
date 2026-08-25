@@ -8,6 +8,25 @@
 #include <CATDomain.h>
 #include <CATEdge.h>
 #include <CATFace.h>
+#include <CATGeometry.h>
+#include <CATSurface.h>
+#include <CATCurve.h>
+#include <CATSurLimits.h>
+#include <CATCrvLimits.h>
+#include <CATSurParam.h>
+#include <CATCrvParam.h>
+#include <CATPlane.h>
+#include <CATElementarySurface.h>
+#include <CATCylinder.h>
+#include <CATCone.h>
+#include <CATSphere.h>
+#include <CATTorus.h>
+#include <CATNurbsSurface.h>
+#include <CATKnotVector.h>
+#include <CATLine.h>
+#include <CATConic.h>
+#include <CATCircle.h>
+#include <CATNurbsCurve.h>
 #include <CATICGMBodyTessellator.h>
 #include <CATCGMTessFanIter.h>
 #include <CATCGMTessPointIter.h>
@@ -22,11 +41,16 @@
 #include <CATIShapeFeatureBody.h>
 #include <CATLISTV_CATISpecObject.h>
 #include <CATInit.h>
+#include <CATMathBox.h>
+#include <CATMathDirection.h>
+#include <CATMathPlane.h>
 #include <CATMathPoint.h>
+#include <CATMathVector.h>
 #include <CATUnicodeString.h>
 #include <ListPOfCATCell.h>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
 #include <map>
 #include <sstream>
 #include <vector>
@@ -325,6 +349,631 @@ static bool LookupTessPoint(const std::map<int, TessPointData>& points, int rank
   out_xyz[1] = found->second.xyz[1];
   out_xyz[2] = found->second.xyz[2];
   return true;
+}
+
+static void WriteJsonPoint(std::ostream& out, const CATMathPoint& point)
+{
+  double xyz[3] = { 0.0, 0.0, 0.0 };
+  point.GetCoord(xyz);
+  out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
+}
+
+static void WriteJsonVector(std::ostream& out, const CATMathVector& vector)
+{
+  double xyz[3] = { 0.0, 0.0, 0.0 };
+  vector.GetCoord(xyz);
+  out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
+}
+
+static void WriteJsonDirection(std::ostream& out, const CATMathDirection& direction)
+{
+  double xyz[3] = { 0.0, 0.0, 0.0 };
+  direction.GetCoord(xyz);
+  out << '[' << std::setprecision(15) << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << ']';
+}
+
+static void WriteJsonDoubleArray(std::ostream& out, const double* values, long count)
+{
+  out << '[';
+  long i = 0;
+  for (; i < count; ++i)
+  {
+    if (i) out << ',';
+    out << std::setprecision(15) << (values ? values[i] : 0.0);
+  }
+  out << ']';
+}
+
+static void WriteJsonLongArray(std::ostream& out, const std::vector<long>& values)
+{
+  out << '[';
+  size_t i = 0;
+  for (; i < values.size(); ++i)
+  {
+    if (i) out << ',';
+    out << values[i];
+  }
+  out << ']';
+}
+
+static void WriteKnotVectorJson(std::ostream& out, const char* name,
+                                const CATKnotVector* knot_vector)
+{
+  out << '"' << name << "\":";
+  if (!knot_vector)
+  {
+    out << "null";
+    return;
+  }
+  const short knot_count = knot_vector->GetNumberOfKnots();
+  const short control_count = knot_vector->GetNumberOfControlPoints();
+  const double* knots = 0;
+  knot_vector->GetKnots(knots);
+  std::vector<long> multiplicities;
+  short i = 1;
+  for (; i <= knot_count; ++i)
+    multiplicities.push_back(static_cast<long>(knot_vector->GetKnotMultiplicity(i)));
+  out << "{\"degree\":" << knot_vector->GetDegree()
+      << ",\"original_degree\":" << knot_vector->GetOriginalDegree()
+      << ",\"periodic\":" << (knot_vector->IsPeriodic() ? "true" : "false")
+      << ",\"uniform\":" << (knot_vector->IsUniform() ? "true" : "false")
+      << ",\"control_point_count\":" << control_count
+      << ",\"knot_count\":" << knot_count
+      << ",\"index_offset\":" << knot_vector->GetIndexOffset()
+      << ",\"knots\":";
+  WriteJsonDoubleArray(out, knots, knot_count);
+  out << ",\"multiplicities\":";
+  WriteJsonLongArray(out, multiplicities);
+  out << '}';
+}
+
+static std::string NurbsCurveJson(CATNurbsCurve* nurbs)
+{
+  if (!nurbs) return "";
+  const CATKnotVector* knots = 0;
+  try { knots = nurbs->GetKnotVector(); } catch (...) { knots = 0; }
+  const short control_count = knots ? knots->GetNumberOfControlPoints() : 0;
+  int original_degree = 0;
+  try { nurbs->GetOriginalDegree(original_degree); } catch (...) {}
+  double parameter_coefficient = 1.0;
+  double parameter_shift = 0.0;
+  try { nurbs->GetOriginalParametrisationDATA(parameter_coefficient, parameter_shift); } catch (...) {}
+  std::ostringstream out;
+  out << "{\"rational\":" << (nurbs->IsRational() ? "true" : "false")
+      << ",\"original_degree\":" << original_degree
+      << ",\"original_parameterization\":{\"coefficient\":" << std::setprecision(15)
+      << parameter_coefficient << ",\"shift\":" << parameter_shift << '}'
+      << ",\"control_point_count\":" << control_count
+      << ",\"control_points\":[";
+  short i = 1;
+  for (; i <= control_count; ++i)
+  {
+    if (i > 1) out << ',';
+    CATMathPoint point;
+    try { nurbs->GetOneControlPoint(i, point); } catch (...) {}
+    WriteJsonPoint(out, point);
+  }
+  out << "],\"weights\":[";
+  for (i = 1; i <= control_count; ++i)
+  {
+    if (i > 1) out << ',';
+    double weight = 1.0;
+    try { weight = nurbs->GetOneWeight(i); } catch (...) {}
+    out << std::setprecision(15) << weight;
+  }
+  out << "],";
+  WriteKnotVectorJson(out, "knot_vector", knots);
+  out << '}';
+  return out.str();
+}
+
+static std::string NurbsSurfaceJson(CATNurbsSurface* nurbs)
+{
+  if (!nurbs) return "";
+  const CATKnotVector* u_knots = 0;
+  const CATKnotVector* v_knots = 0;
+  try { u_knots = nurbs->GetKnotVectorU(); } catch (...) { u_knots = 0; }
+  try { v_knots = nurbs->GetKnotVectorV(); } catch (...) { v_knots = 0; }
+  const short u_count = u_knots ? u_knots->GetNumberOfControlPoints() : 0;
+  const short v_count = v_knots ? v_knots->GetNumberOfControlPoints() : 0;
+  int original_degree_u = 0;
+  int original_degree_v = 0;
+  try { nurbs->GetOriginalDegrees(original_degree_u, original_degree_v); } catch (...) {}
+  double coefficient_u = 1.0;
+  double shift_u = 0.0;
+  double coefficient_v = 1.0;
+  double shift_v = 0.0;
+  try { nurbs->GetOriginalParametrisationDATA(coefficient_u, shift_u, coefficient_v, shift_v); }
+  catch (...) {}
+  std::ostringstream out;
+  out << "{\"rational\":" << (nurbs->IsRational() ? "true" : "false")
+      << ",\"original_degree_u\":" << original_degree_u
+      << ",\"original_degree_v\":" << original_degree_v
+      << ",\"original_parameterization\":{\"u\":{\"coefficient\":" << std::setprecision(15)
+      << coefficient_u << ",\"shift\":" << shift_u << "},\"v\":{\"coefficient\":"
+      << coefficient_v << ",\"shift\":" << shift_v << "}}"
+      << ",\"control_point_count_u\":" << u_count
+      << ",\"control_point_count_v\":" << v_count
+      << ",\"control_points\":[";
+  short u = 1;
+  for (; u <= u_count; ++u)
+  {
+    if (u > 1) out << ',';
+    out << '[';
+    short v = 1;
+    for (; v <= v_count; ++v)
+    {
+      if (v > 1) out << ',';
+      CATMathPoint point;
+      try { nurbs->GetOneControlPoint(u, v, point); } catch (...) {}
+      WriteJsonPoint(out, point);
+    }
+    out << ']';
+  }
+  out << "],\"weights\":[";
+  for (u = 1; u <= u_count; ++u)
+  {
+    if (u > 1) out << ',';
+    out << '[';
+    short v = 1;
+    for (; v <= v_count; ++v)
+    {
+      if (v > 1) out << ',';
+      double weight = 1.0;
+      try { weight = nurbs->GetOneWeight(u, v); } catch (...) {}
+      out << std::setprecision(15) << weight;
+    }
+    out << ']';
+  }
+  out << "],";
+  WriteKnotVectorJson(out, "u_knot_vector", u_knots);
+  out << ',';
+  WriteKnotVectorJson(out, "v_knot_vector", v_knots);
+  out << '}';
+  return out.str();
+}
+
+static std::string GeometryBoundingBoxJson(CATGeometry* geometry)
+{
+  if (!geometry) return "";
+  try
+  {
+    CATMathBox box;
+    geometry->GetBoundingBox(box);
+    CATMathPoint low;
+    CATMathPoint high;
+    box.GetLow(low);
+    box.GetHigh(high);
+    std::ostringstream out;
+    out << "{\"min\":";
+    WriteJsonPoint(out, low);
+    out << ",\"max\":";
+    WriteJsonPoint(out, high);
+    out << '}';
+    return out.str();
+  }
+  catch (...) {}
+  return "";
+}
+
+static std::string SurfaceParameterDomainJson(CATSurface* surface)
+{
+  if (!surface) return "";
+  try
+  {
+    CATSurLimits limits;
+    surface->GetLimits(limits);
+    CATSurParam low;
+    CATSurParam high;
+    limits.GetLow(low);
+    limits.GetHigh(high);
+    std::ostringstream out;
+    out << "{\"kind\":\"surface_uv_limits\",\"u_min\":" << std::setprecision(15)
+        << low.GetParamU() << ",\"u_max\":" << high.GetParamU()
+        << ",\"v_min\":" << low.GetParamV() << ",\"v_max\":" << high.GetParamV()
+        << ",\"u_low_patch\":" << low.GetPatchNumberU()
+        << ",\"u_high_patch\":" << high.GetPatchNumberU()
+        << ",\"v_low_patch\":" << low.GetPatchNumberV()
+        << ",\"v_high_patch\":" << high.GetPatchNumberV()
+        << ",\"source_api\":\"CATSurface.GetLimits\"}";
+    return out.str();
+  }
+  catch (...) {}
+  return "";
+}
+
+static std::string CurveParameterDomainJson(CATCurve* curve)
+{
+  if (!curve) return "";
+  try
+  {
+    CATCrvLimits limits;
+    curve->GetLimits(limits);
+    CATCrvParam low;
+    CATCrvParam high;
+    limits.GetLow(low);
+    limits.GetHigh(high);
+    std::ostringstream out;
+    out << "{\"kind\":\"curve_limits\",\"t_min\":" << std::setprecision(15)
+        << low.GetParam() << ",\"t_max\":" << high.GetParam()
+        << ",\"low_arc\":" << low.GetArcNumber()
+        << ",\"high_arc\":" << high.GetArcNumber()
+        << ",\"source_api\":\"CATCurve.GetLimits\"}";
+    return out.str();
+  }
+  catch (...) {}
+  return "";
+}
+
+template <class InterfaceT>
+static InterfaceT* QueryGeometryInterface(CATGeometry* geometry, const IID& iid)
+{
+  if (!geometry) return 0;
+  InterfaceT* typed = 0;
+  try
+  {
+    if (SUCCEEDED(geometry->QueryInterface(iid, reinterpret_cast<void**>(&typed))) && typed)
+      return typed;
+  }
+  catch (...) {}
+  return 0;
+}
+
+template <class InterfaceT>
+static void ReleaseGeometryInterface(InterfaceT*& pointer)
+{
+  if (pointer)
+  {
+    pointer->Release();
+    pointer = 0;
+  }
+}
+
+static std::string ElementaryAxisJson(CATElementarySurface* surface)
+{
+  if (!surface) return "";
+  CATMathPoint origin;
+  CATMathVector first;
+  CATMathVector second;
+  CATMathVector third;
+  surface->GetAxis(origin, first, second, third);
+  std::ostringstream out;
+  out << "\"origin\":";
+  WriteJsonPoint(out, origin);
+  out << ",\"x_direction\":";
+  WriteJsonVector(out, first);
+  out << ",\"y_direction\":";
+  WriteJsonVector(out, second);
+  out << ",\"axis_direction\":";
+  WriteJsonVector(out, third);
+  return out.str();
+}
+
+static void DecodeExactCellGeometry(ReconstructionPackage& package,
+                                    CATCell* cell,
+                                    TopologyEntity& entity)
+{
+  if (!cell || (entity.dimension != 2 && entity.dimension != 1 && entity.dimension != 0))
+    return;
+  CATOrientation orientation = CATOrientationUnknown;
+  CATGeometry* geometry = 0;
+  try { geometry = cell->GetGeometry(&orientation); }
+  catch (...)
+  {
+    entity.geometry_status = "failed";
+    entity.read_status = "partial";
+    package.diagnostics.push_back(MakeDiagnostic("warning", "brep_geometry_get_failed",
+                                                 entity.topology_id,
+                                                 "CATCell::GetGeometry raised an exception",
+                                                 "topology_extractor"));
+    return;
+  }
+  if (!geometry)
+  {
+    entity.geometry_status = "unavailable";
+    return;
+  }
+
+  entity.geometry_orientation = orientation == CATOrientationPositive ? "positive" :
+    (orientation == CATOrientationNegative ? "negative" : "unknown");
+  entity.bounding_box_json = GeometryBoundingBoxJson(geometry);
+
+  if (entity.dimension == 2)
+  {
+    CATSurface* domain_surface = QueryGeometryInterface<CATSurface>(geometry, IID_CATSurface);
+    if (domain_surface)
+    {
+      entity.parameter_domain_json = SurfaceParameterDomainJson(domain_surface);
+      ReleaseGeometryInterface(domain_surface);
+    }
+    CATPlane* plane = QueryGeometryInterface<CATPlane>(geometry, IID_CATPlane);
+    if (plane)
+    {
+      CATMathPoint origin;
+      CATMathDirection first;
+      CATMathDirection second;
+      plane->GetAxis(origin, first, second);
+      std::ostringstream out;
+      out << "{\"origin\":";
+      WriteJsonPoint(out, origin);
+      out << ",\"u_direction\":";
+      WriteJsonDirection(out, first);
+      out << ",\"v_direction\":";
+      WriteJsonDirection(out, second);
+      out << ",\"normal\":";
+      CATMathPoint normal_origin;
+      CATMathVector normal;
+      plane->GetNormal(normal_origin, normal);
+      WriteJsonVector(out, normal);
+      out << '}';
+      entity.exact_geometry_type = "plane";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(plane);
+      return;
+    }
+    CATCylinder* cylinder = QueryGeometryInterface<CATCylinder>(geometry, IID_CATCylinder);
+    if (cylinder)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"radius_mm\":" << std::setprecision(15) << cylinder->GetRadius()
+          << ",\"start_length_mm\":" << cylinder->GetStartLength()
+          << ",\"end_length_mm\":" << cylinder->GetEndLength()
+          << ",\"start_angle_rad\":" << cylinder->GetStartAngle()
+          << ",\"end_angle_rad\":" << cylinder->GetEndAngle() << '}';
+      entity.exact_geometry_type = "cylinder";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(cylinder);
+      return;
+    }
+    CATCone* cone = QueryGeometryInterface<CATCone>(geometry, IID_CATCone);
+    if (cone)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"start_radius_mm\":" << std::setprecision(15) << cone->GetStartRadius()
+          << ",\"cone_angle_rad\":" << cone->GetConeAngle()
+          << ",\"start_angle_rad\":" << cone->GetStartAngle()
+          << ",\"end_angle_rad\":" << cone->GetEndAngle()
+          << ",\"start_rule_length_mm\":" << cone->GetStartRuleLength()
+          << ",\"end_rule_length_mm\":" << cone->GetEndRuleLength() << '}';
+      entity.exact_geometry_type = "cone";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(cone);
+      return;
+    }
+    CATSphere* sphere = QueryGeometryInterface<CATSphere>(geometry, IID_CATSphere);
+    if (sphere)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"radius_mm\":" << std::setprecision(15) << sphere->GetRadius()
+          << ",\"meridian_start_angle_rad\":" << sphere->GetMeridianStartAngle()
+          << ",\"meridian_end_angle_rad\":" << sphere->GetMeridianEndAngle()
+          << ",\"parallel_start_angle_rad\":" << sphere->GetParallelStartAngle()
+          << ",\"parallel_end_angle_rad\":" << sphere->GetParallelEndAngle() << '}';
+      entity.exact_geometry_type = "sphere";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(sphere);
+      return;
+    }
+    CATTorus* torus = QueryGeometryInterface<CATTorus>(geometry, IID_CATTorus);
+    if (torus)
+    {
+      CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(geometry, IID_CATElementarySurface);
+      std::ostringstream out;
+      out << '{';
+      const std::string axis_json = ElementaryAxisJson(elementary);
+      if (!axis_json.empty()) out << axis_json << ',';
+      out << "\"major_radius_mm\":" << std::setprecision(15) << torus->GetMajorRadius()
+          << ",\"minor_radius_mm\":" << torus->GetMinorRadius()
+          << ",\"major_start_angle_rad\":" << torus->GetMajorStartAngle()
+          << ",\"major_end_angle_rad\":" << torus->GetMajorEndAngle()
+          << ",\"minor_start_angle_rad\":" << torus->GetMinorStartAngle()
+          << ",\"minor_end_angle_rad\":" << torus->GetMinorEndAngle() << '}';
+      entity.exact_geometry_type = "torus";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(elementary);
+      ReleaseGeometryInterface(torus);
+      return;
+    }
+    CATNurbsSurface* nurbs = QueryGeometryInterface<CATNurbsSurface>(geometry, IID_CATNurbsSurface);
+    if (nurbs)
+    {
+      entity.exact_geometry_type = "nurbs_surface";
+      entity.geometry_parameters_json = NurbsSurfaceJson(nurbs);
+      entity.geometry_status = entity.geometry_parameters_json.empty() ? "partial" : "exact";
+      ReleaseGeometryInterface(nurbs);
+      return;
+    }
+    CATSurface* surface = QueryGeometryInterface<CATSurface>(geometry, IID_CATSurface);
+    if (surface)
+    {
+      const CATSurface* geometric_rep = 0;
+      try { geometric_rep = surface->GetGeometricRep(); } catch (...) { geometric_rep = 0; }
+      CATGeometry* rep_geometry = const_cast<CATSurface*>(geometric_rep);
+      if (rep_geometry && rep_geometry != surface)
+      {
+        CATPlane* rep_plane = QueryGeometryInterface<CATPlane>(rep_geometry, IID_CATPlane);
+        if (rep_plane)
+        {
+          CATMathPoint origin;
+          CATMathDirection first;
+          CATMathDirection second;
+          rep_plane->GetAxis(origin, first, second);
+          CATMathPoint normal_origin;
+          CATMathVector normal;
+          rep_plane->GetNormal(normal_origin, normal);
+          std::ostringstream out;
+          out << "{\"origin\":";
+          WriteJsonPoint(out, origin);
+          out << ",\"u_direction\":";
+          WriteJsonDirection(out, first);
+          out << ",\"v_direction\":";
+          WriteJsonDirection(out, second);
+          out << ",\"normal\":";
+          WriteJsonVector(out, normal);
+          out << ",\"surface_representation\":\"CATSurface.GetGeometricRep\"}";
+          entity.exact_geometry_type = "plane";
+          entity.geometry_parameters_json = out.str();
+          entity.geometry_status = "exact";
+          ReleaseGeometryInterface(rep_plane);
+          ReleaseGeometryInterface(surface);
+          return;
+        }
+        CATCylinder* rep_cylinder = QueryGeometryInterface<CATCylinder>(rep_geometry, IID_CATCylinder);
+        if (rep_cylinder)
+        {
+          CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(rep_geometry, IID_CATElementarySurface);
+          std::ostringstream out;
+          out << '{';
+          const std::string axis_json = ElementaryAxisJson(elementary);
+          if (!axis_json.empty()) out << axis_json << ',';
+          out << "\"radius_mm\":" << std::setprecision(15) << rep_cylinder->GetRadius()
+              << ",\"start_length_mm\":" << rep_cylinder->GetStartLength()
+              << ",\"end_length_mm\":" << rep_cylinder->GetEndLength()
+              << ",\"start_angle_rad\":" << rep_cylinder->GetStartAngle()
+              << ",\"end_angle_rad\":" << rep_cylinder->GetEndAngle()
+              << ",\"surface_representation\":\"CATSurface.GetGeometricRep\"}";
+          entity.exact_geometry_type = "cylinder";
+          entity.geometry_parameters_json = out.str();
+          entity.geometry_status = "exact";
+          ReleaseGeometryInterface(elementary);
+          ReleaseGeometryInterface(rep_cylinder);
+          ReleaseGeometryInterface(surface);
+          return;
+        }
+        CATTorus* rep_torus = QueryGeometryInterface<CATTorus>(rep_geometry, IID_CATTorus);
+        if (rep_torus)
+        {
+          CATElementarySurface* elementary = QueryGeometryInterface<CATElementarySurface>(rep_geometry, IID_CATElementarySurface);
+          std::ostringstream out;
+          out << '{';
+          const std::string axis_json = ElementaryAxisJson(elementary);
+          if (!axis_json.empty()) out << axis_json << ',';
+          out << "\"major_radius_mm\":" << std::setprecision(15) << rep_torus->GetMajorRadius()
+              << ",\"minor_radius_mm\":" << rep_torus->GetMinorRadius()
+              << ",\"major_start_angle_rad\":" << rep_torus->GetMajorStartAngle()
+              << ",\"major_end_angle_rad\":" << rep_torus->GetMajorEndAngle()
+              << ",\"minor_start_angle_rad\":" << rep_torus->GetMinorStartAngle()
+              << ",\"minor_end_angle_rad\":" << rep_torus->GetMinorEndAngle()
+              << ",\"surface_representation\":\"CATSurface.GetGeometricRep\"}";
+          entity.exact_geometry_type = "torus";
+          entity.geometry_parameters_json = out.str();
+          entity.geometry_status = "exact";
+          ReleaseGeometryInterface(elementary);
+          ReleaseGeometryInterface(rep_torus);
+          ReleaseGeometryInterface(surface);
+          return;
+        }
+      }
+      entity.exact_geometry_type = "other_surface";
+      entity.geometry_status = "partial";
+      ReleaseGeometryInterface(surface);
+      return;
+    }
+  }
+  else if (entity.dimension == 1)
+  {
+    CATCurve* domain_curve = QueryGeometryInterface<CATCurve>(geometry, IID_CATCurve);
+    if (domain_curve)
+    {
+      entity.parameter_domain_json = CurveParameterDomainJson(domain_curve);
+      ReleaseGeometryInterface(domain_curve);
+    }
+    CATLine* line = QueryGeometryInterface<CATLine>(geometry, IID_CATLine);
+    if (line)
+    {
+      CATMathPoint origin;
+      CATMathDirection direction;
+      line->GetOrigin(origin);
+      line->GetDirection(direction);
+      std::ostringstream out;
+      out << "{\"origin\":";
+      WriteJsonPoint(out, origin);
+      out << ",\"direction\":";
+      WriteJsonDirection(out, direction);
+      out << '}';
+      entity.exact_geometry_type = "line";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(line);
+      return;
+    }
+    CATCircle* circle = QueryGeometryInterface<CATCircle>(geometry, IID_CATCircle);
+    if (circle)
+    {
+      CATConic* conic = QueryGeometryInterface<CATConic>(geometry, IID_CATConic);
+      CATMathPoint center;
+      CATMathPlane support;
+      CATMathVector u;
+      CATMathVector v;
+      CATMathVector normal;
+      if (conic)
+      {
+        conic->GetOrigin(center);
+        conic->GetSupport(support);
+        support.GetFirstDirection(u);
+        support.GetSecondDirection(v);
+        support.GetNormal(normal);
+      }
+      std::ostringstream out;
+      out << "{\"center\":";
+      WriteJsonPoint(out, center);
+      out << ",\"u_direction\":";
+      WriteJsonVector(out, u);
+      out << ",\"v_direction\":";
+      WriteJsonVector(out, v);
+      out << ",\"normal\":";
+      WriteJsonVector(out, normal);
+      out << ",\"radius_mm\":" << std::setprecision(15) << circle->GetRadius()
+          << ",\"start_angle_rad\":" << circle->GetStartAngle()
+          << ",\"end_angle_rad\":" << circle->GetEndAngle() << '}';
+      entity.exact_geometry_type = "circle";
+      entity.geometry_parameters_json = out.str();
+      entity.geometry_status = "exact";
+      ReleaseGeometryInterface(conic);
+      ReleaseGeometryInterface(circle);
+      return;
+    }
+    CATNurbsCurve* nurbs = QueryGeometryInterface<CATNurbsCurve>(geometry, IID_CATNurbsCurve);
+    if (nurbs)
+    {
+      entity.exact_geometry_type = "nurbs_curve";
+      entity.geometry_parameters_json = NurbsCurveJson(nurbs);
+      entity.geometry_status = entity.geometry_parameters_json.empty() ? "partial" : "exact";
+      ReleaseGeometryInterface(nurbs);
+      return;
+    }
+    CATCurve* curve = QueryGeometryInterface<CATCurve>(geometry, IID_CATCurve);
+    if (curve)
+    {
+      entity.exact_geometry_type = "other_curve";
+      entity.geometry_status = "partial";
+      ReleaseGeometryInterface(curve);
+      return;
+    }
+  }
+  entity.exact_geometry_type = entity.dimension == 0 ? "point" : "unknown";
+  if (entity.geometry_status.empty())
+    entity.geometry_status = entity.dimension == 0 ? "partial" : "unknown";
 }
 
 static void ComputeTriangleNormal(MeshTriangleEntity& triangle)
@@ -688,6 +1337,7 @@ static void AppendCellEntity(CaptureIdRegistry& ids,
                                                  "CATFace::CalcArea or CATEdge::CalcLength raised an exception",
                                                  "topology_extractor"));
   }
+  DecodeExactCellGeometry(package, cell, entity);
 
   package.topology.push_back(entity);
 }

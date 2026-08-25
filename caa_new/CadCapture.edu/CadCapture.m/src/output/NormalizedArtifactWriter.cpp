@@ -75,6 +75,16 @@ static bool FinishStream(std::ofstream& out, const std::string& path, std::strin
   return true;
 }
 
+static const char* RawJsonOrObject(const std::string& json)
+{
+  return json.empty() ? "{}" : json.c_str();
+}
+
+static const char* RawJsonOrNull(const std::string& json)
+{
+  return json.empty() ? "null" : json.c_str();
+}
+
 static bool WriteJsonLines(const ReconstructionPackage& package,
                            const std::string& output_dir,
                            std::string& error)
@@ -362,6 +372,11 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
              << JsonQuote("area_mm2") << ":" << entity.area_mm2 << ","
              << JsonQuote("length_mm_available") << ":" << (entity.length_mm_available ? "true" : "false") << ","
              << JsonQuote("length_mm") << ":" << entity.length_mm << ","
+             << JsonQuote("geometry_orientation") << ":" << JsonQuote(entity.geometry_orientation) << ","
+             << JsonQuote("exact_geometry_type") << ":" << JsonQuote(entity.exact_geometry_type) << ","
+             << JsonQuote("geometry_parameters") << ":" << RawJsonOrObject(entity.geometry_parameters_json) << ","
+             << JsonQuote("parameter_domain") << ":" << RawJsonOrNull(entity.parameter_domain_json) << ","
+             << JsonQuote("bounding_box_mm") << ":" << RawJsonOrNull(entity.bounding_box_json) << ","
              << JsonQuote("geometry_status") << ":" << JsonQuote(entity.geometry_status) << ","
              << JsonQuote("measure_status") << ":" << JsonQuote(entity.measure_status) << ","
              << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status)
