@@ -52,3 +52,17 @@ Normal bootstrap mode writes:
 - `reconstruction_plan.json`
 
 The manifest records `native_document_open_status` as `not_implemented_bootstrap`.
+
+## Catalog Tools
+
+Regenerate the local R21 SDK index:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\generate_r21_api_catalog.ps1
+```
+
+Query a header, Framework, or capability:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\find_r21_api.ps1 -Query CATSession
+```

@@ -1,0 +1,74 @@
+{
+  "schema_version": "capability_coverage_v1",
+  "status_chain": [
+    "indexed",
+    "header_verified",
+    "compile_verified",
+    "runtime_verified",
+    "extractor_implemented",
+    "fixture_verified",
+    "reconstruction_verified"
+  ],
+  "capabilities": [
+    {
+      "capability_id": "caa.session.runtime",
+      "family": "runtime",
+      "status": "runtime_verified",
+      "headers": ["CATInit.h", "CATSession.h", "CATSessionServices.h", "CATErrorDef.h"],
+      "frameworks": ["System", "ObjectModelerBase"],
+      "extractor": "CaaRuntime",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "document.extension.classification",
+      "family": "document",
+      "status": "fixture_verified",
+      "headers": [],
+      "frameworks": [],
+      "extractor": "CaaDocumentScanner",
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "part.bootstrap.root",
+      "family": "part",
+      "status": "extractor_implemented",
+      "headers": [],
+      "frameworks": [],
+      "extractor": "CaaPartEnumerator",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "product.bootstrap.root",
+      "family": "product",
+      "status": "indexed",
+      "headers": [],
+      "frameworks": [],
+      "extractor": "CaaProductEnumerator",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "property.native_open_status",
+      "family": "property",
+      "status": "extractor_implemented",
+      "headers": [],
+      "frameworks": [],
+      "extractor": "CaaPropertyExtractors",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "geometry.native_exact",
+      "family": "geometry",
+      "status": "indexed",
+      "headers": [],
+      "frameworks": [],
+      "extractor": "CaaGeometryExtractor",
+      "fixture_verified": false,
+      "reconstruction_verified": false
+    }
+  ]
+}

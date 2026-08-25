@@ -33,8 +33,10 @@ cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionPlanner.cpp" /
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionValidator.cpp" /Fo"%OBJ3%"
 if errorlevel 1 exit /b 4
+cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\SdkCatalog.cpp" /Fo"%OUT%\SdkCatalog.obj"
+if errorlevel 1 exit /b 4
 
-link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" /OUT:"%EXE%"
+link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\SdkCatalog.obj" /OUT:"%EXE%"
 if errorlevel 1 exit /b 4
 
 "%EXE%"

@@ -2,6 +2,8 @@
 
 Only `src/caa` may include CATIA/CAA headers. `src/model`, `src/reconstruction`, `src/output`, `src/engine` public headers, and `src/app` must remain CAA-free.
 
+SDK catalog files may mention every indexed PublicInterfaces header, but those mentions are data, not compile dependencies. Capability-family modules decide which verified headers they use internally.
+
 `CaaRuntime` owns CAA Session creation and cleanup. Its callers only see `Open`, `Close`, and `IsOpen`.
 
 `ModelCaptureEngine.h` exposes only portable C++ types and project data types. It does not expose `CATDocument`, `CATBaseUnknown`, `CATISpecObject`, `HRESULT`, `IUnknown`, or `CATUnicodeString`.

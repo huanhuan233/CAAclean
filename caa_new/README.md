@@ -29,6 +29,7 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 ## Implemented Now
 
 - Pure data model for documents, objects, occurrences, properties, semantic facts, geometry, topology, PMI, diagnostics, and reconstruction package.
+- SDK Catalog and Capability Coverage data structures, JSON files, query tools, and API-independent tests.
 - `ModelCaptureEngine` as the only top-level orchestration entry point.
 - CAA runtime probe using `Create_Session` and `Delete_Session`.
 - Minimal CATPart/CATProduct extension classification without opening native documents.
@@ -43,6 +44,8 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - Legacy JSONL business projection.
 
 All unavailable native capabilities are reported as bootstrap `not_implemented`; the program does not claim to parse CATIA geometry in this stage.
+
+All headers are indexed. Only verified capabilities are compiled. Only fixture-verified capabilities may be declared implemented. Catalog indexing does not add Frameworks to `IdentityCard` or `Imakefile`; build dependencies stay limited to capabilities used in this stage.
 
 ## Suggested Migration Order
 

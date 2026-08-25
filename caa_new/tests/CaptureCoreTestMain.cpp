@@ -5,6 +5,7 @@
 #include "model/OccurrenceGraph.h"
 #include "model/PropertyFacts.h"
 #include "model/ReconstructionPackage.h"
+#include "model/SdkCatalog.h"
 #include "output/JsonSupport.h"
 #include "reconstruction/ReconstructionPlanner.h"
 #include "reconstruction/ReconstructionValidator.h"
@@ -105,6 +106,19 @@ int main()
   report.AddDiagnostic("error", "e", "s", "bad", "stage");
   Check(report.diagnostics.size() == 2, "CaptureReport diagnostics");
   Check(report.HasErrors(), "CaptureReport error count");
+
+  Check(SdkCatalog::IsStageAtLeast("runtime_verified", "compile_verified"), "Capability stage ordering");
+  Check(!SdkCatalog::IsStageAtLeast("extractor_implemented", "fixture_verified"), "fixture verification gates implemented claims");
+
+  SdkCatalog catalog;
+  std::string catalog_error;
+  Check(catalog.LoadCapabilityCoverage("catalog\\capability_coverage.json", catalog_error), "Capability catalog loads");
+  Check(catalog.CapabilityCount() >= 3, "Capability catalog count");
+  const CapabilityRecord* runtime_capability = catalog.FindCapability("caa.session.runtime");
+  Check(runtime_capability != 0, "Capability lookup");
+  Check(runtime_capability != 0 && runtime_capability->status == "runtime_verified", "Runtime capability status");
+  Check(catalog.CapabilityAtLeast("document.extension.classification", "fixture_verified"), "fixture verified capability query");
+  Check(!catalog.CapabilityAtLeast("part.bootstrap.root", "fixture_verified"), "non-fixture capability is not declared fixture verified");
 
   if (g_failed == 0)
   {
