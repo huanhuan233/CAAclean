@@ -17,7 +17,7 @@ struct DocumentEntity
   DocumentEntity()
     : document_kind("unsupported"),
       capture_status("unavailable"),
-      native_document_open_status("not_implemented_bootstrap")
+      native_document_open_status("unavailable")
   {
   }
 };

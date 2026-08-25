@@ -11,6 +11,7 @@
 #include <CATUnicodeString.h>
 #include <cstring>
 #include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -98,6 +99,36 @@ static std::string SafeSpecString(CATISpecObject* spec, const char* field)
   return "";
 }
 
+static std::string SafeUpdateStatus(CATISpecObject* spec)
+{
+  if (!spec)
+    return "unavailable";
+  try
+  {
+    return spec->IsUpToDate() ? "up_to_date" : "not_up_to_date";
+  }
+  catch (...)
+  {
+  }
+  return "unavailable";
+}
+
+static std::string DisplaySegment(CATISpecObject* spec)
+{
+  std::string segment = SafeSpecString(spec, "display");
+  if (segment.empty()) segment = SafeSpecString(spec, "internal");
+  if (segment.empty()) segment = SafeSpecString(spec, "startup");
+  if (segment.empty()) segment = "unnamed";
+  return segment;
+}
+
+static std::string MakeMachineSegment(long source_index, const std::string& segment)
+{
+  std::ostringstream out;
+  out << source_index << ":" << segment;
+  return out.str();
+}
+
 static std::string MakeObjectId(long index)
 {
   std::ostringstream out;
@@ -121,6 +152,7 @@ static void AddStaticTreeNode(ReconstructionPackage& package,
                               const std::string& internal_name,
                               const std::string& startup_type,
                               const std::string& tree_path,
+                              const std::string& occurrence_path,
                               long source_index,
                               long container_index)
 {
@@ -131,12 +163,15 @@ static void AddStaticTreeNode(ReconstructionPackage& package,
   object.display_name = display_name;
   object.internal_name = internal_name;
   object.startup_type = startup_type;
-  object.update_status = "unknown";
+  object.update_status = "not_applicable";
   object.capture_status = "available";
-  object.identity.stable_id = object_id;
+  object.identity.capture_id = object_id;
+  object.identity.native_identity = "";
+  object.identity.identity_method = "static_phase1a_node";
+  object.identity.stable_id = "";
   object.identity.native_label = display_name.empty() ? internal_name : display_name;
   object.identity.scope = IdentitySessionLocal;
-  object.identity.read_status = "runtime_verified";
+  object.identity.read_status = "session_local_only";
   package.objects.push_back(object);
 
   ObjectOccurrence occurrence;
@@ -144,10 +179,13 @@ static void AddStaticTreeNode(ReconstructionPackage& package,
   occurrence.object_id = object_id;
   occurrence.parent_occurrence_id = parent_occurrence_id;
   occurrence.document_id = "doc_1";
-  occurrence.occurrence_path = tree_path;
+  occurrence.occurrence_path = occurrence_path;
   occurrence.tree_path = tree_path;
   occurrence.source_index = source_index;
   occurrence.container_index = container_index;
+  occurrence.occurrence_role = "primary_tree";
+  occurrence.enumeration_source = "phase1a.static";
+  occurrence.presentation_status = "visible";
   occurrence.capture_status = "available";
   package.occurrence_graph.object_occurrences.push_back(occurrence);
 }
@@ -163,17 +201,23 @@ public:
 
   bool Visit(CATISpecObject* spec,
              const std::string& parent_occurrence_id,
-             const std::string& parent_path,
+             const std::string& parent_tree_path,
+             const std::string& parent_occurrence_path,
              long source_index,
              long container_index,
+             const std::string& occurrence_role,
+             const std::string& enumeration_source,
+             const std::string& presentation_status,
              std::string& error)
   {
+    (void)error;
     if (!spec)
       return true;
 
     std::string object_id;
-    std::map<CATISpecObject*, std::string>::iterator found = _object_ids.find(spec);
-    if (found == _object_ids.end())
+    ObjectEntity* entity = 0;
+    std::map<CATISpecObject*, std::string>::iterator found = _entity_ids.find(spec);
+    if (found == _entity_ids.end())
     {
       ObjectEntity object;
       object.object_id = MakeObjectId(_next_object_index++);
@@ -182,57 +226,89 @@ public:
       object.display_name = SafeSpecString(spec, "display");
       object.internal_name = SafeSpecString(spec, "internal");
       object.startup_type = SafeSpecString(spec, "startup");
-      object.update_status = "unknown";
+      object.update_status = SafeUpdateStatus(spec);
       object.capture_status = "available";
-      object.identity.stable_id = object.object_id;
+      object.identity.capture_id = object.object_id;
+      object.identity.native_identity = "";
+      object.identity.identity_method = "session_object_equivalence";
+      object.identity.stable_id = "";
       object.identity.native_label = object.display_name.empty() ? object.internal_name : object.display_name;
       object.identity.scope = IdentitySessionLocal;
-      object.identity.read_status = "runtime_verified";
+      object.identity.read_status = "session_local_only";
       object_id = object.object_id;
-      _object_ids[spec] = object_id;
+      _entity_ids[spec] = object_id;
       _package.objects.push_back(object);
+      entity = &_package.objects[_package.objects.size() - 1];
     }
     else
     {
       object_id = found->second;
+      entity = FindEntity(object_id);
+    }
+    if (entity && entity->supplemental_sources.find(enumeration_source) == std::string::npos)
+    {
+      if (!entity->supplemental_sources.empty())
+        entity->supplemental_sources += ";";
+      entity->supplemental_sources += enumeration_source;
     }
 
-    std::string segment = SafeSpecString(spec, "display");
-    if (segment.empty()) segment = SafeSpecString(spec, "internal");
-    if (segment.empty()) segment = SafeSpecString(spec, "startup");
-    if (segment.empty()) segment = "unnamed";
-    const std::string path = parent_path + "/" + segment;
+    const std::string segment = DisplaySegment(spec);
+    const std::string base_tree_path = parent_tree_path + "/" + segment;
+    std::string tree_path = base_tree_path;
+    if (occurrence_role == "primary_tree")
+    {
+      long count = ++_primary_tree_path_counts[base_tree_path];
+      if (count > 1)
+      {
+        std::ostringstream disambiguated;
+        disambiguated << base_tree_path << "[" << count << "]";
+        tree_path = disambiguated.str();
+      }
+    }
+    const std::string occurrence_path = parent_occurrence_path + "/" + MakeMachineSegment(source_index, segment);
 
     ObjectOccurrence occurrence;
     occurrence.occurrence_id = MakeOccurrenceId(_next_occurrence_index++);
     occurrence.object_id = object_id;
     occurrence.parent_occurrence_id = parent_occurrence_id;
     occurrence.document_id = "doc_1";
-    occurrence.occurrence_path = path;
-    occurrence.tree_path = path;
+    occurrence.occurrence_path = occurrence_path;
+    occurrence.tree_path = tree_path;
     occurrence.source_index = source_index;
     occurrence.container_index = container_index;
+    occurrence.occurrence_role = occurrence_role;
+    occurrence.enumeration_source = enumeration_source;
+    occurrence.presentation_status = presentation_status;
     occurrence.capture_status = "available";
     _package.occurrence_graph.object_occurrences.push_back(occurrence);
+    if (presentation_status == "visible")
+      _primary_occurrence_by_entity[object_id] = occurrence.occurrence_id;
 
-    if (_expanded.find(spec) != _expanded.end())
+    if (_active_path.find(spec) != _active_path.end())
+    {
+      _package.diagnostics.push_back(MakeDiagnostic("warning", "catpart_tree_cycle", object_id,
+                                                    "CATISpecObject appeared again in the active recursion path; subtree expansion stopped for this occurrence",
+                                                    "part_enumerator"));
       return true;
-    _expanded[spec] = true;
+    }
 
+    _active_path.insert(spec);
     try
     {
       CATListValCATISpecObject_var* children = spec->ListComponents();
-      if (!children)
-        return true;
-      SpecListGuard children_guard(children);
-      int index = 0;
-      for (index = 1; index <= children->Size(); ++index)
+      if (children)
       {
-        CATISpecObject_var child = (*children)[index];
-        if (child != NULL_var)
+        SpecListGuard children_guard(children);
+        int index = 0;
+        for (index = 1; index <= children->Size(); ++index)
         {
-          CATISpecObject* child_pointer = child;
-          Visit(child_pointer, occurrence.occurrence_id, path, index, container_index, error);
+          CATISpecObject_var child = (*children)[index];
+          if (child != NULL_var)
+          {
+            CATISpecObject* child_pointer = child;
+            Visit(child_pointer, occurrence.occurrence_id, tree_path, occurrence_path, index, container_index,
+                  "primary_tree", "CATISpecObject.ListComponents", "visible", error);
+          }
         }
       }
     }
@@ -242,15 +318,54 @@ public:
                                                     "CATISpecObject::ListComponents failed; scan continued",
                                                     "part_enumerator"));
     }
+    _active_path.erase(spec);
     return true;
   }
 
+  bool HasPrimaryOccurrence(CATISpecObject* spec) const
+  {
+    std::map<CATISpecObject*, std::string>::const_iterator found = _entity_ids.find(spec);
+    if (found == _entity_ids.end())
+      return false;
+    return _primary_occurrence_by_entity.find(found->second) != _primary_occurrence_by_entity.end();
+  }
+
+  void NoteSupplementalSeen(CATISpecObject* spec)
+  {
+    std::map<CATISpecObject*, std::string>::const_iterator found = _entity_ids.find(spec);
+    if (found == _entity_ids.end())
+      return;
+    ObjectEntity* entity = FindEntity(found->second);
+    if (entity && entity->supplemental_sources.find("CATIContainer.ListMembersHere") == std::string::npos)
+    {
+      if (!entity->supplemental_sources.empty())
+        entity->supplemental_sources += ";";
+      entity->supplemental_sources += "CATIContainer.ListMembersHere";
+    }
+    _package.diagnostics.push_back(MakeDiagnostic("info", "supplemental_object_already_primary", found->second,
+                                                  "CATIContainer::ListMembersHere found an object already present in the primary tree",
+                                                  "part_enumerator"));
+  }
+
 private:
+  ObjectEntity* FindEntity(const std::string& object_id)
+  {
+    size_t i;
+    for (i = 0; i < _package.objects.size(); ++i)
+    {
+      if (_package.objects[i].object_id == object_id)
+        return &_package.objects[i];
+    }
+    return 0;
+  }
+
   ReconstructionPackage& _package;
   long _next_object_index;
   long _next_occurrence_index;
-  std::map<CATISpecObject*, std::string> _object_ids;
-  std::map<CATISpecObject*, bool> _expanded;
+  std::map<CATISpecObject*, std::string> _entity_ids;
+  std::map<std::string, std::string> _primary_occurrence_by_entity;
+  std::map<std::string, long> _primary_tree_path_counts;
+  std::set<CATISpecObject*> _active_path;
 };
 
 bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
@@ -297,10 +412,10 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
 
   AddStaticTreeNode(package, "object_1", "occurrence_1", "", "catia_document",
                     document_handle.DisplayName(), "CATDocument", "CATDocument",
-                    "/document", 0, 0);
+                    "/document", "/0:document", 0, 0);
   AddStaticTreeNode(package, "object_2", "occurrence_2", "occurrence_1", "catia_container",
                     "PartSpecContainer", "CATIPrtContainer", "CATIPrtContainer",
-                    "/document/PartSpecContainer", 1, 1);
+                    "/document/PartSpecContainer", "/0:document/1:PartSpecContainer", 1, 1);
 
   PartTreeCrawler crawler(package);
   CATISpecObject_var part = NULL_var;
@@ -324,7 +439,11 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   }
 
   CATISpecObject* part_pointer = part;
-  if (!crawler.Visit(part_pointer, "occurrence_2", "/document/PartSpecContainer", 1, 1, error))
+  if (!crawler.Visit(part_pointer, "occurrence_2",
+                     "/document/PartSpecContainer",
+                     "/0:document/1:PartSpecContainer",
+                     1, 1,
+                     "primary_tree", "CATIPrtContainer.GetPart", "visible", error))
     return false;
 
   CATIContainer* generic_container = 0;
@@ -348,8 +467,21 @@ bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
             member_spec)
         {
           CaaInterfaceGuard<CATISpecObject> member_spec_guard(member_spec);
-          crawler.Visit(member_spec, "", "/document/PartSpecContainer",
-                        static_cast<long>(index + 1), 2, error);
+          if (crawler.HasPrimaryOccurrence(member_spec))
+          {
+            crawler.NoteSupplementalSeen(member_spec);
+          }
+          else
+          {
+            crawler.Visit(member_spec, "occurrence_2",
+                          "/document/PartSpecContainer",
+                          "/0:document/1:PartSpecContainer",
+                          static_cast<long>(index + 1), 2,
+                          "supplemental_discovery",
+                          "CATIContainer.ListMembersHere",
+                          "non_primary",
+                          error);
+          }
         }
       }
     }

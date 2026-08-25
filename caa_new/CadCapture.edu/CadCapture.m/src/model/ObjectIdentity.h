@@ -14,6 +14,9 @@ enum IdentityStabilityScope
 
 struct ObjectIdentity
 {
+  std::string capture_id;
+  std::string native_identity;
+  std::string identity_method;
   std::string stable_id;
   std::string native_label;
   IdentityStabilityScope scope;
@@ -31,6 +34,7 @@ struct ObjectEntity
   std::string internal_name;
   std::string startup_type;
   std::string update_status;
+  std::string supplemental_sources;
   ObjectIdentity identity;
   std::string capture_status;
 

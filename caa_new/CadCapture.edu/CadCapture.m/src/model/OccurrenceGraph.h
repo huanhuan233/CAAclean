@@ -16,6 +16,9 @@ struct ObjectOccurrence
   std::string tree_path;
   long source_index;
   long container_index;
+  std::string occurrence_role;
+  std::string enumeration_source;
+  std::string presentation_status;
   std::string capture_status;
 
   ObjectOccurrence() : source_index(0), container_index(0), capture_status("unavailable") {}
