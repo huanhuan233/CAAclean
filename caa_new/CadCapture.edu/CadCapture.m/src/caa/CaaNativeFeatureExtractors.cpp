@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaNativeFeatureExtractors::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaNativeFeatureExtractors::Extract(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "native_feature_extractors";
-  report.AddDiagnostic("info", "not_implemented", "native_features", "Native feature extraction is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "native_features",
+                                               "Native feature extraction is not implemented in Phase 1A",
+                                               "native_feature_extractors"));
   return true;
 }
 

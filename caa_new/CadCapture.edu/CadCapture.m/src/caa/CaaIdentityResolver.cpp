@@ -2,11 +2,10 @@
 
 namespace cadcapture {
 
-bool CaaIdentityResolver::Resolve(ReconstructionPackage& package, CaptureReport& report)
+bool CaaIdentityResolver::Resolve(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "identity_resolver";
-  report.AddDiagnostic("info", "stage_executed", "identity", "CaaIdentityResolver executed", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "stage_executed", "identity",
+                                               "CaaIdentityResolver executed", "identity_resolver"));
   return true;
 }
 

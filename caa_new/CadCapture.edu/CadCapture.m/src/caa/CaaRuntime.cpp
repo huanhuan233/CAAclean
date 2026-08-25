@@ -41,4 +41,9 @@ bool CaaRuntime::IsOpen() const
   return _open;
 }
 
+const std::string& CaaRuntime::SessionName() const
+{
+  return _session_name;
+}
+
 }

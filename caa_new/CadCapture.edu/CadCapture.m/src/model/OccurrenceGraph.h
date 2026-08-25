@@ -13,9 +13,12 @@ struct ObjectOccurrence
   std::string parent_occurrence_id;
   std::string document_id;
   std::string occurrence_path;
+  std::string tree_path;
+  long source_index;
+  long container_index;
   std::string capture_status;
 
-  ObjectOccurrence() : capture_status("unavailable") {}
+  ObjectOccurrence() : source_index(0), container_index(0), capture_status("unavailable") {}
 };
 
 struct ProductOccurrence

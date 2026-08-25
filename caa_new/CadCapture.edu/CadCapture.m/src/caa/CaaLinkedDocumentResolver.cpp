@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaLinkedDocumentResolver::Resolve(ReconstructionPackage& package, CaptureReport& report)
+bool CaaLinkedDocumentResolver::Resolve(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "linked_document_resolver";
-  report.AddDiagnostic("info", "not_implemented", "links", "Linked document resolution is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "links",
+                                               "Linked document resolution is not implemented in Phase 1A",
+                                               "linked_document_resolver"));
   return true;
 }
 

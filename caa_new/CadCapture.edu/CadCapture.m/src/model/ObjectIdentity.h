@@ -27,6 +27,10 @@ struct ObjectEntity
   std::string object_id;
   std::string document_id;
   std::string object_kind;
+  std::string display_name;
+  std::string internal_name;
+  std::string startup_type;
+  std::string update_status;
   ObjectIdentity identity;
   std::string capture_status;
 

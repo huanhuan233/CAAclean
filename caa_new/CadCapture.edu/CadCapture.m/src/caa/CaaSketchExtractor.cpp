@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaSketchExtractor::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaSketchExtractor::Extract(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "sketch_extractor";
-  report.AddDiagnostic("info", "not_implemented", "sketch", "Sketch extraction is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "sketch",
+                                               "Sketch extraction is not implemented in Phase 1A",
+                                               "sketch_extractor"));
   return true;
 }
 

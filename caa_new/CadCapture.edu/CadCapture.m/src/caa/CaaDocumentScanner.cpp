@@ -23,26 +23,29 @@ static std::string CaptureExtension(const std::string& path)
   return ext;
 }
 
-bool CaaDocumentScanner::Scan(const CaptureRequest& request,
+bool CaaDocumentScanner::Scan(const std::string& input_path,
+                              CaaDocumentHandle& document_handle,
                               ReconstructionPackage& package,
-                              CaptureReport& report,
                               std::string& error)
 {
+  if (!document_handle.OpenReadOnly(input_path, error))
+    return false;
+
   DocumentEntity document;
   document.document_id = "doc_1";
-  document.source_file_name = CaptureBaseName(request.input_path);
-  document.native_document_open_status = "not_implemented_bootstrap";
+  document.source_file_name = CaptureBaseName(input_path);
+  document.native_document_open_status = "opened_read_only";
 
-  const std::string ext = CaptureExtension(request.input_path);
+  const std::string ext = CaptureExtension(input_path);
   if (ext == ".catpart")
   {
     document.document_kind = "catpart";
-    document.capture_status = "partial";
+    document.capture_status = "opened";
   }
   else if (ext == ".catproduct")
   {
     document.document_kind = "catproduct";
-    document.capture_status = "partial";
+    document.capture_status = "opened";
   }
   else
   {
@@ -52,8 +55,9 @@ bool CaaDocumentScanner::Scan(const CaptureRequest& request,
   }
 
   package.document_graph.AddDocument(document);
-  report.stage = "document_scanner";
-  report.AddDiagnostic("info", "stage_executed", document.document_id, "CaaDocumentScanner executed", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "document_opened", document.document_id,
+                                               "CaaDocumentScanner opened native CATIA document read-only",
+                                               "document_scanner"));
   return document.document_kind != "unsupported";
 }
 

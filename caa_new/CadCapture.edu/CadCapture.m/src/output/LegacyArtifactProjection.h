@@ -10,6 +10,9 @@ class LegacyArtifactProjection
 {
 public:
   std::string ProjectionStatus(const ReconstructionPackage& package) const;
+  bool Write(const ReconstructionPackage& package,
+             const std::string& output_dir,
+             std::string& error) const;
 };
 
 }

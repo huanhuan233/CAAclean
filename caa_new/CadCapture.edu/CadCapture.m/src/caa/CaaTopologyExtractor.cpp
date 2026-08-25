@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaTopologyExtractor::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaTopologyExtractor::Extract(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "topology_extractor";
-  report.AddDiagnostic("info", "not_implemented", "topology", "Topology extraction is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "topology",
+                                               "Topology extraction is not implemented in Phase 1A",
+                                               "topology_extractor"));
   return true;
 }
 

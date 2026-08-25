@@ -28,6 +28,11 @@ static void UpdateReportCounts(const ReconstructionPackage& package, CaptureRepo
   report.property_count = static_cast<int>(package.properties.size());
 }
 
+static void SyncReportDiagnostics(const ReconstructionPackage& package, CaptureReport& report)
+{
+  report.diagnostics = package.diagnostics;
+}
+
 static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& report)
 {
   DocumentEntity document;
@@ -66,7 +71,9 @@ static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& 
   package.properties.push_back(fact);
 
   package.capture_status = "complete";
-  report.AddDiagnostic("info", "self_test_package", document.document_id, "self-test package constructed", "self_test");
+  package.diagnostics.push_back(MakeDiagnostic("info", "self_test_package", document.document_id,
+                                               "self-test package constructed", "self_test"));
+  SyncReportDiagnostics(package, report);
 }
 
 bool ModelCaptureEngine::Capture(const CaptureRequest& request,
@@ -130,12 +137,22 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     return false;
   }
 
+  CaaRuntime runtime;
+  if (!runtime.Open(error))
+  {
+    report.message = error;
+    report.exit_code = 1;
+    return false;
+  }
+
+  CaaDocumentHandle document_handle;
   CaaDocumentScanner scanner;
-  if (!scanner.Scan(request, package, report, error))
+  if (!scanner.Scan(request.input_path, document_handle, package, error))
   {
     report.message = error;
     report.exit_code = 2;
     UpdateReportCounts(package, report);
+    SyncReportDiagnostics(package, report);
     return false;
   }
 
@@ -155,18 +172,25 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   ReconstructionValidator validator;
   ArtifactRepository repository;
 
-  broker.Check("bootstrap_native_access", package, report);
-  part_enumerator.Enumerate(package, report);
-  product_enumerator.Enumerate(package, report);
-  linked_document_resolver.Resolve(package, report);
-  property_extractors.Extract(package, report);
-  native_feature_extractors.Extract(package, report);
-  sketch_extractor.Extract(package, report);
-  topology_extractor.Extract(package, report);
-  geometry_extractor.Extract(package, report);
-  tessellation_extractor.Extract(package, report);
-  fta_extractor.Extract(package, report);
-  identity_resolver.Resolve(package, report);
+  broker.Check("native_access", package);
+  if (!part_enumerator.Enumerate(document_handle, package, error))
+  {
+    report.message = error;
+    report.exit_code = 1;
+    UpdateReportCounts(package, report);
+    SyncReportDiagnostics(package, report);
+    return false;
+  }
+  product_enumerator.Enumerate(package);
+  linked_document_resolver.Resolve(package);
+  property_extractors.Extract(package);
+  native_feature_extractors.Extract(package);
+  sketch_extractor.Extract(package);
+  topology_extractor.Extract(package);
+  geometry_extractor.Extract(package);
+  tessellation_extractor.Extract(package);
+  fta_extractor.Extract(package);
+  identity_resolver.Resolve(package);
 
   planner.Plan(package);
   package.capture_status = "partial";
@@ -175,12 +199,14 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   {
     report.message = error;
     report.exit_code = 1;
+    SyncReportDiagnostics(package, report);
     return false;
   }
   report.success = true;
   report.exit_code = 0;
   report.stage = "complete";
-  report.message = "bootstrap capture completed";
+  report.message = "native tree capture completed";
+  SyncReportDiagnostics(package, report);
   if (!repository.Commit(package, report, request.output_dir, request.pretty, error))
   {
     report.success = false;

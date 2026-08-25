@@ -2,7 +2,7 @@
 
 namespace cadcapture {
 
-bool CaaPropertyExtractors::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaPropertyExtractors::Extract(ReconstructionPackage& package)
 {
   if (!package.document_graph.documents.empty())
   {
@@ -18,8 +18,8 @@ bool CaaPropertyExtractors::Extract(ReconstructionPackage& package, CaptureRepor
     fact.read_status = "available";
     package.properties.push_back(fact);
   }
-  report.stage = "property_extractors";
-  report.AddDiagnostic("info", "stage_executed", "properties", "CaaPropertyExtractors executed", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "stage_executed", "properties",
+                                               "CaaPropertyExtractors executed", "property_extractors"));
   return true;
 }
 

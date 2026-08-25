@@ -24,7 +24,7 @@ model -> C++ standard library
 
 `model` contains pure data structures only. It does not store CATIA pointers or include CAA headers.
 
-`caa` is the only layer that may touch CAA APIs. In this bootstrap, only `CaaRuntime.cpp` creates and deletes a CATIA CAA Session. Other CAA modules expose narrow future-ready interfaces and record explicit `not_implemented` diagnostics.
+`caa` is the only layer that may touch CAA APIs. It owns CATIA session lifetime, document lifetime, and capability-family extractors. Public CAA module headers expose project model types and opaque handles, not concrete `CATI*` interfaces.
 
 `reconstruction` chooses and validates the reconstruction route from model data. It has no CAA dependency.
 
@@ -69,9 +69,19 @@ To keep the logical source tree intact, `src` contains an R21 compatibility laye
 
 - `BuildApp.cpp`
 - `BuildEngine.cpp`
-- `BuildCaa.cpp`
+- `BuildCaaCapabilityBroker.cpp`
+- `BuildCaaDocumentHandle.cpp`
+- `BuildCaaDocumentScanner.cpp`
+- `BuildCaaPartEnumerator.cpp`
+- one matching `BuildCaa*.cpp` bridge for each compiled CAA module
 - `BuildReconstruction.cpp`
 - `BuildOutput.cpp`
 - `BuildModel.cpp`
 
-These files contain only `#include` directives for implementation files in their module directories. They are build glue only and contain no business logic. Nested `.cpp` files must not be compiled separately at the same time, or duplicate definitions would result.
+These files contain only `#include` directives for implementation files in their module directories. They are build glue only and contain no business logic. CAA uses one bridge compilation unit per CAA module so individual capability families can be added or removed without creating one huge CAA translation unit. Nested `.cpp` files must not be compiled separately at the same time, or duplicate definitions would result.
+
+## Phase 1A CATPart Tree
+
+Phase 1A opens native CATPart/CATProduct files read-only with `CATDocumentServices::OpenDocument`. CATPart tree capture starts from the real `CATDocument`, obtains the part container through `CATInit` and `CATIPrtContainer`, then walks `CATISpecObject::ListComponents` and supplemental `CATIContainer::ListMembersHere` members.
+
+Each CATIA object is persisted as an `ObjectEntity`; each place it appears in the captured tree is persisted as an `ObjectOccurrence`. The retained fields include `display_name`, `internal_name`, `startup_type`, parent occurrence, `source_index`, `tree_path`, and `update_status`. Unknown objects are preserved with explicit partial status instead of being dropped. Normal output includes `object_entities.jsonl` and `tree_occurrences.jsonl`; `LegacyArtifactProjection` also emits compatible `features.jsonl` and `relations.jsonl`.

@@ -35,13 +35,7 @@ struct CaptureReport
                      const std::string& text,
                      const std::string& at_stage)
   {
-    Diagnostic diagnostic;
-    diagnostic.severity = severity;
-    diagnostic.code = code;
-    diagnostic.subject_id = subject_id;
-    diagnostic.message = text;
-    diagnostic.stage = at_stage;
-    diagnostics.push_back(diagnostic);
+    diagnostics.push_back(MakeDiagnostic(severity, code, subject_id, text, at_stage));
   }
 
   bool HasErrors() const

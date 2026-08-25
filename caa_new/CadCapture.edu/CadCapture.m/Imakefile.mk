@@ -6,4 +6,6 @@ LOCAL_CCFLAGS = /EHsc /I"src"
 
 LINK_WITH = \
   JS0GROUP \
-  CATObjectModelerBase
+  CATObjectModelerBase \
+  CATObjectSpecsModeler \
+  CATMecModInterfaces

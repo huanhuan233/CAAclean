@@ -8,6 +8,8 @@ build_core/
 intel_a/
 win_b64/
 selftest_output/
+phase1a_output/
+phase1a_old_output/
 *.log
 CATIAV5Level.lvl
 Install_config_*

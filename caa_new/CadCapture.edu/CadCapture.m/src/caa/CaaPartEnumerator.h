@@ -1,15 +1,18 @@
 #ifndef CADCAPTURE_CAA_CAAPARTENUMERATOR_H
 #define CADCAPTURE_CAA_CAAPARTENUMERATOR_H
 
-#include "engine/CaptureReport.h"
+#include "caa/CaaDocumentHandle.h"
 #include "model/ReconstructionPackage.h"
+#include <string>
 
 namespace cadcapture {
 
 class CaaPartEnumerator
 {
 public:
-  bool Enumerate(ReconstructionPackage& package, CaptureReport& report);
+  bool Enumerate(CaaDocumentHandle& document_handle,
+                 ReconstructionPackage& package,
+                 std::string& error);
 };
 
 }

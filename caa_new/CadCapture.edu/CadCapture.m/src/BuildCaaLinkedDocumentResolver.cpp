@@ -1,0 +1,1 @@
+#include "caa/CaaLinkedDocumentResolver.cpp"

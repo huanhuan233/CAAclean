@@ -44,6 +44,51 @@ static bool WriteText(const std::string& path, const std::string& text, std::str
   return true;
 }
 
+static bool WriteJsonLines(const ReconstructionPackage& package,
+                           const std::string& output_dir,
+                           std::string& error)
+{
+  std::ostringstream objects;
+  size_t i;
+  for (i = 0; i < package.objects.size(); ++i)
+  {
+    const ObjectEntity& object = package.objects[i];
+    objects << "{"
+            << JsonQuote("object_id") << ":" << JsonQuote(object.object_id) << ","
+            << JsonQuote("document_id") << ":" << JsonQuote(object.document_id) << ","
+            << JsonQuote("object_kind") << ":" << JsonQuote(object.object_kind) << ","
+            << JsonQuote("display_name") << ":" << JsonQuote(object.display_name) << ","
+            << JsonQuote("internal_name") << ":" << JsonQuote(object.internal_name) << ","
+            << JsonQuote("startup_type") << ":" << JsonQuote(object.startup_type) << ","
+            << JsonQuote("update_status") << ":" << JsonQuote(object.update_status) << ","
+            << JsonQuote("capture_status") << ":" << JsonQuote(object.capture_status)
+            << "}\n";
+  }
+
+  std::ostringstream occurrences;
+  for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)
+  {
+    const ObjectOccurrence& occurrence = package.occurrence_graph.object_occurrences[i];
+    occurrences << "{"
+                << JsonQuote("occurrence_id") << ":" << JsonQuote(occurrence.occurrence_id) << ","
+                << JsonQuote("object_id") << ":" << JsonQuote(occurrence.object_id) << ","
+                << JsonQuote("parent_occurrence_id") << ":" << JsonQuote(occurrence.parent_occurrence_id) << ","
+                << JsonQuote("document_id") << ":" << JsonQuote(occurrence.document_id) << ","
+                << JsonQuote("tree_path") << ":" << JsonQuote(occurrence.tree_path) << ","
+                << JsonQuote("occurrence_path") << ":" << JsonQuote(occurrence.occurrence_path) << ","
+                << JsonQuote("source_index") << ":" << occurrence.source_index << ","
+                << JsonQuote("container_index") << ":" << occurrence.container_index << ","
+                << JsonQuote("capture_status") << ":" << JsonQuote(occurrence.capture_status)
+                << "}\n";
+  }
+
+  if (!WriteText(output_dir + "\\object_entities.jsonl", objects.str(), error))
+    return false;
+  if (!WriteText(output_dir + "\\tree_occurrences.jsonl", occurrences.str(), error))
+    return false;
+  return true;
+}
+
 bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
                                      const CaptureReport& report,
                                      const std::string& output_dir,
@@ -94,6 +139,8 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
   if (!WriteText(output_dir + "\\capture_report.json", report_json.str(), error))
     return false;
   if (!WriteText(output_dir + "\\reconstruction_plan.json", plan_json.str(), error))
+    return false;
+  if (!WriteJsonLines(package, output_dir, error))
     return false;
   return true;
 }

@@ -39,12 +39,20 @@ static ReconstructionPackage MakeValidPackage()
   object.object_id = "object_1";
   object.document_id = "doc_1";
   object.object_kind = "part";
+  object.display_name = "PartBody";
+  object.internal_name = "PartBody";
+  object.startup_type = "MechanicalPart";
+  object.update_status = "unknown";
   package.objects.push_back(object);
 
   ObjectOccurrence occurrence;
   occurrence.occurrence_id = "occurrence_1";
   occurrence.object_id = "object_1";
   occurrence.document_id = "doc_1";
+  occurrence.parent_occurrence_id = "occurrence_root";
+  occurrence.tree_path = "/document/PartSpecContainer/PartBody";
+  occurrence.occurrence_path = occurrence.tree_path;
+  occurrence.source_index = 7;
   package.occurrence_graph.object_occurrences.push_back(occurrence);
   return package;
 }
@@ -73,6 +81,16 @@ int main()
   occurrence_b.occurrence_id = "occ_b";
   Check(object.object_id == occurrence_a.object_id, "ObjectEntity and ObjectOccurrence linked by id");
   Check(occurrence_a.occurrence_id != occurrence_b.occurrence_id, "same ObjectEntity can have two occurrences");
+  object.display_name = "Pad.1";
+  object.internal_name = "Pad.1";
+  object.startup_type = "PartFeature";
+  object.update_status = "unknown";
+  occurrence_a.parent_occurrence_id = "occ_root";
+  occurrence_a.tree_path = "/document/PartSpecContainer/Pad.1";
+  occurrence_a.source_index = 3;
+  Check(object.display_name == "Pad.1" && object.startup_type == "PartFeature", "ObjectEntity preserves native names and startup type");
+  Check(occurrence_a.parent_occurrence_id == "occ_root" && occurrence_a.tree_path.find("/document/") == 0, "ObjectOccurrence preserves parent and tree path");
+  Check(occurrence_a.source_index == 3, "ObjectOccurrence preserves source index");
 
   PropertyFact fact;
   fact.raw_value = "25.4";

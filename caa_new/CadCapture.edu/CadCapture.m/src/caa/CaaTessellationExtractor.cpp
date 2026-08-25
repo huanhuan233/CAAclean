@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaTessellationExtractor::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaTessellationExtractor::Extract(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "tessellation_extractor";
-  report.AddDiagnostic("info", "not_implemented", "tessellation", "Tessellation extraction is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "tessellation",
+                                               "Tessellation extraction is not implemented in Phase 1A",
+                                               "tessellation_extractor"));
   return true;
 }
 

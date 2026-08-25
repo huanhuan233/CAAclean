@@ -14,6 +14,7 @@ public:
   bool Open(std::string& error);
   void Close();
   bool IsOpen() const;
+  const std::string& SessionName() const;
 
 private:
   CaaRuntime(const CaaRuntime&);

@@ -1,6 +1,6 @@
-# CadCapture CAA Bootstrap
+# CadCapture CAA New Architecture
 
-CadCapture is a new CATIA V5R21 CAA parser skeleton built under `caa_new`. This stage is a bootstrap only: it establishes the deep-module architecture, command-line entry point, API-independent tests, and a minimal CAA runtime probe.
+CadCapture is a new CATIA V5R21 CAA parser built under `caa_new`. Phase 1A opens CATPart/CATProduct documents through CAA in read-only mode and captures a lossless CATPart object tree without migrating feature, topology, tessellation, FTA, product-recursion, or sketch extraction.
 
 ## Build
 
@@ -31,25 +31,26 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - Pure data model for documents, objects, occurrences, properties, semantic facts, geometry, topology, PMI, diagnostics, and reconstruction package.
 - SDK Catalog and Capability Coverage data structures, JSON files, query tools, and API-independent tests.
 - `ModelCaptureEngine` as the only top-level orchestration entry point.
-- CAA runtime probe using `Create_Session` and `Delete_Session`.
-- Minimal CATPart/CATProduct extension classification without opening native documents.
-- Normalized JSON artifact writing for manifest, capture report, and reconstruction plan.
+- CAA runtime probe and guarded session lifetime using `Create_Session` and `Delete_Session`.
+- Guarded document lifetime using `CATDocumentServices::OpenDocument` and read-only native document handles.
+- CATPart tree enumeration from the real `CATDocument` using `CATInit`, `CATIPrtContainer`, `CATIPrtContainer::GetPart`, `CATISpecObject::ListComponents`, and `CATIContainer::ListMembersHere`.
+- Lossless object and occurrence preservation for recognized and unknown CATIA objects.
+- Normalized JSON artifact writing for manifest, capture report, reconstruction plan, `object_entities.jsonl`, and `tree_occurrences.jsonl`.
+- Legacy projection writing for compatible `features.jsonl` and `relations.jsonl`.
 - API-independent VS2008 core tests.
 
 ## Not Implemented Yet
 
-- Native CATPart or CATProduct document opening.
 - Product recursion.
 - Pad, pocket, hole, sketch, FTA, topology, B-Rep, and tessellation extraction.
-- Legacy JSONL business projection.
 
-All unavailable native capabilities are reported as bootstrap `not_implemented`; the program does not claim to parse CATIA geometry in this stage.
+All unavailable native capabilities are reported as Phase 1A `not_implemented`; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.
 
 All headers are indexed. Only verified capabilities are compiled. Only fixture-verified capabilities may be declared implemented. Catalog indexing does not add Frameworks to `IdentityCard` or `Imakefile`; build dependencies stay limited to capabilities used in this stage.
 
 ## Suggested Migration Order
 
-1. Move proven session/document open and close handling into the CAA layer.
+1. Verify more real CATPart fixtures against the old parser node count.
 2. Add document-level metadata extraction.
 3. Add product occurrence traversal.
 4. Add part feature identity and property facts.

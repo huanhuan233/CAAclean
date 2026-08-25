@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaGeometryExtractor::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaGeometryExtractor::Extract(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "geometry_extractor";
-  report.AddDiagnostic("info", "not_implemented", "geometry", "Geometry extraction is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "geometry",
+                                               "Geometry extraction is not implemented in Phase 1A",
+                                               "geometry_extractor"));
   return true;
 }
 

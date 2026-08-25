@@ -2,11 +2,11 @@
 
 namespace cadcapture {
 
-bool CaaFtaExtractor::Extract(ReconstructionPackage& package, CaptureReport& report)
+bool CaaFtaExtractor::Extract(ReconstructionPackage& package)
 {
-  (void)package;
-  report.stage = "fta_extractor";
-  report.AddDiagnostic("info", "not_implemented", "fta", "FTA extraction is not implemented in bootstrap", report.stage);
+  package.diagnostics.push_back(MakeDiagnostic("info", "not_implemented", "fta",
+                                               "FTA extraction is not implemented in Phase 1A",
+                                               "fta_extractor"));
   return true;
 }
 
