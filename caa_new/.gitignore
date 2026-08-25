@@ -10,6 +10,7 @@ win_b64/
 selftest_output/
 phase1a_output/
 phase1a_old_output/
+tree_comparison.json
 *.log
 CATIAV5Level.lvl
 Install_config_*

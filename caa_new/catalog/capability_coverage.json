@@ -21,23 +21,33 @@
       "reconstruction_verified": false
     },
     {
-      "capability_id": "document.extension.classification",
+      "capability_id": "document.native_open",
       "family": "document",
       "status": "fixture_verified",
-      "headers": [],
-      "frameworks": [],
+      "headers": ["CATDocument.h", "CATDocumentServices.h", "CATUnicodeString.h"],
+      "frameworks": ["System", "ObjectModelerBase", "ObjectSpecsModeler", "MecModInterfaces"],
       "extractor": "CaaDocumentScanner",
       "fixture_verified": true,
       "reconstruction_verified": false
     },
     {
-      "capability_id": "part.bootstrap.root",
+      "capability_id": "part.native_spec_tree",
       "family": "part",
-      "status": "extractor_implemented",
-      "headers": [],
-      "frameworks": [],
+      "status": "fixture_verified",
+      "headers": ["CATInit.h", "CATIPrtContainer.h", "CATISpecObject.h", "CATIContainer.h"],
+      "frameworks": ["System", "ObjectModelerBase", "ObjectSpecsModeler", "MecModInterfaces"],
       "extractor": "CaaPartEnumerator",
-      "fixture_verified": false,
+      "fixture_verified": true,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "part.container_supplemental_discovery",
+      "family": "part",
+      "status": "fixture_verified",
+      "headers": ["CATIContainer.h"],
+      "frameworks": ["System", "ObjectModelerBase", "ObjectSpecsModeler", "MecModInterfaces"],
+      "extractor": "CaaPartEnumerator",
+      "fixture_verified": true,
       "reconstruction_verified": false
     },
     {
@@ -48,6 +58,16 @@
       "frameworks": [],
       "extractor": "CaaProductEnumerator",
       "fixture_verified": false,
+      "reconstruction_verified": false
+    },
+    {
+      "capability_id": "output.legacy_tree_projection",
+      "family": "output",
+      "status": "fixture_verified",
+      "headers": [],
+      "frameworks": [],
+      "extractor": "LegacyArtifactProjection",
+      "fixture_verified": true,
       "reconstruction_verified": false
     },
     {

@@ -45,13 +45,31 @@ call tools\run_r21_x64.bat --probe-runtime
 call tools\run_r21_x64.bat --input "H:\PXY2\3Djiexi\freecadCAA\caa_new\tests\dummy.CATPart" --output "H:\PXY2\3Djiexi\freecadCAA\caa_new\selftest_output" --pretty
 ```
 
-Normal bootstrap mode writes:
+Normal Phase 1A mode writes through a staging directory and commits the output transaction only after required files and JSONL counts are verified:
 
 - `manifest.json`
 - `capture_report.json`
 - `reconstruction_plan.json`
+- `object_entities.jsonl`
+- `tree_occurrences.jsonl`
+- `features.jsonl`
+- `relations.jsonl`
 
-The manifest records `native_document_open_status` as `not_implemented_bootstrap`.
+The manifest records `native_document_open_status` as `opened_read_only` when CAA opens the native document successfully.
+
+## CATPart Tree Comparison
+
+Compare a real CATPart against the legacy parser without comparing unstable IDs:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\compare_catpart_tree.ps1 `
+  -OldExe "H:\PXY2\3Djiexi\freecadCAA\3DjiexiCAA\win_b64\code\bin\CadParseMvp.exe" `
+  -NewExe "H:\PXY2\3Djiexi\freecadCAA\caa_new\win_b64\code\bin\CadCapture.exe" `
+  -Input "H:\model\sample.CATPart" `
+  -OldOutput "H:\output\old_tree" `
+  -NewOutput "H:\output\new_tree" `
+  -ReportOutput "H:\output\tree_comparison.json"
+```
 
 ## Catalog Tools
 

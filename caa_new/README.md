@@ -35,14 +35,17 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - Guarded document lifetime using `CATDocumentServices::OpenDocument` and read-only native document handles.
 - CATPart tree enumeration from the real `CATDocument` using `CATInit`, `CATIPrtContainer`, `CATIPrtContainer::GetPart`, `CATISpecObject::ListComponents`, and `CATIContainer::ListMembersHere`.
 - Lossless object and occurrence preservation for recognized and unknown CATIA objects.
+- Primary tree and supplemental discovery are separated; supplemental nodes are preserved but not promoted to extra roots.
 - Normalized JSON artifact writing for manifest, capture report, reconstruction plan, `object_entities.jsonl`, and `tree_occurrences.jsonl`.
-- Legacy projection writing for compatible `features.jsonl` and `relations.jsonl`.
+- Legacy tree projection writing for compatible `features.jsonl` and `relations.jsonl` with occurrence IDs as feature IDs.
+- Transactional artifact commit through `ArtifactRepository`.
+- New/old CATPart tree comparison with `tools\compare_catpart_tree.ps1`.
 - API-independent VS2008 core tests.
 
 ## Not Implemented Yet
 
 - Product recursion.
-- Pad, pocket, hole, sketch, FTA, topology, B-Rep, and tessellation extraction.
+- Product Reference / Instance, full properties, native Feature parameters, Pad, Pocket, Hole, Sketch, FTA, topology, B-Rep, and tessellation extraction.
 
 All unavailable native capabilities are reported as Phase 1A `not_implemented`; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.
 
