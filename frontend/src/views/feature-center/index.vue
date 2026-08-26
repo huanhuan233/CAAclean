@@ -1,6 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import {
+  Box,
+  Brush,
+  Close,
+  CollectionTag,
+  Connection,
+  Document,
+  Menu,
+  Operation,
+  Refresh,
+  ScaleToOriginal,
+  Tickets,
+  WarningFilled
+} from '@element-plus/icons-vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -497,12 +511,81 @@ const detailLayout = computed(() => {
     geometryHasLinkedFeature: Boolean(selectedFace.value && (selectedNativeFeature.value || selectedFeature.value))
   });
 });
-const catiaPropertyTitle = computed(() => {
-  const node = catiaPropertyNode.value;
-  if (!node) return 'CATIA 属性';
-  return `${node.displayName}${node.nativeType ? ` · ${node.nativeType}` : ''}`;
-});
 const catiaPropertyTabs = computed(() => buildCatiaPropertyTabs(catiaPropertyNode.value));
+const catiaPropertyName = computed(() => catiaPropertyNode.value?.displayName || 'CATIA 属性');
+const catiaPropertyType = computed(
+  () => catiaPropertyNode.value?.nativeType || catiaPropertyNode.value?.raw?.startup_type || catiaPropertyNode.value?.kind || ''
+);
+
+type CatiaPropertyRow = { label: string; value: string; unit?: string };
+type CatiaPropertyGroup = { title: string; rows: CatiaPropertyRow[] };
+
+const propertyIconMap = {
+  实例名称: Box,
+  类型: Connection,
+  StartUp: Connection,
+  内部名称: CollectionTag,
+  零件编号: Document,
+  更新状态: Refresh,
+  体积: Box,
+  质量: ScaleToOriginal,
+  曲面: Tickets,
+  密度: CollectionTag,
+  颜色: Brush,
+  线型: Operation,
+  线宽: Menu
+};
+
+function catiaGroupRows(tabName: string, groupTitle: string) {
+  return catiaPropertyTabs.value.find(tab => tab.name === tabName)?.groups.find(group => group.title === groupTitle)?.rows || [];
+}
+
+function catiaRowValue(rows: CatiaPropertyRow[], label: string) {
+  return rows.find(row => row.label === label)?.value;
+}
+
+function iconForCatiaRow(row: CatiaPropertyRow) {
+  return propertyIconMap[row.label as keyof typeof propertyIconMap] || Document;
+}
+
+function isWarningStatus(value: string) {
+  return /not[_\s-]?up[_\s-]?to[_\s-]?date|failed|unavailable|error/i.test(value);
+}
+
+function shouldRenderCatiaStatus(row: CatiaPropertyRow) {
+  return /状态|status/i.test(row.label) || isWarningStatus(row.value);
+}
+
+function catiaDisplayRows(group: CatiaPropertyGroup) {
+  return group.rows.filter(row => row.value !== undefined && row.value !== null && row.value !== '');
+}
+
+function isInertiaGroup(group: CatiaPropertyGroup) {
+  return group.title === '惯性矩阵';
+}
+
+function inertiaCell(rows: CatiaPropertyRow[], axisRow: string, axisColumn: string) {
+  return catiaRowValue(rows, `I${axisRow.toLowerCase()}${axisColumn.toLowerCase()}`) || '—';
+}
+
+function groupUnit(group: CatiaPropertyGroup) {
+  return group.rows.find(row => row.unit)?.unit;
+}
+
+function displayUnit(unit?: string) {
+  if (!unit) return '';
+  const unitMap: Record<string, string> = {
+    m2: 'm²',
+    m3: 'm³',
+    kg_m3: 'kg/m³',
+    kgxm2: 'kg·m²'
+  };
+  return unitMap[unit] || unit;
+}
+
+function isAxisRow(row: CatiaPropertyRow) {
+  return ['x', 'y', 'z'].includes(row.label.toLowerCase());
+}
 
 // 用途：详情区只格式化真实解析值；对象和数组保留 JSON 结构，不补默认参数。
 function formatNativeAttribute(value: unknown) {
@@ -541,7 +624,7 @@ function formatCatiaNumber(value: unknown) {
 function propertyRow(label: string, value: unknown, unit = '') {
   if (value === undefined || value === null || value === '') return null;
   const text = unit ? formatCatiaNumber(value) : formatNativeAttribute(value);
-  return { label, value: unit && !text.endsWith(unit) ? `${text}${unit}` : text };
+  return { label, value: text, unit };
 }
 
 function compactRows(rows: Array<{ label: string; value: string } | null>) {
@@ -593,12 +676,6 @@ function buildCatiaPropertyTabs(node: FeatureTreeNode | null) {
     propertyRow('内部名称', node.raw?.internal_name || node.name),
     propertyRow('树路径', node.raw?.tree_path || node.sourceRef)
   ]);
-  const referenceRows = compactRows([
-    propertyRow('参考链接', pickAttribute(attrs, ['source_document', 'instance_path', 'tree_path']) || node.sourceRef),
-    propertyRow('引用 ID', pickAttribute(attrs, ['reference_id'])),
-    propertyRow('实例 ID', pickAttribute(attrs, ['instance_id'])),
-    propertyRow('父实例 ID', pickAttribute(attrs, ['parent_instance_id']))
-  ]);
   const productRows = compactRows([
     propertyRow('零件编号', pickAttribute(attrs, ['part_number']) || node.displayName),
     propertyRow('版本', pickAttribute(attrs, ['revision', 'version'])),
@@ -637,7 +714,6 @@ function buildCatiaPropertyTabs(node: FeatureTreeNode | null) {
       label: '产品',
       groups: [
         { title: '部件', rows: componentRows },
-        { title: '参考链接', rows: referenceRows },
         { title: '产品', rows: productRows }
       ]
     },
@@ -2113,31 +2189,132 @@ onBeforeUnmount(() => {
     <ElDialog
       v-model="catiaPropertyDialogOpen"
       class="catia-property-dialog"
-      :title="catiaPropertyTitle"
-      width="640px"
+      width="min(88vw, 980px)"
       append-to-body
+      :show-close="false"
     >
-      <div class="catia-current-selection">
-        <span>当前选择：</span>
-        <strong>{{ catiaPropertyNode?.sourceRef || catiaPropertyNode?.displayName || '—' }}</strong>
-      </div>
-      <ElTabs v-if="catiaPropertyTabs.length" v-model="catiaPropertyTab" type="card">
+      <template #header>
+        <header class="catia-property-header">
+          <div class="catia-property-identity">
+            <span class="catia-property-mark" aria-hidden="true">
+              <ElIcon><Box /></ElIcon>
+            </span>
+            <h3>{{ catiaPropertyName }}</h3>
+            <ElTag v-if="catiaPropertyType" class="catia-property-type" effect="plain">
+              {{ catiaPropertyType }}
+            </ElTag>
+          </div>
+          <ElButton class="catia-dialog-close" text circle aria-label="关闭" @click="catiaPropertyDialogOpen = false">
+            <ElIcon><Close /></ElIcon>
+          </ElButton>
+        </header>
+      </template>
+
+      <ElTabs v-if="catiaPropertyTabs.length" v-model="catiaPropertyTab" class="catia-property-tabs">
         <ElTabPane v-for="tab in catiaPropertyTabs" :key="tab.name" :label="tab.label" :name="tab.name">
-          <section v-for="group in tab.groups" :key="group.title" class="catia-property-group">
-            <h4>{{ group.title }}</h4>
-            <dl v-if="group.rows.length">
-              <template v-for="row in group.rows" :key="`${group.title}-${row.label}`">
-                <dt>{{ row.label }}</dt>
-                <dd :title="row.value">{{ row.value }}</dd>
-              </template>
-            </dl>
-            <p v-else class="catia-property-empty">当前解析结果未提供</p>
-          </section>
+          <div class="catia-property-pane">
+            <section v-if="tab.name === 'graphic'" class="catia-property-section">
+              <h4>图形属性</h4>
+              <div class="catia-property-card catia-property-card--three catia-property-card--graphic">
+                <article
+                  v-for="row in catiaDisplayRows({
+                    title: '图形属性',
+                    rows: [
+                      { label: '颜色', value: catiaRowValue(catiaGroupRows('graphic', '图形属性'), '颜色') || '无颜色' },
+                      { label: '线型', value: catiaRowValue(catiaGroupRows('graphic', '图形属性'), '线型') || '无线型' },
+                      { label: '线宽', value: catiaRowValue(catiaGroupRows('graphic', '图形属性'), '线宽') || '无宽度' }
+                    ]
+                  })"
+                  :key="`graphic-${row.label}`"
+                  class="catia-info-item"
+                >
+                  <ElIcon class="catia-info-icon"><component :is="iconForCatiaRow(row)" /></ElIcon>
+                  <div class="catia-info-text">
+                    <span>{{ row.label }}</span>
+                    <strong :title="`${row.value}${displayUnit(row.unit)}`">
+                      {{ row.value }}<small v-if="row.unit">{{ displayUnit(row.unit) }}</small>
+                    </strong>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section v-if="tab.name === 'product'" class="catia-property-section">
+              <h4>部件信息</h4>
+              <div class="catia-property-card catia-property-card--three">
+                <article
+                  v-for="row in catiaDisplayRows({ title: '部件信息', rows: [
+                    { label: '实例名称', value: catiaRowValue(catiaGroupRows('product', '部件'), '实例名称') || '—' },
+                    { label: '类型', value: catiaRowValue(catiaGroupRows('product', '部件'), 'StartUp') || catiaPropertyType || '—' },
+                    { label: '内部名称', value: catiaRowValue(catiaGroupRows('product', '部件'), '内部名称') || catiaPropertyName }
+                  ] })"
+                  :key="`product-summary-${row.label}`"
+                  class="catia-info-item"
+                >
+                  <ElIcon class="catia-info-icon"><component :is="iconForCatiaRow(row)" /></ElIcon>
+                  <div class="catia-info-text">
+                    <span>{{ row.label }}</span>
+                    <strong :title="`${row.value}${displayUnit(row.unit)}`">
+                      {{ row.value }}<small v-if="row.unit">{{ displayUnit(row.unit) }}</small>
+                    </strong>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section
+              v-for="group in tab.groups.filter(item => tab.name !== 'graphic' && item.title !== '部件')"
+              :key="group.title"
+              class="catia-property-section"
+            >
+              <h4>
+                {{ group.title === '产品' ? '产品信息' : group.title }}
+                <small v-if="isInertiaGroup(group) && groupUnit(group)">{{ displayUnit(groupUnit(group)) }}</small>
+              </h4>
+              <div v-if="isInertiaGroup(group) && catiaDisplayRows(group).length" class="catia-inertia-table">
+                <div class="catia-inertia-cell catia-inertia-head"></div>
+                <div class="catia-inertia-cell catia-inertia-head">X</div>
+                <div class="catia-inertia-cell catia-inertia-head">Y</div>
+                <div class="catia-inertia-cell catia-inertia-head">Z</div>
+                <template v-for="axis in ['X', 'Y', 'Z']" :key="`inertia-${axis}`">
+                  <div class="catia-inertia-cell catia-inertia-head">{{ axis }}</div>
+                  <div class="catia-inertia-cell">{{ inertiaCell(group.rows, axis, 'X') }}</div>
+                  <div class="catia-inertia-cell">{{ inertiaCell(group.rows, axis, 'Y') }}</div>
+                  <div class="catia-inertia-cell">{{ inertiaCell(group.rows, axis, 'Z') }}</div>
+                </template>
+              </div>
+              <div
+                v-else-if="catiaDisplayRows(group).length"
+                class="catia-property-card"
+                :class="{ 'catia-property-card--axis': group.title === '惯性中心' }"
+              >
+                <article v-for="row in catiaDisplayRows(group)" :key="`${group.title}-${row.label}`" class="catia-info-item">
+                  <span v-if="isAxisRow(row)" class="catia-axis-badge" :class="`catia-axis-badge--${row.label.toLowerCase()}`">
+                    {{ row.label.toUpperCase() }}
+                  </span>
+                  <ElIcon v-else class="catia-info-icon"><component :is="iconForCatiaRow(row)" /></ElIcon>
+                  <div class="catia-info-text">
+                    <span>{{ isAxisRow(row) ? row.label.toUpperCase() : row.label }}</span>
+                    <ElTag v-if="shouldRenderCatiaStatus(row)" :type="isWarningStatus(row.value) ? 'warning' : 'success'" effect="light">
+                      <ElIcon v-if="isWarningStatus(row.value)"><WarningFilled /></ElIcon>
+                      {{ row.value }}
+                    </ElTag>
+                    <strong v-else :title="`${row.value}${displayUnit(row.unit)}`">
+                      {{ row.value }}<small v-if="row.unit">{{ displayUnit(row.unit) }}</small>
+                    </strong>
+                  </div>
+                </article>
+              </div>
+              <p v-else class="catia-property-empty">当前解析结果未提供</p>
+            </section>
+          </div>
         </ElTabPane>
       </ElTabs>
       <ElEmpty v-else description="当前节点没有可显示的 CATIA 属性" />
       <template #footer>
-        <ElButton @click="catiaPropertyDialogOpen = false">关闭</ElButton>
+        <div class="catia-property-footer">
+          <ElButton type="primary" @click="catiaPropertyDialogOpen = false">关闭</ElButton>
+        </div>
       </template>
     </ElDialog>
   </div>
@@ -2750,73 +2927,287 @@ button:disabled {
   pointer-events: none;
   opacity: 0;
 }
+:global(.catia-property-dialog) {
+  border-radius: 5px;
+  background: var(--el-bg-color-overlay);
+}
+:global(.catia-property-dialog .el-dialog__header) {
+  padding: 28px 28px 0;
+}
 :global(.catia-property-dialog .el-dialog__body) {
-  padding-top: 8px;
+  min-height: min(62vh, 620px);
+  padding: 28px 28px 0;
 }
-.catia-current-selection {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
-  font-size: 13px;
+:global(.catia-property-dialog .el-dialog__footer) {
+  padding: 24px 28px 28px;
 }
-.catia-current-selection span {
-  color: var(--el-text-color-regular);
-}
-.catia-current-selection strong {
+.catia-property-header {
+  display: flex;
   min-width: 0;
-  border: 1px solid var(--el-border-color-light);
-  background: var(--el-fill-color-lighter);
-  font-weight: 500;
-  overflow: hidden;
-  padding: 5px 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.catia-property-group {
-  border: 1px solid var(--el-border-color);
-  margin: 8px 0 10px;
-  padding: 12px 8px 8px;
-  position: relative;
-}
-.catia-property-group h4 {
-  position: absolute;
-  top: -10px;
-  left: 8px;
-  background: var(--el-bg-color);
-  font-size: 13px;
-  font-weight: 500;
-  margin: 0;
-  padding: 0 5px;
-}
-.catia-property-group dl {
-  display: grid;
-  grid-template-columns: max-content minmax(118px, 1fr) max-content minmax(118px, 1fr) max-content minmax(118px, 1fr);
-  gap: 6px 6px;
   align-items: center;
-  margin: 0;
+  justify-content: space-between;
+  gap: 16px;
 }
-.catia-property-group dt {
+.catia-property-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 16px;
+}
+.catia-property-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--el-color-primary);
+}
+.catia-property-mark .el-icon {
+  font-size: 34px;
+}
+.catia-property-identity h3 {
+  min-width: 0;
+  margin: 0;
   color: var(--el-text-color-primary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.catia-property-group dd {
-  min-height: 26px;
-  border: 1px solid var(--el-border-color-lighter);
-  background: var(--el-fill-color-lighter);
-  font-size: 12px;
-  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
   overflow: hidden;
-  padding: 4px 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.catia-property-type {
+  max-width: 240px;
+  height: 30px;
+  border-color: var(--el-border-color);
+  color: var(--el-text-color-regular);
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.catia-dialog-close {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  color: var(--el-text-color-primary);
+}
+.catia-dialog-close .el-icon {
+  font-size: 26px;
+}
+.catia-dialog-close:hover,
+.catia-dialog-close:focus-visible {
+  background: var(--el-fill-color-light);
+  color: var(--el-color-primary);
+}
+.catia-property-tabs {
+  --el-tabs-header-height: 52px;
+}
+.catia-property-tabs :deep(.el-tabs__header) {
+  margin: 0 0 26px;
+}
+.catia-property-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background: var(--el-border-color);
+}
+.catia-property-tabs :deep(.el-tabs__item) {
+  height: 52px;
+  padding: 0 28px;
+  color: var(--el-text-color-primary);
+  font-size: 20px;
+  font-weight: 500;
+}
+.catia-property-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--el-color-primary);
+  font-weight: 700;
+}
+.catia-property-tabs :deep(.el-tabs__active-bar) {
+  height: 3px;
+  background: var(--el-color-primary);
+}
+.catia-property-pane {
+  display: flex;
+  min-height: 420px;
+  flex-direction: column;
+  gap: 28px;
+}
+.catia-property-section h4 {
+  margin: 0 0 16px;
+  color: var(--el-text-color-primary);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.catia-property-section h4 small {
+  margin-left: 10px;
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+.catia-property-card,
+.catia-inertia-table {
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  background: var(--el-bg-color-overlay);
+}
+.catia-property-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+}
+.catia-property-card--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.catia-property-card--axis {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.catia-property-card--graphic .catia-info-item {
+  min-height: 110px;
+}
+.catia-info-item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 22px 26px;
+}
+.catia-info-item + .catia-info-item {
+  border-left: 1px solid var(--el-border-color);
+}
+.catia-property-card:not(.catia-property-card--three):not(.catia-property-card--axis) .catia-info-item:nth-child(2n + 1) {
+  border-left: 0;
+}
+.catia-property-card:not(.catia-property-card--three):not(.catia-property-card--axis) .catia-info-item:nth-child(n + 3),
+.catia-property-card--three .catia-info-item:nth-child(n + 4),
+.catia-property-card--axis .catia-info-item:nth-child(n + 4) {
+  border-top: 1px solid var(--el-border-color);
+}
+.catia-property-card--three .catia-info-item:nth-child(3n + 1),
+.catia-property-card--axis .catia-info-item:nth-child(3n + 1) {
+  border-left: 0;
+}
+.catia-info-icon {
+  color: var(--el-text-color-primary);
+  font-size: 30px;
+}
+.catia-axis-badge {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  border: 1px solid currentcolor;
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  place-items: center;
+}
+.catia-axis-badge--x {
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+}
+.catia-axis-badge--y {
+  background: var(--el-color-success-light-9);
+  color: var(--el-color-success);
+}
+.catia-axis-badge--z {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.catia-info-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--el-text-color-regular);
+  font-size: 16px;
+}
+.catia-info-text strong {
+  min-width: 0;
+  color: var(--el-text-color-primary);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catia-info-text strong small {
+  margin-left: 4px;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+.catia-info-text .el-tag {
+  width: fit-content;
+  max-width: 100%;
+  font-size: 14px;
+}
+.catia-info-text .el-icon {
+  margin-right: 4px;
+}
+.catia-inertia-table {
+  display: grid;
+  grid-template-columns: 80px repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+}
+.catia-inertia-cell {
+  min-width: 0;
+  border-left: 1px solid var(--el-border-color-light);
+  border-top: 1px solid var(--el-border-color-light);
+  padding: 16px;
+  color: var(--el-text-color-primary);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 17px;
+  text-align: center;
+}
+.catia-inertia-cell:nth-child(-n + 4) {
+  border-top: 0;
+}
+.catia-inertia-cell:nth-child(4n + 1) {
+  border-left: 0;
+}
+.catia-inertia-head {
+  background: var(--el-fill-color-lighter);
+  font-family: inherit;
+  font-weight: 500;
 }
 .catia-property-empty {
-  color: var(--el-text-color-placeholder);
-  font-size: 12px;
-  margin: 2px 0 0;
+  display: flex;
+  min-height: 108px;
+  align-items: center;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  margin: 0;
+  padding: 24px 32px;
+  color: var(--el-text-color-secondary);
+  font-size: 16px;
+}
+.catia-property-empty::before {
+  content: "i";
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border: 2px solid var(--el-text-color-secondary);
+  border-radius: 50%;
+  margin-right: 20px;
+  color: var(--el-text-color-secondary);
+  font-size: 26px;
+  font-weight: 700;
+  place-items: center;
+}
+.catia-property-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 24px;
+  border-top: 1px solid var(--el-border-color);
+  padding-top: 24px;
+}
+.catia-property-footer .el-button {
+  min-width: 92px;
+  height: 42px;
+  font-size: 18px;
 }
 .details-trigger {
   display: none;
