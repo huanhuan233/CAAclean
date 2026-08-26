@@ -160,7 +160,9 @@ struct NativeFeatureTopologyLinkEntity
   std::string mapping_status;
   std::string mapping_method;
   std::string authority;
+  std::string persistent_reference;
   std::string relation_kind;
+  std::vector<std::string> candidate_final_cell_ids;
   double confidence;
   double center_residual_mm;
   double measure_residual;

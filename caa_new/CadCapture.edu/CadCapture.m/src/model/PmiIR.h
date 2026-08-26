@@ -2,6 +2,7 @@
 #define CADCAPTURE_MODEL_PMIIR_H
 
 #include <string>
+#include <vector>
 
 namespace cadcapture {
 
@@ -34,6 +35,34 @@ struct PmiAssociation
   std::string read_status;
 
   PmiAssociation() : read_status("unavailable") {}
+};
+
+struct FtaSemanticEntity
+{
+  std::string fta_semantic_id;
+  std::string fta_set_id;
+  long component_index;
+  std::string read_status;
+  std::string component_kind;
+  std::vector<std::string> supported_interface_keys;
+  long semantic_interface_count;
+  long all_semantic_interface_count;
+  std::string validation_text;
+  std::string validation_text_status;
+  long semantic_check_status_raw;
+  std::string semantic_check_diagnostic;
+  std::string topology_mapping_status;
+  std::string value_source;
+
+  FtaSemanticEntity()
+    : component_index(0),
+      semantic_interface_count(0),
+      all_semantic_interface_count(0),
+      semantic_check_status_raw(-1),
+      validation_text_status("unavailable"),
+      topology_mapping_status("not_available")
+  {
+  }
 };
 
 }

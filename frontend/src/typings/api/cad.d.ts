@@ -480,6 +480,8 @@ declare namespace Api {
         available: boolean;
         features_url?: string | null;
         native_features_url?: string | null;
+        parameters_url?: string | null;
+        property_facts_url?: string | null;
         topology_bodies_url?: string | null;
         topology_cells_url?: string | null;
         topology_wires_url?: string | null;

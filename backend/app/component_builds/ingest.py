@@ -650,6 +650,8 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
     candidates = {
         "features": "features.jsonl",
         "native_features": "native_features.jsonl",
+        "parameters": "parameters.jsonl",
+        "property_facts": "property_facts.jsonl",
         "topology_bodies": "native_topology_bodies.jsonl",
         "topology_cells": "native_topology_cells.jsonl",
         "topology_wires": "native_topology_wires.jsonl",

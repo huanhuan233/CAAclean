@@ -1072,6 +1072,8 @@ static double Distance3(const double a[3], const double b[3])
   return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+static void AddUniqueString(std::vector<std::string>& values, const std::string& value);
+
 static void AppendFeatureTopologyLink(ReconstructionPackage& package,
                                       const NativeFeatureResultCellEntity& result_cell)
 {
@@ -1110,6 +1112,7 @@ static void AppendFeatureTopologyLink(ReconstructionPackage& package,
       std::fabs(result_cell.area_mm2) * 0.000001 : 0.001;
     if (center_residual <= 0.001 && area_residual <= area_tolerance)
     {
+      AddUniqueString(link.candidate_final_cell_ids, cell.topology_id);
       if (link.candidate_count == 0 || center_residual < best_center ||
           (center_residual == best_center && area_residual < best_area))
       {

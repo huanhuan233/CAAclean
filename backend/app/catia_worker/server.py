@@ -258,8 +258,8 @@ async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServ
     caa_run_script = Path(settings.caa_run_script).name
     await _run_process(
         [
-            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / caa_run_script),
-            "--input", str(source), "--output", str(native), "--read-only",
+            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "caa_new" / "tools" / caa_run_script),
+            "--input", str(source), "--output", str(native),
         ],
         job,
         "caa_parse_failed",

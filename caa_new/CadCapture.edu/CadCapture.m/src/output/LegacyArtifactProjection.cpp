@@ -717,11 +717,15 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                            << JsonQuote("mapping_status") << ":" << JsonQuote(link.mapping_status) << ","
                            << JsonQuote("mapping_method") << ":" << JsonQuote(link.mapping_method) << ","
                            << JsonQuote("authority") << ":" << JsonQuote(link.authority) << ","
+                           << JsonQuote("persistent_reference") << ":" << JsonQuote(link.persistent_reference) << ","
                            << JsonQuote("relation_kind") << ":" << JsonQuote(link.relation_kind) << ","
                            << JsonQuote("confidence") << ":" << link.confidence << ","
                            << JsonQuote("center_residual_mm") << ":" << link.center_residual_mm << ","
                            << JsonQuote("measure_residual") << ":" << link.measure_residual << ","
-                           << JsonQuote("candidate_count") << ":" << link.candidate_count
+                           << JsonQuote("candidate_count") << ":" << link.candidate_count << ","
+                           << JsonQuote("candidate_final_cell_ids") << ":";
+    LegacyWriteStringArray(feature_topology_links, link.candidate_final_cell_ids);
+    feature_topology_links
                            << "}\n";
     if (!feature_topology_links)
     {
@@ -731,8 +735,58 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   }
   if (!FinishLegacyStream(feature_topology_links, feature_topology_links_path, error))
     return false;
-  if (!WriteLegacyText(output_dir + "\\fta_semantics.jsonl", "", error))
+
+  const std::string fta_semantics_path = output_dir + "\\fta_semantics.jsonl";
+  std::ofstream fta_semantics(fta_semantics_path.c_str(), std::ios::out | std::ios::binary);
+  if (!fta_semantics)
+  {
+    error = "failed to open output file: " + fta_semantics_path;
     return false;
+  }
+  for (i = 0; i < package.fta_semantics.size(); ++i)
+  {
+    const FtaSemanticEntity& entity = package.fta_semantics[i];
+    fta_semantics << "{"
+                  << JsonQuote("fta_semantic_id") << ":" << JsonQuote(entity.fta_semantic_id) << ","
+                  << JsonQuote("fta_set_id") << ":" << JsonQuote(entity.fta_set_id) << ","
+                  << JsonQuote("component_index") << ":" << entity.component_index << ","
+                  << JsonQuote("read_status") << ":" << JsonQuote(entity.read_status) << ","
+                  << JsonQuote("component_kind") << ":" << JsonQuote(entity.component_kind) << ","
+                  << JsonQuote("semantic_type") << ":" << JsonQuote(entity.component_kind) << ","
+                  << JsonQuote("semantic_payload") << ":{"
+                  << JsonQuote("supported_interface_keys") << ":";
+    LegacyWriteStringArray(fta_semantics, entity.supported_interface_keys);
+    fta_semantics << ","
+                  << JsonQuote("validation_text") << ":" << JsonQuote(entity.validation_text) << ","
+                  << JsonQuote("validation_text_status") << ":" << JsonQuote(entity.validation_text_status) << ","
+                  << JsonQuote("semantic_check_status_raw") << ":" << entity.semantic_check_status_raw << ","
+                  << JsonQuote("semantic_check_diagnostic") << ":" << JsonQuote(entity.semantic_check_diagnostic)
+                  << "},"
+                  << JsonQuote("ttrs_id") << ":null,"
+                  << JsonQuote("annotation_view_id") << ":null,"
+                  << JsonQuote("capture_ids") << ":[],"
+                  << JsonQuote("semantic_validity") << ":" << JsonQuote(entity.semantic_check_diagnostic) << ","
+                  << JsonQuote("supported_interface_keys") << ":";
+    LegacyWriteStringArray(fta_semantics, entity.supported_interface_keys);
+    fta_semantics << ","
+                  << JsonQuote("semantic_interface_count") << ":" << entity.semantic_interface_count << ","
+                  << JsonQuote("all_semantic_interface_count") << ":" << entity.all_semantic_interface_count << ","
+                  << JsonQuote("validation_text") << ":" << JsonQuote(entity.validation_text) << ","
+                  << JsonQuote("validation_text_status") << ":" << JsonQuote(entity.validation_text_status) << ","
+                  << JsonQuote("semantic_check_status_raw") << ":" << entity.semantic_check_status_raw << ","
+                  << JsonQuote("semantic_check_diagnostic") << ":" << JsonQuote(entity.semantic_check_diagnostic) << ","
+                  << JsonQuote("topology_mapping_status") << ":" << JsonQuote(entity.topology_mapping_status) << ","
+                  << JsonQuote("value_source") << ":" << JsonQuote(entity.value_source)
+                  << "}\n";
+    if (!fta_semantics)
+    {
+      error = "failed to write output file: " + fta_semantics_path;
+      return false;
+    }
+  }
+  if (!FinishLegacyStream(fta_semantics, fta_semantics_path, error))
+    return false;
+
   if (!WriteLegacyText(output_dir + "\\fta_topology_links.jsonl", "", error))
     return false;
 

@@ -444,6 +444,8 @@ class ComponentBuildService:
         for key in (
             "features",
             "native_features",
+            "parameters",
+            "property_facts",
             "topology_bodies",
             "topology_cells",
             "topology_wires",

@@ -10,6 +10,7 @@ const props = defineProps<{
   sourceFileName: string;
   selectedId: string;
   faceRefsByFeatureId?: Record<string, string[]>;
+  parameterValuesByObjectId?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -34,7 +35,12 @@ const userExpandedKeys = ref<string[]>([]);
 const savedExpandedKeys = ref<string[]>([]);
 
 const sourceTree = computed(() =>
-  buildNativeFeatureTree(props.records, props.sourceFileName, props.faceRefsByFeatureId || {})
+  buildNativeFeatureTree(
+    props.records,
+    props.sourceFileName,
+    props.faceRefsByFeatureId || {},
+    props.parameterValuesByObjectId || {}
+  )
 );
 const projection = computed(() =>
   projectFeatureTree(sourceTree.value, {

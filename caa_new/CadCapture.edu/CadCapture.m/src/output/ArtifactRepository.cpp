@@ -213,6 +213,12 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     error = "fta_sets.jsonl line count mismatch";
     return false;
   }
+  if (CountLines(JoinPath(staging, "fta_semantics.jsonl")) !=
+      static_cast<long>(package.fta_semantics.size()))
+  {
+    error = "fta_semantics.jsonl line count mismatch";
+    return false;
+  }
   if (CountLines(JoinPath(staging, "feature_dependencies.jsonl")) !=
       static_cast<long>(package.feature_dependencies.size()))
   {

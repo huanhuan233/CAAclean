@@ -120,6 +120,17 @@ static std::string DisplaySegment(CATISpecObject* spec)
   return segment;
 }
 
+static void ReleaseSpecList(std::vector<CATISpecObject*>& specs)
+{
+  size_t i;
+  for (i = 0; i < specs.size(); ++i)
+  {
+    if (specs[i])
+      specs[i]->Release();
+  }
+  specs.clear();
+}
+
 static std::string MakeMachineSegment(long source_index, const std::string& segment)
 {
   std::ostringstream out;
@@ -139,6 +150,42 @@ static std::string JoinMachinePath(const std::string& prefix, long source_index,
   if (prefix.empty())
     return "/" + MakeMachineSegment(source_index, segment);
   return prefix + "/" + MakeMachineSegment(source_index, segment);
+}
+
+static bool EndsWithPathSegment(const std::string& path, const std::string& segment)
+{
+  if (path.size() < segment.size())
+    return false;
+  if (path.compare(path.size() - segment.size(), segment.size(), segment) != 0)
+    return false;
+  return path.size() == segment.size() || path[path.size() - segment.size() - 1] == '/';
+}
+
+static long FeaturePropertyChildOrder(const std::string& parent_tree_path, const std::string& display_name)
+{
+  if (!EndsWithPathSegment(parent_tree_path, "\xE7\x89\xB9\xE5\xBE\x81\xE5\xB1\x9E\xE6\x80\xA7"))
+    return 0;
+
+  if (display_name == "\xE9\xA1\xB6\xE9\x9D\xA2\xE6\xA0\x87\xE8\xAF\x86")
+    return 1;
+  if (display_name == "\xE4\xBE\xA7\xE5\xA3\x81\xE7\xB1\xBB\xE5\x9E\x8B")
+    return 2;
+  if (display_name == "\xE5\xBA\x95\xE8\xA7\x92\xE5\x8D\x8A\xE5\xBE\x84")
+    return 3;
+  if (display_name == "\xE5\x8C\x85\xE5\x9B\xB4\xE7\x9B\x92")
+    return 4;
+  if (display_name == "\xE5\xBA\x95\xE9\x9D\xA2\xE6\xA0\x87\xE8\xAF\x86")
+    return 5;
+  if (display_name == "\xE5\xBA\x95\xE9\x9D\xA2\xE6\xB3\x95\xE5\x90\x91")
+    return 6;
+  if (display_name == "\xE8\xBD\xAC\xE8\xA7\x92\xE5\x8D\x8A\xE5\xBE\x84")
+    return 7;
+  if (display_name == "\xE6\x98\xAF\xE5\x90\xA6\xE5\x85\xB1\xE4\xBE\xA7\xE9\x9D\xA2")
+    return 8;
+  if (display_name == "\xE5\xB1\x82\xE6\x95\xB0")
+    return 9;
+
+  return 0;
 }
 
 static ObjectEntity MakeStaticObject(CaptureIdRegistry& ids,
@@ -265,6 +312,8 @@ public:
     }
 
     const std::string segment = DisplaySegment(spec);
+    const long display_order = FeaturePropertyChildOrder(parent_tree_path, segment);
+    const long occurrence_index = display_order > 0 ? display_order : source_index;
     const std::string base_tree_path = JoinDisplayPath(parent_tree_path, segment);
     std::string tree_path = base_tree_path;
     if (occurrence_role == "primary_tree")
@@ -277,11 +326,11 @@ public:
         tree_path = disambiguated.str();
       }
     }
-    const std::string occurrence_path = JoinMachinePath(parent_occurrence_path, source_index, segment);
+    const std::string occurrence_path = JoinMachinePath(parent_occurrence_path, occurrence_index, segment);
     const std::string template_id = NextTemplateId();
     _definition.occurrence_templates.push_back(MakeTemplateOccurrence(template_id, object_id, parent_template_id,
                                                                       _document_id, tree_path, occurrence_path,
-                                                                      source_index, container_index,
+                                                                      occurrence_index, container_index,
                                                                       occurrence_role, enumeration_source,
                                                                       presentation_status));
     if (presentation_status == "visible")
@@ -350,6 +399,68 @@ public:
                                                   "part_enumerator"));
   }
 
+  bool ResolvePrimaryParentByFather(CATISpecObject* spec,
+                                    std::string& parent_template_id,
+                                    std::string& parent_tree_path,
+                                    std::string& parent_occurrence_path,
+                                    long& container_index,
+                                    std::string& status) const
+  {
+    parent_template_id.clear();
+    parent_tree_path.clear();
+    parent_occurrence_path.clear();
+    container_index = 2;
+    status = "not_found";
+    CATISpecObject* current = spec;
+    std::vector<CATISpecObject*> owned_fathers;
+    int depth = 0;
+    for (depth = 0; current && depth < 16; ++depth)
+    {
+      CATISpecObject* father = 0;
+      try
+      {
+        father = current->GetFather();
+      }
+      catch (...)
+      {
+        ReleaseSpecList(owned_fathers);
+        status = "father_exception";
+        return false;
+      }
+      if (!father)
+      {
+        ReleaseSpecList(owned_fathers);
+        status = "no_father";
+        return false;
+      }
+      owned_fathers.push_back(father);
+      std::map<CATISpecObject*, std::string>::const_iterator entity_found = _entity_ids.find(father);
+      if (entity_found != _entity_ids.end())
+      {
+        std::map<std::string, std::string>::const_iterator occurrence_found =
+          _primary_occurrence_by_entity.find(entity_found->second);
+        if (occurrence_found != _primary_occurrence_by_entity.end())
+        {
+          const ObjectOccurrence* occurrence = FindTemplateOccurrence(occurrence_found->second);
+          if (occurrence)
+          {
+            parent_template_id = occurrence->occurrence_id;
+            parent_tree_path = occurrence->tree_path;
+            parent_occurrence_path = occurrence->occurrence_path;
+            container_index = occurrence->container_index;
+            status = "resolved";
+            ReleaseSpecList(owned_fathers);
+            return true;
+          }
+        }
+      }
+      current = father;
+    }
+    ReleaseSpecList(owned_fathers);
+    status = "depth_limit";
+    return false;
+  }
+
 private:
   std::string NextTemplateId()
   {
@@ -365,6 +476,17 @@ private:
     {
       if (_package.objects[i].object_id == object_id)
         return &_package.objects[i];
+    }
+    return 0;
+  }
+
+  const ObjectOccurrence* FindTemplateOccurrence(const std::string& occurrence_id) const
+  {
+    size_t i;
+    for (i = 0; i < _definition.occurrence_templates.size(); ++i)
+    {
+      if (_definition.occurrence_templates[i].occurrence_id == occurrence_id)
+        return &_definition.occurrence_templates[i];
     }
     return 0;
   }
@@ -502,14 +624,43 @@ bool CaaPartEnumerator::CaptureDefinition(CaaDocumentHandle& document_handle,
           }
           else
           {
-            crawler.Visit(member_spec, "template_container",
-                          "/document/PartSpecContainer",
-                          "/0:document/1:PartSpecContainer",
-                          static_cast<long>(index + 1), 2,
-                          "supplemental_discovery",
-                          "CATIContainer.ListMembersHere",
-                          "non_primary",
-                          error);
+            std::string parent_template_id;
+            std::string parent_tree_path;
+            std::string parent_occurrence_path;
+            std::string parent_resolution_status;
+            long parent_container_index = 2;
+            if (crawler.ResolvePrimaryParentByFather(member_spec,
+                                                     parent_template_id,
+                                                     parent_tree_path,
+                                                     parent_occurrence_path,
+                                                     parent_container_index,
+                                                     parent_resolution_status))
+            {
+              crawler.Visit(member_spec, parent_template_id,
+                            parent_tree_path,
+                            parent_occurrence_path,
+                            static_cast<long>(index + 1), parent_container_index,
+                            "supplemental_discovery",
+                            "CATIContainer.ListMembersHere.GetFather",
+                            "visible",
+                            error);
+            }
+            else
+            {
+              package.diagnostics.push_back(MakeDiagnostic("info", "supplemental_parent_unresolved",
+                                                           definition.document_id,
+                                                           "CATIContainer::ListMembersHere returned an object whose CATISpecObject::GetFather chain did not reach the primary tree: " +
+                                                           parent_resolution_status,
+                                                           "part_enumerator"));
+              crawler.Visit(member_spec, "template_container",
+                            "/document/PartSpecContainer",
+                            "/0:document/1:PartSpecContainer",
+                            static_cast<long>(index + 1), 2,
+                            "supplemental_discovery",
+                            "CATIContainer.ListMembersHere",
+                            "non_primary",
+                            error);
+            }
           }
         }
       }

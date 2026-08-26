@@ -19,7 +19,7 @@ import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
 import type { CadSelectionTarget } from './modules/cad-selection';
 import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
-import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
+import type { FeatureTreeNode, NativeFeatureRecord, NativeParameterRecord } from './modules/native-feature-tree';
 import {
   clearViewerSelection,
   emptySelectionContext,
@@ -105,6 +105,19 @@ interface ProductInstanceRecord {
   transform_value_source?: string;
   transform_4x4?: number[];
   suppressed?: boolean;
+  [key: string]: unknown;
+}
+
+interface NativePropertyFactRecord {
+  subject_id?: string;
+  key?: string;
+  raw_value?: unknown;
+  raw_display_text?: unknown;
+  display_value?: unknown;
+  normalized_numeric_value?: unknown;
+  display_order?: number;
+  read_status?: string;
+  hidden_status?: string;
   [key: string]: unknown;
 }
 
@@ -250,6 +263,8 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
+const nativeParameterValues = ref<Record<string, string>>({});
+const nativePropertyFactsBySubjectId = ref<Record<string, Record<string, unknown>>>({});
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
 const topologyBodies = ref<TopologySelectionRecord[]>([]);
 const topologySolids = ref<TopologySelectionRecord[]>([]);
@@ -371,7 +386,12 @@ const nativeFaceRefs = computed(() => {
   return index;
 });
 const nativeTreeNodes = computed(() =>
-  buildNativeFeatureTree(nativeFeatures.value, contract.value?.summary.source_file_name || '', nativeFaceRefs.value)
+  buildNativeFeatureTree(
+    nativeFeatures.value,
+    contract.value?.summary.source_file_name || '',
+    nativeFaceRefs.value,
+    nativeParameterValues.value
+  )
 );
 const nativeTreeNodeIndex = computed(
   () => new Map(flattenFeatureTree(nativeTreeNodes.value).map(node => [node.id, node]))
@@ -492,7 +512,13 @@ function formatNativeAttribute(value: unknown) {
 }
 
 function nativeAttributesOf(node: FeatureTreeNode | null) {
-  return (node?.raw?.attributes || {}) as Record<string, unknown>;
+  if (!node) return {};
+  const objectId = String(node.raw?.source_object_id || '');
+  const factAttrs = objectId ? nativePropertyFactsBySubjectId.value[objectId] || {} : {};
+  return {
+    ...((node.raw?.attributes || {}) as Record<string, unknown>),
+    ...factAttrs
+  };
 }
 
 function pickAttribute(attrs: Record<string, unknown>, keys: string[]) {
@@ -812,6 +838,7 @@ async function retryBuild() {
 // 用途：分阶段读取原生 CAA Feature 与 B-Rep Face，避免大型装配同时保留多个完整 ArrayBuffer。
 async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.ViewerContract) {
   nativeFeatures.value = [];
+  nativeParameterValues.value = {};
   topologyFaces.value = [];
   topologyBodies.value = [];
   topologySolids.value = [];
@@ -819,10 +846,13 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyCoedges.value = [];
   topologyEdges.value = [];
   topologyVertices.value = [];
+  nativePropertyFactsBySubjectId.value = {};
   selectionIndex.value = null;
   const productFeatureTreeUrl = viewerContract.native_semantics?.product_feature_tree_url;
   const productInstancesUrl = viewerContract.native_semantics?.product_instances_url;
   const nativeUrl = viewerContract.native_semantics?.features_url;
+  const nativeParametersUrl = viewerContract.native_semantics?.parameters_url;
+  const nativePropertyFactsUrl = viewerContract.native_semantics?.property_facts_url;
   const shouldLoadProductTree = viewerContract.source_format === 'CATPRODUCT';
   // CATProduct 的选择索引和拓扑资产可能远大于特征树本身，首屏先不加载，避免浏览器 OOM。
   const skipHeavyAssemblySemantics = shouldLoadProductTree;
@@ -854,6 +884,38 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   } else if (nativeUrl) {
     await loadJsonLines<NativeFeatureRecord>(nativeUrl, records => {
       nativeFeatures.value = records;
+    });
+  }
+  if (nativeParametersUrl) {
+    await loadJsonLines<NativeParameterRecord>(nativeParametersUrl, records => {
+      const values: Record<string, string> = {};
+      records.forEach(record => {
+        if (record.name !== 'catia_parameter_value_text') return;
+        const objectId = String(record.feature_id || '');
+        if (!objectId) return;
+        const value = record.raw_display_text ?? record.display_value ?? record.raw_value;
+        if (value === null || value === undefined) return;
+        values[objectId] = Array.isArray(value) ? value.join(',') : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      });
+      nativeParameterValues.value = values;
+    });
+  }
+  if (nativePropertyFactsUrl) {
+    await loadJsonLines<NativePropertyFactRecord>(nativePropertyFactsUrl, records => {
+      const factsBySubject: Record<string, Record<string, unknown>> = {};
+      records
+        .filter(record => record.hidden_status !== 'hidden')
+        .sort((left, right) => Number(left.display_order ?? 0) - Number(right.display_order ?? 0))
+        .forEach(record => {
+          const subjectId = String(record.subject_id || '');
+          const key = String(record.key || '');
+          if (!subjectId || !key) return;
+          const value = record.normalized_numeric_value ?? record.raw_display_text ?? record.display_value ?? record.raw_value;
+          if (value === null || value === undefined || value === '') return;
+          if (!factsBySubject[subjectId]) factsBySubject[subjectId] = {};
+          factsBySubject[subjectId][key] = value;
+        });
+      nativePropertyFactsBySubjectId.value = factsBySubject;
     });
   }
   if (facesUrl && !skipHeavyAssemblySemantics) {
@@ -1133,7 +1195,10 @@ function showNativeTreeNodeProperties(node: FeatureTreeNode) {
   selectNativeTreeNode(node);
   if (!isCatiaPropertyTarget(node)) return;
   catiaPropertyNode.value = node;
-  catiaPropertyTab.value = buildMechanicalRows(node).characteristic.length ? 'mechanical' : 'product';
+  const mechanical = buildMechanicalRows(node);
+  catiaPropertyTab.value = mechanical.characteristic.length || mechanical.center.length || mechanical.inertia.length
+    ? 'mechanical'
+    : 'product';
   catiaPropertyDialogOpen.value = true;
 }
 
@@ -1849,6 +1914,7 @@ onBeforeUnmount(() => {
                 :source-file-name="contract?.summary.source_file_name || ''"
                 :selected-id="selectedNativeTreeNodeId"
                 :face-refs-by-feature-id="nativeFaceRefs"
+                :parameter-values-by-object-id="nativeParameterValues"
                 @select="selectNativeTreeNode"
                 @properties="showNativeTreeNodeProperties"
               />

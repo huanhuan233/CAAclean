@@ -3,13 +3,32 @@
 
 #include <CATDocument.h>
 #include <CATITPSComponent.h>
+#include <CATITPS.h>
 #include <CATITPSDocument.h>
 #include <CATITPSGeometryList.h>
 #include <CATITPSList.h>
+#include <CATITPSSemanticValidity.h>
 #include <CATITPSSet.h>
+#include <CATITPSText.h>
+#include <CATITPSTextContent.h>
+#include <CATUnicodeString.h>
+#include <CATTPSStatus.h>
 #include <sstream>
+#include <vector>
 
 namespace cadcapture {
+
+static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
+{
+  const size_t capacity = static_cast<size_t>(value.GetLengthInChar() + 1) * 4 + 1;
+  std::vector<char> buffer(capacity, 0);
+  size_t byte_count = 0;
+  value.ConvertToUTF8(&buffer[0], &byte_count);
+  if (byte_count >= buffer.size())
+    byte_count = buffer.size() - 1;
+  buffer[byte_count] = 0;
+  return std::string(&buffer[0], byte_count);
+}
 
 static std::string RootDocumentSubject(const ReconstructionPackage& package)
 {
@@ -72,6 +91,106 @@ static long SafeGeometryListCount(CATITPSGeometryList* list,
     return 0;
   }
   return static_cast<long>(count);
+}
+
+static std::string SemanticId(const std::string& set_id, long one_based_index)
+{
+  std::ostringstream out;
+  out << set_id << "_TPS";
+  if (one_based_index < 10) out << "00000";
+  else if (one_based_index < 100) out << "0000";
+  else if (one_based_index < 1000) out << "000";
+  else if (one_based_index < 10000) out << "00";
+  else if (one_based_index < 100000) out << "0";
+  out << one_based_index;
+  return out.str();
+}
+
+static void AppendFtaSemantic(CATITPSComponent* component,
+                              const PmiEntity& set_entity,
+                              long component_index,
+                              ReconstructionPackage& package)
+{
+  FtaSemanticEntity entity;
+  entity.fta_semantic_id = SemanticId(set_entity.pmi_id, component_index + 1);
+  entity.fta_set_id = set_entity.pmi_id;
+  entity.component_index = component_index + 1;
+  entity.read_status = component ? "partial" : "unavailable";
+  entity.component_kind = "unknown_tps_component";
+  entity.value_source = "typed_caa_public_tps_component";
+  if (!component)
+  {
+    package.fta_semantics.push_back(entity);
+    return;
+  }
+
+  CATITPS* tps = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPS, reinterpret_cast<void**>(&tps))) && tps)
+  {
+    CaaInterfaceGuard<CATITPS> tps_guard(tps);
+    entity.supported_interface_keys.push_back("CATITPS");
+    entity.component_kind = "tps";
+  }
+
+  CATITPSSemanticValidity* semantic = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPSSemanticValidity,
+                                          reinterpret_cast<void**>(&semantic))) && semantic)
+  {
+    CaaInterfaceGuard<CATITPSSemanticValidity> semantic_guard(semantic);
+    entity.supported_interface_keys.push_back("CATITPSSemanticValidity");
+    int count = 0;
+    IID** iid_list = 0;
+    if (SUCCEEDED(semantic->GetUnderstandingSemanticsItf(&count, &iid_list)))
+    {
+      entity.semantic_interface_count = static_cast<long>(count);
+      delete [] iid_list;
+    }
+    count = 0;
+    iid_list = 0;
+    if (SUCCEEDED(semantic->GetAllSemanticsItf(&count, &iid_list)))
+    {
+      entity.all_semantic_interface_count = static_cast<long>(count);
+      delete [] iid_list;
+    }
+    wchar_t* diagnostic = 0;
+    CATTPSStatus status = CATTPSStatusUnknown;
+    if (SUCCEEDED(semantic->Check(&diagnostic, &status)))
+    {
+      entity.semantic_check_status_raw = static_cast<long>(status);
+      if (diagnostic)
+      {
+        entity.semantic_check_diagnostic = "available_but_not_converted";
+        delete [] diagnostic;
+      }
+    }
+  }
+
+  CATITPSText* text = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPSText, reinterpret_cast<void**>(&text))) && text)
+  {
+    CaaInterfaceGuard<CATITPSText> text_guard(text);
+    entity.supported_interface_keys.push_back("CATITPSText");
+  }
+
+  CATITPSTextContent* text_content = 0;
+  if (SUCCEEDED(component->QueryInterface(IID_CATITPSTextContent,
+                                          reinterpret_cast<void**>(&text_content))) && text_content)
+  {
+    CaaInterfaceGuard<CATITPSTextContent> text_content_guard(text_content);
+    entity.supported_interface_keys.push_back("CATITPSTextContent");
+    CATUnicodeString validation_text;
+    if (SUCCEEDED(text_content->GetValidationString(validation_text)))
+    {
+      entity.validation_text = UnicodeToUtf8Local(validation_text);
+      entity.validation_text_status = "success";
+    }
+    else
+      entity.validation_text_status = "failed";
+  }
+
+  if (!entity.supported_interface_keys.empty())
+    entity.read_status = "success";
+  package.fta_semantics.push_back(entity);
 }
 
 bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
@@ -171,6 +290,23 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
         pmi.tps_count = SafeListCount(tps_list, package, pmi.pmi_id,
                                       "tps_set_tps_count_failed",
                                       "CATITPSList::Count failed for TPS list");
+        unsigned int tps_index = 0;
+        for (; tps_index < static_cast<unsigned int>(pmi.tps_count); ++tps_index)
+        {
+          CATITPSComponent* tps_component = 0;
+          if (SUCCEEDED(tps_list->Item(tps_index, &tps_component)) && tps_component)
+          {
+            CaaInterfaceGuard<CATITPSComponent> tps_component_guard(tps_component);
+            AppendFtaSemantic(tps_component, pmi, static_cast<long>(tps_index), package);
+          }
+          else
+          {
+            package.diagnostics.push_back(MakeDiagnostic("warning", "tps_component_item_failed",
+                                                         pmi.pmi_id,
+                                                         "CATITPSList::Item failed for a TPS component",
+                                                         "fta_extractor"));
+          }
+        }
       }
     }
     catch (...)

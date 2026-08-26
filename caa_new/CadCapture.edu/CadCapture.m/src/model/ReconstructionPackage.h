@@ -45,6 +45,7 @@ struct ReconstructionPackage
   std::vector<NativeFeatureTopologyLinkEntity> native_feature_topology_links;
   std::vector<PmiEntity> pmi;
   std::vector<PmiAssociation> pmi_associations;
+  std::vector<FtaSemanticEntity> fta_semantics;
   std::vector<Diagnostic> diagnostics;
   std::string reconstruction_plan;
   std::string capture_status;

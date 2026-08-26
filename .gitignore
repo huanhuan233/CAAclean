@@ -7,6 +7,9 @@ frontend/.tmp-three-pack/
 .worktrees/
 .runtime/
 .caa_toolchain_links/
+3DjiexiCAA/test-output/
+caa_new/test-output/
+backend/cad-spec-work/
 __pycache__/
 .pytest_cache/
 *.pyc
