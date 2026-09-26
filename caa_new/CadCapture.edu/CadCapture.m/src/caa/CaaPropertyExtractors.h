@@ -10,6 +10,11 @@ namespace cadcapture {
 class CaaPropertyExtractors
 {
 public:
+  bool ExtractNativeFactsForDocument(CaptureIdRegistry& ids,
+                                     CaaCapabilityBroker& broker,
+                                     ReconstructionPackage& package,
+                                     const std::string& document_id);
+
   bool Extract(CaptureIdRegistry& ids,
                CaaCapabilityBroker& broker,
                ReconstructionPackage& package);

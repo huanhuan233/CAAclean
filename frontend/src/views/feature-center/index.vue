@@ -29,6 +29,9 @@ import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
 import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
+import { loadCaaNewNativeChildPage, loadCaaNewNativeRecords, loadCaaNewNodeProperties } from './modules/caa-new-loader';
+import { nativeChildPages } from './modules/native-tree-loading';
+import { nativeAssetLoadPolicy } from './modules/native-asset-policy';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
 import type { CadSelectionTarget } from './modules/cad-selection';
@@ -51,7 +54,14 @@ import {
   resolveFeatureCenterBuildId,
   saveRecentFeatureCenterBuildId
 } from './modules/recent-result';
-import { defaultBomVisible, isCatiaNativeSource, tabsForSource, workerStageLabel } from './modules/viewer-workspace';
+import {
+  defaultBomVisible,
+  isCatiaNativeSource,
+  shouldBlockWorkspaceDuringLoad,
+  shouldLoadNativeTreeDuringProcessing,
+  tabsForSource,
+  workerStageLabel
+} from './modules/viewer-workspace';
 import type { ViewerTab } from './modules/viewer-workspace';
 
 defineOptions({ name: 'FeatureCenterViewer' });
@@ -119,6 +129,36 @@ interface ProductInstanceRecord {
   transform_value_source?: string;
   transform_4x4?: number[];
   suppressed?: boolean;
+  [key: string]: unknown;
+}
+
+interface NativeObjectEntityRecord {
+  object_id: string;
+  document_id?: string;
+  object_kind?: string;
+  display_name?: string;
+  internal_name?: string;
+  startup_type?: string;
+  update_status?: string;
+  capture_status?: string;
+  [key: string]: unknown;
+}
+
+interface NativeTreeOccurrenceRecord {
+  occurrence_id: string;
+  object_id?: string;
+  parent_occurrence_id?: string;
+  document_id?: string;
+  tree_path?: string;
+  occurrence_path?: string;
+  source_index?: number;
+  container_index?: number;
+  occurrence_kind?: string;
+  product_occurrence_id?: string;
+  reference_id?: string;
+  referenced_document_id?: string;
+  presentation_status?: string;
+  capture_status?: string;
   [key: string]: unknown;
 }
 
@@ -222,7 +262,12 @@ const prototypeProcessSteps: ProcessStep[] = [
   }
 ];
 
-function productInstancesToNativeRecords(records: ProductInstanceRecord[]): NativeFeatureRecord[] {
+function lastPathSegment(value?: string) {
+  if (!value) return '';
+  return value.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) || '';
+}
+
+function productOccurrencesToNativeRecords(records: ProductInstanceRecord[]): NativeFeatureRecord[] {
   return records.map(record => {
     const hasChildren = Number(record.child_count || 0) > 0;
     return {
@@ -260,6 +305,48 @@ function productInstancesToNativeRecords(records: ProductInstanceRecord[]): Nati
   });
 }
 
+function caaNewOccurrencesToNativeRecords(
+  productRecords: ProductInstanceRecord[],
+  occurrenceRecords: NativeTreeOccurrenceRecord[],
+  objectRecords: NativeObjectEntityRecord[]
+): NativeFeatureRecord[] {
+  const objects = new Map(objectRecords.map(record => [record.object_id, record]));
+  const productNodes = productOccurrencesToNativeRecords(productRecords);
+  const occurrenceNodes = occurrenceRecords
+    .filter(record => record.occurrence_id)
+    .map(record => {
+      const object = record.object_id ? objects.get(record.object_id) : undefined;
+      return {
+        feature_id: record.occurrence_id,
+        parent_id: record.parent_occurrence_id || record.product_occurrence_id || '',
+        traversal_index: Number(record.source_index ?? record.container_index ?? Number.MAX_SAFE_INTEGER),
+        native_enumeration_index: Number(record.source_index ?? Number.MAX_SAFE_INTEGER),
+        container_enumeration_index: Number(record.container_index ?? Number.MAX_SAFE_INTEGER),
+        display_name: object?.display_name || lastPathSegment(record.tree_path) || record.occurrence_id,
+        internal_name: object?.internal_name || record.occurrence_id,
+        native_type: object?.object_kind || record.occurrence_kind,
+        startup_type: object?.startup_type || record.occurrence_kind,
+        tree_path: record.tree_path || record.occurrence_path,
+        update_status: object?.update_status,
+        attributes: {
+          ...record,
+          object_display_name: object?.display_name,
+          object_internal_name: object?.internal_name,
+          object_kind: object?.object_kind,
+          object_startup_type: object?.startup_type,
+          object_update_status: object?.update_status,
+          source_object_id: record.object_id
+        },
+        source_object_id: record.object_id,
+        product_occurrence_id: record.product_occurrence_id,
+        reference_id: record.reference_id,
+        document_id: record.document_id,
+        occurrence_path: record.occurrence_path
+      } satisfies NativeFeatureRecord;
+    });
+  return [...productNodes, ...occurrenceNodes];
+}
+
 type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
 
 interface GeometryTreeNode {
@@ -277,6 +364,9 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
+const loadingNativeChildren = ref(new Set<string>());
+const failedNativeChildren = ref(new Set<string>());
+let nativeTreeGeneration = 0;
 const nativeParameterValues = ref<Record<string, string>>({});
 const nativePropertyFactsBySubjectId = ref<Record<string, Record<string, unknown>>>({});
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
@@ -320,6 +410,7 @@ const selectionTarget = ref<CadSelectionTarget | null>(null);
 const catiaPropertyDialogOpen = ref(false);
 const catiaPropertyNode = ref<FeatureTreeNode | null>(null);
 const catiaPropertyTab = ref('product');
+const catiaPropertyApiTabs = ref<CatiaPropertyTab[] | null>(null);
 const processPanelOpen = ref(false);
 const processGenerating = ref(false);
 const processProgress = ref(0);
@@ -511,14 +602,15 @@ const detailLayout = computed(() => {
     geometryHasLinkedFeature: Boolean(selectedFace.value && (selectedNativeFeature.value || selectedFeature.value))
   });
 });
-const catiaPropertyTabs = computed(() => buildCatiaPropertyTabs(catiaPropertyNode.value));
+const catiaPropertyTabs = computed(() => catiaPropertyApiTabs.value ?? buildCatiaPropertyTabs(catiaPropertyNode.value));
 const catiaPropertyName = computed(() => catiaPropertyNode.value?.displayName || 'CATIA 属性');
 const catiaPropertyType = computed(
   () => catiaPropertyNode.value?.nativeType || catiaPropertyNode.value?.raw?.startup_type || catiaPropertyNode.value?.kind || ''
 );
 
-type CatiaPropertyRow = { label: string; value: string; unit?: string };
+type CatiaPropertyRow = { key?: string; label: string; value: string; unit?: string };
 type CatiaPropertyGroup = { title: string; rows: CatiaPropertyRow[] };
+type CatiaPropertyTab = { name: string; label: string; groups: CatiaPropertyGroup[] };
 
 const propertyIconMap = {
   实例名称: Box,
@@ -536,12 +628,154 @@ const propertyIconMap = {
   线宽: Menu
 };
 
+const catiaTabLabelMap: Record<string, string> = {
+  product: '产品',
+  graphic: '图形',
+  graphics: '图形',
+  mechanical: '机械',
+  mass: '机械',
+  drafting: '工程制图',
+  drawing: '工程制图',
+  attributes: '特征属性',
+  attribute: '特征属性',
+  feature_property: '特征属性',
+  feature_properties: '特征属性'
+};
+
+const catiaGroupLabelMap: Record<string, string> = {
+  occurrence: '部件',
+  'product instance': '产品',
+  product: '产品',
+  identity: '特征属性',
+  attributes: '特征属性',
+  document: '文档',
+  update: '更新状态',
+  inertia: '特性',
+  'inertia matrix': '惯性矩阵',
+  'principal axes': '主轴',
+  'principal moments': '主惯性',
+  graphic: '图形属性',
+  graphics: '图形属性',
+  'graphic properties': '图形属性',
+  surface: '填充',
+  edge: '边线',
+  line: '直线和曲线',
+  point: '点',
+  global: '全局属性',
+  drafting: '工程制图'
+};
+
+const catiaFieldLabelMap: Record<string, string> = {
+  instance_name: '实例名称',
+  display_name: '名称',
+  internal_name: '内部名称',
+  startup_type: '类型',
+  part_number: '零件编号',
+  update_status: '更新状态',
+  catia_property_mechanical_status: '机械状态',
+  catia_property_density_kg_m3: '密度',
+  catia_property_mass_kg: '质量',
+  catia_property_volume_m3: '体积',
+  catia_property_area_m2: '曲面',
+  catia_property_center_x_mm: 'x',
+  catia_property_center_y_mm: 'y',
+  catia_property_center_z_mm: 'z',
+  catia_property_ixx_kg_m2: 'Ixx',
+  catia_property_ixy_kg_m2: 'Ixy',
+  catia_property_ixz_kg_m2: 'Ixz',
+  catia_property_iyx_kg_m2: 'Iyx',
+  catia_property_iyy_kg_m2: 'Iyy',
+  catia_property_iyz_kg_m2: 'Iyz',
+  catia_property_izx_kg_m2: 'Izx',
+  catia_property_izy_kg_m2: 'Izy',
+  catia_property_izz_kg_m2: 'Izz',
+  color: '颜色',
+  rgb: '颜色',
+  line_type: '线型',
+  line_width: '线宽',
+  transparency: '透明度',
+  opacity: '透明度',
+  layer: '图层',
+  visible: '可视化',
+  shown: '显示的',
+  pickable: '可拾取',
+  render_style: '渲染样式'
+};
+
+const hiddenCatiaPropertyKeys = new Set([
+  'document_id',
+  'object_id',
+  'occurrence_id',
+  'product_occurrence_id',
+  'reference_id',
+  'geometry_status',
+  'source_file_name',
+  'source_file',
+  'load_status',
+  'native_document_open_status',
+  'definition_status',
+  'tree_path',
+  'occurrence_path',
+  'reference_path',
+  'reference_link',
+  'source_ref',
+  'source_index',
+  'transform_status',
+  'source_api',
+  'authority',
+  'read_status',
+  'normalization_status'
+]);
+
+function normalizeCatiaToken(value: string) {
+  return value.trim().toLowerCase().replace(/[_-]+/g, ' ');
+}
+
+function normalizeCatiaTabId(tabId: string) {
+  const normalized = normalizeCatiaToken(tabId).replace(/\s+/g, '_');
+  if (['graphic', 'graphics'].includes(normalized)) return 'graphic';
+  if (['mass', 'mechanical'].includes(normalized)) return 'mechanical';
+  if (['drawing', 'drafting'].includes(normalized)) return 'drafting';
+  if (['attribute', 'attributes', 'feature_property', 'feature_properties'].includes(normalized)) return 'feature_property';
+  return normalized || 'feature_property';
+}
+
+function catiaDisplayLabel(value: string, fallback: string, map: Record<string, string>) {
+  const normalized = normalizeCatiaToken(value || fallback);
+  return map[normalized] || map[normalized.replace(/\s+/g, '_')] || fallback || value;
+}
+
+function catiaFieldLabel(key: string, displayName: string) {
+  const normalizedKey = normalizeCatiaToken(key).replace(/\s+/g, '_');
+  return catiaFieldLabelMap[normalizedKey] || catiaFieldLabelMap[normalizeCatiaToken(displayName)] || displayName || key;
+}
+
 function catiaGroupRows(tabName: string, groupTitle: string) {
   return catiaPropertyTabs.value.find(tab => tab.name === tabName)?.groups.find(group => group.title === groupTitle)?.rows || [];
 }
 
 function catiaRowValue(rows: CatiaPropertyRow[], label: string) {
   return rows.find(row => row.label === label)?.value;
+}
+
+function catiaFirstRow(rows: CatiaPropertyRow[], labels: string[]) {
+  return rows.find(row => labels.includes(row.label) || (row.key && labels.includes(catiaFieldLabel(row.key, row.label))));
+}
+
+function catiaGraphicRows(tab: CatiaPropertyTab) {
+  const rows = tab.groups.flatMap(group => group.rows);
+  const pick = (labels: string[], fallback: string): CatiaPropertyRow => {
+    const row = catiaFirstRow(rows, labels);
+    return { key: row?.key, label: labels[0], value: row?.value || fallback, unit: row?.unit };
+  };
+  const summary: CatiaPropertyRow[] = [
+    pick(['颜色'], '无颜色'),
+    pick(['线型'], '无线型'),
+    pick(['线宽'], '无宽度')
+  ];
+  const transparency = catiaFirstRow(rows, ['透明度']);
+  if (transparency) summary.push({ ...transparency, label: '透明度' });
+  return summary;
 }
 
 function iconForCatiaRow(row: CatiaPropertyRow) {
@@ -581,6 +815,81 @@ function displayUnit(unit?: string) {
     kgxm2: 'kg·m²'
   };
   return unitMap[unit] || unit;
+}
+
+function apiPropertyValueText(value: unknown) {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function isHiddenCatiaApiField(field: Api.ComponentBuild.NativePropertyField) {
+  const key = normalizeCatiaToken(field.key || '').replace(/\s+/g, '_');
+  if (hiddenCatiaPropertyKeys.has(key)) return true;
+  if (key.startsWith('__catia_property_tab__')) return true;
+  const value = apiPropertyValueText(field.display_value ?? field.raw_value);
+  return /^<local_path>\\/.test(value) || /^[a-z]:\\/i.test(value);
+}
+
+function mergeCatiaGroups(groups: CatiaPropertyGroup[]) {
+  const merged = new Map<string, CatiaPropertyGroup>();
+  for (const group of groups) {
+    const existing = merged.get(group.title);
+    if (existing) existing.rows.push(...group.rows);
+    else merged.set(group.title, { title: group.title, rows: [...group.rows] });
+  }
+  return [...merged.values()];
+}
+
+function apiTabsToCatiaTabs(tabs: Api.ComponentBuild.NativePropertyTab[]) {
+  const declaredTabs = new Set<string>();
+  for (const tab of tabs) {
+    for (const group of tab.groups) {
+      for (const field of group.fields) {
+        const key = normalizeCatiaToken(field.key || '').replace(/\s+/g, '_');
+        if (key.startsWith('__catia_property_tab__')) declaredTabs.add(normalizeCatiaTabId(tab.tab_id || tab.tab_label));
+      }
+    }
+  }
+  const mappedTabs = tabs
+    .map<CatiaPropertyTab | null>(tab => {
+      const name = normalizeCatiaTabId(tab.tab_id || tab.tab_label);
+      if (declaredTabs.size && !declaredTabs.has(name)) return null;
+      const groups = mergeCatiaGroups(
+        tab.groups.map(group => {
+          const rawGroupLabel = group.group_label || group.group_id;
+          const title = catiaDisplayLabel(rawGroupLabel, rawGroupLabel, catiaGroupLabelMap);
+          const rows = group.fields
+            .filter(field => !isHiddenCatiaApiField(field))
+            .map(field => {
+              const value = apiPropertyValueText(field.display_value ?? field.raw_value);
+              if (!value) return null;
+              return {
+                key: field.key,
+                label: catiaFieldLabel(field.key, field.display_name),
+                value,
+                unit: field.display_unit || field.raw_unit || undefined
+              };
+            })
+            .filter(Boolean) as CatiaPropertyRow[];
+          return { title, rows };
+        })
+      );
+      return {
+        name,
+        label: catiaDisplayLabel(name, tab.tab_label || tab.tab_id || name, catiaTabLabelMap),
+        groups
+      };
+    })
+    .filter(Boolean) as CatiaPropertyTab[];
+
+  const tabsByName = new Map<string, CatiaPropertyTab>();
+  for (const tab of mappedTabs) {
+    const existing = tabsByName.get(tab.name);
+    if (existing) existing.groups = mergeCatiaGroups([...existing.groups, ...tab.groups]);
+    else tabsByName.set(tab.name, tab);
+  }
+  return [...tabsByName.values()];
 }
 
 function isAxisRow(row: CatiaPropertyRow) {
@@ -795,9 +1104,11 @@ function scheduleStatusPoll(buildId: string) {
   }, 1800);
 }
 
+let progressiveNativeTreeBuildId = '';
+
 async function loadBuildBundle(buildId: string) {
   clearStatusPoll();
-  loading.value = true;
+  loading.value = shouldBlockWorkspaceDuringLoad(Boolean(contract.value));
   errorText.value = '';
   explicitError.value = false;
   try {
@@ -819,7 +1130,15 @@ async function loadBuildBundle(buildId: string) {
     if (!renderer) initViewer();
     bomVisible.value = defaultBomVisible(result.data.bom);
     activeTab.value = 'bom';
-    if (result.data.status !== 'ready' || !result.data.viewer_asset) {
+    if (result.data.status !== 'ready') {
+      if (
+        shouldLoadNativeTreeDuringProcessing(result.data) &&
+        progressiveNativeTreeBuildId !== buildId
+      ) {
+        await loadOptionalSemanticAssets(result.data);
+        if (nativeFeatures.value.length > 0) progressiveNativeTreeBuildId = buildId;
+        clearSelection();
+      }
       if (result.data.status === 'failed' || result.data.error_code || result.data.error_message) {
         explicitError.value = true;
         errorText.value =
@@ -832,6 +1151,16 @@ async function loadBuildBundle(buildId: string) {
     }
 
     const viewerAsset = result.data.viewer_asset;
+    if (!viewerAsset) {
+      canonicalFeatures.value = [];
+      measurements.value = [];
+      featureMeshMap.value = null;
+      faceMeshMap.value = null;
+      await loadOptionalSemanticAssets(result.data);
+      clearSelection();
+      saveRecentFeatureCenterBuildId(window.localStorage, buildId);
+      return;
+    }
     const skipStepViewer = false;
     const canonicalUrl = result.data.feature_center.canonical_features_url;
     const measurementUrl = result.data.feature_center.measurements_url;
@@ -913,6 +1242,9 @@ async function retryBuild() {
 
 // 用途：分阶段读取原生 CAA Feature 与 B-Rep Face，避免大型装配同时保留多个完整 ArrayBuffer。
 async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.ViewerContract) {
+  nativeTreeGeneration += 1;
+  loadingNativeChildren.value.clear();
+  failedNativeChildren.value.clear();
   nativeFeatures.value = [];
   nativeParameterValues.value = {};
   topologyFaces.value = [];
@@ -924,22 +1256,35 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyVertices.value = [];
   nativePropertyFactsBySubjectId.value = {};
   selectionIndex.value = null;
-  const productFeatureTreeUrl = viewerContract.native_semantics?.product_feature_tree_url;
-  const productInstancesUrl = viewerContract.native_semantics?.product_instances_url;
+  const treeOccurrencesUrl = viewerContract.native_capture?.tree_url || viewerContract.native_semantics?.tree_occurrences_url;
+  const objectEntitiesUrl = viewerContract.native_semantics?.object_entities_url;
+  const productOccurrencesUrl =
+    viewerContract.native_semantics?.product_occurrences_url || viewerContract.native_semantics?.product_instances_url;
   const nativeUrl = viewerContract.native_semantics?.features_url;
   const nativeParametersUrl = viewerContract.native_semantics?.parameters_url;
   const nativePropertyFactsUrl = viewerContract.native_semantics?.property_facts_url;
   const shouldLoadProductTree = viewerContract.source_format === 'CATPRODUCT';
-  // CATProduct 的选择索引和拓扑资产可能远大于特征树本身，首屏先不加载，避免浏览器 OOM。
-  const skipHeavyAssemblySemantics = shouldLoadProductTree;
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
-  const loadJsonLines = async <T>(url: string, assign: (records: T[]) => void) => {
+  const loadJsonLines = async <T,>(url: string, assign: (records: T[]) => void) => {
     const buffer = await fetchAsset(url);
     const text = new TextDecoder().decode(buffer);
     assign(parseJsonLines<T>(text));
   };
-  if (selectionIndexUrl && !skipHeavyAssemblySemantics) {
+  let loadedNativeTreeFromApi = false;
+  if (viewerContract.native_capture?.has_tree && viewerContract.part_id) {
+    nativeFeatures.value = await loadCaaNewNativeRecords(viewerContract.part_id, {
+      signal: assetRequestController.signal,
+      silent: true
+    });
+    loadedNativeTreeFromApi = true;
+  }
+  const nativeAssetPolicy = nativeAssetLoadPolicy({
+    loadedNativeTreeFromApi,
+    sourceFormat: viewerContract.source_format,
+    status: viewerContract.status
+  });
+  if (selectionIndexUrl && nativeAssetPolicy.loadHeavySemanticsJsonl) {
     const buffer = await fetchAsset(selectionIndexUrl);
     const loaded = JSON.parse(new TextDecoder().decode(buffer)) as ViewerSelectionIndex;
     selectionIndex.value = {
@@ -948,21 +1293,30 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     };
     hydrateTopologyFromSelectionIndex(selectionIndex.value);
   }
-  // 使用 4a648b6 的稳定逻辑：优先一次性加载完整产品特征树。
-  if (shouldLoadProductTree && productFeatureTreeUrl) {
-    await loadJsonLines<NativeFeatureRecord>(productFeatureTreeUrl, records => {
-      nativeFeatures.value = records;
+  if (!viewerContract.native_capture?.has_tree && !loadedNativeTreeFromApi && treeOccurrencesUrl) {
+    const [occurrenceBuffer, objectBuffer, productBuffer] = await Promise.all([
+      fetchAsset(treeOccurrencesUrl),
+      objectEntitiesUrl ? fetchAsset(objectEntitiesUrl) : Promise.resolve(new ArrayBuffer(0)),
+      productOccurrencesUrl ? fetchAsset(productOccurrencesUrl) : Promise.resolve(new ArrayBuffer(0))
+    ]);
+    const occurrenceRecords = parseJsonLines<NativeTreeOccurrenceRecord>(new TextDecoder().decode(occurrenceBuffer));
+    const objectRecords = objectEntitiesUrl
+      ? parseJsonLines<NativeObjectEntityRecord>(new TextDecoder().decode(objectBuffer))
+      : [];
+    const productRecords = productOccurrencesUrl
+      ? parseJsonLines<ProductInstanceRecord>(new TextDecoder().decode(productBuffer))
+      : [];
+    nativeFeatures.value = caaNewOccurrencesToNativeRecords(productRecords, occurrenceRecords, objectRecords);
+  } else if (nativeAssetPolicy.loadProductOccurrencesJsonl && productOccurrencesUrl) {
+    await loadJsonLines<ProductInstanceRecord>(productOccurrencesUrl, records => {
+      nativeFeatures.value = productOccurrencesToNativeRecords(records);
     });
-  } else if (shouldLoadProductTree && productInstancesUrl) {
-    await loadJsonLines<ProductInstanceRecord>(productInstancesUrl, records => {
-      nativeFeatures.value = productInstancesToNativeRecords(records);
-    });
-  } else if (nativeUrl) {
+  } else if (nativeAssetPolicy.loadFeaturesJsonl && nativeUrl) {
     await loadJsonLines<NativeFeatureRecord>(nativeUrl, records => {
       nativeFeatures.value = records;
     });
   }
-  if (nativeParametersUrl) {
+  if (nativeAssetPolicy.loadParametersJsonl && nativeParametersUrl) {
     await loadJsonLines<NativeParameterRecord>(nativeParametersUrl, records => {
       const values: Record<string, string> = {};
       records.forEach(record => {
@@ -976,7 +1330,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       nativeParameterValues.value = values;
     });
   }
-  if (nativePropertyFactsUrl) {
+  if (nativeAssetPolicy.loadPropertyFactsJsonl && nativePropertyFactsUrl) {
     await loadJsonLines<NativePropertyFactRecord>(nativePropertyFactsUrl, records => {
       const factsBySubject: Record<string, Record<string, unknown>> = {};
       records
@@ -994,12 +1348,12 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       nativePropertyFactsBySubjectId.value = factsBySubject;
     });
   }
-  if (facesUrl && !skipHeavyAssemblySemantics) {
+  if (facesUrl && nativeAssetPolicy.loadHeavySemanticsJsonl) {
     await loadJsonLines<TopologyFaceRecord>(facesUrl, records => {
       topologyFaces.value = records;
     });
   }
-  if (!skipHeavyAssemblySemantics) for (const [url, assign] of [
+  if (nativeAssetPolicy.loadHeavySemanticsJsonl) for (const [url, assign] of [
     [viewerContract.native_semantics?.topology_bodies_url, (records: TopologySelectionRecord[]) => (topologyBodies.value = records)],
     [viewerContract.native_semantics?.topology_cells_url, hydrateNativeCells],
     [viewerContract.native_semantics?.topology_wires_url, (records: TopologySelectionRecord[]) => (topologyLoops.value = records)],
@@ -1008,7 +1362,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     if (!url) continue;
     await loadJsonLines<TopologySelectionRecord>(url, assign);
   }
-  if (viewerContract.native_semantics?.feature_topology_links_url && !skipHeavyAssemblySemantics) {
+  if (viewerContract.native_semantics?.feature_topology_links_url && nativeAssetPolicy.loadHeavySemanticsJsonl) {
     await loadJsonLines<Record<string, unknown>>(
       viewerContract.native_semantics.feature_topology_links_url,
       mergeNativeFeatureTopologyLinks
@@ -1266,11 +1620,68 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
   applyVisualState();
 }
 
+async function loadNativeTreeChildren(node: FeatureTreeNode) {
+  const buildId = contract.value?.part_id;
+  if (!buildId || loadingNativeChildren.value.has(node.id)) return;
+  const generation = nativeTreeGeneration;
+  loadingNativeChildren.value.add(node.id);
+  failedNativeChildren.value.delete(node.id);
+  try {
+    const fetchPage = async (parentId: string, offset: number) => {
+      if (generation !== nativeTreeGeneration) throw new DOMException('Stale tree', 'AbortError');
+      return loadCaaNewNativeChildPage(buildId, parentId, offset, {
+        signal: assetRequestController.signal, silent: true
+      });
+    };
+    for await (const children of nativeChildPages(node.id, fetchPage)) {
+      if (generation !== nativeTreeGeneration) return;
+      const merged = new Map(nativeFeatures.value.map(record => [record.feature_id, record]));
+      children.forEach(record => merged.set(record.feature_id, record));
+      nativeFeatures.value = [...merged.values()];
+      await nextTick();
+    }
+  } catch (error) {
+    if (generation === nativeTreeGeneration && !assetRequestController.signal.aborted) {
+      failedNativeChildren.value.add(node.id);
+      window.$message?.error(error instanceof Error ? error.message : '树节点加载失败，请重试');
+    }
+  } finally {
+    if (generation === nativeTreeGeneration) loadingNativeChildren.value.delete(node.id);
+  }
+}
+
 // 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
-function showNativeTreeNodeProperties(node: FeatureTreeNode) {
+async function showNativeTreeNodeProperties(node: FeatureTreeNode) {
   selectNativeTreeNode(node);
-  if (!isCatiaPropertyTarget(node)) return;
   catiaPropertyNode.value = node;
+  catiaPropertyApiTabs.value = null;
+  const buildId = contract.value?.part_id;
+  if (buildId) {
+    try {
+      const propertyResult = await loadCaaNewNodeProperties(buildId, node.id, {
+        signal: assetRequestController.signal,
+        silent: true
+      });
+      if (!propertyResult.tabs.length) {
+        window.$message?.info('该节点没有可显示属性');
+        return;
+      }
+      catiaPropertyApiTabs.value = apiTabsToCatiaTabs(propertyResult.tabs);
+      if (!catiaPropertyApiTabs.value.length) {
+        window.$message?.info('该节点没有可显示属性');
+        return;
+      }
+      catiaPropertyTab.value = catiaPropertyApiTabs.value[0].name;
+      catiaPropertyDialogOpen.value = true;
+      return;
+    } catch {
+      catiaPropertyApiTabs.value = null;
+    }
+  }
+  if (!isCatiaPropertyTarget(node)) {
+    window.$message?.info('该节点没有可显示属性');
+    return;
+  }
   const mechanical = buildMechanicalRows(node);
   catiaPropertyTab.value = mechanical.characteristic.length || mechanical.center.length || mechanical.inertia.length
     ? 'mechanical'
@@ -1991,8 +2402,11 @@ onBeforeUnmount(() => {
                 :selected-id="selectedNativeTreeNodeId"
                 :face-refs-by-feature-id="nativeFaceRefs"
                 :parameter-values-by-object-id="nativeParameterValues"
+                :loading-node-ids="loadingNativeChildren"
+                :retry-node-ids="failedNativeChildren"
                 @select="selectNativeTreeNode"
                 @properties="showNativeTreeNodeProperties"
+                @load-children="loadNativeTreeChildren"
               />
               <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
                 <button
@@ -2127,8 +2541,13 @@ onBeforeUnmount(() => {
           class="viewer-empty"
           description="暂无 CATPart 解析结果，请从零件库打开已完成的 CATPart"
         />
+        <ElEmpty
+          v-else-if="!contract.viewer_asset"
+          class="viewer-empty"
+          description="该文件没有可用的轻量化几何，BOM、特征树和属性仍可正常浏览。"
+        />
         <CadViewerControls
-          v-if="contract"
+          v-if="contract && contract.viewer_asset"
           :tool-mode="toolMode"
           :scene-mode="sceneMode"
           :transparent="transparent"
@@ -2217,14 +2636,7 @@ onBeforeUnmount(() => {
               <h4>图形属性</h4>
               <div class="catia-property-card catia-property-card--three catia-property-card--graphic">
                 <article
-                  v-for="row in catiaDisplayRows({
-                    title: '图形属性',
-                    rows: [
-                      { label: '颜色', value: catiaRowValue(catiaGroupRows('graphic', '图形属性'), '颜色') || '无颜色' },
-                      { label: '线型', value: catiaRowValue(catiaGroupRows('graphic', '图形属性'), '线型') || '无线型' },
-                      { label: '线宽', value: catiaRowValue(catiaGroupRows('graphic', '图形属性'), '线宽') || '无宽度' }
-                    ]
-                  })"
+                  v-for="row in catiaGraphicRows(tab)"
                   :key="`graphic-${row.label}`"
                   class="catia-info-item"
                 >

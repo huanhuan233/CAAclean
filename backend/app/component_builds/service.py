@@ -23,7 +23,15 @@ from app.component_builds.component_spec_document import (
     unpack_component_spec_document,
     validate_component_spec_yaml,
 )
+from app.component_builds.ingest import safe_asset_path
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
+from app.component_builds.caa_new_bundle import CaaNewBundleError, CaaNewBundleReader
+from app.component_builds.native_property_store import (
+    build_database_properties,
+    native_parameter_values,
+    native_property_subject_ids,
+)
+from app.component_builds.native_tree_store import build_database_tree
 from app.core.config import Settings
 from app.component_builds.viewer_bom import build_bom_contract
 from app.db.models import CadModel, CadModelRevision, CadSpecTask, CadSpecSource, CadDrawingRegion, CadDrawingFact, ComponentBuild
@@ -390,20 +398,25 @@ class ComponentBuildService:
             "summary": summary,
             "bom": bom,
             "viewer_geometry": viewer_geometry,
+            "native_capture": self._native_capture_contract("", manifest),
             "worker": manifest.get("worker") or {"mode": "not_applicable"},
             "progress": int(getattr(revision, "progress", 0) or 0),
         }
-        if revision.status != "completed" or revision.status_message != "ready" or any(not viewer.get(key) for key in required):
+        asset_base = f"/api/component-builds/{build.id}/viewer/assets/"
+        base_payload["native_capture"] = self._native_capture_contract(asset_base, manifest)
+        native_capture_available = bool(base_payload["native_capture"].get("available"))
+        viewer_asset_ready = not any(not viewer.get(key) for key in required)
+        if revision.status != "completed" or revision.status_message != "ready" or (not viewer_asset_ready and not native_capture_available):
             return {
                 **base_payload,
                 "status": revision.status,
                 "current_stage": revision.status_message,
                 "viewer_asset": None,
                 "feature_center": {"available": False},
+                "native_semantics": self._native_semantics_contract(asset_base, manifest.get("native_semantics") or {}),
                 "error_code": revision.error_code,
                 "error_message": revision.error_message,
             }
-        asset_base = f"/api/component-builds/{build.id}/viewer/assets/"
         feature_center = manifest.get("feature_center") or {}
         return {
             **base_payload,
@@ -417,7 +430,7 @@ class ComponentBuildService:
                 "curves_url": asset_base + viewer["curves"] if viewer.get("curves") else None,
                 "selection_index_url": asset_base + viewer["selection_index"]
                 if viewer.get("selection_index") else None,
-            },
+            } if viewer_asset_ready else None,
             "feature_center": {
                 "available": bool(feature_center.get("available")),
                 "mapping_available": bool(feature_center.get("mapping_available")),
@@ -438,14 +451,138 @@ class ComponentBuildService:
             "error_message": None,
         }
 
+    async def get_native_tree(
+        self,
+        build_id: UUID,
+        settings: Settings,
+        *,
+        include_supplemental: bool = False,
+        parent_id: str | None = None,
+        offset: int = 0,
+        page_size: int | None = None,
+    ) -> dict:
+        """只从 PostgreSQL 返回一层 CAA 树；不允许回读或兜底 JSONL。"""
+        del settings, include_supplemental
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("native capture source is not attached")
+        revision = await self.repository.get_raw_revision(build.cad_revision_id)
+        if revision is None:
+            raise ValueError("native capture revision is missing")
+        storage = dict((revision.parse_manifest or {}).get("native_tree_storage") or {})
+        if storage.get("backend") != "postgresql" or not storage.get("complete"):
+            raise ValueError("native tree is not persisted in PostgreSQL")
+        total = await self.repository.count_native_tree_entities(revision.id)
+        expected = int(storage.get("node_count") or 0)
+        if total == 0 or total != expected:
+            raise ValueError(f"native tree database count mismatch: expected={expected}, stored={total}")
+        if page_size is not None:
+            if not 1 <= page_size <= 500 or offset < 0:
+                raise ValueError("invalid native tree page")
+            entities = await self.repository.list_native_tree_entities(
+                revision.id, parent_id, offset=offset, limit=page_size + 1
+            )
+            has_more = len(entities) > page_size
+            entities = entities[:page_size]
+        else:
+            entities = await self.repository.list_native_tree_entities(revision.id, parent_id)
+            has_more = False
+        page = await self._database_tree_page(revision.id, entities, total)
+        page.update({"has_more": has_more, "next_offset": offset + len(entities) if has_more else None})
+        # 首屏只多取根的直接子节点（通常几个顶层装配），让左树立即可见；
+        # 更深层仍通过 parent_id 分页，绝不恢复整棵 JSONL。
+        if parent_id is None and page_size is None:
+            for root in page["roots"]:
+                children = await self.repository.list_native_tree_entities(revision.id, root["node_id"])
+                child_page = await self._database_tree_page(revision.id, children, total)
+                root["children"] = child_page["roots"]
+            page["node_count"] = sum(1 + len(root["children"]) for root in page["roots"])
+        return page
+
+    async def _database_tree_page(self, revision_id: UUID, entities: list, total: int) -> dict:
+        page = build_database_tree(entities, total_node_count=total)
+        subject_ids: set[str] = set()
+        for node in page["roots"]:
+            subject_ids.update(native_property_subject_ids(node["node_id"], node))
+        values = native_parameter_values(
+            await self.repository.list_native_property_facts(revision_id, subject_ids, parameter_values_only=True)
+        )
+        for node in page["roots"]:
+            for subject_id in native_property_subject_ids(node["node_id"], node):
+                if subject_id in values:
+                    node["parameter_value"] = values[subject_id]
+                    break
+        return page
+
+    async def get_native_node(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
+        reader = await self._native_bundle_reader(build_id, settings)
+        return reader.get_node(node_id)
+
+    async def get_native_node_properties(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
+        del settings
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("native capture source is not attached")
+        revision = await self.repository.get_raw_revision(build.cad_revision_id)
+        if revision is None:
+            raise ValueError("native capture revision is missing")
+        storage = dict((revision.parse_manifest or {}).get("native_property_storage") or {})
+        if storage.get("backend") != "postgresql" or not storage.get("complete"):
+            raise ValueError("native properties are not persisted in PostgreSQL")
+        entity = await self.repository.get_native_tree_entity(revision.id, node_id)
+        if entity is None:
+            raise ValueError(f"native tree node not found: {node_id}")
+        metadata = dict(entity.metadata_json or {})
+        subject_ids = native_property_subject_ids(node_id, metadata)
+        facts = await self.repository.list_native_property_facts(revision.id, subject_ids)
+        return build_database_properties(node_id, metadata, facts)
+
+    async def get_native_topology(self, build_id: UUID, settings: Settings) -> dict:
+        reader = await self._native_bundle_reader(build_id, settings)
+        return reader.get_topology()
+
+    async def get_native_node_selection(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
+        reader = await self._native_bundle_reader(build_id, settings)
+        return reader.get_selection(node_id)
+
+    async def _native_bundle_reader(self, build_id: UUID, settings: Settings) -> CaaNewBundleReader:
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("native capture source is not attached")
+        revision = await self.repository.get_raw_revision(build.cad_revision_id)
+        if revision is None:
+            raise ValueError("native capture revision is missing")
+        manifest = revision.parse_manifest or {}
+        native = manifest.get("native_semantics") or {}
+        if not native.get("available"):
+            raise CaaNewBundleError("native capture bundle is not available")
+        manifest_asset = native.get("manifest") or "native-caa/manifest.json"
+        manifest_path = safe_asset_path(Path(settings.cad_work_dir) / str(revision.id), str(manifest_asset))
+        return CaaNewBundleReader(manifest_path.parent)
+
     @staticmethod
     def _native_semantics_contract(asset_base: str, native: dict) -> dict:
         payload = {"available": bool(native.get("available"))}
         for key in (
+            "manifest",
+            "capture_report",
+            "reconstruction_plan",
+            "object_entities",
+            "tree_occurrences",
             "features",
             "native_features",
             "parameters",
             "property_facts",
+            "semantic_facets",
+            "feature_dependencies",
+            "topology_entities",
+            "topology_relations",
+            "geometry_entities",
+            "pmi_entities",
+            "pmi_associations",
+            "diagnostics",
+            "coverage",
+            "capability_matrix",
             "topology_bodies",
             "topology_cells",
             "topology_wires",
@@ -456,12 +593,49 @@ class ComponentBuildService:
             "feature_result_cells",
             "feature_topology_links",
             "product_references",
+            "product_occurrences",
+            "document_links",
             "product_instances",
             "product_feature_tree",
             "part_feature_tree_index",
             "capabilities",
         ):
             payload[f"{key}_url"] = asset_base + native[key] if native.get(key) else None
+        return payload
+
+    @classmethod
+    def _native_capture_contract(cls, asset_base: str, manifest: dict) -> dict:
+        native = manifest.get("native_capture") or {}
+        native_semantics = manifest.get("native_semantics") or {}
+        schema_version = native.get("schema_version")
+        is_caa_new_capture = isinstance(schema_version, str) and schema_version.startswith("caa_capture_")
+        payload = {
+            "available": bool(native.get("available") or native_semantics.get("available")),
+            "status": native.get("status"),
+            "schema_version": schema_version,
+            "parser_version": native.get("parser_version"),
+            "capture_engine": native.get("capture_engine") or ("caa_new" if is_caa_new_capture else None),
+            "capture_platform": native.get("capture_platform") or ("intel_a" if is_caa_new_capture else None),
+            "capture_bitness": native.get("capture_bitness") or (32 if is_caa_new_capture else None),
+            "document_kind": native.get("document_kind"),
+            "selected_reconstruction_route": native.get("selected_reconstruction_route"),
+            "has_tree": bool(native.get("has_tree") or native_semantics.get("tree_occurrences") or native_semantics.get("features")),
+            "has_properties": bool(native.get("has_properties") or native_semantics.get("property_facts")),
+            "has_topology": bool(native.get("has_topology") or native_semantics.get("topology_entities")),
+            "has_geometry": bool(native.get("has_geometry") or native_semantics.get("geometry_entities")),
+            "has_mesh": bool(native.get("has_mesh") or native_semantics.get("mesh_triangles")),
+        }
+        if asset_base:
+            payload.update(
+                {
+                    "tree_url": asset_base + native_semantics["tree_occurrences"]
+                    if native_semantics.get("tree_occurrences") else None,
+                    "capabilities_url": asset_base + native_semantics["capabilities"]
+                    if native_semantics.get("capabilities") else None,
+                    "diagnostics_url": asset_base + native_semantics["diagnostics"]
+                    if native_semantics.get("diagnostics") else None,
+                }
+            )
         return payload
 
     async def _viewer_bom(self, revision, source_format: str, manifest: dict | None = None) -> dict:
@@ -529,7 +703,7 @@ class ComponentBuildService:
     @staticmethod
     def _native_product_instances_bom_roots(revision, manifest: dict) -> list[dict]:
         native = manifest.get("native_semantics") or {}
-        product_instances = native.get("product_instances")
+        product_instances = native.get("product_occurrences") or native.get("product_instances")
         if not product_instances:
             return []
         base_dir = Path(getattr(revision, "source_file_path", "") or "").parent
@@ -551,28 +725,30 @@ class ComponentBuildService:
         nodes: dict[str, dict] = {}
         ordered_records = sorted(
             records,
-            key=lambda item: (int(item.get("depth") or 0), int(item.get("child_index") or 0)),
+            key=lambda item: (int(item.get("depth") or 0), int(item.get("source_index") or item.get("child_index") or 0)),
         )
         for record in ordered_records:
-            instance_id = str(record.get("instance_id") or "")
+            instance_id = str(record.get("occurrence_id") or record.get("instance_id") or "")
             if not instance_id:
                 continue
-            parent_id = str(record.get("parent_instance_id") or "")
+            parent_id = str(record.get("parent_occurrence_id") or record.get("parent_instance_id") or "")
             child_count = int(record.get("child_count") or 0)
             node_type = "subassembly" if parent_id and child_count > 0 else ("assembly" if child_count > 0 else "part")
             instance_name = str(record.get("instance_name") or record.get("instance_path") or instance_id)
+            part_number = str(record.get("part_number") or "")
             reference_id = str(record.get("reference_id") or "")
             nodes[instance_id] = {
                 "id": instance_id,
                 "parent_entity_id": parent_id,
                 "entity_type": node_type,
                 "label": instance_name,
-                "source_ref": reference_id,
+                "source_ref": part_number or reference_id,
                 "placement": record.get("transform_4x4"),
                 "metadata": {
                     "instance_name": instance_name,
-                    "part_number": reference_id,
-                    "assembly_path": str(record.get("instance_path") or record.get("tree_path") or ""),
+                    "part_number": part_number,
+                    "reference_id": reference_id,
+                    "assembly_path": str(record.get("occurrence_path") or record.get("instance_path") or record.get("tree_path") or ""),
                     "load_status": record.get("load_status"),
                     "read_status": record.get("read_status"),
                     "transform_status": record.get("transform_status"),
@@ -583,7 +759,7 @@ class ComponentBuildService:
 
         roots: list[dict] = []
         for record in ordered_records:
-            node = nodes.get(str(record.get("instance_id") or ""))
+            node = nodes.get(str(record.get("occurrence_id") or record.get("instance_id") or ""))
             if node is None:
                 continue
             parent = nodes.get(node["parent_entity_id"])

@@ -29,12 +29,12 @@ export interface DetailPanelLayout {
 
 // 用途：根据真实对象类型和装配契约决定右侧分组；界面的 BOM 显隐状态不参与业务判断。
 export function buildDetailPanelLayout(context: DetailPanelContext): DetailPanelLayout {
-  const featureLinkLabel = context.sourceFormat === 'CATPART' || context.sourceFormat === 'CATPRODUCT'
-    ? '查看原生特征与关联面'
-    : '查看识别特征与关联面';
+  const featureLinkLabel =
+    context.sourceFormat === 'CATPART' || context.sourceFormat === 'CATPRODUCT'
+      ? '查看原生特征与关联面'
+      : '查看识别特征与关联面';
   const featureLinkEnabled = Boolean(
-    context.featureFaceMappingAvailable
-    && (context.sourceFormat === 'STEP' || context.nativeFeatureAvailable)
+    context.featureFaceMappingAvailable && (context.sourceFormat === 'STEP' || context.nativeFeatureAvailable)
   );
 
   if (context.selectionKind === 'feature') {
@@ -49,9 +49,9 @@ export function buildDetailPanelLayout(context: DetailPanelContext): DetailPanel
   }
 
   if (
-    context.nodeType === 'assembly'
-    || context.nodeType === 'subassembly'
-    || (context.nodeType === 'root' && context.assemblyMode === 'assembly')
+    context.nodeType === 'assembly' ||
+    context.nodeType === 'subassembly' ||
+    (context.nodeType === 'root' && context.assemblyMode === 'assembly')
   ) {
     const groups: DetailGroup[] = ['assembly', 'assembly_statistics'];
     if (context.nodeType === 'subassembly' && context.hasParent) groups.push('positioning');

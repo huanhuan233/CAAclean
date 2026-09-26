@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import {
-  appendFieldPath,
-  parseScalarArrayInput,
-  type ComponentSpecFieldPath
-} from '../component-spec-field-events';
+import { type ComponentSpecFieldPath, appendFieldPath, parseScalarArrayInput } from '../component-spec-field-events';
 
 defineOptions({ name: 'ComponentSpecFieldEditor' });
 
@@ -21,9 +17,7 @@ const emit = defineEmits<{
 
 const currentPath = computed<ComponentSpecFieldPath>(() => props.path || [props.field.key]);
 const objectValue = computed<Record<string, any>>(() =>
-  props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue)
-    ? props.modelValue
-    : {}
+  props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue) ? props.modelValue : {}
 );
 const arrayValue = computed<any[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : []));
 const scalarArrayText = computed(() => arrayValue.value.join(', '));
@@ -197,20 +191,91 @@ function updateGeneric(value: string) {
 </template>
 
 <style scoped>
-.spec-object, .spec-array { min-width: 0; grid-column: 1 / -1; }
-.group-heading, .array-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.group-heading { margin-bottom: 12px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 9px; }
-.group-heading strong { display: block; font-size: 14px; font-weight: 600; }
-.group-heading small { display: block; margin-top: 2px; color: var(--el-text-color-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.field-grid { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
-.array-item { margin-top: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 12px; }
-.array-item-heading { margin-bottom: 12px; color: var(--el-text-color-secondary); font-size: 12px; }
-.spec-field { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
-.spec-field.wide { grid-column: 1 / -1; }
-.field-label { display: flex; min-height: 22px; align-items: center; gap: 6px; color: var(--el-text-color-primary); font-size: 13px; }
-.field-label b { color: var(--el-color-danger); font-weight: 500; }
-.field-path, .field-source { overflow: hidden; color: var(--el-text-color-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.field-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.spec-field :deep(.el-input-number), .spec-field :deep(.el-select) { width: 100%; }
-@media (max-width: 900px) { .field-grid { grid-template-columns: minmax(0, 1fr); } }
+.spec-object,
+.spec-array {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+.group-heading,
+.array-item-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.group-heading {
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding-bottom: 9px;
+}
+.group-heading strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+.group-heading small {
+  display: block;
+  margin-top: 2px;
+  color: var(--el-text-color-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.field-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+.array-item {
+  margin-top: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 12px;
+}
+.array-item-heading {
+  margin-bottom: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.spec-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+.spec-field.wide {
+  grid-column: 1 / -1;
+}
+.field-label {
+  display: flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 6px;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+}
+.field-label b {
+  color: var(--el-color-danger);
+  font-weight: 500;
+}
+.field-path,
+.field-source {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.field-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.spec-field :deep(.el-input-number),
+.spec-field :deep(.el-select) {
+  width: 100%;
+}
+@media (max-width: 900px) {
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 </style>

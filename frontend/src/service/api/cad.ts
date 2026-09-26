@@ -292,6 +292,54 @@ export function fetchComponentBuildViewer(buildId: string, options?: ComponentBu
   });
 }
 
+export function fetchComponentBuildNativeTree(
+  buildId: string,
+  params: { include_supplemental?: boolean; parent_id?: string; offset?: number; page_size?: number } = {},
+  options?: ComponentBuildQueryOptions
+) {
+  return request<Api.ComponentBuild.NativeTreeResponse>({
+    url: `/api/component-builds/${buildId}/viewer/native/tree`,
+    params,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchComponentBuildNativeNode(buildId: string, nodeId: string, options?: ComponentBuildQueryOptions) {
+  return request<Api.ComponentBuild.NativeTreeNode>({
+    url: `/api/component-builds/${buildId}/viewer/native/nodes/${encodeURIComponent(nodeId)}`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchComponentBuildNativeNodeProperties(
+  buildId: string,
+  nodeId: string,
+  options?: ComponentBuildQueryOptions
+) {
+  return request<Api.ComponentBuild.NativeNodeProperties>({
+    url: `/api/component-builds/${buildId}/viewer/native/nodes/${encodeURIComponent(nodeId)}/properties`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchComponentBuildNativeTopology(buildId: string, options?: ComponentBuildQueryOptions) {
+  return request<Api.ComponentBuild.NativeTopologyResponse>({
+    url: `/api/component-builds/${buildId}/viewer/native/topology`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchComponentBuildNativeNodeSelection(
+  buildId: string,
+  nodeId: string,
+  options?: ComponentBuildQueryOptions
+) {
+  return request<Api.ComponentBuild.NativeSelectionResponse>({
+    url: `/api/component-builds/${buildId}/viewer/native/nodes/${encodeURIComponent(nodeId)}/selection`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 /**
  * 用途：通过统一认证请求层读取 Viewer 二进制资产，避免原生 fetch 绕过令牌刷新和代理配置。
  */
@@ -316,11 +364,7 @@ export function updateComponentBuild(params: Api.ComponentBuild.UpdatePayload) {
   return submitComponentBuild(`/api/component-builds/${params.build_id}`, 'patch', params);
 }
 
-function submitComponentBuild(
-  url: string,
-  method: 'post' | 'patch',
-  params: Api.ComponentBuild.CreatePayload
-) {
+function submitComponentBuild(url: string, method: 'post' | 'patch', params: Api.ComponentBuild.CreatePayload) {
   const data = new FormData();
   data.append('category_code', params.category_code);
   data.append('part_type_code', params.part_type_code);
@@ -386,7 +430,7 @@ export function fuseComponentBuild(buildId: string, overwrite = false) {
 export function deleteComponentBuild(buildId: string) {
   return request<{ id: string; deleted: boolean }>({
     url: `/api/component-builds/${buildId}`,
-    method: 'delete',
+    method: 'delete'
   });
 }
 

@@ -1,4 +1,5 @@
 #include "caa/CaaPropertyExtractors.h"
+#include "caa/CaaSemanticPropertyExtractor.h"
 
 #include <CATBaseUnknown.h>
 #include <CATICkeInst.h>
@@ -6,7 +7,10 @@
 #include <CATICkeType.h>
 #include <CATIInertia.h>
 #include <CATISpecObject.h>
+#include <CATIVisProperties.h>
 #include <CATUnicodeString.h>
+#include <CATVisGeomType.h>
+#include <CATVisPropertiesValues.h>
 #include <cstdlib>
 #include <sstream>
 #include <vector>
@@ -88,6 +92,170 @@ static PropertyFact* AddFact(CaptureIdRegistry& ids,
   fact.read_only = true;
   package.properties.push_back(fact);
   return &package.properties.back();
+}
+
+static void AddTabDeclaration(CaptureIdRegistry& ids,
+                              ReconstructionPackage& package,
+                              const std::string& subject_id,
+                              const std::string& tab_id,
+                              const std::string& tab_label,
+                              const std::string& group_id,
+                              const std::string& group_label,
+                              long display_order)
+{
+  PropertyFact fact;
+  fact.property_id = ids.NextPropertyFactId();
+  fact.subject_id = subject_id;
+  fact.tab_id = tab_id;
+  fact.tab_label = tab_label;
+  fact.group_id = group_id;
+  fact.group_label = group_label;
+  fact.group = group_id;
+  fact.key = "__catia_property_tab__" + tab_id;
+  fact.display_name = tab_label;
+  fact.raw_value = "declared";
+  fact.raw_display_text = "declared";
+  fact.display_value = "declared";
+  fact.value_type = "ui_meta";
+  fact.source_api = "CATIA.PropertyDialog";
+  fact.read_status = "declared";
+  fact.authority = "captured_native_tree";
+  fact.display_order = display_order;
+  fact.read_only = true;
+  fact.hidden_status = "ui_meta";
+  package.properties.push_back(fact);
+}
+
+static bool LooksLikePartOrProduct(const ObjectEntity& object)
+{
+  const std::string text = object.startup_type + " " + object.object_kind + " " + object.internal_name;
+  return text.find("Part") != std::string::npos ||
+         text.find("Product") != std::string::npos ||
+         text.find("CATPart") != std::string::npos ||
+         text.find("CATProduct") != std::string::npos;
+}
+
+static void AddCatiaPropertyTabDeclarations(CaptureIdRegistry& ids,
+                                            ReconstructionPackage& package,
+                                            const ObjectEntity& object)
+{
+  if (LooksLikePartOrProduct(object))
+  {
+    AddTabDeclaration(ids, package, object.object_id, "product", "Product", "product", "Product", 1);
+    AddTabDeclaration(ids, package, object.object_id, "graphic", "Graphic", "graphic_properties", "Graphic properties", 2);
+    AddTabDeclaration(ids, package, object.object_id, "mechanical", "Mechanical", "update", "Update", 3);
+    AddTabDeclaration(ids, package, object.object_id, "drafting", "Drafting", "drafting", "Drafting", 4);
+    return;
+  }
+  AddTabDeclaration(ids, package, object.object_id, "mechanical", "Mechanical", "update", "Update", 1);
+  AddTabDeclaration(ids, package, object.object_id, "feature_property", "Feature properties", "feature_property", "Feature properties", 2);
+  AddTabDeclaration(ids, package, object.object_id, "graphic", "Graphic", "graphic_properties", "Graphic properties", 3);
+}
+
+static std::string RgbToString(unsigned int red, unsigned int green, unsigned int blue)
+{
+  std::ostringstream out;
+  out << red << "," << green << "," << blue;
+  return out.str();
+}
+
+static void AddGraphicFactsForGeomType(CaptureIdRegistry& ids,
+                                       ReconstructionPackage& package,
+                                       const ObjectEntity& object,
+                                       CATIVisProperties* visual_properties,
+                                       CATVisGeomType geom_type,
+                                       const std::string& group_id,
+                                       const std::string& group_label,
+                                       long order_base)
+{
+  CATVisPropertiesValues color_values;
+  if (SUCCEEDED(visual_properties->GetPropertiesAtt(color_values, CATVPColor, geom_type)))
+  {
+    unsigned int red = 0;
+    unsigned int green = 0;
+    unsigned int blue = 0;
+    if (SUCCEEDED(color_values.GetColor(red, green, blue)))
+      AddFact(ids, package, object.object_id, "graphic", "Graphic", group_id, group_label,
+              "color", "Color", RgbToString(red, green, blue),
+              "color", "CATIVisProperties.GetPropertiesAtt(CATVPColor)", order_base + 10);
+  }
+
+  CATVisPropertiesValues opacity_values;
+  if (SUCCEEDED(visual_properties->GetPropertiesAtt(opacity_values, CATVPOpacity, geom_type)))
+  {
+    unsigned int opacity = 0;
+    if (SUCCEEDED(opacity_values.GetOpacity(opacity)))
+    {
+      const unsigned int transparency = opacity > 255 ? 0 : 100 - ((opacity * 100) / 255);
+      PropertyFact* transparency_fact =
+        AddFact(ids, package, object.object_id, "graphic", "Graphic", group_id, group_label,
+                "transparency", "Transparency", LongToString(static_cast<long>(transparency)),
+                "integer", "CATIVisProperties.GetPropertiesAtt(CATVPOpacity)", order_base + 20);
+      if (transparency_fact)
+      {
+        transparency_fact->raw_unit = "%";
+        transparency_fact->display_unit = "%";
+      }
+    }
+  }
+
+  CATVisPropertiesValues line_type_values;
+  if (SUCCEEDED(visual_properties->GetPropertiesAtt(line_type_values, CATVPLineType, geom_type)))
+  {
+    unsigned int line_type = 0;
+    if (SUCCEEDED(line_type_values.GetLineType(line_type)))
+      AddFact(ids, package, object.object_id, "graphic", "Graphic", group_id, group_label,
+              "line_type", "Line type", LongToString(static_cast<long>(line_type)),
+              "integer", "CATIVisProperties.GetPropertiesAtt(CATVPLineType)", order_base + 30);
+  }
+
+  CATVisPropertiesValues width_values;
+  if (SUCCEEDED(visual_properties->GetPropertiesAtt(width_values, CATVPWidth, geom_type)))
+  {
+    unsigned int width = 0;
+    if (SUCCEEDED(width_values.GetWidth(width)))
+      AddFact(ids, package, object.object_id, "graphic", "Graphic", group_id, group_label,
+              "line_width", "Line width", LongToString(static_cast<long>(width)),
+              "integer", "CATIVisProperties.GetPropertiesAtt(CATVPWidth)", order_base + 40);
+  }
+}
+
+static void AddGraphicPropertyFacts(CaptureIdRegistry& ids,
+                                    CaaCapabilityBroker& broker,
+                                    ReconstructionPackage& package,
+                                    const ObjectEntity& object,
+                                    CATISpecObject* spec)
+{
+  if (!spec)
+    return;
+
+  CaaCapabilityLease visual_lease;
+  broker.Acquire<CATIVisProperties>(spec, IID_CATIVisProperties, "visualization.CATIVisProperties",
+                                    object.object_id, package, visual_lease);
+  CATIVisProperties* visual_properties = visual_lease.As<CATIVisProperties>();
+  if (!visual_properties)
+    return;
+
+  AddGraphicFactsForGeomType(ids, package, object, visual_properties, CATVPAsm,
+                             "graphic_properties", "Graphic properties", 3000);
+  AddGraphicFactsForGeomType(ids, package, object, visual_properties, CATVPMesh,
+                             "surface", "Surface", 3100);
+  AddGraphicFactsForGeomType(ids, package, object, visual_properties, CATVPEdge,
+                             "edge", "Edge", 3200);
+  AddGraphicFactsForGeomType(ids, package, object, visual_properties, CATVPLine,
+                             "line", "Line", 3300);
+  AddGraphicFactsForGeomType(ids, package, object, visual_properties, CATVPPoint,
+                             "point", "Point", 3400);
+
+  CATVisPropertiesValues layer_values;
+  if (SUCCEEDED(visual_properties->GetPropertiesAtt(layer_values, CATVPLayer, CATVPGlobalType)))
+  {
+    unsigned int layer = 0;
+    if (SUCCEEDED(layer_values.GetLayer(layer)))
+      AddFact(ids, package, object.object_id, "graphic", "Graphic", "global", "Global",
+              "layer", "Layer", LongToString(static_cast<long>(layer)),
+              "integer", "CATIVisProperties.GetPropertiesAtt(CATVPLayer)", 3500);
+  }
 }
 
 static std::string ParameterLeafName(const std::string& qualified_name)
@@ -223,76 +391,24 @@ static void AddMechanicalInertiaFacts(CaptureIdRegistry& ids,
           "number", "CATIInertia.GetInertia", 1320);
 }
 
-static void AddKnowledgeParameterFacts(CaptureIdRegistry& ids,
-                                       CaaCapabilityBroker& broker,
-                                       ReconstructionPackage& package,
-                                       const ObjectEntity& object,
-                                       CATISpecObject* spec)
+bool CaaPropertyExtractors::ExtractNativeFactsForDocument(CaptureIdRegistry& ids,
+                                                          CaaCapabilityBroker& broker,
+                                                          ReconstructionPackage& package,
+                                                          const std::string& document_id)
 {
-  if (!spec)
-    return;
-
-  CaaCapabilityLease parameter_lease;
-  broker.Acquire<CATICkeParm>(spec, IID_CATICkeParm, "knowledgeware.CATICkeParm",
-                              object.object_id, package, parameter_lease);
-  CATICkeParm* parameter = parameter_lease.As<CATICkeParm>();
-  if (!parameter)
-    return;
-
-  try
+  size_t i;
+  for (i = 0; i < package.objects.size(); ++i)
   {
-    const CATICkeType_var parameter_type = parameter->Type();
-    if (parameter_type == NULL_var || static_cast<int>(parameter_type->IsaString()) == 0)
-      return;
-    const CATICkeInst_var value = parameter->Value();
-    if (value == NULL_var)
-    {
-      AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-              "catia_parameter_value_status", "Value status", "value_unavailable",
-              "string", "CATICkeParm.Value", 2000);
-      return;
-    }
-    std::string parameter_name = object.display_name.empty() ? object.internal_name : object.display_name;
-    std::string raw_display_text;
-    bool read_only = true;
-    std::string hidden_status = "unknown";
-    try { parameter_name = ParameterLeafName(UnicodeToUtf8Local(parameter->Name())); }
-    catch (...) {}
-    try { raw_display_text = UnicodeToUtf8Local(parameter->Show()); }
-    catch (...) {}
-    try { read_only = static_cast<int>(parameter->IsReadOnly()) == 0 ? false : true; }
-    catch (...) { read_only = true; }
-    try { hidden_status = static_cast<int>(parameter->IsHidden()) == 0 ? "false" : "true"; }
-    catch (...) { hidden_status = "unknown"; }
+    const ObjectEntity& object = package.objects[i];
+    if (object.document_id != document_id)
+      continue;
 
-    AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-            "catia_parameter_kind", "Parameter kind", "string",
-            "string", "CATICkeParm.Type", 2010);
-    PropertyFact* name_fact = AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-                                      "catia_parameter_name", "Parameter name", parameter_name,
-                                      "string", "CATICkeParm.Name", 2020);
-    if (name_fact)
-    {
-      name_fact->raw_display_text = raw_display_text;
-      name_fact->read_only = read_only;
-      name_fact->hidden_status = hidden_status;
-    }
-    PropertyFact* value_fact = AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-                                       "catia_parameter_value_text", "Parameter value", UnicodeToUtf8Local(value->AsString()),
-                                       "string", "CATICkeParm.Value.AsString", 2030);
-    if (value_fact)
-    {
-      value_fact->raw_display_text = raw_display_text;
-      value_fact->read_only = read_only;
-      value_fact->hidden_status = hidden_status;
-    }
+    CATISpecObject* spec = FindNativeSpecObject(package, object.object_id);
+    AddGraphicPropertyFacts(ids, broker, package, object, spec);
+    AddMechanicalInertiaFacts(ids, broker, package, object, spec);
+    CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package);
   }
-  catch (...)
-  {
-    AddFact(ids, package, object.object_id, "knowledgeware", "Knowledgeware", "parameter", "Parameter",
-            "catia_parameter_value_status", "Value status", "value_exception",
-            "string", "CATICkeParm.Value", 2000);
-  }
+  return true;
 }
 
 bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
@@ -320,6 +436,7 @@ bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
   for (i = 0; i < package.objects.size(); ++i)
   {
     const ObjectEntity& object = package.objects[i];
+    AddCatiaPropertyTabDeclarations(ids, package, object);
     AddFact(ids, package, object.object_id, "attributes", "Attributes", "identity", "Identity",
             "display_name", "Display name", object.display_name, "string", "ObjectEntity", 10);
     AddFact(ids, package, object.object_id, "attributes", "Attributes", "identity", "Identity",
@@ -336,8 +453,9 @@ bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
             "geometry_status", "Geometry status", package.geometry.empty() ? "not_available" : "available", "string", "GeometryIR", 70);
 
     CATISpecObject* spec = FindNativeSpecObject(package, object.object_id);
+    AddGraphicPropertyFacts(ids, broker, package, object, spec);
     AddMechanicalInertiaFacts(ids, broker, package, object, spec);
-    AddKnowledgeParameterFacts(ids, broker, package, object, spec);
+    CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package);
   }
 
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)

@@ -41,15 +41,25 @@ test('总装和子装配使用装配属性而不是零件属性', () => {
       nativeFeatureAvailable: true,
       featureFaceMappingAvailable: true
     });
-    assert.deepEqual(layout.groups, ['assembly', 'assembly_statistics', ...(nodeType === 'subassembly' ? ['positioning'] as const : []), 'operations', 'topology']);
+    assert.deepEqual(layout.groups, [
+      'assembly',
+      'assembly_statistics',
+      ...(nodeType === 'subassembly' ? (['positioning'] as const) : []),
+      'operations',
+      'topology'
+    ]);
   }
 });
 
 test('设计特征和几何对象拥有各自属性分组', () => {
-  assert.deepEqual(buildDetailPanelLayout({ selectionKind: 'feature', assemblyMode: 'assembly', sourceFormat: 'CATPART' }).groups,
-    ['feature', 'operations', 'topology']);
-  assert.deepEqual(buildDetailPanelLayout({ selectionKind: 'geometry', assemblyMode: 'assembly', sourceFormat: 'STEP' }).groups,
-    ['geometry', 'operations', 'topology']);
+  assert.deepEqual(
+    buildDetailPanelLayout({ selectionKind: 'feature', assemblyMode: 'assembly', sourceFormat: 'CATPART' }).groups,
+    ['feature', 'operations', 'topology']
+  );
+  assert.deepEqual(
+    buildDetailPanelLayout({ selectionKind: 'geometry', assemblyMode: 'assembly', sourceFormat: 'STEP' }).groups,
+    ['geometry', 'operations', 'topology']
+  );
 });
 
 test('Face 只有存在真实反向映射时才同时展示关联特征', () => {

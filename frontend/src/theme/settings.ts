@@ -4,7 +4,7 @@ export const themeSettings: App.Theme.ThemeSetting = {
   grayscale: false,
   colourWeakness: false,
   recommendColor: false,
-  themeColor: '#646cff',
+  themeColor: '#0632F6',
   otherColor: {
     info: '#2080f0',
     success: '#52c41a',
@@ -22,7 +22,7 @@ export const themeSettings: App.Theme.ThemeSetting = {
     animateMode: 'fade-slide'
   },
   header: {
-    height: 56,
+    height: 45,
     breadcrumb: {
       visible: true,
       showIcon: true
@@ -89,4 +89,40 @@ export const themeSettings: App.Theme.ThemeSetting = {
  *
  * If publish new version, use `overrideThemeSettings` to override certain theme settings
  */
-export const overrideThemeSettings: Partial<App.Theme.ThemeSetting> = {};
+type DeepPartial<T> = {
+  [Key in keyof T]?: T[Key] extends object ? DeepPartial<T[Key]> : T[Key];
+};
+
+export const overrideThemeSettings: DeepPartial<App.Theme.ThemeSetting> = {
+  themeScheme: 'light',
+  recommendColor: false,
+  themeColor: '#0632F6',
+  otherColor: {
+    info: '#2080f0',
+    success: '#52c41a',
+    warning: '#faad14',
+    error: '#f5222d'
+  },
+  isInfoFollowPrimary: true,
+  layout: {
+    mode: 'vertical',
+    scrollMode: 'content'
+  },
+  page: {
+    animate: true,
+    animateMode: 'fade-slide'
+  },
+  header: {
+    height: 45,
+    breadcrumb: {
+      visible: true,
+      showIcon: true
+    }
+  },
+  tab: {
+    visible: true,
+    cache: true,
+    height: 44,
+    mode: 'chrome'
+  }
+};

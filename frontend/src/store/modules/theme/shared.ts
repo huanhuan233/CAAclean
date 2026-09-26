@@ -23,7 +23,7 @@ export function initThemeSettings() {
   const isOverride = localStg.get('overrideThemeFlag') === BUILD_TIME;
 
   if (!isOverride) {
-    settings = defu(overrideThemeSettings, settings);
+    settings = defu(overrideThemeSettings, settings) as App.Theme.ThemeSetting;
     localStg.set('overrideThemeFlag', BUILD_TIME);
   }
 

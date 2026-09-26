@@ -128,6 +128,20 @@ class CadEntity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class CadNativePropertyFact(Base):
+    __tablename__ = "cad_native_property_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), nullable=False
+    )
+    subject_id: Mapped[str] = mapped_column(String, nullable=False)
+    property_id: Mapped[str] = mapped_column(String, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class CadRelation(Base):
     __tablename__ = "cad_relations"
 
@@ -356,6 +370,8 @@ Index("ix_component_builds_status", ComponentBuild.status)
 Index("ix_cad_entities_revision_id", CadEntity.revision_id)
 Index("ix_cad_entities_parent_entity_id", CadEntity.parent_entity_id)
 Index("ix_cad_entities_revision_type", CadEntity.revision_id, CadEntity.entity_type)
+Index("ix_cad_native_property_revision", CadNativePropertyFact.revision_id)
+Index("ix_cad_native_property_subject", CadNativePropertyFact.revision_id, CadNativePropertyFact.subject_id)
 Index("ix_cad_relations_revision_id", CadRelation.revision_id)
 Index("ix_cad_relations_source_entity_id", CadRelation.source_entity_id)
 Index("ix_cad_relations_target_entity_id", CadRelation.target_entity_id)

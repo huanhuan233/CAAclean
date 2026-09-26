@@ -41,7 +41,6 @@ function chooseSceneMode(mode: SceneMode) {
   if (mode === 'explode' && !props.canExplode) return;
   emit('sceneModeChange', props.sceneMode === mode && mode !== 'whole' ? 'whole' : mode);
 }
-
 </script>
 
 <template>

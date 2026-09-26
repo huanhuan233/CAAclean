@@ -63,6 +63,7 @@ static bool IsCompiledCapability(const std::string& capability)
          capability == "product.linked_document_resolution" ||
          capability == "product.part_definition_projection" ||
          capability == "mechanical.CATIInertia" ||
+         capability == "visualization.CATIVisProperties" ||
          capability == "knowledgeware.CATICkeParm" ||
          capability == "native_feature.CATIAHole" ||
          capability == "native_feature.CATIAPad" ||

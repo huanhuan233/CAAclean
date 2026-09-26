@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -7,6 +8,8 @@ import pytest
 
 from app.component_builds.component_spec import component_spec_template
 from app.component_builds.component_spec_document import pack_component_spec_document, unpack_component_spec_document
+from app.component_builds.caa_new_bundle import CaaNewBundleReader
+from app.component_builds.native_tree_store import NATIVE_SOURCE_PREFIX, native_tree_rows
 from app.component_builds.repository import MemoryComponentBuildRepository, SqlAlchemyComponentBuildRepository
 from app.component_builds.fusion import FusionSourceUnavailable, FusionSources
 from app.component_builds.service import ComponentBuildService, SqlAlchemySourceStatusReader
@@ -374,6 +377,89 @@ async def test_viewer_contract_builds_catproduct_bom_from_native_product_instanc
 
 
 @pytest.mark.asyncio
+async def test_viewer_contract_builds_catproduct_bom_from_caa_new_product_occurrences(tmp_path):
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="assy-new-001",
+        component_name="CAA New Assy",
+        component_type="assembly",
+        cad_revision_id=revision_id,
+    )
+    native_dir = tmp_path / str(revision_id) / "native-caa"
+    native_dir.mkdir(parents=True)
+    _write_jsonl(
+        native_dir / "product_occurrences.jsonl",
+        [
+            {
+                "occurrence_id": "product_occurrence_1",
+                "parent_occurrence_id": "",
+                "instance_name": "RootProduct",
+                "part_number": "ROOT-PN",
+                "reference_id": "product_reference_1",
+                "occurrence_path": "/0:RootProduct",
+                "depth": 0,
+                "source_index": 0,
+                "child_count": 2,
+            },
+            {
+                "occurrence_id": "product_occurrence_3",
+                "parent_occurrence_id": "product_occurrence_1",
+                "instance_name": "Bolt.1",
+                "part_number": "BOLT-PN",
+                "reference_id": "product_reference_2",
+                "occurrence_path": "/0:RootProduct/2:Bolt.1",
+                "depth": 1,
+                "source_index": 2,
+                "child_count": 0,
+            },
+            {
+                "occurrence_id": "product_occurrence_2",
+                "parent_occurrence_id": "product_occurrence_1",
+                "instance_name": "Bracket.1",
+                "part_number": "BRACKET-PN",
+                "reference_id": "product_reference_2",
+                "occurrence_path": "/0:RootProduct/1:Bracket.1",
+                "depth": 1,
+                "source_index": 1,
+                "child_count": 0,
+            },
+        ],
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        status="completed",
+        status_message="ready",
+        progress=100,
+        source_file_ext=".catproduct",
+        source_file_name="RootProduct.CATProduct",
+        source_file_path=str(tmp_path / str(revision_id) / "source.CATProduct"),
+        error_code=None,
+        error_message=None,
+        parse_manifest={
+            "ingest": {"source_format": "CATPRODUCT", "processing_route": "catia_feature_center"},
+            "viewer_asset": {},
+            "native_capture": {"available": True, "has_tree": True, "has_properties": False},
+            "native_semantics": {
+                "available": True,
+                "product_occurrences": "native-caa/product_occurrences.jsonl",
+                "tree_occurrences": "native-caa/tree_occurrences.jsonl",
+            },
+        },
+    ))
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    contract = await service.get_viewer_contract(build.id)
+
+    assert contract["bom"]["assembly_mode"] == "assembly"
+    root = contract["bom"]["nodes"][0]
+    assert root["part_number"] == "ROOT-PN"
+    assert [child["name"] for child in root["children"]] == ["Bracket.1", "Bolt.1"]
+    assert root["children"][0]["part_number"] == "BRACKET-PN"
+    assert "product_reference_2" not in root["children"][0]["part_number"]
+
+
+@pytest.mark.asyncio
 async def test_viewer_contract_reports_empty_catproduct_geometry():
     revision_id = uuid4()
     repository = MemoryComponentBuildRepository()
@@ -415,11 +501,388 @@ async def test_viewer_contract_reports_empty_catproduct_geometry():
     assert contract["viewer_geometry"]["empty_reason"] == "catproduct_missing_loaded_representations"
 
 
+@pytest.mark.asyncio
+async def test_viewer_contract_keeps_native_capture_ready_without_viewer_asset():
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="catpart-native-only",
+        component_name="Native Only",
+        component_type="part",
+        cad_revision_id=revision_id,
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        status="completed",
+        status_message="ready",
+        progress=100,
+        source_file_ext=".catpart",
+        source_file_name="NativeOnly.CATPart",
+        error_code=None,
+        error_message=None,
+        parse_manifest={
+            "ingest": {"source_format": "CATPART", "processing_route": "catia_feature_center"},
+            "viewer_asset": {},
+            "native_capture": {
+                "available": True,
+                "status": "partial",
+                "schema_version": "caa_capture_v1",
+                "parser_version": "0.2.0",
+                "capture_engine": "caa_new",
+                "capture_platform": "intel_a",
+                "capture_bitness": 32,
+                "has_tree": True,
+                "has_properties": True,
+                "has_topology": False,
+                "has_geometry": False,
+                "has_mesh": False,
+            },
+            "native_semantics": {
+                "available": True,
+                "tree_occurrences": "native-caa/tree_occurrences.jsonl",
+                "property_facts": "native-caa/property_facts.jsonl",
+            },
+            "feature_center_manifest": {"lightweight": {"primitive_count": 0, "triangle_count": 0}},
+        },
+    ))
+
+    contract = await ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader()).get_viewer_contract(build.id)
+
+    assert contract["status"] == "ready"
+    assert contract["viewer_asset"] is None
+    assert contract["native_capture"]["available"] is True
+    assert contract["native_capture"]["capture_engine"] == "caa_new"
+    assert contract["native_capture"]["capture_platform"] == "intel_a"
+    assert contract["native_capture"]["capture_bitness"] == 32
+    assert contract["native_capture"]["tree_url"].endswith("native-caa/tree_occurrences.jsonl")
+
+
+@pytest.mark.asyncio
+async def test_viewer_contract_exposes_progressive_native_tree_while_geometry_is_processing():
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="catproduct-progressive",
+        component_name="Progressive Assembly",
+        component_type="assembly",
+        cad_revision_id=revision_id,
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        status="processing",
+        status_message="feature_center_processing",
+        progress=70,
+        source_file_ext=".catproduct",
+        source_file_name="Progressive.CATProduct",
+        error_code=None,
+        error_message=None,
+        parse_manifest={
+            "ingest": {"source_format": "CATPRODUCT", "processing_route": "catia_feature_center"},
+            "native_capture": {"available": True, "has_tree": True},
+            "native_semantics": {
+                "available": True,
+                "manifest": "native-caa/manifest.json",
+                "tree_occurrences": "native-caa/tree_occurrences.jsonl",
+            },
+        },
+    ))
+
+    contract = await ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader()).get_viewer_contract(build.id)
+
+    assert contract["status"] == "processing"
+    assert contract["current_stage"] == "feature_center_processing"
+    assert contract["viewer_asset"] is None
+    assert contract["native_capture"]["has_tree"] is True
+    assert contract["native_capture"]["tree_url"].endswith("native-caa/tree_occurrences.jsonl")
+    assert contract["native_semantics"]["tree_occurrences_url"].endswith("native-caa/tree_occurrences.jsonl")
+
+
+@pytest.mark.asyncio
+async def test_native_tree_api_reads_postgresql_level_without_file_fallback(tmp_path):
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="native-tree-db",
+        component_name="Database Tree",
+        component_type="assembly",
+        cad_revision_id=revision_id,
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        parse_manifest={"native_tree_storage": {"backend": "postgresql", "node_count": 2, "complete": True}},
+    ))
+    root_entity = SimpleNamespace(
+        id=uuid4(),
+        parent_entity_id=None,
+        source_ref="caa-native:root",
+        source_index=0,
+        sort_order=0,
+        name="500.000",
+        label="500.000",
+        tree_path="/500.000",
+        metadata_json={
+            "native_tree": True,
+            "native_node_id": "root",
+            "node_kind": "product_occurrence",
+            "display_name": "500.000",
+            "has_children": True,
+        },
+    )
+    child_entity = SimpleNamespace(
+        id=uuid4(), parent_entity_id=root_entity.id, source_ref="caa-native:child",
+        source_index=1, sort_order=1, name="510.000.2", label="510.000.2",
+        tree_path="/500.000/510.000.2",
+        metadata_json={"native_tree": True, "native_node_id": "child", "parent_id": "root",
+                       "node_kind": "product_occurrence", "display_name": "510.000.2"},
+    )
+    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None: _async_value(
+        [root_entity] if parent_node_id is None else ([child_entity] if parent_node_id == "root" else [])
+    )
+    repository.count_native_tree_entities = lambda _revision_id: _async_value(2)
+
+    tree = await ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader()).get_native_tree(
+        build.id,
+        SimpleNamespace(cad_work_dir=tmp_path),
+    )
+
+    assert tree["schema_version"] == "caa_native_tree_db_v1"
+    assert tree["node_count"] == 2
+    assert tree["total_node_count"] == 2
+    assert tree["roots"][0]["node_id"] == "root"
+    assert tree["roots"][0]["children"][0]["display_name"] == "510.000.2"
+
+
+@pytest.mark.asyncio
+async def test_native_tree_api_includes_parameter_value_from_postgresql_facts(tmp_path):
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="native-tree-parameter",
+        component_name="Database Tree Parameter",
+        component_type="part",
+        cad_revision_id=revision_id,
+    )
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        parse_manifest={"native_tree_storage": {"backend": "postgresql", "node_count": 2, "complete": True}},
+    ))
+    root_entity = SimpleNamespace(
+        id=uuid4(), parent_entity_id=None, source_ref="caa-native:root",
+        source_index=0, sort_order=0, name="Part10", label="Part10", tree_path="/Part10",
+        metadata_json={"native_tree": True, "native_node_id": "root", "display_name": "Part10"},
+    )
+    parameter_entity = SimpleNamespace(
+        id=uuid4(), parent_entity_id=root_entity.id, source_ref="caa-native:parameter",
+        source_index=1, sort_order=1, name="材料编号", label="材料编号", tree_path="/Part10/材料编号",
+        metadata_json={
+            "native_tree": True,
+            "native_node_id": "parameter",
+            "parent_id": "root",
+            "display_name": "材料编号",
+            "object_id": "object_parameter",
+            "startup_type": "String",
+        },
+    )
+    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None: _async_value(
+        [root_entity] if parent_node_id is None else ([parameter_entity] if parent_node_id == "root" else [])
+    )
+    repository.count_native_tree_entities = lambda _revision_id: _async_value(2)
+    repository.list_native_property_facts = lambda _revision_id, subject_ids, **_options: _async_value([
+        SimpleNamespace(
+            subject_id="object_parameter",
+            sort_order=0,
+            payload={
+                "key": "catia_parameter_value_text",
+                "raw_value": "M00001453",
+                "display_value": "M00001453",
+                "raw_display_text": "M00001453",
+            },
+        )
+    ] if "object_parameter" in subject_ids else [])
+
+    tree = await ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader()).get_native_tree(
+        build.id,
+        SimpleNamespace(cad_work_dir=tmp_path),
+    )
+
+    assert tree["roots"][0]["children"][0]["parameter_value"] == "M00001453"
+
+
+@pytest.mark.asyncio
+async def test_native_tree_api_reads_caa_new_bundle_without_local_paths(tmp_path):
+    revision_id = uuid4()
+    repository = MemoryComponentBuildRepository()
+    build = await repository.create_build(
+        component_id="native-tree",
+        component_name="Native Tree",
+        component_type="assembly",
+        cad_revision_id=revision_id,
+    )
+    native_dir = tmp_path / str(revision_id) / "native-caa"
+    native_dir.mkdir(parents=True)
+    _write_json(native_dir / "manifest.json", {"schema_version": "caa_capture_v1", "parser_version": "0.2.0", "capture_status": "partial"})
+    _write_jsonl(
+        native_dir / "product_occurrences.jsonl",
+        [
+            {
+                "occurrence_id": "product_occurrence_1",
+                "parent_occurrence_id": "",
+                "reference_id": "product_reference_root",
+                "referenced_document_id": "doc_1",
+                "instance_name": "Root",
+                "part_number": "Root",
+                "source_index": 0,
+                "depth": 0,
+                "child_count": 2,
+            },
+            {
+                "occurrence_id": "product_occurrence_3",
+                "parent_occurrence_id": "product_occurrence_1",
+                "reference_id": "product_reference_part",
+                "referenced_document_id": "doc_2",
+                "instance_name": "Part.2",
+                "part_number": "Part",
+                "source_index": 2,
+                "depth": 1,
+                "child_count": 0,
+            },
+            {
+                "occurrence_id": "product_occurrence_2",
+                "parent_occurrence_id": "product_occurrence_1",
+                "reference_id": "product_reference_part",
+                "referenced_document_id": "doc_2",
+                "instance_name": "Part.1",
+                "part_number": "Part",
+                "source_index": 1,
+                "depth": 1,
+                "child_count": 0,
+            },
+        ],
+    )
+    _write_jsonl(
+        native_dir / "object_entities.jsonl",
+        [
+            {
+                "object_id": "object_1",
+                "document_id": "doc_2",
+                "object_kind": "catia_spec_object",
+                "display_name": "D:\\secret\\Part.CATPart",
+                "internal_name": "Part1",
+                "startup_type": "MechanicalPart",
+                "update_status": "up_to_date",
+            }
+        ],
+    )
+    _write_jsonl(
+        native_dir / "tree_occurrences.jsonl",
+        [
+            {
+                "occurrence_id": "occurrence_1",
+                "parent_occurrence_id": "product_occurrence_2",
+                "object_id": "object_1",
+                "document_id": "doc_2",
+                "product_occurrence_id": "product_occurrence_2",
+                "reference_id": "product_reference_part",
+                "source_index": 1,
+                "occurrence_kind": "native_feature",
+                "presentation_status": "visible",
+            }
+        ],
+    )
+    _write_jsonl(
+        native_dir / "property_facts.jsonl",
+        [
+            {
+                "property_id": "property_fact_1",
+                "subject_id": "product_occurrence_2",
+                "tab_id": "product",
+                "tab_label": "产品",
+                "group_id": "identity",
+                "group_label": "标识",
+                "key": "path",
+                "display_name": "路径",
+                "raw_value": "D:\\secret\\Part.CATPart",
+                "display_value": "D:\\secret\\Part.CATPart",
+                "display_order": 10,
+                "read_only": True,
+            }
+        ],
+    )
+    payload = CaaNewBundleReader(native_dir).build_tree()
+    rows = native_tree_rows(revision_id, payload)
+    entities = [SimpleNamespace(
+        id=row["id"], parent_entity_id=row["parent_entity_id"], source_ref=row["source_ref"],
+        source_index=row["source_index"], sort_order=row["sort_order"], name=row["name"],
+        label=row["label"], tree_path=row["tree_path"], metadata_json=row["metadata_json"],
+    ) for row in rows]
+    entity_ids = {entity.source_ref.removeprefix(NATIVE_SOURCE_PREFIX): entity.id for entity in entities}
+    repository.get_raw_revision = lambda _revision_id: _async_value(SimpleNamespace(
+        id=revision_id,
+        parse_manifest={
+            "native_tree_storage": {"backend": "postgresql", "node_count": len(entities), "complete": True},
+            "native_property_storage": {"backend": "postgresql", "fact_count": 1, "complete": True},
+            "native_semantics": {
+                "available": True,
+                "manifest": "native-caa/manifest.json",
+            }
+        },
+    ))
+    repository.count_native_tree_entities = lambda _revision_id: _async_value(len(entities))
+    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None: _async_value([
+        entity for entity in entities
+        if entity.parent_entity_id == (entity_ids[parent_node_id] if parent_node_id else None)
+    ])
+    repository.get_native_tree_entity = lambda _revision_id, node_id: _async_value(next(
+        (entity for entity in entities if entity.source_ref == NATIVE_SOURCE_PREFIX + node_id), None
+    ))
+    repository.list_native_property_facts = lambda _revision_id, subject_ids, **_options: _async_value([
+        SimpleNamespace(
+            subject_id="product_occurrence_2",
+            sort_order=0,
+            payload={
+                "property_id": "property_fact_1",
+                "subject_id": "product_occurrence_2",
+                "tab_id": "product",
+                "tab_label": "产品",
+                "group_id": "identity",
+                "group_label": "标识",
+                "key": "path",
+                "display_name": "路径",
+                "raw_value": "D:\\secret\\Part.CATPart",
+                "display_value": "D:\\secret\\Part.CATPart",
+                "display_order": 10,
+                "read_only": True,
+            },
+        )
+    ])
+    service = ComponentBuildService(repository, source_status_reader=FakeSourceStatusReader())
+
+    tree = await service.get_native_tree(build.id, SimpleNamespace(cad_work_dir=tmp_path))
+    part_children = await service.get_native_tree(
+        build.id, SimpleNamespace(cad_work_dir=tmp_path), parent_id="product_occurrence_2"
+    )
+    properties = await service.get_native_node_properties(build.id, "product_occurrence_2", SimpleNamespace(cad_work_dir=tmp_path))
+
+    root = tree["roots"][0]
+    assert [child["display_name"] for child in root["children"]] == ["Part.1", "Part.2"]
+    assert part_children["roots"][0]["display_name"] == "Part.CATPart"
+    assert "D:\\secret" not in json.dumps(tree)
+    assert properties["property_count"] == 1
+    assert properties["tabs"][0]["groups"][0]["fields"][0]["display_value"] == "<local_path>\\Part.CATPart"
+
+
 async def _async_value(value):
     return value
-    assert response["component_spec"]["custom_extension"] == {"curve_policy": "all"}
-    assert stored.data["custom_extension"] == {"curve_policy": "all"}
-    assert "custom_extension:" in stored.yaml
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(json.dumps(record) + "\n")
 
 
 @pytest.mark.asyncio

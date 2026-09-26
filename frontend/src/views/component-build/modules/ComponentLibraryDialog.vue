@@ -9,26 +9,27 @@
  * 页签三：YAML / ComponentSpec——提供字段编辑与 YAML 预览。
  */
 
-import { computed, nextTick, ref, watch } from 'vue'
-import type { FormInstance, FormRules } from 'element-plus'
-import { ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import type { FormInstance, FormRules } from 'element-plus';
+import { ElMessageBox } from 'element-plus';
 import {
+  type ComponentSpecEditorState,
   applyComponentSpecFieldEdit,
   componentSpecPayloadForFusion,
   createComponentSpecEditorStateFromUpload,
   createComponentSpecSavePayload,
   createPersistedComponentSpecEditorState,
   importComponentSpecYaml,
-  requiresComponentSpecDiscardConfirmation,
-  type ComponentSpecEditorState
-} from '../component-spec-editor-state'
-import type { ComponentSpecFieldPath } from '../component-spec-field-events'
-import { YamlWorkingDocumentError } from '../yaml-working-document'
-import { isSupportedPartSourceFile } from '../source-file'
-import { modelViewerLocation } from '../model-viewer-route'
-import ComponentSpecFieldEditor from './ComponentSpecFieldEditor.vue'
-import ComponentYamlPreview from './ComponentYamlPreview.vue'
+  requiresComponentSpecDiscardConfirmation
+} from '../component-spec-editor-state';
+import type { ComponentSpecFieldPath } from '../component-spec-field-events';
+import { YamlWorkingDocumentError } from '../yaml-working-document';
+import { isSupportedPartSourceFile } from '../source-file';
+import { modelViewerLocation } from '../model-viewer-route';
+import ComponentSpecFieldEditor from './ComponentSpecFieldEditor.vue';
+import ComponentYamlPreview from './ComponentYamlPreview.vue';
+defineOptions({ name: 'ComponentLibraryDialog' });
 
 /**
  * 用途：向 index.vue 暴露可调用的弹窗方法。
@@ -41,101 +42,105 @@ defineExpose({
   setComponentSpec,
   setSpecLoading,
   setSpecSaving
-})
+});
 
-const router = useRouter()
+const router = useRouter();
 
 // 用途：声明父组件输入。
 const props = defineProps<{
-  catalog: Api.ComponentBuild.CatalogCategory[]
-  catalogLoading: boolean
-  submitting: boolean
-}>()
+  catalog: Api.ComponentBuild.CatalogCategory[];
+  catalogLoading: boolean;
+  submitting: boolean;
+}>();
 
 // 用途：声明弹窗对外事件。
 const emit = defineEmits<{
-  submit: [payload: {
-    form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>
-    editingBuild: Api.ComponentBuild.BuildDetail | null
-    sourceFile: File | null
-    drawingFile: File | null
-  }]
-  refresh: []
-  fusion: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload | null]
-  saveSpec: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload]
-  startParsing: [buildId: string, role: Api.ComponentBuild.RetryRole]
-}>()
+  submit: [
+    payload: {
+      form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>;
+      editingBuild: Api.ComponentBuild.BuildDetail | null;
+      sourceFile: File | null;
+      drawingFile: File | null;
+    }
+  ];
+  refresh: [];
+  fusion: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload | null];
+  saveSpec: [buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload];
+  startParsing: [buildId: string, role: Api.ComponentBuild.RetryRole];
+}>();
 
 // 用途：保存弹窗状态。
-const visible = ref(false)
-const activeTab = ref('basic')
-const formRef = ref<FormInstance>()
+const visible = ref(false);
+const activeTab = ref('basic');
+const formRef = ref<FormInstance>();
 
 // 用途：保存编辑表单状态。
-const editingBuild = ref<Api.ComponentBuild.BuildDetail | null>(null)
-const isEditing = computed(() => Boolean(editingBuild.value))
+const editingBuild = ref<Api.ComponentBuild.BuildDetail | null>(null);
+const isEditing = computed(() => Boolean(editingBuild.value));
 
-const form = ref(createDefaultForm())
-const sourceFile = ref<File | null>(null)
-const drawingFile = ref<File | null>(null)
+const form = ref(createDefaultForm());
+const sourceFile = ref<File | null>(null);
+const drawingFile = ref<File | null>(null);
 
 // 用途：保存 ComponentSpec 编辑状态。
-const componentSpec = ref<Api.ComponentBuild.ComponentSpecDocument | null>(null)
-const editorState = ref<ComponentSpecEditorState | null>(null)
-const specLoading = ref(false)
-const specSaving = ref(false)
-const specDirty = ref(false)
-const specOffline = ref(false)
-const specParseError = ref<string | null>(null)
-const yamlPreviewRef = ref<InstanceType<typeof ComponentYamlPreview> | null>(null)
+const componentSpec = ref<Api.ComponentBuild.ComponentSpecDocument | null>(null);
+const editorState = ref<ComponentSpecEditorState | null>(null);
+const specLoading = ref(false);
+const specSaving = ref(false);
+const specDirty = ref(false);
+const specOffline = ref(false);
+const specParseError = ref<string | null>(null);
+const yamlPreviewRef = ref<InstanceType<typeof ComponentYamlPreview> | null>(null);
 
-const currentYaml = computed(() => editorState.value?.working.yaml || '')
-const currentYamlFilename = computed(() => editorState.value?.working.sourceFilename || null)
-const currentSpecFields = computed(() => editorState.value?.working.fields || [])
-const currentSpecData = computed(() => editorState.value?.working.data || {})
+const currentYaml = computed(() => editorState.value?.working.yaml || '');
+const currentYamlFilename = computed(() => editorState.value?.working.sourceFilename || null);
+const currentSpecFields = computed(() => editorState.value?.working.fields || []);
+const currentSpecData = computed(() => editorState.value?.working.data || {});
 
 // 用途：保存当前零件构建任务的真实状态。
-const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({})
+const buildStatuses = ref<Record<string, Api.ComponentBuild.BuildStatus>>({});
 
 const formRules: FormRules = {
   category_code: [{ required: true, message: '请选择大类', trigger: 'change' }],
   part_type_code: [{ required: true, message: '请选择部件类型', trigger: 'change' }],
-  component_name: [{ required: true, message: '请输入零件名称', trigger: 'blur' }],
-}
+  component_name: [{ required: true, message: '请输入零件名称', trigger: 'blur' }]
+};
 
 const selectedCategory = computed(
   () => props.catalog.find(item => item.category_code === form.value.category_code) || null
-)
-const availablePartTypes = computed(() => selectedCategory.value?.parts || [])
+);
+const availablePartTypes = computed(() => selectedCategory.value?.parts || []);
 const selectedPartType = computed(
   () => availablePartTypes.value.find(item => item.part_type_code === form.value.part_type_code) || null
-)
+);
 const selectedCatalogPath = computed(() => {
-  const labels = [selectedCategory.value?.label, selectedPartType.value?.label].filter(Boolean)
-  return labels.length ? `/${labels.join('/')}` : '请先选择大类和部件类型'
-})
+  const labels = [selectedCategory.value?.label, selectedPartType.value?.label].filter(Boolean);
+  return labels.length ? `/${labels.join('/')}` : '请先选择大类和部件类型';
+});
 const generatedIdPreview = computed(() =>
   editingBuild.value
     ? editingBuild.value.component_id
     : selectedPartType.value
       ? `${selectedPartType.value.id_prefix}-###（系统自动递增）`
       : '选择部件类型后自动生成'
-)
+);
 
 // 用途：保存模型源文件和图纸源文件的独立处理状态。
 const canStartParsing = computed(() => (role: Api.ComponentBuild.RetryRole) => {
-  if (!editingBuild.value) return false
+  if (!editingBuild.value) return false;
   return role === 'reference_step'
     ? Boolean(editingBuild.value.cad_revision_id)
-    : Boolean(editingBuild.value.drawing_task_id)
-})
+    : Boolean(editingBuild.value.drawing_task_id);
+});
 
-const sourceParsing = ref(false)
+const sourceParsing = ref(false);
 
-const currentBuildId = computed(() => editingBuild.value?.id || '')
+const currentBuildId = computed(() => editingBuild.value?.id || '');
 
-const stepStatus = computed(() => buildStatuses.value[currentBuildId.value]?.sources.reference_step.status || 'missing')
-const drawingStatus = computed(() => buildStatuses.value[currentBuildId.value]?.sources.drawing.status || 'missing')
+const stepStatus = computed(
+  () => buildStatuses.value[currentBuildId.value]?.sources.reference_step.status || 'missing'
+);
+const drawingStatus = computed(() => buildStatuses.value[currentBuildId.value]?.sources.drawing.status || 'missing');
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
@@ -158,16 +163,16 @@ function statusLabel(status: string) {
     missing: '未上传',
     pending: '等待处理',
     future: '后续能力'
-  }
-  return labels[status] || status
+  };
+  return labels[status] || status;
 }
 
 function statusType(status: string): 'success' | 'primary' | 'warning' | 'danger' | 'info' {
-  if (['released', 'saved', 'completed', 'yaml_ready'].includes(status)) return 'success'
-  if (['parsing_sources', 'uploading', 'aligning', 'sources_ready'].includes(status)) return 'primary'
-  if (['review_required', 'sources_partial'].includes(status)) return 'warning'
-  if (['source_failed', 'failed'].includes(status)) return 'danger'
-  return 'info'
+  if (['released', 'saved', 'completed', 'yaml_ready'].includes(status)) return 'success';
+  if (['parsing_sources', 'uploading', 'aligning', 'sources_ready'].includes(status)) return 'primary';
+  if (['review_required', 'sources_partial'].includes(status)) return 'warning';
+  if (['source_failed', 'failed'].includes(status)) return 'danger';
+  return 'info';
 }
 
 // 用途：集中放置弹窗方法。
@@ -179,171 +184,169 @@ function createDefaultForm(): Omit<Api.ComponentBuild.CreatePayload, 'source_fil
     component_name: '',
     standard_number: '',
     version: '1.0.0'
-  }
+  };
 }
 
-async function open(build: Api.ComponentBuild.BuildDetail | null, statuses: Record<string, Api.ComponentBuild.BuildStatus>, spec: Api.ComponentBuild.ComponentSpecDocument | null) {
-  const nextBuildId = build?.id || null
-  if (visible.value && currentBuildId.value === nextBuildId) return false
-  if (!(await confirmDiscardChanges(nextBuildId))) return false
-  editingBuild.value = build
-  buildStatuses.value = statuses
-  componentSpec.value = null
-  editorState.value = null
-  specLoading.value = Boolean(build && !spec)
-  specSaving.value = false
-  specDirty.value = false
-  specOffline.value = false
-  specParseError.value = null
+async function open(
+  build: Api.ComponentBuild.BuildDetail | null,
+  statuses: Record<string, Api.ComponentBuild.BuildStatus>,
+  spec: Api.ComponentBuild.ComponentSpecDocument | null
+) {
+  const nextBuildId = build?.id || null;
+  if (visible.value && currentBuildId.value === nextBuildId) return false;
+  if (!(await confirmDiscardChanges(nextBuildId))) return false;
+  editingBuild.value = build;
+  buildStatuses.value = statuses;
+  componentSpec.value = null;
+  editorState.value = null;
+  specLoading.value = Boolean(build && !spec);
+  specSaving.value = false;
+  specDirty.value = false;
+  specOffline.value = false;
+  specParseError.value = null;
   form.value = {
     category_code: build?.family || '',
     part_type_code: build?.component_type || '',
     component_name: build?.component_name || '',
     standard_number: build?.standard_number || '',
     version: build?.version || '1.0.0'
-  }
-  sourceFile.value = null
-  drawingFile.value = null
-  activeTab.value = 'basic'
-  visible.value = true
-  if (build && spec) setComponentSpec(build.id, spec)
-  await nextTick()
-  formRef.value?.clearValidate()
-  return true
+  };
+  sourceFile.value = null;
+  drawingFile.value = null;
+  activeTab.value = 'basic';
+  visible.value = true;
+  if (build && spec) setComponentSpec(build.id, spec);
+  await nextTick();
+  formRef.value?.clearValidate();
+  return true;
 }
 
 async function close() {
-  if (!(await confirmDiscardChanges(null))) return false
-  visible.value = false
-  editingBuild.value = null
-  return true
+  if (!(await confirmDiscardChanges(null))) return false;
+  visible.value = false;
+  editingBuild.value = null;
+  return true;
 }
 
 async function confirmDiscardChanges(nextBuildId: string | null) {
-  if (!requiresComponentSpecDiscardConfirmation(
-    specDirty.value,
-    currentBuildId.value || null,
-    nextBuildId
-  )) {
-    return true
+  if (!requiresComponentSpecDiscardConfirmation(specDirty.value, currentBuildId.value || null, nextBuildId)) {
+    return true;
   }
   try {
     await ElMessageBox.confirm(
-      nextBuildId ? '当前 YAML 有未保存修改，切换图元会丢失这些修改。是否继续？' : '当前 YAML 有未保存修改，关闭后会丢失。是否继续？',
+      nextBuildId
+        ? '当前 YAML 有未保存修改，切换图元会丢失这些修改。是否继续？'
+        : '当前 YAML 有未保存修改，关闭后会丢失。是否继续？',
       '未保存的 ComponentSpec',
       {
         type: 'warning',
         confirmButtonText: '放弃修改',
         cancelButtonText: '继续编辑'
       }
-    )
-    return true
+    );
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
 async function handleBeforeClose(done: () => void) {
-  if (await confirmDiscardChanges(null)) done()
+  if (await confirmDiscardChanges(null)) done();
 }
 
 function setSourceParsing(value: boolean) {
-  sourceParsing.value = value
+  sourceParsing.value = value;
 }
 
 function updateBuildStatuses(statuses: Record<string, Api.ComponentBuild.BuildStatus>) {
-  buildStatuses.value = statuses
+  buildStatuses.value = statuses;
 }
 
-function setComponentSpec(
-  buildId: string,
-  spec: Api.ComponentBuild.ComponentSpecDocument,
-  offline = false
-) {
-  if (currentBuildId.value !== buildId) return
+function setComponentSpec(buildId: string, spec: Api.ComponentBuild.ComponentSpecDocument, offline = false) {
+  if (currentBuildId.value !== buildId) return;
   try {
-    const nextState = createPersistedComponentSpecEditorState(spec)
-    componentSpec.value = spec
-    editorState.value = nextState
-    specOffline.value = offline
-    specDirty.value = false
-    specParseError.value = null
+    const nextState = createPersistedComponentSpecEditorState(spec);
+    componentSpec.value = spec;
+    editorState.value = nextState;
+    specOffline.value = offline;
+    specDirty.value = false;
+    specParseError.value = null;
   } catch (error) {
-    specParseError.value = formatYamlError(error)
-    editorState.value = null
+    specParseError.value = formatYamlError(error);
+    editorState.value = null;
   }
 }
 
 function setSpecLoading(buildId: string, value: boolean) {
-  if (currentBuildId.value !== buildId) return
-  specLoading.value = value
+  if (currentBuildId.value !== buildId) return;
+  specLoading.value = value;
 }
 
 function setSpecSaving(buildId: string, value: boolean) {
-  if (currentBuildId.value !== buildId) return
-  specSaving.value = value
+  if (currentBuildId.value !== buildId) return;
+  specSaving.value = value;
 }
 
 function handleSpecFieldChange(path: ComponentSpecFieldPath, value: unknown) {
-  if (!editorState.value) return
-  editorState.value = applyComponentSpecFieldEdit(editorState.value, path, value)
-  specDirty.value = true
-  specParseError.value = null
-  yamlPreviewRef.value?.showCurrent()
+  if (!editorState.value) return;
+  editorState.value = applyComponentSpecFieldEdit(editorState.value, path, value);
+  specDirty.value = true;
+  specParseError.value = null;
+  yamlPreviewRef.value?.showCurrent();
 }
 
 function handleSaveSpec() {
-  if (!currentBuildId.value || !editorState.value) return
-  emit('saveSpec', currentBuildId.value, createComponentSpecSavePayload(editorState.value))
+  if (!currentBuildId.value || !editorState.value) return;
+  emit('saveSpec', currentBuildId.value, createComponentSpecSavePayload(editorState.value));
 }
 
 function handleFusion() {
-  if (!currentBuildId.value || !editorState.value) return
-  emit(
-    'fusion',
-    currentBuildId.value,
-    componentSpecPayloadForFusion(editorState.value, specDirty.value)
-  )
+  if (!currentBuildId.value || !editorState.value) return;
+  emit('fusion', currentBuildId.value, componentSpecPayloadForFusion(editorState.value, specDirty.value));
 }
 
 function handleUploadYaml(filename: string, content: string) {
   try {
     editorState.value = editorState.value
       ? importComponentSpecYaml(editorState.value, content, filename)
-      : createComponentSpecEditorStateFromUpload(content, filename)
-    specDirty.value = true
-    specParseError.value = null
-    window.$message?.success(`已加载 ${filename}，字段与预览已同步更新`)
+      : createComponentSpecEditorStateFromUpload(content, filename);
+    specDirty.value = true;
+    specParseError.value = null;
+    window.$message?.success(`已加载 ${filename}，字段与预览已同步更新`);
   } catch (error) {
-    specParseError.value = formatYamlError(error)
-    window.$message?.error(specParseError.value)
+    specParseError.value = formatYamlError(error);
+    window.$message?.error(specParseError.value);
   }
 }
 
 function formatYamlError(error: unknown) {
   if (error instanceof YamlWorkingDocumentError) {
-    const location = error.line && error.column ? `第 ${error.line} 行，第 ${error.column} 列：` : ''
-    return `${location}${error.message}`
+    const location = error.line && error.column ? `第 ${error.line} 行，第 ${error.column} 列：` : '';
+    return `${location}${error.message}`;
   }
-  return error instanceof Error ? error.message : 'YAML 解析失败'
+  return error instanceof Error ? error.message : 'YAML 解析失败';
 }
 
 function handleCategoryChange() {
-  form.value.part_type_code = ''
-  nextTick(() => formRef.value?.clearValidate('part_type_code'))
+  form.value.part_type_code = '';
+  nextTick(() => formRef.value?.clearValidate('part_type_code'));
 }
 
 function pickFile(role: 'source' | 'drawing', event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0] || null
-  if (!file) return
-  const valid = role === 'source' ? isSupportedPartSourceFile(file.name) : /\.(png|jpe?g|webp)$/i.test(file.name)
+  const file = (event.target as HTMLInputElement).files?.[0] || null;
+  if (!file) return;
+  const valid = role === 'source' ? isSupportedPartSourceFile(file.name) : /\.(png|jpe?g|webp)$/i.test(file.name);
   if (!valid) {
-    window.$message?.error(role === 'source' ? '请选择 STEP、STP、CATPart、CATProduct 或依赖 ZIP 文件；不支持 .cart' : '请选择 PNG、JPG、JPEG 或 WEBP 图纸')
-    ;(event.target as HTMLInputElement).value = ''
-    return
+    window.$message?.error(
+      role === 'source'
+        ? '请选择 STEP、STP、CATPart、CATProduct 或依赖 ZIP 文件；不支持 .cart'
+        : '请选择 PNG、JPG、JPEG 或 WEBP 图纸'
+    );
+    (event.target as HTMLInputElement).value = '';
+    return;
   }
-  if (role === 'source') sourceFile.value = file
-  else drawingFile.value = file
+  if (role === 'source') sourceFile.value = file;
+  else drawingFile.value = file;
 }
 
 function handleSubmit() {
@@ -352,41 +355,43 @@ function handleSubmit() {
     editingBuild: editingBuild.value,
     sourceFile: sourceFile.value,
     drawingFile: drawingFile.value
-  })
+  });
 }
 
 function handleViewCad() {
-  if (!editingBuild.value?.id) return
-  router.push(modelViewerLocation(
-    editingBuild.value.id,
-    editingBuild.value.cad_revision_id || '',
-    editingBuild.value.source_format
-  ))
+  if (!editingBuild.value?.id) return;
+  router.push(
+    modelViewerLocation(
+      editingBuild.value.id,
+      editingBuild.value.cad_revision_id || '',
+      editingBuild.value.source_format
+    )
+  );
 }
 
 function handleViewDrawing() {
-  if (!editingBuild.value?.drawing_task_id) return
-  activeTab.value = 'drawing'
+  if (!editingBuild.value?.drawing_task_id) return;
+  activeTab.value = 'drawing';
 }
 
 function handleStartParsing(role: Api.ComponentBuild.RetryRole) {
-  if (!currentBuildId.value) return
-  sourceParsing.value = true
-  emit('startParsing', currentBuildId.value, role)
+  if (!currentBuildId.value) return;
+  sourceParsing.value = true;
+  emit('startParsing', currentBuildId.value, role);
 }
 
-watch(visible, (val) => {
+watch(visible, val => {
   if (!val) {
-    editingBuild.value = null
-    componentSpec.value = null
-    editorState.value = null
-    specLoading.value = false
-    specSaving.value = false
-    specDirty.value = false
-    specOffline.value = false
-    specParseError.value = null
+    editingBuild.value = null;
+    componentSpec.value = null;
+    editorState.value = null;
+    specLoading.value = false;
+    specSaving.value = false;
+    specDirty.value = false;
+    specOffline.value = false;
+    specParseError.value = null;
   }
-})
+});
 </script>
 
 <template>
@@ -429,12 +434,7 @@ watch(visible, (val) => {
           </div>
           <div class="form-grid-2">
             <ElFormItem label="大类" prop="category_code">
-              <ElSelect
-                v-model="form.category_code"
-                filterable
-                placeholder="请选择大类"
-                @change="handleCategoryChange"
-              >
+              <ElSelect v-model="form.category_code" filterable placeholder="请选择大类" @change="handleCategoryChange">
                 <ElOption
                   v-for="category in catalog"
                   :key="category.category_code"
@@ -470,26 +470,39 @@ watch(visible, (val) => {
 
           <div class="upload-fields">
             <div class="upload-field">
-              <span class="upload-label">源模型文件 <small>可稍后补充</small></span>
+              <span class="upload-label">
+                源模型文件
+                <small>可稍后补充</small>
+              </span>
               <label class="file-input">
                 <input accept=".step,.stp,.CATPart,.CATProduct,.zip" type="file" @change="pickFile('source', $event)" />
                 <span>
                   {{
                     sourceFile?.name ||
-                    (editingBuild?.cad_revision_id ? '已有关联源模型；选择新文件可替换' : '选择 STEP / STP / CATPart / CATProduct / ZIP 文件')
+                    (editingBuild?.cad_revision_id
+                      ? '已有关联源模型；选择新文件可替换'
+                      : '选择 STEP / STP / CATPart / CATProduct / ZIP 文件')
                   }}
                 </span>
               </label>
-              <small class="upload-hint">支持 STEP/STP、CATPart、CATProduct，或包含一个 CATProduct 及其依赖 CATPart 的 ZIP。CATIA 文件将通过 CATIA 特征中心处理，需要 CATIA Worker 可用。</small>
+              <small class="upload-hint">
+                支持 STEP/STP、CATPart、CATProduct，或包含一个 CATProduct 及其依赖 CATPart 的 ZIP。CATIA 文件将通过
+                CATIA 特征中心处理，需要 CATIA Worker 可用。
+              </small>
             </div>
             <div class="upload-field">
-              <span class="upload-label">二维参数图 <small>可稍后补充</small></span>
+              <span class="upload-label">
+                二维参数图
+                <small>可稍后补充</small>
+              </span>
               <label class="file-input">
                 <input accept=".png,.jpg,.jpeg,.webp" type="file" @change="pickFile('drawing', $event)" />
                 <span>
                   {{
                     drawingFile?.name ||
-                    (editingBuild?.drawing_task_id ? '已有关联图纸；选择新文件可替换' : '选择 PNG、JPG、JPEG 或 WEBP 图纸')
+                    (editingBuild?.drawing_task_id
+                      ? '已有关联图纸；选择新文件可替换'
+                      : '选择 PNG、JPG、JPEG 或 WEBP 图纸')
                   }}
                 </span>
               </label>
@@ -505,18 +518,22 @@ watch(visible, (val) => {
             <!-- STEP card -->
             <div class="status-card">
               <div class="status-card-header">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path
+                    d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
+                  />
+                </svg>
                 <span>三维源模型</span>
               </div>
               <div class="status-card-body">
                 <div class="status-row">
                   <span>关联状态</span>
-                  <el-tag v-if="editingBuild?.cad_revision_id" size="small" type="success">已关联</el-tag>
-                  <el-tag v-else size="small" type="info">未关联</el-tag>
+                  <ElTag v-if="editingBuild?.cad_revision_id" size="small" type="success">已关联</ElTag>
+                  <ElTag v-else size="small" type="info">未关联</ElTag>
                 </div>
                 <div v-if="editingBuild?.cad_revision_id" class="status-row">
                   <span>解析状态</span>
-                  <el-tag :type="statusType(stepStatus)" size="small">{{ statusLabel(stepStatus) }}</el-tag>
+                  <ElTag :type="statusType(stepStatus)" size="small">{{ statusLabel(stepStatus) }}</ElTag>
                 </div>
                 <div v-if="editingBuild?.cad_revision_id" class="status-row">
                   <span>Revision ID</span>
@@ -524,9 +541,7 @@ watch(visible, (val) => {
                 </div>
               </div>
               <div class="status-card-actions">
-                <ElButton v-if="editingBuild?.cad_revision_id" size="small" @click="handleViewCad">
-                  查看模型
-                </ElButton>
+                <ElButton v-if="editingBuild?.cad_revision_id" size="small" @click="handleViewCad">查看模型</ElButton>
                 <ElButton
                   v-if="editingBuild?.cad_revision_id"
                   size="small"
@@ -542,18 +557,22 @@ watch(visible, (val) => {
             <!-- Drawing card -->
             <div class="status-card">
               <div class="status-card-header">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
                 <span>二维图纸</span>
               </div>
               <div class="status-card-body">
                 <div class="status-row">
                   <span>关联状态</span>
-                  <el-tag v-if="editingBuild?.drawing_task_id" size="small" type="success">已关联</el-tag>
-                  <el-tag v-else size="small" type="info">未关联</el-tag>
+                  <ElTag v-if="editingBuild?.drawing_task_id" size="small" type="success">已关联</ElTag>
+                  <ElTag v-else size="small" type="info">未关联</ElTag>
                 </div>
                 <div v-if="editingBuild?.drawing_task_id" class="status-row">
                   <span>解析状态</span>
-                  <el-tag :type="statusType(drawingStatus)" size="small">{{ statusLabel(drawingStatus) }}</el-tag>
+                  <ElTag :type="statusType(drawingStatus)" size="small">{{ statusLabel(drawingStatus) }}</ElTag>
                 </div>
                 <div v-if="editingBuild?.drawing_task_id" class="status-row">
                   <span>Task ID</span>
@@ -579,24 +598,25 @@ watch(visible, (val) => {
             <!-- ComponentSpec/YAML card -->
             <div class="status-card">
               <div class="status-card-header">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="16 18 22 12 16 6" />
+                  <polyline points="8 6 2 12 8 18" />
+                </svg>
                 <span>ComponentSpec / YAML</span>
               </div>
               <div class="status-card-body">
                 <div class="status-row">
                   <span>YAML 状态</span>
-                  <el-tag v-if="componentSpec?.saved" size="small" type="success">已保存</el-tag>
-                  <el-tag v-else size="small" type="info">待上传</el-tag>
+                  <ElTag v-if="componentSpec?.saved" size="small" type="success">已保存</ElTag>
+                  <ElTag v-else size="small" type="info">待上传</ElTag>
                 </div>
-                <div class="status-row" v-if="currentYaml">
+                <div v-if="currentYaml" class="status-row">
                   <span>YAML</span>
-                  <el-tag size="small" type="success">已加载</el-tag>
+                  <ElTag size="small" type="success">已加载</ElTag>
                 </div>
               </div>
               <div class="status-card-actions">
-                <ElButton size="small" :disabled="!editorState" @click="handleFusion">
-                  数据融合
-                </ElButton>
+                <ElButton size="small" :disabled="!editorState" @click="handleFusion">数据融合</ElButton>
                 <ElButton
                   size="small"
                   :loading="specSaving"
@@ -627,7 +647,18 @@ watch(visible, (val) => {
                     @click="handleSaveSpec"
                   >
                     <template #icon>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                        <polyline points="17 21 17 13 7 13 7 21" />
+                        <polyline points="7 3 7 8 15 8" />
+                      </svg>
                     </template>
                     保存草稿
                   </ElButton>
@@ -640,7 +671,7 @@ watch(visible, (val) => {
                   type="warning"
                   :closable="false"
                   show-icon
-                  style="margin-bottom: 10px;"
+                  style="margin-bottom: 10px"
                 />
                 <ComponentSpecFieldEditor
                   v-for="field in currentSpecFields"
@@ -692,10 +723,6 @@ watch(visible, (val) => {
     </template>
   </ElDialog>
 </template>
-
-<script lang="ts">
-export default { name: 'ComponentLibraryDialog' }
-</script>
 
 <style scoped>
 .library-dialog :deep(.el-dialog__body) {

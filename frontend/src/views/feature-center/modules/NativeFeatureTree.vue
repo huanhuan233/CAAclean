@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import { useElementSize } from '@vueuse/core';
 import { buildNativeFeatureTree, flattenFeatureTree, projectFeatureTree, splitHighlight } from './native-feature-tree';
 import type { FeatureTreeCategory, FeatureTreeKind, FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
 
@@ -11,23 +12,25 @@ const props = defineProps<{
   selectedId: string;
   faceRefsByFeatureId?: Record<string, string[]>;
   parameterValuesByObjectId?: Record<string, string>;
+  loadingNodeIds?: Set<string>;
+  retryNodeIds?: Set<string>;
 }>();
 
 const emit = defineEmits<{
   select: [node: FeatureTreeNode];
   properties: [node: FeatureTreeNode];
+  loadChildren: [node: FeatureTreeNode];
 }>();
 
-interface TreeNodeState {
-  expanded: boolean;
-}
-
 interface TreeExposed {
-  getNode: (key: string) => TreeNodeState | undefined;
+  setExpandedKeys: (keys: string[]) => void;
   setCurrentKey: (key?: string) => void;
 }
 
 const treeRef = ref<TreeExposed | null>(null);
+const scrollRef = ref<HTMLElement | null>(null);
+const { height: treeHeight } = useElementSize(scrollRef);
+const initializedExpansion = ref(false);
 const query = ref('');
 const showSystem = ref(false);
 const category = ref<FeatureTreeCategory>('all');
@@ -49,7 +52,6 @@ const projection = computed(() =>
     category: category.value
   })
 );
-const visibleNodes = computed(() => flattenFeatureTree(projection.value.nodes));
 
 const KIND_ICONS: Record<FeatureTreeKind, string> = {
   catpart: 'lucide:file-box',
@@ -88,39 +90,55 @@ function defaultExpandedKeys() {
 
 function expansionKeys() {
   if (query.value || category.value !== 'all') return projection.value.expandedKeys;
-  return userExpandedKeys.value.length ? userExpandedKeys.value : defaultExpandedKeys();
+  return userExpandedKeys.value;
 }
 
 // 用途：搜索期间临时展开命中祖先，清空后恢复用户搜索前的展开集合和当前项。
 async function syncTreeState() {
   await nextTick();
-  const expanded = new Set(expansionKeys());
-  visibleNodes.value.forEach(node => {
-    const state = treeRef.value?.getNode(node.id);
-    if (state) state.expanded = expanded.has(node.id);
-  });
+  treeRef.value?.setExpandedKeys(expansionKeys());
   treeRef.value?.setCurrentKey(props.selectedId || undefined);
-  await nextTick();
-  document
-    .querySelector('.native-feature-tree .el-tree-node.is-current > .el-tree-node__content')
-    ?.scrollIntoView({ block: 'nearest' });
 }
 
-function handleExpand(node: FeatureTreeNode) {
+// Element Plus 对外暴露的是宽泛 TreeNodeData；组件边界内再收窄为本模块构造的节点。
+function featureNode(node: unknown) {
+  return node as FeatureTreeNode;
+}
+
+function handleExpand(data: unknown) {
+  const node = featureNode(data);
   if (query.value || category.value !== 'all') return;
   userExpandedKeys.value = [...new Set([...userExpandedKeys.value, node.id])];
 }
 
-function handleCollapse(node: FeatureTreeNode) {
+function handleCollapse(data: unknown) {
+  const node = featureNode(data);
   if (query.value || category.value !== 'all') return;
   userExpandedKeys.value = userExpandedKeys.value.filter(key => key !== node.id);
 }
 
-function handleSelect(node: FeatureTreeNode) {
+function handleSelect(data: unknown) {
+  const node = featureNode(data);
   emit('select', node);
+  if (hasUnloadedChildren(node)) {
+    handleExpand(node);
+    emit('loadChildren', node);
+  }
 }
 
-function handleContextMenu(event: Event, node: FeatureTreeNode) {
+function hasUnloadedChildren(node: FeatureTreeNode) {
+  const attributes = node.raw?.attributes || {};
+  return node.children.length === 0 && (Boolean(attributes.has_children) || Number(attributes.child_count || 0) > 0);
+}
+
+function handleLoadChildren(node: FeatureTreeNode) {
+  if (props.loadingNodeIds?.has(node.id)) return;
+  handleExpand(node);
+  emit('loadChildren', node);
+}
+
+function handleContextMenu(event: Event, data: unknown) {
+  const node = featureNode(data);
   event.preventDefault();
   emit('select', node);
   emit('properties', node);
@@ -142,7 +160,10 @@ watch(
   sourceTree,
   () => {
     // 数据初始化后保留用户手动展开状态，避免点击节点时整棵树缩回。
-    if (!userExpandedKeys.value.length) userExpandedKeys.value = defaultExpandedKeys();
+    if (!initializedExpansion.value && props.records.length) {
+      userExpandedKeys.value = defaultExpandedKeys();
+      initializedExpansion.value = true;
+    }
   },
   { immediate: true }
 );
@@ -185,14 +206,15 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
       </ElPopover>
     </div>
 
-    <div class="native-tree-scroll">
-      <ElTree
+    <div ref="scrollRef" class="native-tree-scroll">
+      <ElTreeV2
         v-if="projection.nodes.length"
         ref="treeRef"
         class="native-feature-tree"
         :data="projection.nodes"
-        node-key="id"
-        :props="{ label: 'displayName', children: 'children' }"
+        :props="{ value: 'id', label: 'displayName', children: 'children' }"
+        :height="Math.max(100, treeHeight - 10)"
+        :item-size="36"
         :default-expanded-keys="defaultExpandedKeys()"
         :current-node-key="selectedId"
         :expand-on-click-node="false"
@@ -210,6 +232,18 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
             :show-after="500"
           >
             <span class="feature-tree-row" :class="[`kind-${data.kind}`, { system: data.isSystem }]">
+              <button
+                v-if="hasUnloadedChildren(data) || loadingNodeIds?.has(data.id) || retryNodeIds?.has(data.id)"
+                type="button"
+                class="lazy-expand"
+                title="加载下一层 CATIA 节点"
+                :disabled="loadingNodeIds?.has(data.id)"
+                :aria-busy="loadingNodeIds?.has(data.id)"
+                @click.stop="handleLoadChildren(data)"
+              >
+                <SvgIcon :icon="loadingNodeIds?.has(data.id) ? 'lucide:loader-circle' : 'lucide:chevron-right'"
+                  :class="{ 'animate-spin': loadingNodeIds?.has(data.id) }" />
+              </button>
               <span class="node-icon"><SvgIcon :icon="iconFor(data.kind)" /></span>
               <span class="node-title" :class="{ 'has-value': data.parameterValue }">
                 <template v-for="(part, index) in highlightParts(data.displayName)" :key="`${data.id}-${index}`">
@@ -218,17 +252,22 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
                 </template>
               </span>
               <strong v-if="data.parameterValue" class="node-value" :title="data.parameterValue">
-                <template v-for="(part, index) in highlightParts(data.parameterValue)" :key="`${data.id}-value-${index}`">
+                <template
+                  v-for="(part, index) in highlightParts(data.parameterValue)"
+                  :key="`${data.id}-value-${index}`"
+                >
                   <mark v-if="part.matched">{{ part.text }}</mark>
                   <span v-else>{{ part.text }}</span>
                 </template>
               </strong>
               <span v-if="data.faceRefs.length" class="mapping-dot" title="已建立 Feature–Face 映射" />
+              <small v-if="loadingNodeIds?.has(data.id)" role="status">加载中…</small>
+              <small v-else-if="retryNodeIds?.has(data.id)" @click.stop="handleLoadChildren(data)">点击重试</small>
               <small v-if="kindLabel(data)" class="node-kind">{{ kindLabel(data) }}</small>
             </span>
           </ElTooltip>
         </template>
-      </ElTree>
+      </ElTreeV2>
       <ElEmpty
         v-else
         :description="query || category !== 'all' ? '没有匹配的原生特征' : '没有可用的 CAA 原生特征索引'"
@@ -330,6 +369,17 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
   min-width: 0;
   align-items: center;
   gap: 8px;
+}
+.lazy-expand {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  padding: 0;
 }
 .feature-tree-row.system {
   color: var(--el-text-color-secondary);

@@ -9,8 +9,12 @@ import {
 class MemoryStorage {
   private readonly values = new Map<string, string>();
 
-  getItem(key: string) { return this.values.get(key) ?? null; }
-  setItem(key: string, value: string) { this.values.set(key, value); }
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
 }
 
 test('只恢复上一次真实成功加载的 build id', () => {

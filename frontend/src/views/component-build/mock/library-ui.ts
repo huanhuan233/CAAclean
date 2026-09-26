@@ -31,17 +31,17 @@
  * Formula: simple string hash → mod 300 + 10 → result in [10, 309].
  */
 function stableHash(str: string): number {
-  let hash = 0
+  let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash = hash & hash // Convert to 32bit integer
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash &= hash; // Convert to 32bit integer
   }
-  return Math.abs(hash)
+  return Math.abs(hash);
 }
 
 /** Map build_id → call volume. Built lazily; stable within a session. */
-const callVolumeCache = new Map<string, number>()
+const callVolumeCache = new Map<string, number>();
 
 /**
  * Get a stable demo call volume for a given build_id.
@@ -53,9 +53,9 @@ const callVolumeCache = new Map<string, number>()
  */
 export function getDemoCallVolume(buildId: string): number {
   if (!callVolumeCache.has(buildId)) {
-    callVolumeCache.set(buildId, (stableHash(buildId) % 300) + 10)
+    callVolumeCache.set(buildId, (stableHash(buildId) % 300) + 10);
   }
-  return callVolumeCache.get(buildId)!
+  return callVolumeCache.get(buildId)!;
 }
 
 /** Catalog path display helper — maps category_code to label. */
@@ -67,14 +67,14 @@ const catalogCategoryLabels: Record<string, string> = {
   '05': '05 密封元件',
   '06': '06 支撑与结构',
   '07': '07 动力与执行'
-}
+};
 
 /**
  * Get catalog display label from category code.
  * Falls back to the code itself if not found.
  */
 export function getCatalogLabel(code: string): string {
-  return catalogCategoryLabels[code] || code
+  return catalogCategoryLabels[code] || code;
 }
 
 /**
@@ -89,14 +89,14 @@ export function getCatalogLabel(code: string): string {
  * =============================================================================
  */
 
-const LOCAL_YAML_PREFIX = 'component-library-local-yaml:'
+const LOCAL_YAML_PREFIX = 'component-library-local-yaml:';
 
 export interface LocalYamlRecord {
-  filename: string
-  size: number
-  modifiedAt: string
-  content: string
-  uploadedAt: string
+  filename: string;
+  size: number;
+  modifiedAt: string;
+  content: string;
+  uploadedAt: string;
 }
 
 /**
@@ -105,7 +105,7 @@ export interface LocalYamlRecord {
  */
 export function saveLocalYaml(buildId: string, record: LocalYamlRecord): void {
   try {
-    localStorage.setItem(LOCAL_YAML_PREFIX + buildId, JSON.stringify(record))
+    localStorage.setItem(LOCAL_YAML_PREFIX + buildId, JSON.stringify(record));
   } catch {
     // localStorage full or unavailable — silently ignore
   }
@@ -118,11 +118,11 @@ export function saveLocalYaml(buildId: string, record: LocalYamlRecord): void {
  */
 export function getLocalYaml(buildId: string): LocalYamlRecord | null {
   try {
-    const raw = localStorage.getItem(LOCAL_YAML_PREFIX + buildId)
-    if (!raw) return null
-    return JSON.parse(raw) as LocalYamlRecord
+    const raw = localStorage.getItem(LOCAL_YAML_PREFIX + buildId);
+    if (!raw) return null;
+    return JSON.parse(raw) as LocalYamlRecord;
   } catch {
-    return null
+    return null;
   }
 }
 
@@ -130,5 +130,5 @@ export function getLocalYaml(buildId: string): LocalYamlRecord | null {
  * Remove a locally-uploaded YAML from localStorage.
  */
 export function clearLocalYaml(buildId: string): void {
-  localStorage.removeItem(LOCAL_YAML_PREFIX + buildId)
+  localStorage.removeItem(LOCAL_YAML_PREFIX + buildId);
 }

@@ -26,7 +26,10 @@ test('参数集合支持对象和数组形态，并复制完整格式化值', ()
     nested: { depth: 12 }
   });
 
-  assert.deepEqual(objectRows.map(row => row.key), ['long_name', 'zero', 'disabled', 'nested']);
+  assert.deepEqual(
+    objectRows.map(row => row.key),
+    ['long_name', 'zero', 'disabled', 'nested']
+  );
   assert.equal(objectRows[1].value.text, '0');
   assert.equal(objectRows[2].value.text, 'false');
   assert.equal(objectRows[3].value.text, '1 个字段');
@@ -38,7 +41,10 @@ test('参数集合支持对象和数组形态，并复制完整格式化值', ()
     { label: 'material', value: null }
   ]);
 
-  assert.deepEqual(arrayRows.map(row => row.key), ['length', 'enabled', 'material']);
+  assert.deepEqual(
+    arrayRows.map(row => row.key),
+    ['length', 'enabled', 'material']
+  );
   assert.equal(arrayRows[1].value.text, 'false');
   assert.equal(arrayRows[2].value.text, '—');
 });
@@ -82,9 +88,18 @@ test('特征详情按配置优先显示，并追加真实返回的未声明字�
     custom_backend_field: 'visible'
   } as never);
 
-  assert.deepEqual(rows.slice(0, 3).map(row => row.key), ['feature_id', 'native_type', 'update_status']);
-  assert.equal(rows.some(row => row.key === 'native_feature_parameters'), false);
-  assert.equal(rows.some(row => row.key === 'children'), false);
+  assert.deepEqual(
+    rows.slice(0, 3).map(row => row.key),
+    ['feature_id', 'native_type', 'update_status']
+  );
+  assert.equal(
+    rows.some(row => row.key === 'native_feature_parameters'),
+    false
+  );
+  assert.equal(
+    rows.some(row => row.key === 'children'),
+    false
+  );
   assert.equal(rows.find(row => row.key === 'custom_backend_field')?.value.text, 'visible');
 });
 
@@ -104,5 +119,8 @@ test('关联几何沿用真实 face、feature 和边界数据', () => {
     selectedFace: { adjacent_face_ids: ['AF1'], boundary_edge_ids: ['E1'] }
   });
 
-  assert.deepEqual(rows.map(row => `${row.kind}:${row.id}`), ['面:NF1', '面:RF1', '特征:FC1', '相邻面:AF1', '边:E1']);
+  assert.deepEqual(
+    rows.map(row => `${row.kind}:${row.id}`),
+    ['面:NF1', '面:RF1', '特征:FC1', '相邻面:AF1', '边:E1']
+  );
 });

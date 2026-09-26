@@ -1,37 +1,37 @@
-import { stringify } from 'yaml'
+import { stringify } from 'yaml';
 import {
-  createYamlWorkingDocument,
-  updateYamlWorkingDocument,
   type TemplateSectionDefinition,
   type YamlFieldPath,
-  type YamlWorkingDocument
-} from './yaml-working-document'
+  type YamlWorkingDocument,
+  createYamlWorkingDocument,
+  updateYamlWorkingDocument
+} from './yaml-working-document';
 
 export interface ComponentSpecDocumentLike {
   schema: {
-    sections: TemplateSectionDefinition[]
-  }
-  data: Record<string, unknown>
-  yaml?: string | null
-  source_filename?: string | null
-  saved?: boolean
+    sections: TemplateSectionDefinition[];
+  };
+  data: Record<string, unknown>;
+  yaml?: string | null;
+  source_filename?: string | null;
+  saved?: boolean;
 }
 
 export interface ComponentSpecEditorState {
-  systemYaml: string
-  working: YamlWorkingDocument
-  dirty: boolean
-  source: 'system' | 'upload' | 'manual'
+  systemYaml: string;
+  working: YamlWorkingDocument;
+  dirty: boolean;
+  source: 'system' | 'upload' | 'manual';
 }
 
 export interface CreateComponentSpecEditorStateOptions {
-  generatedYaml?: string
+  generatedYaml?: string;
 }
 
 export interface ComponentSpecSavePayload {
-  data: Record<string, unknown>
-  yaml: string
-  source_filename: string | null
+  data: Record<string, unknown>;
+  yaml: string;
+  source_filename: string | null;
 }
 
 export function requiresComponentSpecDiscardConfirmation(
@@ -39,40 +39,40 @@ export function requiresComponentSpecDiscardConfirmation(
   currentBuildId: string | null,
   nextBuildId: string | null
 ): boolean {
-  return dirty && currentBuildId !== nextBuildId
+  return dirty && currentBuildId !== nextBuildId;
 }
 
 export function createComponentSpecEditorState(
   document: ComponentSpecDocumentLike,
   options: CreateComponentSpecEditorStateOptions = {}
 ): ComponentSpecEditorState {
-  const yamlText = document.yaml || options.generatedYaml || stringify(document.data)
+  const yamlText = document.yaml || options.generatedYaml || stringify(document.data);
   const working = createYamlWorkingDocument(yamlText, {
     sourceFilename: document.source_filename ?? null,
     templateSections: document.schema.sections
-  })
+  });
   return {
     systemYaml: yamlText,
     working,
     dirty: false,
     source: 'system'
-  }
+  };
 }
 
 export function createPersistedComponentSpecEditorState(
   document: ComponentSpecDocumentLike
 ): ComponentSpecEditorState | null {
-  if (!document.saved || !document.yaml) return null
+  if (!document.saved || !document.yaml) return null;
   const working = createYamlWorkingDocument(document.yaml, {
     sourceFilename: document.source_filename ?? null,
     templateSections: []
-  })
+  });
   return {
     systemYaml: document.yaml,
     working,
     dirty: false,
     source: 'system'
-  }
+  };
 }
 
 export function createComponentSpecEditorStateFromUpload(
@@ -82,13 +82,13 @@ export function createComponentSpecEditorStateFromUpload(
   const working = createYamlWorkingDocument(yamlText, {
     sourceFilename,
     templateSections: []
-  })
+  });
   return {
     systemYaml: '',
     working,
     dirty: true,
     source: 'upload'
-  }
+  };
 }
 
 export function importComponentSpecYaml(
@@ -99,13 +99,13 @@ export function importComponentSpecYaml(
   const working = createYamlWorkingDocument(yamlText, {
     sourceFilename,
     templateSections: state.working.templateSections
-  })
+  });
   return {
     ...state,
     working,
     dirty: true,
     source: 'upload'
-  }
+  };
 }
 
 export function applyComponentSpecFieldEdit(
@@ -118,22 +118,20 @@ export function applyComponentSpecFieldEdit(
     working: updateYamlWorkingDocument(state.working, path, value),
     dirty: true,
     source: state.source === 'system' ? 'manual' : state.source
-  }
+  };
 }
 
-export function createComponentSpecSavePayload(
-  state: ComponentSpecEditorState
-): ComponentSpecSavePayload {
+export function createComponentSpecSavePayload(state: ComponentSpecEditorState): ComponentSpecSavePayload {
   return {
     data: state.working.data,
     yaml: state.working.yaml,
     source_filename: state.working.sourceFilename
-  }
+  };
 }
 
 export function componentSpecPayloadForFusion(
   state: ComponentSpecEditorState,
   dirty: boolean
 ): ComponentSpecSavePayload | null {
-  return dirty ? createComponentSpecSavePayload(state) : null
+  return dirty ? createComponentSpecSavePayload(state) : null;
 }

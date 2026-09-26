@@ -20,9 +20,13 @@ from uuid import UUID
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.catia_worker.caa_new_runner import CaaNewRunner, CaaNewRunnerError
 from app.cad.repository import CadRepository
 from app.cad.service import CadService
+from app.component_builds.caa_new_bundle import CaaNewBundleReader
 from app.component_builds.catia_worker import CatiaWorkerClient, CatiaWorkerError
+from app.component_builds.native_property_store import iter_native_property_rows
+from app.component_builds.native_tree_store import native_tree_rows
 from app.core.config import BACKEND_ROOT, REPOSITORY_ROOT, Settings
 from app.db.session import SessionLocal
 
@@ -64,6 +68,10 @@ class _IngestRuntimeSettings(BaseSettings):
     caa_rade_root: str = ""
     caa_prereq_root: str = ""
     catia_worker_mode: str = ""
+    caa_capture_project_root: Path = REPOSITORY_ROOT / "caa_new"
+    caa_capture_runner: Path | None = None
+    caa_capture_platform: str = "intel_a"
+    caa_capture_bitness: int = 32
 
 
 # 用途：只根据已校验文件名识别真实格式，绝不接受客户端指定处理路线。
@@ -223,17 +231,19 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
     runtime = _IngestRuntimeSettings()
     rade_root = os.environ.get("CAA_RADE_ROOT") or runtime.caa_rade_root
     prereq_root = os.environ.get("CAA_PREREQ_ROOT") or runtime.caa_prereq_root
-    mode = (runtime.catia_worker_mode or settings.catia_worker_mode).strip().lower()
-    if mode in {"", "disabled"}:
+    mode = (settings.catia_worker_mode or runtime.catia_worker_mode).strip().lower()
+    if mode == "":
         mode = "local_process"
     if mode == "disabled":
         raise IngestStageError("catia_worker_disabled", "dispatching_caa", "CATIA Worker 未启用")
     if mode == "http":
         worker_source_path = original_source_path if original_source_path.suffix.lower() == ".zip" else source_path
         await _run_remote_catpart_worker(repository, revision_id, settings, str(worker_source_path), task_root)
-        await _append_catpart_feature_trees(source_path, native_bundle, rade_root, prereq_root, settings)
-        await _set_stage(repository, revision_id, "feature_center_processing", 70)
-        await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
+        if exported_step.is_file() and exported_step.stat().st_size > 0:
+            await _set_stage(repository, revision_id, "feature_center_processing", 70)
+            await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
+        else:
+            await _publish_native_only(repository, revision_id, settings, native_bundle, "step_unavailable")
         return
     if mode != "local_process":
         raise IngestStageError("catia_worker_mode_invalid", "dispatching_caa", "CATIA Worker 模式无效")
@@ -244,32 +254,61 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
         raise IngestStageError("catia_worker_unavailable", "dispatching_caa", "未配置 CAA_RADE_ROOT 或 CAA_PREREQ_ROOT")
 
     await _set_stage(repository, revision_id, "running_caa", 15)
-    await _run_command(
-        [
-            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x64_host_intel_a.bat"),
-            "--input", str(source_path), "--output", str(native_bundle), "--read-only",
-        ],
-        "caa_parse_failed",
-        "running_caa",
-        settings.freecad_timeout,
-        {"CAA_RADE_ROOT": rade_root, "CAA_PREREQ_ROOT": prereq_root},
+    runner = CaaNewRunner(
+        project_root=runtime.caa_capture_project_root,
+        runner=runtime.caa_capture_runner or runtime.caa_capture_project_root / "tools" / "run_r21_x86.bat",
+        platform=runtime.caa_capture_platform,
+        bitness=runtime.caa_capture_bitness,
+        rade_root=rade_root,
+        prereq_root=prereq_root,
     )
-    await _append_catpart_feature_trees(source_path, native_bundle, rade_root, prereq_root, settings)
-    await _set_stage(repository, revision_id, "exporting_step", 45)
-    await _run_command(
-        [
-            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-            str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "export_catpart_step.ps1"),
-            "-InputCatPart", str(source_path),
-            "-OutputStep", str(exported_step),
-            "-ReportPath", str(export_report),
-        ],
-        "catia_step_export_failed",
-        "exporting_step",
-        settings.freecad_timeout,
+    try:
+        capture_result = await runner.capture(source_path, native_bundle, timeout_seconds=settings.freecad_timeout)
+    except CaaNewRunnerError as exc:
+        raise IngestStageError(exc.code, exc.stage, str(exc)) from exc
+    await repository.update_revision_manifest(
+        revision_id,
+        {
+            "native_capture": {
+                "available": True,
+                "status": capture_result.capture_status,
+                "schema_version": capture_result.schema_version,
+                "parser_version": capture_result.parser_version,
+                "document_kind": capture_result.document_kind,
+                "selected_reconstruction_route": capture_result.selected_reconstruction_route,
+                "has_tree": (native_bundle / "tree_occurrences.jsonl").is_file(),
+                "has_properties": (native_bundle / "property_facts.jsonl").is_file(),
+                "has_topology": (native_bundle / "topology_entities.jsonl").is_file(),
+                "has_geometry": capture_result.has_geometry,
+                "has_mesh": (native_bundle / "native_mesh_triangles.jsonl").is_file(),
+                "capture_engine": "caa_new",
+                "capture_platform": runtime.caa_capture_platform,
+                "capture_bitness": runtime.caa_capture_bitness,
+            }
+        },
     )
-    await _set_stage(repository, revision_id, "feature_center_processing", 70)
-    await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
+    await _publish_native_progress(repository, revision_id, native_bundle)
+    try:
+        await _set_stage(repository, revision_id, "exporting_step", 45)
+        await _run_command(
+            [
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "export_catpart_step.ps1"),
+                "-InputCatPart", str(source_path),
+                "-OutputStep", str(exported_step),
+                "-ReportPath", str(export_report),
+            ],
+            "catia_step_export_failed",
+            "exporting_step",
+            settings.freecad_timeout,
+        )
+        await _set_stage(repository, revision_id, "feature_center_processing", 70)
+        await _build_feature_center(repository, revision_id, settings, exported_step, native_bundle)
+    except IngestStageError as exc:
+        if (native_bundle / "tree_occurrences.jsonl").is_file() or (native_bundle / "features.jsonl").is_file():
+            await _publish_native_only(repository, revision_id, settings, native_bundle, exc.code)
+            return
+        raise
 
 
 # 用途：通过 HTTP Worker 上传 CATPart 字节并下载经哈希校验的原生 IR 与 STEP 产物。
@@ -316,10 +355,19 @@ async def _run_remote_catpart_worker(
     )
     native_archive = download_root / "native_bundle.zip"
     exported_step = download_root / "exported.stp"
-    if not native_archive.is_file() or not exported_step.is_file() or exported_step.stat().st_size == 0:
-        raise IngestStageError("catia_step_export_failed", "exporting_step", "Worker 未返回完整原生结果和 STEP")
+    if not native_archive.is_file():
+        raise IngestStageError("catia_worker_artifact_invalid", "publishing_assets", "Worker 未返回 CAA_NEW 原生结果")
     _extract_worker_archive(native_archive, task_root / "native-caa")
-    shutil.copy2(exported_step, task_root / "exported.stp")
+    if exported_step.is_file() and exported_step.stat().st_size > 0:
+        shutil.copy2(exported_step, task_root / "exported.stp")
+    worker_manifest_path = download_root / "manifest.json"
+    if worker_manifest_path.is_file():
+        worker_manifest = json.loads(worker_manifest_path.read_text(encoding="utf-8"))
+        native_capture = dict(worker_manifest.get("native_capture") or {})
+        if native_capture:
+            native_capture["available"] = True
+            await repository.update_revision_manifest(revision_id, {"native_capture": native_capture})
+    await _publish_native_progress(repository, revision_id, task_root / "native-caa")
 
 
 # 用途：只解压相对普通文件，拒绝 Worker ZIP 中的绝对路径、父目录和符号链接式穿越。
@@ -361,6 +409,7 @@ def _prepare_catia_source(source_path: Path, task_root: Path) -> Path:
 def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path:
     """选择 ZIP 中的最外层 Product；子 CATProduct 由 CAA 产品树递归读取。"""
     archive_stem = "".join(character for character in archive_path.stem.casefold() if character.isalnum())
+    referenced_products = _find_referenced_catproducts(candidates)
     return min(
         candidates,
         key=lambda path: (
@@ -368,166 +417,39 @@ def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path
             if archive_stem
             and "".join(character for character in path.stem.casefold() if character.isalnum()) == archive_stem
             else 1,
+            1 if path.resolve() in referenced_products else 0,
+            0 if _looks_like_root_product(path) else 1,
             len(path.parts),
             str(path).casefold(),
         ),
     )
 
 
-async def _append_catpart_feature_trees(
-    source_path: Path,
-    native_bundle: Path,
-    rade_root: str,
-    prereq_root: str,
-    settings: Settings,
-) -> None:
-    product_instances_path = native_bundle / "product_instances.jsonl"
-    if source_path.suffix.lower() != ".catproduct" or not product_instances_path.is_file():
-        return
-    catparts = sorted(source_path.parent.rglob("*.CATPart"))
-    if not catparts:
-        catparts = sorted(source_path.parent.rglob("*.catpart"))
-    if not catparts:
-        return
-
-    part_output_root = native_bundle / "part-feature-trees"
-    if part_output_root.exists():
-        shutil.rmtree(part_output_root)
-    part_output_root.mkdir(parents=True, exist_ok=True)
-
-    instances = [_load_json_line(line) for line in product_instances_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    combined_path = native_bundle / "product_feature_tree.jsonl"
-    part_tree_index: dict[str, str] = {}
-    with combined_path.open("w", encoding="utf-8", newline="\n") as stream:
-        for instance in instances:
-            if instance:
-                stream.write(json.dumps(_product_instance_tree_record(instance), ensure_ascii=False) + "\n")
-
-        for catpart in catparts:
-            output_dir = part_output_root / catpart.stem
-            await _run_command(
-                [
-                    "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "run_r21_x64_host_intel_a.bat"),
-                    "--input", str(catpart), "--output", str(output_dir), "--read-only",
-                ],
-                "caa_parse_failed",
-                "running_caa",
-                settings.freecad_timeout,
-                {"CAA_RADE_ROOT": rade_root, "CAA_PREREQ_ROOT": prereq_root},
-            )
-            parent_ids = _matching_product_instance_ids(instances, catpart.stem)
-            for parent_id in parent_ids:
-                part_tree_index[parent_id] = f"native-caa/part-feature-trees/{catpart.stem}/features.jsonl"
-            if not parent_ids:
-                parent_ids = [f"CATPART:{catpart.stem}"]
-                stream.write(json.dumps({
-                    "feature_id": parent_ids[0],
-                    "parent_id": "",
-                    "display_name": catpart.stem,
-                    "internal_name": str(catpart),
-                    "native_type": "CATPart",
-                    "startup_type": "CATPart",
-                    "tree_path": catpart.name,
-                    "attributes": {"source_document": str(catpart)}
-                }, ensure_ascii=False) + "\n")
-            part_features_path = output_dir / "features.jsonl"
-            if not part_features_path.is_file():
-                continue
-            records = [_load_json_line(line) for line in part_features_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-            for parent_id in parent_ids:
-                for record in records:
-                    if not record:
-                        continue
-                    feature_id = str(record.get("feature_id") or "")
-                    if not feature_id:
-                        continue
-                    merged = dict(record)
-                    merged["feature_id"] = f"{parent_id}/{feature_id}"
-                    original_parent = str(record.get("parent_id") or "")
-                    merged["parent_id"] = f"{parent_id}/{original_parent}" if original_parent else parent_id
-                    merged["tree_path"] = f"{parent_id}/{record.get('tree_path') or record.get('display_name') or feature_id}"
-                    attributes = dict(record.get("attributes") or {})
-                    attributes["source_catpart"] = str(catpart)
-                    attributes["product_instance_id"] = parent_id
-                    merged["attributes"] = attributes
-                    stream.write(json.dumps(merged, ensure_ascii=False) + "\n")
-    (part_output_root / "index.json").write_text(
-        json.dumps(part_tree_index, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def _load_json_line(line: str) -> dict:
-    try:
-        value = json.loads(line)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
-def _product_instance_tree_record(instance: dict) -> dict:
-    has_children = int(instance.get("child_count") or 0) > 0
-    return {
-        "feature_id": instance.get("instance_id"),
-        "parent_id": instance.get("parent_instance_id") or "",
-        "display_name": instance.get("instance_name") or instance.get("instance_path") or instance.get("instance_id"),
-        "internal_name": instance.get("instance_path") or instance.get("tree_path") or instance.get("instance_name"),
-        "native_type": "CATProduct" if has_children else "CATPart",
-        "startup_type": "CATProduct" if has_children else "CATPart",
-        "tree_path": instance.get("tree_path") or instance.get("instance_path"),
-        "decode_status": instance.get("read_status"),
-        "decoder_status": instance.get("load_status"),
-        "payload_extraction_status": instance.get("value_source"),
-        "update_status": "suppressed" if instance.get("suppressed") else "active",
-        "attributes": instance,
-    }
-
-
-def _matching_product_instance_ids(instances: list[dict], catpart_stem: str) -> list[str]:
-    normalized_stem = _normalize_part_name(catpart_stem)
-    stem_keys = _part_name_keys(normalized_stem)
-    matches: list[str] = []
-    for instance in instances:
-        instance_id = str(instance.get("instance_id") or "")
-        if not instance_id:
+def _find_referenced_catproducts(candidates: list[Path]) -> set[Path]:
+    referenced: set[Path] = set()
+    names = {path.name.casefold(): path.resolve() for path in candidates}
+    for product_path in candidates:
+        try:
+            content = product_path.read_bytes().lower()
+        except OSError:
             continue
-        names = [
-            instance.get("instance_name"),
-            instance.get("instance_path"),
-            instance.get("tree_path"),
-            instance.get("reference_id"),
-        ]
-        normalized_names = [_normalize_part_name(str(name)) for name in names if name]
-        name_keys = {key for name in normalized_names for key in _part_name_keys(name)}
-        if stem_keys & name_keys:
-            matches.append(instance_id)
-    return matches
+        for name, candidate in names.items():
+            if candidate == product_path.resolve():
+                continue
+            probes = (
+                name.encode("utf-8"),
+                Path(name).stem.encode("utf-8"),
+                name.encode("utf-16-le"),
+                Path(name).stem.encode("utf-16-le"),
+            )
+            if any(probe in content for probe in probes):
+                referenced.add(candidate)
+    return referenced
 
 
-def _part_name_keys(value: str) -> set[str]:
-    """生成 CATPart 文件名与 Product 实例名的稳定比较键。
-
-    CATIA 常把实例显示名写成 R_<文件名>、P_<文件名> 或 Part_<文件名>，
-    而 CATPart 文件本身没有这个实例前缀。
-    """
-    keys = {value}
-    compact = re.sub(r"[^a-z0-9]", "", value)
-    if compact:
-        keys.add(compact)
-        for prefix in ("r", "p", "part"):
-            if compact.startswith(prefix) and len(compact) > len(prefix):
-                keys.add(compact[len(prefix):])
-    current = value
-    for prefix in ("r_", "p_", "part_"):
-        if current.startswith(prefix) and len(current) > len(prefix):
-            keys.add(current[len(prefix):])
-    return keys
-
-
-def _normalize_part_name(value: str) -> str:
-    base = Path(value.replace("\\", "/")).name
-    if "." in base:
-        base = base.split(".", 1)[0]
-    return base.lower()
+def _looks_like_root_product(path: Path) -> bool:
+    normalized = path.stem.casefold()
+    return any(token in normalized for token in ("root", "assembly", "product", "总装", "装配"))
 
 
 async def _build_feature_center(
@@ -622,6 +544,137 @@ async def _build_feature_center(
     )
 
 
+async def _publish_native_only(
+    repository: CadRepository,
+    revision_id: UUID,
+    settings: Settings,
+    native_bundle: Path,
+    lightweight_error_code: str,
+) -> None:
+    manifest_path = native_bundle / "manifest.json"
+    native_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    native_assets = _available_native_assets(native_bundle)
+    native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
+    await repository.update_revision_manifest(
+        revision_id,
+        {
+            "viewer_asset": {},
+            "feature_center": {
+                "available": False,
+                "mapping_available": False,
+                "feature_face_mapping_count": 0,
+                "bundle_available": False,
+            },
+            "native_semantics": {
+                "available": bool(native_assets),
+                **native_assets,
+            },
+            "native_capture": {
+                "available": bool(native_assets),
+                "status": native_manifest.get("capture_status") or "ready",
+                "schema_version": native_manifest.get("schema_version"),
+                "parser_version": native_manifest.get("parser_version"),
+                "document_kind": native_manifest.get("document_kind"),
+                "selected_reconstruction_route": native_manifest.get("selected_reconstruction_route"),
+                "has_tree": (native_bundle / "tree_occurrences.jsonl").is_file() or (native_bundle / "features.jsonl").is_file(),
+                "has_properties": (native_bundle / "property_facts.jsonl").is_file(),
+                "has_topology": (native_bundle / "topology_entities.jsonl").is_file(),
+                "has_geometry": (native_bundle / "geometry_entities.jsonl").is_file(),
+                "has_mesh": (native_bundle / "native_mesh_triangles.jsonl").is_file(),
+                "capture_engine": "caa_new",
+                "capture_platform": "intel_a",
+                "capture_bitness": 32,
+            },
+            "viewer_summary": {
+                "solid_count": 0,
+                "native_feature_count": native_feature_count,
+                "recognized_feature_count": 0,
+            },
+            "feature_center_manifest": {
+                "lightweight": {
+                    "primitive_count": 0,
+                    "triangle_count": 0,
+                    "status": "unavailable",
+                    "error_code": lightweight_error_code,
+                },
+                "performance": {},
+            },
+        },
+    )
+    await repository.set_revision_status(
+        revision_id,
+        status="completed",
+        progress=100,
+        status_message="ready",
+        error_code=None,
+        error_message=None,
+    )
+
+
+async def _publish_native_progress(
+    repository: CadRepository,
+    revision_id: UUID,
+    native_bundle: Path,
+) -> None:
+    """发布已完成的 CAA 原生树，但不提前结束仍在运行的 Feature Center 任务。"""
+    manifest_path = native_bundle / "manifest.json"
+    native_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    native_assets = _available_native_assets(native_bundle)
+    if not native_assets:
+        return
+    reader = CaaNewBundleReader(native_bundle)
+    # Persist the full graph: visible children can belong to supplemental parents.
+    # Presentation filtering must never remove ancestors from database storage.
+    tree_payload = reader.build_tree(include_supplemental=True)
+    rows = native_tree_rows(revision_id, tree_payload)
+    expected_count = int(tree_payload.get("node_count") or len(rows))
+    stored_count = await repository.replace_native_tree_entities(revision_id, rows, expected_count)
+    if stored_count != expected_count:
+        raise ValueError(
+            f"native tree database count mismatch: expected={expected_count}, stored={stored_count}"
+        )
+    property_count = await repository.replace_native_property_facts(
+        revision_id,
+        iter_native_property_rows(revision_id, reader.iter_property_facts()),
+    )
+    await repository.update_revision_manifest(
+        revision_id,
+        {
+            "native_semantics": {"available": True, **native_assets},
+            "native_capture": {
+                "available": True,
+                "status": native_manifest.get("capture_status") or "ready",
+                "schema_version": native_manifest.get("schema_version"),
+                "parser_version": native_manifest.get("parser_version"),
+                "document_kind": native_manifest.get("document_kind"),
+                "selected_reconstruction_route": native_manifest.get("selected_reconstruction_route"),
+                "has_tree": (native_bundle / "tree_occurrences.jsonl").is_file()
+                or (native_bundle / "features.jsonl").is_file(),
+                "has_properties": (native_bundle / "property_facts.jsonl").is_file(),
+                "has_topology": (native_bundle / "topology_entities.jsonl").is_file(),
+                "has_geometry": (native_bundle / "geometry_entities.jsonl").is_file(),
+                "has_mesh": (native_bundle / "native_mesh_triangles.jsonl").is_file(),
+                "capture_engine": "caa_new",
+                "capture_platform": "intel_a",
+                "capture_bitness": 32,
+            },
+            "viewer_summary": {
+                "native_feature_count": _count_jsonl_records(native_bundle / "features.jsonl"),
+            },
+            "native_tree_storage": {
+                "backend": "postgresql",
+                "node_count": stored_count,
+                "complete": True,
+            },
+            "native_property_storage": {
+                "backend": "postgresql",
+                "fact_count": property_count,
+                "complete": True,
+            },
+        },
+    )
+
+
 # 用途：确定性统计 JSONL 非空记录，不因文件末尾换行多算一条。
 def _count_jsonl_records(path: Path) -> int:
     if not path.is_file():
@@ -648,10 +701,25 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
     if native_bundle is None:
         return {}
     candidates = {
+        "manifest": "manifest.json",
+        "capture_report": "capture_report.json",
+        "reconstruction_plan": "reconstruction_plan.json",
+        "object_entities": "object_entities.jsonl",
+        "tree_occurrences": "tree_occurrences.jsonl",
         "features": "features.jsonl",
         "native_features": "native_features.jsonl",
         "parameters": "parameters.jsonl",
         "property_facts": "property_facts.jsonl",
+        "semantic_facets": "semantic_facets.jsonl",
+        "feature_dependencies": "feature_dependencies.jsonl",
+        "topology_entities": "topology_entities.jsonl",
+        "topology_relations": "topology_relations.jsonl",
+        "geometry_entities": "geometry_entities.jsonl",
+        "pmi_entities": "pmi_entities.jsonl",
+        "pmi_associations": "pmi_associations.jsonl",
+        "diagnostics": "diagnostics.jsonl",
+        "coverage": "coverage.json",
+        "capability_matrix": "capability_matrix.json",
         "topology_bodies": "native_topology_bodies.jsonl",
         "topology_cells": "native_topology_cells.jsonl",
         "topology_wires": "native_topology_wires.jsonl",
@@ -662,9 +730,9 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
         "feature_result_cells": "native_feature_result_cells.jsonl",
         "feature_topology_links": "native_feature_topology_links.jsonl",
         "product_references": "product_references.jsonl",
+        "product_occurrences": "product_occurrences.jsonl",
+        "document_links": "document_links.jsonl",
         "product_instances": "product_instances.jsonl",
-        "product_feature_tree": "product_feature_tree.jsonl",
-        "part_feature_tree_index": "part-feature-trees/index.json",
         "capabilities": "capabilities.json",
     }
     return {

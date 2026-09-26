@@ -460,6 +460,25 @@ declare namespace Api {
         status?: string;
         stage?: string;
       };
+      native_capture?: {
+        available: boolean;
+        status?: string | null;
+        schema_version?: string | null;
+        parser_version?: string | null;
+        capture_engine?: string | null;
+        capture_platform?: string | null;
+        capture_bitness?: number | null;
+        document_kind?: string | null;
+        selected_reconstruction_route?: string | null;
+        has_tree: boolean;
+        has_properties: boolean;
+        has_topology: boolean;
+        has_geometry: boolean;
+        has_mesh: boolean;
+        tree_url?: string | null;
+        capabilities_url?: string | null;
+        diagnostics_url?: string | null;
+      };
       viewer_asset: {
         glb_url: string;
         scene_manifest_url: string;
@@ -478,10 +497,25 @@ declare namespace Api {
       };
       native_semantics?: {
         available: boolean;
+        manifest_url?: string | null;
+        capture_report_url?: string | null;
+        reconstruction_plan_url?: string | null;
+        object_entities_url?: string | null;
+        tree_occurrences_url?: string | null;
         features_url?: string | null;
         native_features_url?: string | null;
         parameters_url?: string | null;
         property_facts_url?: string | null;
+        semantic_facets_url?: string | null;
+        feature_dependencies_url?: string | null;
+        topology_entities_url?: string | null;
+        topology_relations_url?: string | null;
+        geometry_entities_url?: string | null;
+        pmi_entities_url?: string | null;
+        pmi_associations_url?: string | null;
+        diagnostics_url?: string | null;
+        coverage_url?: string | null;
+        capability_matrix_url?: string | null;
         topology_bodies_url?: string | null;
         topology_cells_url?: string | null;
         topology_wires_url?: string | null;
@@ -492,6 +526,8 @@ declare namespace Api {
         feature_result_cells_url?: string | null;
         feature_topology_links_url?: string | null;
         product_references_url?: string | null;
+        product_occurrences_url?: string | null;
+        document_links_url?: string | null;
         product_instances_url?: string | null;
         product_feature_tree_url?: string | null;
         part_feature_tree_index_url?: string | null;
@@ -525,6 +561,92 @@ declare namespace Api {
       constraint_status: string;
       constraint_count: number | null;
       children: ViewerBomNode[];
+    }
+
+    interface NativeTreeResponse {
+      has_more?: boolean;
+      next_offset?: number | null;
+      schema_version?: string | null;
+      parser_version?: string | null;
+      capture_status?: string | null;
+      node_count: number;
+      total_node_count?: number;
+      roots: NativeTreeNode[];
+    }
+
+    interface NativeTreeNode {
+      node_id: string;
+      parent_id: string;
+      node_kind: string;
+      display_name: string;
+      internal_name: string;
+      startup_type: string;
+      document_id: string;
+      object_id: string;
+      occurrence_id: string;
+      product_occurrence_id: string;
+      reference_id: string;
+      referenced_document_id: string;
+      source_index: number;
+      tree_path: string;
+      occurrence_path: string;
+      update_status: string;
+      presentation_status: string;
+      has_children: boolean;
+      child_count?: number;
+      has_properties: boolean;
+      property_count: number;
+      has_geometry: boolean;
+      has_topology_mapping: boolean;
+      geometry_ids: string[];
+      topology_ids: string[];
+      parameter_value?: string;
+      children: NativeTreeNode[];
+    }
+
+    interface NativeNodeProperties {
+      node_id: string;
+      property_count: number;
+      tabs: NativePropertyTab[];
+    }
+
+    interface NativePropertyTab {
+      tab_id: string;
+      tab_label: string;
+      groups: NativePropertyGroup[];
+    }
+
+    interface NativePropertyGroup {
+      group_id: string;
+      group_label: string;
+      fields: NativePropertyField[];
+    }
+
+    interface NativePropertyField {
+      property_id: string;
+      key: string;
+      display_name: string;
+      raw_value: unknown;
+      raw_unit: string;
+      display_value: unknown;
+      display_unit: string;
+      value_type: string;
+      source_api: string;
+      read_status: string;
+      authority: string;
+      display_order: number;
+      read_only: boolean;
+    }
+
+    interface NativeTopologyResponse {
+      topology_entities: Record<string, unknown>[];
+      topology_relations: Record<string, unknown>[];
+      geometry_entities: Record<string, unknown>[];
+    }
+
+    interface NativeSelectionResponse {
+      node_id: string;
+      candidates: Array<Record<string, unknown> & { selectable?: boolean }>;
     }
 
     interface CreatePayload {

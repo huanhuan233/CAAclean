@@ -3,10 +3,11 @@ from __future__ import annotations
 import uuid
 import re
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadDrawingRegion, CadDrawingFact, CadEntity, CadModel, CadModelRevision, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
+from app.db.models import CadDrawingRegion, CadDrawingFact, CadEntity, CadModel, CadModelRevision, CadNativePropertyFact, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
+from app.component_builds.native_tree_store import NATIVE_SOURCE_PREFIX
 
 
 class MemoryComponentBuildRepository:
@@ -42,6 +43,18 @@ class MemoryComponentBuildRepository:
 
     async def list_structure_entities(self, revision_id: uuid.UUID) -> list:
         """用途：内存仓储没有 CAD 实体表时返回空结构，保持旧单元测试向前兼容。"""
+        return []
+
+    async def list_native_tree_entities(self, revision_id: uuid.UUID, parent_node_id: str | None = None, *, offset: int = 0, limit: int | None = None) -> list:
+        return []
+
+    async def count_native_tree_entities(self, revision_id: uuid.UUID) -> int:
+        return 0
+
+    async def get_native_tree_entity(self, revision_id: uuid.UUID, node_id: str):
+        return None
+
+    async def list_native_property_facts(self, revision_id: uuid.UUID, subject_ids: set[str], *, parameter_values_only: bool = False) -> list:
         return []
 
     async def next_component_id(self, prefix: str) -> str:
@@ -154,6 +167,62 @@ class SqlAlchemyComponentBuildRepository:
                 CadEntity.entity_type.in_({"root", "assembly", "subassembly", "part", "imported_object", "body", "solid"}),
             )
             .order_by(CadEntity.sort_order, CadEntity.id)
+        )
+        return list(result.scalars().all())
+
+    async def list_native_tree_entities(
+        self,
+        revision_id: uuid.UUID,
+        parent_node_id: str | None = None,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[CadEntity]:
+        parent_entity_id = uuid.uuid5(revision_id, parent_node_id) if parent_node_id else None
+        result = await self.session.execute(
+            select(CadEntity)
+            .where(
+                CadEntity.revision_id == revision_id,
+                CadEntity.source_ref.like(f"{NATIVE_SOURCE_PREFIX}%"),
+                CadEntity.parent_entity_id == parent_entity_id,
+            )
+            .order_by(CadEntity.source_index.nullslast(), CadEntity.sort_order, CadEntity.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def count_native_tree_entities(self, revision_id: uuid.UUID) -> int:
+        return int(
+            await self.session.scalar(
+                select(func.count()).select_from(CadEntity).where(
+                    CadEntity.revision_id == revision_id,
+                    CadEntity.source_ref.like(f"{NATIVE_SOURCE_PREFIX}%"),
+                )
+            )
+            or 0
+        )
+
+    async def get_native_tree_entity(self, revision_id: uuid.UUID, node_id: str) -> CadEntity | None:
+        entity = await self.session.get(CadEntity, uuid.uuid5(revision_id, node_id))
+        if entity is None or entity.revision_id != revision_id or not str(entity.source_ref or "").startswith(NATIVE_SOURCE_PREFIX):
+            return None
+        return entity
+
+    async def list_native_property_facts(
+        self, revision_id: uuid.UUID, subject_ids: set[str], *, parameter_values_only: bool = False
+    ) -> list[CadNativePropertyFact]:
+        if not subject_ids:
+            return []
+        result = await self.session.execute(
+            select(CadNativePropertyFact)
+            .where(
+                CadNativePropertyFact.revision_id == revision_id,
+                CadNativePropertyFact.subject_id.in_(subject_ids),
+                *([CadNativePropertyFact.payload["key"].astext == "catia_parameter_value_text"]
+                  if parameter_values_only else []),
+            )
+            .order_by(CadNativePropertyFact.sort_order, CadNativePropertyFact.id)
         )
         return list(result.scalars().all())
 

@@ -757,6 +757,9 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                   << JsonQuote("supported_interface_keys") << ":";
     LegacyWriteStringArray(fta_semantics, entity.supported_interface_keys);
     fta_semantics << ","
+                  << JsonQuote("annotation_text") << ":" << JsonQuote(entity.annotation_text) << ","
+                  << JsonQuote("annotation_text_status") << ":" << JsonQuote(entity.annotation_text_status) << ","
+                  << JsonQuote("annotation_text_source") << ":" << JsonQuote(entity.annotation_text_source) << ","
                   << JsonQuote("validation_text") << ":" << JsonQuote(entity.validation_text) << ","
                   << JsonQuote("validation_text_status") << ":" << JsonQuote(entity.validation_text_status) << ","
                   << JsonQuote("semantic_check_status_raw") << ":" << entity.semantic_check_status_raw << ","
@@ -769,6 +772,9 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                   << JsonQuote("supported_interface_keys") << ":";
     LegacyWriteStringArray(fta_semantics, entity.supported_interface_keys);
     fta_semantics << ","
+                  << JsonQuote("annotation_text") << ":" << JsonQuote(entity.annotation_text) << ","
+                  << JsonQuote("annotation_text_status") << ":" << JsonQuote(entity.annotation_text_status) << ","
+                  << JsonQuote("annotation_text_source") << ":" << JsonQuote(entity.annotation_text_source) << ","
                   << JsonQuote("semantic_interface_count") << ":" << entity.semantic_interface_count << ","
                   << JsonQuote("all_semantic_interface_count") << ":" << entity.all_semantic_interface_count << ","
                   << JsonQuote("validation_text") << ":" << JsonQuote(entity.validation_text) << ","

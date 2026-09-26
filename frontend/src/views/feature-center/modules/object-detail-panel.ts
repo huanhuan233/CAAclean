@@ -276,7 +276,7 @@ export function detailRowsFromRecord(
     rows.push({ key, label: labelFor(key), value: formatDetailValue(value, key) });
   };
   preferredKeys.forEach(key => {
-    if (Object.prototype.hasOwnProperty.call(record, key)) push(key, record[key]);
+    if (Object.hasOwn(record, key)) push(key, record[key]);
   });
   Object.entries(record).forEach(([key, value]) => push(key, value));
   return [...(options.extraRows || []), ...rows];
@@ -285,16 +285,20 @@ export function detailRowsFromRecord(
 export function selectionEvidenceRows(primary: SelectionTarget | null, context: SelectionContext) {
   const rows: DetailField[] = [];
   if (primary) {
-    rows.push(
-      {
-        key: 'primary_object',
-        label: '主对象',
-        value: formatDetailValue(`${primary.kind} / ${primary.id}`, 'primary_object')
-      }
-    );
+    rows.push({
+      key: 'primary_object',
+      label: '主对象',
+      value: formatDetailValue(`${primary.kind} / ${primary.id}`, 'primary_object')
+    });
   }
   const contextRecord = context as unknown as Record<string, unknown>;
-  const coreKeys = new Set(['mappingStatus', 'mappingAuthority', 'primitiveIds', 'renderFaceIds', 'recognizedFeatureIds']);
+  const coreKeys = new Set([
+    'mappingStatus',
+    'mappingAuthority',
+    'primitiveIds',
+    'renderFaceIds',
+    'recognizedFeatureIds'
+  ]);
   const coreRows: DetailField[] = [
     'mappingStatus',
     'mappingAuthority',
@@ -302,12 +306,18 @@ export function selectionEvidenceRows(primary: SelectionTarget | null, context: 
     'renderFaceIds',
     'recognizedFeatureIds'
   ].flatMap(key => {
-    if (!Object.prototype.hasOwnProperty.call(contextRecord, key)) return [];
+    if (!Object.hasOwn(contextRecord, key)) return [];
     const raw = contextRecord[key];
     if (key === 'primitiveIds' && Array.isArray(raw)) {
       return [{ key, label: 'Primitive', value: formatDetailValue(raw.length, key) }];
     }
-    return [{ key, label: key === 'recognizedFeatureIds' ? '关联 Feature' : labelFor(key), value: formatDetailValue(raw, key) }];
+    return [
+      {
+        key,
+        label: key === 'recognizedFeatureIds' ? '关联 Feature' : labelFor(key),
+        value: formatDetailValue(raw, key)
+      }
+    ];
   });
   const extraRows = detailRowsFromRecord(contextRecord, [], {
     excludeKeys: coreKeys
@@ -359,7 +369,7 @@ export function normalizeParameterRows(source: unknown): ParameterField[] {
       if (item && typeof item === 'object') {
         const record = item as Record<string, unknown>;
         const key = String(record.key ?? record.name ?? record.label ?? `parameter_${index + 1}`);
-        const value = Object.prototype.hasOwnProperty.call(record, 'value') ? record.value : record;
+        const value = Object.hasOwn(record, 'value') ? record.value : record;
         return { key, label: key, value: formatDetailValue(value, key) };
       }
       const key = `parameter_${index + 1}`;

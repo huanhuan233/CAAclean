@@ -49,6 +49,9 @@ struct FtaSemanticEntity
   long all_semantic_interface_count;
   std::string validation_text;
   std::string validation_text_status;
+  std::string annotation_text;
+  std::string annotation_text_status;
+  std::string annotation_text_source;
   long semantic_check_status_raw;
   std::string semantic_check_diagnostic;
   std::string topology_mapping_status;
@@ -60,6 +63,7 @@ struct FtaSemanticEntity
       all_semantic_interface_count(0),
       semantic_check_status_raw(-1),
       validation_text_status("unavailable"),
+      annotation_text_status("unsupported"),
       topology_mapping_status("not_available")
   {
   }

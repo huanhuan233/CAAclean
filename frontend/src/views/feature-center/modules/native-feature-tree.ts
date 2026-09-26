@@ -41,6 +41,7 @@ export interface NativeFeatureRecord {
   update_status?: string;
   attributes?: Record<string, unknown>;
   parameter?: Record<string, unknown>;
+  parameter_value?: string;
   [key: string]: unknown;
 }
 
@@ -132,10 +133,16 @@ function baseName(path: string) {
 }
 
 // 用途：用经验证的 StartUp/原生类型映射展示语义；未知类型保持 unknown，不根据名称猜特征。
+export function isSystemNativeFeatureRecord(record: NativeFeatureRecord) {
+  const startup = String(record.startup_type || '').toLowerCase();
+  const native = String(record.native_type || '').toLowerCase();
+  return SYSTEM_TYPES.has(startup) || SYSTEM_TYPES.has(native);
+}
+
 function featureKind(record: NativeFeatureRecord): FeatureTreeKind {
   const startup = String(record.startup_type || '').toLowerCase();
   const native = String(record.native_type || '').toLowerCase();
-  if (SYSTEM_TYPES.has(startup) || SYSTEM_TYPES.has(native)) return 'system';
+  if (isSystemNativeFeatureRecord(record)) return 'system';
   return KIND_BY_TYPE[startup] || KIND_BY_TYPE[native] || 'unknown';
 }
 
@@ -148,6 +155,23 @@ function sequenceOf(record: NativeFeatureRecord) {
   );
 }
 
+function recordId(record: NativeFeatureRecord) {
+  return String(
+    record.feature_id ||
+      record.occurrence_id ||
+      record.object_id ||
+      record.source_object_id ||
+      record.tree_path ||
+      record.internal_name ||
+      record.display_name ||
+      ''
+  );
+}
+
+function compareRecordId(left: NativeFeatureRecord, right: NativeFeatureRecord) {
+  return recordId(left).localeCompare(recordId(right));
+}
+
 function formatParameterTreeValue(value: unknown) {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(',');
@@ -156,6 +180,9 @@ function formatParameterTreeValue(value: unknown) {
 }
 
 function parameterValueOf(record: NativeFeatureRecord, parameterValuesByObjectId: Record<string, string> = {}) {
+  if (record.parameter_value !== undefined && record.parameter_value !== null) {
+    return formatParameterTreeValue(record.parameter_value);
+  }
   const objectId = String(record.source_object_id || '');
   if (objectId && parameterValuesByObjectId[objectId]) return parameterValuesByObjectId[objectId];
   const parameter = record.parameter || record.native_feature_parameters;
@@ -177,15 +204,16 @@ export function buildNativeFeatureTree(
   parameterValuesByObjectId: Record<string, string> = {}
 ): FeatureTreeNode[] {
   const nodes = new Map<string, FeatureTreeNode>();
-  const ordered = [...records].sort(
-    (left, right) => sequenceOf(left) - sequenceOf(right) || left.feature_id.localeCompare(right.feature_id)
+  const ordered = [...records].filter(record => recordId(record)).sort(
+    (left, right) => sequenceOf(left) - sequenceOf(right) || compareRecordId(left, right)
   );
   ordered.forEach(record => {
+    const id = recordId(record);
     const kind = featureKind(record);
-    const rawName = String(record.display_name || record.internal_name || record.feature_id);
-    const displayName = kind === 'catpart' ? baseName(sourceFileName || rawName) : baseName(rawName);
-    nodes.set(record.feature_id, {
-      id: record.feature_id,
+    const rawName = String(record.display_name || record.internal_name || id);
+    const displayName = baseName(rawName);
+    nodes.set(id, {
+      id,
       parentId: record.parent_id || undefined,
       name: rawName,
       displayName,
@@ -196,7 +224,7 @@ export function buildNativeFeatureTree(
       children: [],
       isSystem: kind === 'system',
       isContainer: CONTAINER_KINDS.has(kind),
-      faceRefs: [...(faceRefsByFeatureId[record.feature_id] || [])],
+      faceRefs: [...(faceRefsByFeatureId[id] || [])],
       parameters: record.attributes,
       parameterValue: parameterValueOf(record, parameterValuesByObjectId),
       raw: record
@@ -205,7 +233,7 @@ export function buildNativeFeatureTree(
 
   const roots: FeatureTreeNode[] = [];
   ordered.forEach(record => {
-    const node = nodes.get(record.feature_id);
+    const node = nodes.get(recordId(record));
     if (!node) return;
     const parent = record.parent_id ? nodes.get(record.parent_id) : undefined;
     if (parent && parent.id !== node.id) parent.children.push(node);
@@ -237,7 +265,12 @@ export function buildNativeFeatureTree(
     sortNodes(part.children);
   }
 
-  if (!roots.some(node => node.kind === 'catpart')) {
+  const hasAssemblyRoot = roots.some(node => {
+    const startup = String(node.raw?.startup_type || '').toLowerCase();
+    const native = String(node.raw?.native_type || '').toLowerCase();
+    return startup === 'catproduct' || native === 'product';
+  });
+  if (!roots.some(node => node.kind === 'catpart') && !hasAssemblyRoot) {
     return [
       {
         id: `source:${sourceFileName}`,

@@ -116,9 +116,11 @@ static ProductReferenceEntity* FindProductReference(ReconstructionPackage& packa
 }
 
 static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
-                                            CaptureIdRegistry& ids,
-                                            ReconstructionPackage& package,
-                                            std::string& error)
+                                             CaaPropertyExtractors& property_extractors,
+                                             CaaCapabilityBroker& broker,
+                                             CaptureIdRegistry& ids,
+                                             ReconstructionPackage& package,
+                                             std::string& error)
 {
   std::map<std::string, PartDefinition> definitions_by_document;
   size_t i;
@@ -147,8 +149,10 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
     PartDefinition definition;
     definition.document_id = reference.referenced_document_id;
     std::string capture_error;
-    if (!part_enumerator.CaptureDefinition(linked_handle, ids, definition, package, capture_error, false))
+    const size_t binding_count_before = package.native_object_bindings.size();
+    if (!part_enumerator.CaptureDefinition(linked_handle, ids, definition, package, capture_error, true))
     {
+      package.native_object_bindings.resize(binding_count_before);
       reference.definition_status = "definition_capture_failed";
       package.diagnostics.push_back(MakeDiagnostic("warning", "linked_catpart_definition_failed",
                                                    reference.reference_id,
@@ -156,6 +160,8 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
                                                    "model_capture_engine"));
       continue;
     }
+    property_extractors.ExtractNativeFactsForDocument(ids, broker, package, reference.referenced_document_id);
+    package.native_object_bindings.resize(binding_count_before);
     reference.definition_status = "definition_captured";
     definitions_by_document[reference.referenced_document_id] = definition;
   }
@@ -300,7 +306,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     SyncReportDiagnostics(package, report);
     return false;
   }
-  if (!ProjectLinkedCatPartDefinitions(part_enumerator, ids, package, error))
+  if (!ProjectLinkedCatPartDefinitions(part_enumerator, property_extractors, broker, ids, package, error))
   {
     report.message = error;
     report.exit_code = 1;

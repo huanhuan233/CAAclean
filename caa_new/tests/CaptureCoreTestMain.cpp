@@ -505,7 +505,23 @@ int main()
   output_report.object_count = static_cast<int>(package.objects.size());
   output_report.occurrence_count = static_cast<int>(package.occurrence_graph.object_occurrences.size());
   const std::string output_dir = "build_core\\transaction_output";
+  FtaSemanticEntity text_annotation;
+  text_annotation.fta_semantic_id = "pmi_1_TPS000001";
+  text_annotation.fta_set_id = "pmi_1";
+  text_annotation.annotation_text = "Material = S1454_G803\nThickness = 0.33mm";
+  text_annotation.annotation_text_status = "available";
+  text_annotation.annotation_text_source = "CATITPSText.GetText";
+  package.fta_semantics.push_back(text_annotation);
   Check(repository.Commit(package, output_report, output_dir, true, error), "ArtifactRepository transactional commit");
+  {
+    std::ifstream annotations((output_dir + "\\fta_semantics.jsonl").c_str());
+    std::string line;
+    std::getline(annotations, line);
+    Check(line.find("Material = S1454_G803\\nThickness = 0.33mm") != std::string::npos,
+          "FTA output preserves actual multiline text separately from validation text");
+    Check(line.find("CATITPSText.GetText") != std::string::npos,
+          "FTA text retains its source interface");
+  }
   Check(CountLines(output_dir + "\\features.jsonl") ==
         static_cast<long>(package.occurrence_graph.object_occurrences.size()),
         "Legacy features are occurrence projection");

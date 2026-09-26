@@ -20,6 +20,6 @@ test('没有历史结果时仍保留 Feature Center 工作区框架', () => {
   assert.match(source, /class="geometry-toolbar"/);
   assert.match(source, /<ElTree[\s\S]*:data="geometryTreeNodes"/);
   assert.doesNotMatch(source, /class="geometry-tabs"/);
-  assert.match(source, /contract\?\.summary\.part_number \|\| detailNode\?\.part_number/);
-  assert.match(source, /contract\?\.summary\.part_name \|\| detailNode\?\.name/);
+  assert.match(source, /<ObjectDetailPanel[\s\S]*:contract="contract"/);
+  assert.match(source, /<ObjectDetailPanel[\s\S]*:detail-node="detailNode"/);
 });

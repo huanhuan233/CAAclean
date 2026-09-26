@@ -10,6 +10,20 @@ export function defaultBomVisible(bom: { assembly_mode: string; default_visible:
   return Boolean(bom?.default_visible && bom.assembly_mode === 'assembly');
 }
 
+// 用途：CAA 树已经就绪时先展示左侧导航，不让耗时的轻量化几何阻塞原生结构浏览。
+export function shouldLoadNativeTreeDuringProcessing(contract: {
+  status: string;
+  native_capture?: { has_tree?: boolean } | null;
+  viewer_asset?: unknown;
+}) {
+  return contract.status !== 'ready' && Boolean(contract.native_capture?.has_tree) && !contract.viewer_asset;
+}
+
+// 用途：后台轮询几何时保持已加载的数据库树可见、可操作，只在首次进入时遮罩工作区。
+export function shouldBlockWorkspaceDuringLoad(hasLoadedContract: boolean) {
+  return !hasLoadedContract;
+}
+
 // 用途：在共享 Viewer 中区分 STEP 推理语义与 CATIA 原生语义，不复制页面实现。
 export function tabsForSource(sourceFormat: ViewerSourceFormat): ViewerTab[] {
   void sourceFormat;

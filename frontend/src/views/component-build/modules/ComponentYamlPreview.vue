@@ -1,60 +1,58 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref } from 'vue';
 
-defineOptions({ name: 'ComponentYamlPreview' })
+defineOptions({ name: 'ComponentYamlPreview' });
 
 const props = defineProps<{
-  buildId: string
-  currentYaml: string
-  currentFilename: string | null
-  loading: boolean
-  loadingLabel: string
-  parseError?: string | null
-}>()
+  buildId: string;
+  currentYaml: string;
+  currentFilename: string | null;
+  loading: boolean;
+  loadingLabel: string;
+  parseError?: string | null;
+}>();
 
 const emit = defineEmits<{
-  uploadYaml: [filename: string, content: string]
-}>()
+  uploadYaml: [filename: string, content: string];
+}>();
 
-const fileInput = ref<HTMLInputElement>()
+const fileInput = ref<HTMLInputElement>();
 
-const previewText = computed(() => props.currentYaml)
-const previewFilename = computed(() =>
-  props.currentFilename || `component-spec-${props.buildId}.yaml`
-)
+const previewText = computed(() => props.currentYaml);
+const previewFilename = computed(() => props.currentFilename || `component-spec-${props.buildId}.yaml`);
 
 function showCurrent() {}
 
 function handleUploadClick() {
-  fileInput.value?.click()
+  fileInput.value?.click();
 }
 
 async function handleFileChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
   if (!/\.ya?ml$/i.test(file.name)) {
-    window.$message?.warning('请选择 .yaml 或 .yml 文件')
-    return
+    window.$message?.warning('请选择 .yaml 或 .yml 文件');
+    return;
   }
   try {
-    emit('uploadYaml', file.name, await file.text())
+    emit('uploadYaml', file.name, await file.text());
   } catch {
-    window.$message?.error('YAML 文件读取失败')
+    window.$message?.error('YAML 文件读取失败');
   }
 }
 
 async function handleCopy() {
   try {
-    await navigator.clipboard.writeText(previewText.value)
-    window.$message?.success('YAML 已复制')
+    await navigator.clipboard.writeText(previewText.value);
+    window.$message?.success('YAML 已复制');
   } catch {
-    window.$message?.error('复制失败')
+    window.$message?.error('复制失败');
   }
 }
 
-defineExpose({ showCurrent })
+defineExpose({ showCurrent });
 </script>
 
 <template>
@@ -67,13 +65,7 @@ defineExpose({ showCurrent })
       </div>
     </div>
 
-    <ElAlert
-      v-if="parseError"
-      :title="parseError"
-      type="error"
-      :closable="false"
-      show-icon
-    />
+    <ElAlert v-if="parseError" :title="parseError" type="error" :closable="false" show-icon />
 
     <div v-loading="loading" :element-loading-text="loadingLabel" class="yaml-viewer">
       <div v-if="!loading && previewText" class="yaml-header">
@@ -86,13 +78,7 @@ defineExpose({ showCurrent })
       </ElEmpty>
     </div>
 
-    <input
-      ref="fileInput"
-      type="file"
-      accept=".yaml,.yml"
-      class="hidden-file-input"
-      @change="handleFileChange"
-    />
+    <input ref="fileInput" type="file" accept=".yaml,.yml" class="hidden-file-input" @change="handleFileChange" />
   </div>
 </template>
 

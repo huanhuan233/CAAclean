@@ -12,7 +12,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Awaitable, Callable
 from uuid import uuid4
 
@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.catia_worker.caa_new_runner import CaaNewRunner, CaaNewRunnerError
 from app.core.config import BACKEND_ROOT, REPOSITORY_ROOT
 
 
@@ -48,7 +49,14 @@ class CatiaWorkerServerSettings(BaseSettings):
     job_timeout_seconds: int = Field(default=1800, validation_alias=AliasChoices("CATIA_WORKER_JOB_TIMEOUT", "job_timeout_seconds"))
     caa_rade_root: str = Field(default="", validation_alias=AliasChoices("CAA_RADE_ROOT", "caa_rade_root"))
     caa_prereq_root: str = Field(default="", validation_alias=AliasChoices("CAA_PREREQ_ROOT", "caa_prereq_root"))
-    caa_run_script: str = Field(default="run_r21_x86.bat", validation_alias=AliasChoices("CATIA_WORKER_CAA_RUN_SCRIPT", "caa_run_script"))
+    caa_run_script: str = Field(default="", validation_alias=AliasChoices("CATIA_WORKER_CAA_RUN_SCRIPT", "caa_run_script"))
+    caa_capture_project_root: Path = Field(
+        default=REPOSITORY_ROOT / "caa_new",
+        validation_alias=AliasChoices("CAA_CAPTURE_PROJECT_ROOT", "caa_capture_project_root"),
+    )
+    caa_capture_runner: Path | None = Field(default=None, validation_alias=AliasChoices("CAA_CAPTURE_RUNNER", "caa_capture_runner"))
+    caa_capture_platform: str = Field(default="intel_a", validation_alias=AliasChoices("CAA_CAPTURE_PLATFORM", "caa_capture_platform"))
+    caa_capture_bitness: int = Field(default=32, validation_alias=AliasChoices("CAA_CAPTURE_BITNESS", "caa_capture_bitness"))
 
 
 @dataclass
@@ -203,13 +211,23 @@ def _resolve_job_source(job_root: Path) -> Path:
         resolved_root = bundle_root.resolve()
         with zipfile.ZipFile(job_root / "source.zip") as archive:
             entries = [item for item in archive.infolist() if not item.is_dir()]
-            for entry in entries:
-                destination = (bundle_root / entry.filename).resolve()
+            entry_paths = [PurePosixPath(item.filename.replace("\\", "/")) for item in entries]
+            first_parts = {path.parts[0] for path in entry_paths if len(path.parts) > 1}
+            common_root = (
+                next(iter(first_parts))
+                if len(first_parts) == 1 and all(len(path.parts) > 1 for path in entry_paths)
+                else None
+            )
+            for entry, entry_path in zip(entries, entry_paths):
+                relative_path = _zip_entry_relative_path(entry_path, common_root)
+                destination = (bundle_root / relative_path).resolve()
                 try:
                     destination.relative_to(resolved_root)
                 except ValueError as exc:
                     raise WorkerExecutionError("catia_source_bundle_invalid", "queued_caa", "CATProduct ZIP 包含越界路径") from exc
-            archive.extractall(bundle_root)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(entry) as source_stream, destination.open("wb") as destination_stream:
+                    shutil.copyfileobj(source_stream, destination_stream)
         catproducts = sorted(
             path for path in bundle_root.rglob("*") if path.is_file() and path.suffix.lower() == ".catproduct"
         )
@@ -222,11 +240,22 @@ def _resolve_job_source(job_root: Path) -> Path:
     raise WorkerExecutionError("catia_source_missing", "queued_caa", "CATIA 源文件不存在")
 
 
+def _zip_entry_relative_path(entry_path: PurePosixPath, common_root: str | None) -> Path:
+    if entry_path.is_absolute() or any(part in {"", ".", ".."} for part in entry_path.parts):
+        raise WorkerExecutionError("catia_source_bundle_invalid", "queued_caa", "CATProduct ZIP 包含越界路径")
+    parts = entry_path.parts[1:] if common_root else entry_path.parts
+    if not parts:
+        raise WorkerExecutionError("catia_source_bundle_invalid", "queued_caa", "CATProduct ZIP 包含越界路径")
+    return Path(*parts)
+
+
 def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path:
     """选择 ZIP 中的最外层 Product；子 CATProduct 由 CAA 的产品树递归读取。"""
     archive_stem = "".join(character for character in archive_path.stem.casefold() if character.isalnum())
+    referenced_products = _find_referenced_catproducts(candidates)
 
-    # ZIP 通常保留装配目录层级；优先与 ZIP 名称相符的入口，其次选路径最浅的 Product。
+    # 完整装配 ZIP 往往同时包含根 Product 与子 Product。优先选不被其他 CATProduct 引用的入口，
+    # 避免把子装配当根节点解析，导致前端树只显示局部层级。
     return min(
         candidates,
         key=lambda path: (
@@ -235,10 +264,41 @@ def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path
             and "".join(character for character in path.stem.casefold() if character.isalnum())
             == archive_stem
             else 1,
+            1 if path.resolve() in referenced_products else 0,
+            0 if _looks_like_root_product(path) else 1,
             len(path.parts),
             str(path).casefold(),
         ),
     )
+
+
+def _find_referenced_catproducts(candidates: list[Path]) -> set[Path]:
+    referenced: set[Path] = set()
+    names = {path.name.casefold(): path.resolve() for path in candidates}
+    if not names:
+        return referenced
+    for product_path in candidates:
+        try:
+            content = product_path.read_bytes().lower()
+        except OSError:
+            continue
+        for name, candidate in names.items():
+            if candidate == product_path.resolve():
+                continue
+            probes = (
+                name.encode("utf-8"),
+                Path(name).stem.encode("utf-8"),
+                name.encode("utf-16-le"),
+                Path(name).stem.encode("utf-16-le"),
+            )
+            if any(probe in content for probe in probes):
+                referenced.add(candidate)
+    return referenced
+
+
+def _looks_like_root_product(path: Path) -> bool:
+    normalized = path.stem.casefold()
+    return any(token in normalized for token in ("root", "assembly", "product", "总装", "装配"))
 
 
 async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServerSettings) -> None:
@@ -255,32 +315,45 @@ async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServ
     if not settings.caa_rade_root or not settings.caa_prereq_root:
         raise WorkerExecutionError("catia_worker_unavailable", "running_caa", "Worker 未配置 CAA/RADE 环境")
     _set_stage(job, settings, "running_caa", 20)
-    caa_run_script = Path(settings.caa_run_script).name
-    await _run_process(
-        [
-            "cmd.exe", "/d", "/c", str(REPOSITORY_ROOT / "caa_new" / "tools" / caa_run_script),
-            "--input", str(source), "--output", str(native),
-        ],
-        job,
-        "caa_parse_failed",
-        "running_caa",
-        log_path,
-        {"CAA_RADE_ROOT": settings.caa_rade_root, "CAA_PREREQ_ROOT": settings.caa_prereq_root},
+    runner = CaaNewRunner(
+        project_root=settings.caa_capture_project_root,
+        runner=settings.caa_capture_runner or (settings.caa_capture_project_root / "tools" / Path(settings.caa_run_script).name if settings.caa_run_script else None),
+        platform=settings.caa_capture_platform,
+        bitness=settings.caa_capture_bitness,
+        rade_root=settings.caa_rade_root,
+        prereq_root=settings.caa_prereq_root,
     )
+    try:
+        capture_result = await runner.capture(source, native, timeout_seconds=settings.job_timeout_seconds)
+    except CaaNewRunnerError as exc:
+        raise WorkerExecutionError(exc.code, exc.stage, str(exc)) from exc
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "[running_caa]\n"
+            f"capture_engine=caa_new\n"
+            f"schema_version={capture_result.schema_version}\n"
+            f"parser_version={capture_result.parser_version}\n"
+            f"capture_status={capture_result.capture_status}\n"
+        )
+    step_export_status = "not_requested"
     _set_stage(job, settings, "exporting_step", 65)
-    await _run_process(
-        [
-            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-            str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "export_catpart_step.ps1"),
-            "-InputCatPart", str(source), "-OutputStep", str(exported_step), "-ReportPath", str(export_report),
-        ],
-        job,
-        "catia_step_export_failed",
-        "exporting_step",
-        log_path,
-    )
-    if not exported_step.is_file() or exported_step.stat().st_size == 0:
-        raise WorkerExecutionError("catia_step_export_failed", "exporting_step", "CATIA 未生成有效 STEP")
+    try:
+        await _run_process(
+            [
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                str(REPOSITORY_ROOT / "3DjiexiCAA" / "tools" / "export_catpart_step.ps1"),
+                "-InputCatPart", str(source), "-OutputStep", str(exported_step), "-ReportPath", str(export_report),
+            ],
+            job,
+            "catia_step_export_failed",
+            "exporting_step",
+            log_path,
+        )
+        step_export_status = "ready" if exported_step.is_file() and exported_step.stat().st_size > 0 else "unavailable"
+    except WorkerExecutionError as exc:
+        step_export_status = exc.code
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"[exporting_step:non_blocking]\n{exc}\n")
     _set_stage(job, settings, "publishing_artifacts", 90)
     archive_path = staging / "native_bundle.zip"
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -292,6 +365,22 @@ async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServ
         "worker_job_id": job.worker_job_id,
         "source_sha256": job.source_sha256,
         "source_size_bytes": job.source_size_bytes,
+        "native_capture": {
+            "capture_engine": "caa_new",
+            "capture_platform": settings.caa_capture_platform,
+            "capture_bitness": settings.caa_capture_bitness,
+            "status": capture_result.capture_status,
+            "schema_version": capture_result.schema_version,
+            "parser_version": capture_result.parser_version,
+            "document_kind": capture_result.document_kind,
+            "has_geometry": capture_result.has_geometry,
+            "selected_reconstruction_route": capture_result.selected_reconstruction_route,
+        },
+        "lightweight": {
+            "status": "ready" if step_export_status == "ready" else "unavailable",
+            "displayable": step_export_status == "ready",
+            "step_export_status": step_export_status,
+        },
         "artifacts": [],
     }
     artifact_sources = [archive_path, exported_step, export_report, log_path]
@@ -385,13 +474,27 @@ def create_app(
 
     @app.get("/health", dependencies=[Depends(authorize)])
     async def health() -> dict:
-        environment_ready = bool(worker_settings.caa_rade_root and worker_settings.caa_prereq_root and os.name == "nt")
+        runner = CaaNewRunner(
+            project_root=worker_settings.caa_capture_project_root,
+            runner=worker_settings.caa_capture_runner
+            or (worker_settings.caa_capture_project_root / "tools" / Path(worker_settings.caa_run_script).name if worker_settings.caa_run_script else None),
+            platform=worker_settings.caa_capture_platform,
+            bitness=worker_settings.caa_capture_bitness,
+            rade_root=worker_settings.caa_rade_root,
+            prereq_root=worker_settings.caa_prereq_root,
+        )
+        parser_available = runner.parser_available()
+        environment_ready = bool(worker_settings.caa_rade_root and worker_settings.caa_prereq_root and os.name == "nt" and parser_available)
         running = sum(not task.done() for task in service.tasks.values())
         return {
             "status": "ready" if worker_settings.enabled and environment_ready else "degraded",
             "accepting_jobs": worker_settings.enabled and environment_ready,
             "worker_version": "1.0.0",
             "catia_release": "V5R21",
+            "capture_engine": "caa_new",
+            "capture_platform": worker_settings.caa_capture_platform,
+            "capture_bitness": worker_settings.caa_capture_bitness,
+            "parser_available": parser_available,
             "max_concurrency": max(1, worker_settings.max_concurrency),
             "active_job_count": running,
             "queued_job_count": max(0, running - max(1, worker_settings.max_concurrency)),

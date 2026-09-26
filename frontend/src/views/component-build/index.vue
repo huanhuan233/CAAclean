@@ -8,8 +8,8 @@
  */
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ElMessageBox } from 'element-plus';
 import { useRoute, useRouter } from 'vue-router';
+import { ElMessageBox } from 'element-plus';
 import {
   createComponentBuild,
   deleteComponentBuild,
@@ -24,7 +24,7 @@ import {
   updateComponentBuild
 } from '@/service/api';
 import { isOfflineRequestError, loadComponentSpecWithFallback } from './component-spec-loader';
-import { buildCatalogNavigation, type CatalogNavigationItem } from './catalog-navigation';
+import { type CatalogNavigationItem, buildCatalogNavigation } from './catalog-navigation';
 import { modelViewerLocation } from './model-viewer-route';
 import ComponentLibraryCatalog from './modules/ComponentLibraryCatalog.vue';
 import ComponentLibraryTable from './modules/ComponentLibraryTable.vue';
@@ -73,10 +73,10 @@ const catalogItems = computed<CatalogNavigationItem[]>(() => buildCatalogNavigat
 
 const flatBuildRows = computed(() => {
   return flattenBuilds(treeData.value).map(build => {
-    const detail = buildDetailMap.value[build.id]
+    const detail = buildDetailMap.value[build.id];
     // 用途：依次采用后端详情缓存、当前构建和目录节点中已有的真实字段。
-    const cached = cachedBuildDetails.value[build.id]
-    const merged = cached || (selectedBuild.value?.id === build.id ? selectedBuild.value : null) || detail
+    const cached = cachedBuildDetails.value[build.id];
+    const merged = cached || (selectedBuild.value?.id === build.id ? selectedBuild.value : null) || detail;
     return {
       id: build.id,
       componentId: merged?.component_id || '',
@@ -97,38 +97,45 @@ const flatBuildRows = computed(() => {
       hasDrawing: Boolean(merged?.drawing_task_id),
       paramFields: {
         dn: merged?.default_dn != null ? String(merged.default_dn) : null,
-        pn: merged?.default_pn != null ? String(merged.default_pn) : null,
+        pn: merged?.default_pn != null ? String(merged.default_pn) : null
       }
-    }
+    };
   });
 });
 
 const filteredRows = computed(() => {
-  const keyword = searchKeyword.value.trim().toLowerCase()
-  if (!keyword) return flatBuildRows.value
+  const keyword = searchKeyword.value.trim().toLowerCase();
+  if (!keyword) return flatBuildRows.value;
   return flatBuildRows.value.filter(row => {
     return [
-      row.componentName, row.componentId, row.componentType, row.family,
-      row.standardNumber, row.version, row.statusLabel
-    ].some(val => val.toLowerCase().includes(keyword))
-  })
+      row.componentName,
+      row.componentId,
+      row.componentType,
+      row.family,
+      row.standardNumber,
+      row.version,
+      row.statusLabel
+    ].some(val => val.toLowerCase().includes(keyword));
+  });
 });
 
 const displayedRows = computed(() => {
-  if (selectedCatalogId.value === '__root__') return filteredRows.value
-  const selectedItem = catalogItems.value.find(c => c.id === selectedCatalogId.value)
+  if (selectedCatalogId.value === '__root__') return filteredRows.value;
+  const selectedItem = catalogItems.value.find(c => c.id === selectedCatalogId.value);
   if (selectedItem?.nodeType === 'type') {
-    return filteredRows.value.filter(row => row.partTypeCode === selectedItem.partTypeCode && row.categoryCode === selectedItem.categoryCode)
+    return filteredRows.value.filter(
+      row => row.partTypeCode === selectedItem.partTypeCode && row.categoryCode === selectedItem.categoryCode
+    );
   }
   if (selectedItem) {
-    const categories = new Set(selectedItem.descendantCategoryCodes)
-    return filteredRows.value.filter(row => categories.has(row.categoryCode))
+    const categories = new Set(selectedItem.descendantCategoryCodes);
+    return filteredRows.value.filter(row => categories.has(row.categoryCode));
   }
-  return filteredRows.value.filter(row => row.categoryCode === selectedCatalogId.value)
+  return filteredRows.value.filter(row => row.categoryCode === selectedCatalogId.value);
 });
 
 const buildDetailMap = computed(() => {
-  const map: Record<string, Api.ComponentBuild.BuildDetail> = {}
+  const map: Record<string, Api.ComponentBuild.BuildDetail> = {};
   for (const build of allBuildNodes(treeData.value)) {
     if (build.component_name && build.component_id) {
       map[build.id] = {
@@ -153,7 +160,7 @@ const buildDetailMap = computed(() => {
         error_message: null,
         created_at: '',
         updated_at: ''
-      }
+      };
     }
   }
   // 用途：合并当前构建已经从后端取得的详情。
@@ -161,69 +168,81 @@ const buildDetailMap = computed(() => {
     map[selectedBuild.value.id] = {
       ...map[selectedBuild.value.id],
       ...selectedBuild.value
-    }
+    };
   }
-  return map
+  return map;
 });
 
 // 用途：集中放置页面辅助函数。
 function findCatalogLabel(code: string | null | undefined): string {
-  if (!code) return ''
-  const cat = catalog.value.find(c => c.category_code === code)
-  if (!cat) return ''
-  return `${cat.label} · ${cat.label_en || ''}`
+  if (!code) return '';
+  const cat = catalog.value.find(c => c.category_code === code);
+  if (!cat) return '';
+  return `${cat.label} · ${cat.label_en || ''}`;
 }
 
-function flattenBuilds(nodes: ComponentTreeNode[], parentCategoryCode?: string | null, parentPartTypeCode?: string | null): ComponentTreeNode[] {
-  const result: ComponentTreeNode[] = []
+function flattenBuilds(
+  nodes: ComponentTreeNode[],
+  parentCategoryCode?: string | null,
+  parentPartTypeCode?: string | null
+): ComponentTreeNode[] {
+  const result: ComponentTreeNode[] = [];
   for (const node of nodes) {
     // 用途：节点缺少分类或零件类型编码时，沿真实父目录继承。
     if (!node.category_code && parentCategoryCode) {
-      node.category_code = parentCategoryCode
+      node.category_code = parentCategoryCode;
     }
     if (!node.part_type_code && parentPartTypeCode) {
-      node.part_type_code = parentPartTypeCode
+      node.part_type_code = parentPartTypeCode;
     }
     if (node.node_type === 'build') {
-      result.push(node)
+      result.push(node);
     }
-    result.push(...flattenBuilds(
-      node.children,
-      node.category_code || parentCategoryCode,
-      node.part_type_code || parentPartTypeCode
-    ))
+    result.push(
+      ...flattenBuilds(
+        node.children,
+        node.category_code || parentCategoryCode,
+        node.part_type_code || parentPartTypeCode
+      )
+    );
   }
-  return result
+  return result;
 }
 
-function allBuildNodes(nodes: ComponentTreeNode[], parentCategoryCode?: string | null, parentPartTypeCode?: string | null): ComponentTreeNode[] {
-  const result: ComponentTreeNode[] = []
+function allBuildNodes(
+  nodes: ComponentTreeNode[],
+  parentCategoryCode?: string | null,
+  parentPartTypeCode?: string | null
+): ComponentTreeNode[] {
+  const result: ComponentTreeNode[] = [];
   for (const node of nodes) {
     // 用途：节点缺少分类或零件类型编码时，沿真实父目录继承。
     if (!node.category_code && parentCategoryCode) {
-      node.category_code = parentCategoryCode
+      node.category_code = parentCategoryCode;
     }
     if (!node.part_type_code && parentPartTypeCode) {
-      node.part_type_code = parentPartTypeCode
+      node.part_type_code = parentPartTypeCode;
     }
-    if (node.node_type === 'build') result.push(node)
-    result.push(...allBuildNodes(
-      node.children,
-      node.category_code || parentCategoryCode,
-      node.part_type_code || parentPartTypeCode
-    ))
+    if (node.node_type === 'build') result.push(node);
+    result.push(
+      ...allBuildNodes(
+        node.children,
+        node.category_code || parentCategoryCode,
+        node.part_type_code || parentPartTypeCode
+      )
+    );
   }
-  return result
+  return result;
 }
 
 function countBuildsInCategory(code: string, parentCode?: string): number {
   return allBuildNodes(treeData.value).filter(node => {
     if (parentCode) {
       // 用途：同时按零件类型编码和分类编码筛选。
-      return node.part_type_code === code && node.category_code === parentCode
+      return node.part_type_code === code && node.category_code === parentCode;
     }
-    return node.category_code === code
-  }).length
+    return node.category_code === code;
+  }).length;
 }
 
 function statusLabel(status: string) {
@@ -247,45 +266,63 @@ function statusLabel(status: string) {
     missing: '未上传',
     pending: '等待处理',
     future: '后续能力'
-  }
-  return labels[status] || status
+  };
+  return labels[status] || status;
 }
 
 function isFailure(status: string) {
-  return status === 'failed' || status === 'source_failed'
+  return status === 'failed' || status === 'source_failed';
 }
 
 function futureLabel(nodeType: Api.ComponentBuild.NodeType) {
-  if (nodeType === 'fusion') return '数据融合'
-  if (nodeType === 'yaml' || nodeType === 'component_spec') return 'ComponentSpec'
-  return '后续能力'
+  if (nodeType === 'fusion') return '数据融合';
+  if (nodeType === 'yaml' || nodeType === 'component_spec') return 'ComponentSpec';
+  return '后续能力';
 }
 
 function normalizeNodeType(nodeType?: string): Api.ComponentBuild.NodeType {
   const aliases: Record<string, Api.ComponentBuild.NodeType> = {
     data_fusion: 'fusion',
     publish_validation: 'future'
-  }
+  };
   const supported = new Set<Api.ComponentBuild.NodeType>([
-    'root', 'library', 'family', 'type', 'subtype', 'component', 'build', 'folder',
-    'reference_step', 'drawing', 'component_spec', 'fusion', 'yaml', 'future'
-  ])
-  if (nodeType && supported.has(nodeType as Api.ComponentBuild.NodeType)) return nodeType as Api.ComponentBuild.NodeType
-  return aliases[nodeType || ''] || 'future'
+    'root',
+    'library',
+    'family',
+    'type',
+    'subtype',
+    'component',
+    'build',
+    'folder',
+    'reference_step',
+    'drawing',
+    'component_spec',
+    'fusion',
+    'yaml',
+    'future'
+  ]);
+  if (nodeType && supported.has(nodeType as Api.ComponentBuild.NodeType))
+    return nodeType as Api.ComponentBuild.NodeType;
+  return aliases[nodeType || ''] || 'future';
 }
 
-function normalizeTree(nodes: RawTreeNode[], parentBuildId: string | null = null, parentId = 'tree'): ComponentTreeNode[] {
+function normalizeTree(
+  nodes: RawTreeNode[],
+  parentBuildId: string | null = null,
+  parentId = 'tree'
+): ComponentTreeNode[] {
   return nodes.map((node, index) => {
-    const nodeType = normalizeNodeType(node.node_type)
-    const buildId = node.build_id || (nodeType === 'build' ? node.id || null : parentBuildId)
-    const id = node.id || `${parentId}:${nodeType}:${index}`
-    const children = normalizeTree((node.children || []) as RawTreeNode[], buildId, id)
+    const nodeType = normalizeNodeType(node.node_type);
+    const buildId = node.build_id || (nodeType === 'build' ? node.id || null : parentBuildId);
+    const id = node.id || `${parentId}:${nodeType}:${index}`;
+    const children = normalizeTree((node.children || []) as RawTreeNode[], buildId, id);
     return {
       id,
       label: node.label || node.name || futureLabel(nodeType),
       label_en: node.label_en || null,
       node_type: nodeType,
-      status: node.status || (nodeType === 'future' || nodeType === 'fusion' || nodeType === 'yaml' ? 'future' : 'pending'),
+      status:
+        node.status || (nodeType === 'future' || nodeType === 'fusion' || nodeType === 'yaml' ? 'future' : 'pending'),
       progress: typeof node.progress === 'number' ? node.progress : null,
       disabled: Boolean(node.disabled) || nodeType === 'future' || nodeType === 'yaml',
       build_id: buildId,
@@ -303,70 +340,70 @@ function normalizeTree(nodes: RawTreeNode[], parentBuildId: string | null = null
       processing_route: node.processing_route || null,
       current_stage: node.current_stage || null,
       children
-    }
-  })
+    };
+  });
 }
 
 function findNodeById(nodes: ComponentTreeNode[], id: string): ComponentTreeNode | null {
   for (const node of nodes) {
     if (node.id === id) return node;
-    const found = findNodeById(node.children, id)
-    if (found) return found
+    const found = findNodeById(node.children, id);
+    if (found) return found;
   }
-  return null
+  return null;
 }
 
 function hasPendingBuilds() {
-  return allBuildNodes(treeData.value).some(node => node.status === 'uploading' || node.status === 'parsing_sources')
+  return allBuildNodes(treeData.value).some(node => node.status === 'uploading' || node.status === 'parsing_sources');
 }
 
 function formatProgress(progress: number | null | undefined) {
-  return typeof progress === 'number' ? `${Math.round(progress)}%` : ''
+  return typeof progress === 'number' ? `${Math.round(progress)}%` : '';
 }
 
 function formatError(error: unknown, fallback: string) {
-  if (typeof error === 'string') return error
+  if (typeof error === 'string') return error;
   if (error && typeof error === 'object') {
-    const data = error as { message?: string; response?: { data?: { detail?: string | { message?: string } } } }
-    const detail = data.response?.data?.detail
-    if (typeof detail === 'string') return detail
-    if (detail?.message) return detail.message
-    if (data.message) return data.message
+    const data = error as { message?: string; response?: { data?: { detail?: string | { message?: string } } } };
+    const detail = data.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (detail?.message) return detail.message;
+    if (data.message) return data.message;
   }
-  return fallback
+  return fallback;
 }
 
 // 用途：集中放置页面数据加载函数。
 
 async function loadSelectedBuild(buildId: string, options: { silent?: boolean } = {}): Promise<boolean> {
   if (!buildId) {
-    selectedBuild.value = null
-    return true
+    selectedBuild.value = null;
+    return true;
   }
-  const queryOptions = { signal: requestController.signal, silent: options.silent }
+  const queryOptions = { signal: requestController.signal, silent: options.silent };
   const [detailResult, statusResult] = await Promise.all([
     fetchComponentBuild(buildId, queryOptions),
     fetchComponentBuildStatus(buildId, queryOptions)
-  ])
-  if (requestController.signal.aborted) return false
-  if (!detailResult.error && detailResult.data) selectedBuild.value = detailResult.data
+  ]);
+  if (requestController.signal.aborted) return false;
+  if (!detailResult.error && detailResult.data) selectedBuild.value = detailResult.data;
   if (!statusResult.error && statusResult.data) {
-    buildStatuses.value = { ...buildStatuses.value, [buildId]: statusResult.data }
+    buildStatuses.value = { ...buildStatuses.value, [buildId]: statusResult.data };
   }
-  return !detailResult.error && Boolean(detailResult.data) && !statusResult.error && Boolean(statusResult.data)
+  return !detailResult.error && Boolean(detailResult.data) && !statusResult.error && Boolean(statusResult.data);
 }
 
 async function ensureBuildDetailLoaded(buildId: string) {
-  if (buildDetailMap.value[buildId]?.component_id) return
-  const queryOptions = { signal: requestController.signal, silent: true }
-  const result = await fetchComponentBuild(buildId, queryOptions)
+  if (buildDetailMap.value[buildId]?.component_id) return;
+  const queryOptions = { signal: requestController.signal, silent: true };
+  const result = await fetchComponentBuild(buildId, queryOptions);
   if (!result.error && result.data) {
     // 用途：保存后由 buildDetailMap 在下一次渲染中读取。
   }
 }
 
 function componentSpecStorageKey(buildId: string) {
-  return `component-spec-v1.2:${buildId}`
+  return `component-spec-v1.2:${buildId}`;
 }
 
 function localComponentSpec(buildId: string): Api.ComponentBuild.ComponentSpecDocument {
@@ -378,128 +415,123 @@ function localComponentSpec(buildId: string): Api.ComponentBuild.ComponentSpecDo
     source_filename: null,
     saved: false,
     updated_at: null
-  }
-  const saved = localStorage.getItem(componentSpecStorageKey(buildId))
-  if (!saved) return document
+  };
+  const saved = localStorage.getItem(componentSpecStorageKey(buildId));
+  if (!saved) return document;
   try {
     const cached = JSON.parse(saved) as {
-      data: Record<string, any>
-      yaml?: string | null
-      source_filename?: string | null
-      updated_at: string
-    }
-    document.data = cached.data
-    document.yaml = cached.yaml || null
-    document.source_filename = cached.source_filename || null
-    document.saved = true
-    document.updated_at = cached.updated_at
+      data: Record<string, any>;
+      yaml?: string | null;
+      source_filename?: string | null;
+      updated_at: string;
+    };
+    document.data = cached.data;
+    document.yaml = cached.yaml || null;
+    document.source_filename = cached.source_filename || null;
+    document.saved = true;
+    document.updated_at = cached.updated_at;
   } catch {
-    localStorage.removeItem(componentSpecStorageKey(buildId))
+    localStorage.removeItem(componentSpecStorageKey(buildId));
   }
-  return document
+  return document;
 }
 
 async function loadComponentSpecForDialog(buildId: string) {
-  const sequence = ++componentSpecRequestSequence
-  componentSpecLoading.value = true
-  libraryDialogRef.value?.setSpecLoading(buildId, true)
+  const sequence = ++componentSpecRequestSequence;
+  componentSpecLoading.value = true;
+  libraryDialogRef.value?.setSpecLoading(buildId, true);
   try {
-    const result = await loadComponentSpecWithFallback(
-      buildId,
-      id => fetchComponentSpec(id),
-      localComponentSpec
-    )
-    if (sequence !== componentSpecRequestSequence) return
-    componentSpec.value = result.document
-    libraryDialogRef.value?.setComponentSpec(buildId, result.document, result.offline)
+    const result = await loadComponentSpecWithFallback(buildId, id => fetchComponentSpec(id), localComponentSpec);
+    if (sequence !== componentSpecRequestSequence) return;
+    componentSpec.value = result.document;
+    libraryDialogRef.value?.setComponentSpec(buildId, result.document, result.offline);
   } finally {
     if (sequence === componentSpecRequestSequence) {
-      componentSpecLoading.value = false
-      libraryDialogRef.value?.setSpecLoading(buildId, false)
+      componentSpecLoading.value = false;
+      libraryDialogRef.value?.setSpecLoading(buildId, false);
     }
   }
 }
 
 async function loadAllBuildDetails(silent = true) {
-  const ids = allBuildNodes(treeData.value).map(b => b.id)
-  if (!ids.length) return
+  const ids = allBuildNodes(treeData.value).map(b => b.id);
+  if (!ids.length) return;
   const results = await Promise.all(
     ids.map(id => fetchComponentBuild(id, { signal: requestController.signal, silent }))
-  )
-  const updates: Record<string, Api.ComponentBuild.BuildDetail> = {}
+  );
+  const updates: Record<string, Api.ComponentBuild.BuildDetail> = {};
   for (let i = 0; i < results.length; i++) {
-    const result = results[i]
+    const result = results[i];
     if (!result.error && result.data) {
-      updates[ids[i]] = result.data
+      updates[ids[i]] = result.data;
     }
   }
-  cachedBuildDetails.value = { ...cachedBuildDetails.value, ...updates }
+  cachedBuildDetails.value = { ...cachedBuildDetails.value, ...updates };
 }
 
 async function loadTree(options: { preserveSelection?: boolean; silent?: boolean } = {}): Promise<boolean> {
-  const showLoading = !options.silent
-  if (showLoading) treeLoading.value = true
+  const showLoading = !options.silent;
+  if (showLoading) treeLoading.value = true;
   try {
     const result = await fetchComponentBuildTree({
       signal: requestController.signal,
       silent: options.silent
-    })
-    if (requestController.signal.aborted) return false
+    });
+    if (requestController.signal.aborted) return false;
     if (result.error || !result.data) {
-      if (!options.silent) window.$message?.error('零件库树暂时不可用')
-      return false
+      if (!options.silent) window.$message?.error('零件库树暂时不可用');
+      return false;
     }
-    treeData.value = normalizeTree(result.data)
+    treeData.value = normalizeTree(result.data);
     // 用途：首次进入页面时选中第一个系统库，避免把两个库的数据混成一个无归属列表。
     if (!options.preserveSelection && selectedCatalogId.value === '__root__' && treeData.value.length) {
-      selectedCatalogId.value = treeData.value[0].id
+      selectedCatalogId.value = treeData.value[0].id;
     }
     // 用途：读取全部构建详情，填充标准号等真实表格字段。
-    void loadAllBuildDetails(options.silent)
-    return true
+    void loadAllBuildDetails(options.silent);
+    return true;
   } finally {
-    if (showLoading) treeLoading.value = false
+    if (showLoading) treeLoading.value = false;
   }
 }
 
 async function loadCatalog(options: { silent?: boolean } = {}): Promise<boolean> {
-  catalogLoading.value = true
+  catalogLoading.value = true;
   try {
     const result = await fetchComponentBuildCatalog({
       signal: requestController.signal,
       silent: options.silent
-    })
-    if (requestController.signal.aborted) return false
+    });
+    if (requestController.signal.aborted) return false;
     if (result.error || !result.data) {
-      if (!options.silent) window.$message?.error('图元分类目录暂时不可用')
-      return false
+      if (!options.silent) window.$message?.error('图元分类目录暂时不可用');
+      return false;
     }
-    catalog.value = result.data.categories
-    return true
+    catalog.value = result.data.categories;
+    return true;
   } finally {
-    catalogLoading.value = false
+    catalogLoading.value = false;
   }
 }
 
 async function refresh() {
-  refreshing.value = true
+  refreshing.value = true;
   try {
-    const [treeOk, catalogOk] = await Promise.all([
-      loadTree({ preserveSelection: true }),
-      loadCatalog()
-    ])
-    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value) : true
-    statusUnavailable.value = !(treeOk && catalogOk && buildOk)
+    const [treeOk, catalogOk] = await Promise.all([loadTree({ preserveSelection: true }), loadCatalog()]);
+    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value) : true;
+    statusUnavailable.value = !(treeOk && catalogOk && buildOk);
   } finally {
-    refreshing.value = false
+    refreshing.value = false;
   }
 }
 
 async function pollBuilds() {
-  if (polling.value) return
-  const pending = allBuildNodes(treeData.value).filter(node => node.status === 'uploading' || node.status === 'parsing_sources')
-  if (!pending.length) return
-  polling.value = true
+  if (polling.value) return;
+  const pending = allBuildNodes(treeData.value).filter(
+    node => node.status === 'uploading' || node.status === 'parsing_sources'
+  );
+  if (!pending.length) return;
+  polling.value = true;
   try {
     const results = await Promise.all(
       pending.map(node =>
@@ -508,43 +540,43 @@ async function pollBuilds() {
           silent: true
         })
       )
-    )
-    if (requestController.signal.aborted) return
-    const next = { ...buildStatuses.value }
+    );
+    if (requestController.signal.aborted) return;
+    const next = { ...buildStatuses.value };
     results.forEach((result, index) => {
-      if (!result.error && result.data) next[pending[index].id] = result.data
-    })
-    buildStatuses.value = next
-    const treeOk = await loadTree({ preserveSelection: true, silent: true })
-    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value, { silent: true }) : true
-    statusUnavailable.value = !(treeOk && buildOk)
+      if (!result.error && result.data) next[pending[index].id] = result.data;
+    });
+    buildStatuses.value = next;
+    const treeOk = await loadTree({ preserveSelection: true, silent: true });
+    const buildOk = selectedBuildId.value ? await loadSelectedBuild(selectedBuildId.value, { silent: true }) : true;
+    statusUnavailable.value = !(treeOk && buildOk);
   } finally {
-    polling.value = false
+    polling.value = false;
   }
 }
 
 function syncPolling() {
   if (hasPendingBuilds() && !pollTimer.value) {
     pollTimer.value = window.setInterval(() => {
-      void pollBuilds()
-    }, 2000)
+      void pollBuilds();
+    }, 2000);
   }
   if (!hasPendingBuilds() && pollTimer.value) {
-    window.clearInterval(pollTimer.value)
-    pollTimer.value = null
+    window.clearInterval(pollTimer.value);
+    pollTimer.value = null;
   }
 }
 
 // 用途：集中放置页面事件处理函数。
 
 function handleCatalogSelect(catalogId: string) {
-  selectedCatalogId.value = catalogId
+  selectedCatalogId.value = catalogId;
 }
 
 function handleRowClick(buildId: string) {
-  selectedBuildId.value = buildId
-  void loadSelectedBuild(buildId)
-  openDialogForBuild(buildId)
+  selectedBuildId.value = buildId;
+  void loadSelectedBuild(buildId);
+  openDialogForBuild(buildId);
 }
 
 // 用途：根据真实源格式进入对应工作台，防止 STEP 被错误送入 CATPart 专属 Feature Center。
@@ -554,45 +586,50 @@ function openModelViewer(buildId: string, revisionId: string) {
 }
 
 async function openDialogForBuild(buildId: string) {
-  const build = selectedBuild.value?.id === buildId ? selectedBuild.value : await fetchComponentBuild(buildId, { silent: true }).then(r => r.data || null)
-  if (!build) return
-  const opened = await libraryDialogRef.value?.open(build, buildStatuses.value, null)
-  if (!opened) return
-  componentSpec.value = null
-  await loadComponentSpecForDialog(buildId)
+  const build =
+    selectedBuild.value?.id === buildId
+      ? selectedBuild.value
+      : await fetchComponentBuild(buildId, { silent: true }).then(r => r.data || null);
+  if (!build) return;
+  const opened = await libraryDialogRef.value?.open(build, buildStatuses.value, null);
+  if (!opened) return;
+  componentSpec.value = null;
+  await loadComponentSpecForDialog(buildId);
 }
 
 function handleDialogSubmit(payload: {
-  form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>
-  editingBuild: Api.ComponentBuild.BuildDetail | null
-  sourceFile: File | null
-  drawingFile: File | null
+  form: Omit<Api.ComponentBuild.CreatePayload, 'source_file' | 'step_file' | 'drawing_file'>;
+  editingBuild: Api.ComponentBuild.BuildDetail | null;
+  sourceFile: File | null;
+  drawingFile: File | null;
 }) {
-  submitting.value = true
+  submitting.value = true;
   const doSubmit = async () => {
     const data = {
       ...payload.form,
       ...(payload.sourceFile ? { source_file: payload.sourceFile } : {}),
       ...(payload.drawingFile ? { drawing_file: payload.drawingFile } : {})
-    }
+    };
     const result = payload.editingBuild
       ? await updateComponentBuild({ ...data, build_id: payload.editingBuild.id })
-      : await createComponentBuild(data)
-    if (result.error || !result.data) throw result.error
-    libraryDialogRef.value?.close()
-    void router.replace({ path: '/component-build', query: { build_id: result.data.id } })
+      : await createComponentBuild(data);
+    if (result.error || !result.data) throw result.error;
+    libraryDialogRef.value?.close();
+    void router.replace({ path: '/component-build', query: { build_id: result.data.id } });
     // 用途：用保存后的构建数据更新缓存，让表格立即显示新值。
-    cachedBuildDetails.value = { ...cachedBuildDetails.value, [result.data.id]: result.data }
-    void loadTree()
-    selectedBuild.value = result.data
-    selectedBuildId.value = result.data.id
-    window.$message?.success(payload.editingBuild ? '图元修改已保存' : '图元已创建')
-  }
-  doSubmit().catch(error => {
-    window.$message?.error(formatError(error, payload.editingBuild ? '图元修改保存失败' : '图元创建失败'))
-  }).finally(() => {
-    submitting.value = false
-  })
+    cachedBuildDetails.value = { ...cachedBuildDetails.value, [result.data.id]: result.data };
+    void loadTree();
+    selectedBuild.value = result.data;
+    selectedBuildId.value = result.data.id;
+    window.$message?.success(payload.editingBuild ? '图元修改已保存' : '图元已创建');
+  };
+  doSubmit()
+    .catch(error => {
+      window.$message?.error(formatError(error, payload.editingBuild ? '图元修改保存失败' : '图元创建失败'));
+    })
+    .finally(() => {
+      submitting.value = false;
+    });
 }
 
 function handleDeleteBuild(buildId: string) {
@@ -605,112 +642,111 @@ function handleDeleteBuild(buildId: string) {
       type: 'warning',
       confirmButtonClass: 'el-button--danger'
     }
-  ).then(async () => {
-    try {
-      const result = await deleteComponentBuild(buildId)
-      if (result.error) throw result.error
-      // 用途：清除已删除构建的详情缓存。
-      const next = { ...cachedBuildDetails.value }
-      delete next[buildId]
-      cachedBuildDetails.value = next
-      // 用途：从当前目录树移除已删除节点。
-      treeData.value = treeData.value.filter(node => node.id !== buildId).map(node => ({
-        ...node,
-        children: removeNodeFromChildren(node.children, buildId)
-      }))
-      if (selectedBuildId.value === buildId) {
-        selectedBuild.value = null
-        selectedBuildId.value = ''
+  )
+    .then(async () => {
+      try {
+        const result = await deleteComponentBuild(buildId);
+        if (result.error) throw result.error;
+        // 用途：清除已删除构建的详情缓存。
+        const next = { ...cachedBuildDetails.value };
+        delete next[buildId];
+        cachedBuildDetails.value = next;
+        // 用途：从当前目录树移除已删除节点。
+        treeData.value = treeData.value
+          .filter(node => node.id !== buildId)
+          .map(node => ({
+            ...node,
+            children: removeNodeFromChildren(node.children, buildId)
+          }));
+        if (selectedBuildId.value === buildId) {
+          selectedBuild.value = null;
+          selectedBuildId.value = '';
+        }
+        window.$message?.success('图元已删除');
+        // 用途：删除后从服务端重新加载权威目录数据。
+        void refresh();
+      } catch (error) {
+        window.$message?.error(formatError(error, '删除图元失败'));
       }
-      window.$message?.success('图元已删除')
-      // 用途：删除后从服务端重新加载权威目录数据。
-      void refresh()
-    } catch (error) {
-      window.$message?.error(formatError(error, '删除图元失败'))
-    }
-  }).catch(() => { /* user cancelled */ })
+    })
+    .catch(() => {
+      /* user cancelled */
+    });
 }
 
 function removeNodeFromChildren(children: ComponentTreeNode[], targetId: string): ComponentTreeNode[] {
-  return children.filter(child => child.id !== targetId).map(child => ({
-    ...child,
-    children: removeNodeFromChildren(child.children, targetId)
-  }))
+  return children
+    .filter(child => child.id !== targetId)
+    .map(child => ({
+      ...child,
+      children: removeNodeFromChildren(child.children, targetId)
+    }));
 }
 
 function handleStartParsing(buildId: string, role: Api.ComponentBuild.RetryRole) {
   const run = async () => {
-    parsingRole.value = role
+    parsingRole.value = role;
     try {
-      const result = await retryComponentBuild(buildId, role)
-      if (result.error) throw result.error
-      await refresh()
-      window.$message?.success(role === 'reference_step' ? 'STEP 已进入解析队列' : '二维图纸已进入解析队列')
+      const result = await retryComponentBuild(buildId, role);
+      if (result.error) throw result.error;
+      await refresh();
+      window.$message?.success(role === 'reference_step' ? 'STEP 已进入解析队列' : '二维图纸已进入解析队列');
     } catch (error) {
-      window.$message?.error(formatError(error, role === 'reference_step' ? 'STEP 解析启动失败' : '二维图纸解析启动失败'))
+      window.$message?.error(
+        formatError(error, role === 'reference_step' ? 'STEP 解析启动失败' : '二维图纸解析启动失败')
+      );
     } finally {
-      parsingRole.value = null
-      libraryDialogRef.value?.setSourceParsing(false)
+      parsingRole.value = null;
+      libraryDialogRef.value?.setSourceParsing(false);
     }
-  }
-  run()
+  };
+  run();
 }
 
-function handleFusion(
-  buildId: string,
-  workingPayload: Api.ComponentBuild.ComponentSpecSavePayload | null = null
-) {
+function handleFusion(buildId: string, workingPayload: Api.ComponentBuild.ComponentSpecSavePayload | null = null) {
   const run = async () => {
-    fusionLoading.value = true
+    fusionLoading.value = true;
     try {
       if (workingPayload) {
-        componentSpecSaving.value = true
-        libraryDialogRef.value?.setSpecSaving(buildId, true)
-        const saved = await saveComponentSpec(buildId, workingPayload)
+        componentSpecSaving.value = true;
+        libraryDialogRef.value?.setSpecSaving(buildId, true);
+        const saved = await saveComponentSpec(buildId, workingPayload);
         if (saved.error || !saved.data) {
-          throw saved.error || new Error('ComponentSpec save returned no document')
+          throw saved.error || new Error('ComponentSpec save returned no document');
         }
-        localStorage.removeItem(componentSpecStorageKey(buildId))
-        componentSpec.value = saved.data
-        libraryDialogRef.value?.setComponentSpec(buildId, saved.data, false)
+        localStorage.removeItem(componentSpecStorageKey(buildId));
+        componentSpec.value = saved.data;
+        libraryDialogRef.value?.setComponentSpec(buildId, saved.data, false);
       }
-      const result = await fuseComponentBuild(buildId, false)
-      if (result.error || !result.data) throw result.error
-      fusionReport.value = result.data
-      await loadComponentSpecForDialog(buildId)
-      window.$message?.success('数据融合完成')
+      const result = await fuseComponentBuild(buildId, false);
+      if (result.error || !result.data) throw result.error;
+      fusionReport.value = result.data;
+      await loadComponentSpecForDialog(buildId);
+      window.$message?.success('数据融合完成');
     } catch (error) {
-      window.$message?.error(formatError(error, '数据融合失败'))
+      window.$message?.error(formatError(error, '数据融合失败'));
     } finally {
-      componentSpecSaving.value = false
-      libraryDialogRef.value?.setSpecSaving(buildId, false)
-      fusionLoading.value = false
+      componentSpecSaving.value = false;
+      libraryDialogRef.value?.setSpecSaving(buildId, false);
+      fusionLoading.value = false;
     }
-  }
-  run()
+  };
+  run();
 }
 
-function handleSaveSpec(
-  buildId: string,
-  payload: Api.ComponentBuild.ComponentSpecSavePayload
-) {
+function handleSaveSpec(buildId: string, payload: Api.ComponentBuild.ComponentSpecSavePayload) {
   const run = async () => {
-    componentSpecSaving.value = true
-    libraryDialogRef.value?.setSpecSaving(buildId, true)
-    const baseSpec = componentSpec.value?.build_id === buildId
-      ? componentSpec.value
-      : localComponentSpec(buildId)
+    componentSpecSaving.value = true;
+    libraryDialogRef.value?.setSpecSaving(buildId, true);
+    const baseSpec = componentSpec.value?.build_id === buildId ? componentSpec.value : localComponentSpec(buildId);
     try {
-      const result = await saveComponentSpec(buildId, payload)
+      const result = await saveComponentSpec(buildId, payload);
       if (result.error || !result.data) {
         if (!isOfflineRequestError(result.error)) {
-          throw result.error || new Error('ComponentSpec save returned no document')
+          throw result.error || new Error('ComponentSpec save returned no document');
         }
-        const updatedAt = new Date().toISOString()
-        localStorage.setItem(
-          componentSpecStorageKey(buildId),
-          JSON.stringify({ ...payload, updated_at: updatedAt })
-        )
+        const updatedAt = new Date().toISOString();
+        localStorage.setItem(componentSpecStorageKey(buildId), JSON.stringify({ ...payload, updated_at: updatedAt }));
         const localSaved = {
           ...baseSpec,
           data: payload.data,
@@ -718,47 +754,55 @@ function handleSaveSpec(
           source_filename: payload.source_filename,
           saved: true,
           updated_at: updatedAt
-        }
-        componentSpec.value = localSaved
-        libraryDialogRef.value?.setComponentSpec(buildId, localSaved, true)
-        window.$message?.warning('后端模板接口尚未启用，草稿已暂存在当前浏览器')
+        };
+        componentSpec.value = localSaved;
+        libraryDialogRef.value?.setComponentSpec(buildId, localSaved, true);
+        window.$message?.warning('后端模板接口尚未启用，草稿已暂存在当前浏览器');
       } else {
-        localStorage.removeItem(componentSpecStorageKey(buildId))
-        componentSpec.value = result.data
-        libraryDialogRef.value?.setComponentSpec(buildId, result.data, false)
-        window.$message?.success('ComponentSpec 草稿已保存')
+        localStorage.removeItem(componentSpecStorageKey(buildId));
+        componentSpec.value = result.data;
+        libraryDialogRef.value?.setComponentSpec(buildId, result.data, false);
+        window.$message?.success('ComponentSpec 草稿已保存');
       }
     } catch (error) {
-      window.$message?.error(formatError(error, 'ComponentSpec 保存失败'))
+      window.$message?.error(formatError(error, 'ComponentSpec 保存失败'));
     } finally {
-      componentSpecSaving.value = false
-      libraryDialogRef.value?.setSpecSaving(buildId, false)
+      componentSpecSaving.value = false;
+      libraryDialogRef.value?.setSpecSaving(buildId, false);
     }
-  }
-  run()
+  };
+  run();
 }
 
 function handleOpenCreateDialog() {
-  libraryDialogRef.value?.open(null, buildStatuses.value, null)
+  libraryDialogRef.value?.open(null, buildStatuses.value, null);
 }
 
 // 用途：监听目录和路由变化。
-watch(treeData, syncPolling, { deep: true })
-watch(buildStatuses, statuses => {
-  libraryDialogRef.value?.updateBuildStatuses(statuses)
-}, { deep: true })
+watch(treeData, syncPolling, { deep: true });
+watch(
+  buildStatuses,
+  statuses => {
+    libraryDialogRef.value?.updateBuildStatuses(statuses);
+  },
+  { deep: true }
+);
 
 // 用途：执行页面初始化。
 onMounted(async () => {
-  const [treeOk, catalogOk] = await Promise.all([loadTree(), loadCatalog()])
-  statusUnavailable.value = !(treeOk && catalogOk)
-  syncPolling()
-})
+  const [treeOk, catalogOk] = await Promise.all([loadTree(), loadCatalog()]);
+  statusUnavailable.value = !(treeOk && catalogOk);
+  syncPolling();
+});
 
 onBeforeUnmount(() => {
-  if (pollTimer.value) window.clearInterval(pollTimer.value)
-  requestController.abort()
-})
+  if (pollTimer.value) window.clearInterval(pollTimer.value);
+  requestController.abort();
+});
+</script>
+
+<script lang="ts">
+export default { name: 'ComponentBuild' };
 </script>
 
 <template>
@@ -769,17 +813,20 @@ onBeforeUnmount(() => {
         <h3 class="header-title">零件存储管理</h3>
       </div>
       <div class="header-actions">
-        <ElButton
-          ref="addBtnRef"
-          type="primary"
-          @click="handleOpenCreateDialog"
-        >
-          新增零件
-        </ElButton>
+        <ElButton ref="addBtnRef" type="primary" @click="handleOpenCreateDialog">新增零件</ElButton>
         <ElTooltip content="刷新目录和列表" placement="bottom">
           <ElButton :loading="refreshing" circle @click="refresh">
             <template #icon>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <polyline points="1 4 1 10 7 10" />
                 <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
               </svg>
@@ -811,11 +858,11 @@ onBeforeUnmount(() => {
           @edit="openDialogForBuild"
           @delete-build="handleDeleteBuild"
           @view-cad-model="openModelViewer"
-          @view-drawing="(bid) => openDialogForBuild(bid)"
-          @start-step-parsing="(bid) => handleStartParsing(bid, 'reference_step')"
-          @start-drawing-parsing="(bid) => handleStartParsing(bid, 'drawing')"
-          @view-component-spec="(bid) => openDialogForBuild(bid)"
-          @view-yaml="(bid) => openDialogForBuild(bid)"
+          @view-drawing="bid => openDialogForBuild(bid)"
+          @start-step-parsing="bid => handleStartParsing(bid, 'reference_step')"
+          @start-drawing-parsing="bid => handleStartParsing(bid, 'drawing')"
+          @view-component-spec="bid => openDialogForBuild(bid)"
+          @view-yaml="bid => openDialogForBuild(bid)"
           @run-fusion="handleFusion"
           @row-click="handleRowClick"
         />
@@ -846,10 +893,6 @@ onBeforeUnmount(() => {
     />
   </div>
 </template>
-
-<script lang="ts">
-export default { name: 'ComponentBuild' }
-</script>
 
 <style scoped>
 .component-library-page {

@@ -3,27 +3,27 @@
  */
 
 export interface CatalogTreeNodeLike {
-  id: string
-  label: string
-  label_en?: string | null
-  node_type: string
-  library_code?: string | null
-  category_code?: string | null
-  part_type_code?: string | null
-  children: CatalogTreeNodeLike[]
+  id: string;
+  label: string;
+  label_en?: string | null;
+  node_type: string;
+  library_code?: string | null;
+  category_code?: string | null;
+  part_type_code?: string | null;
+  children: CatalogTreeNodeLike[];
 }
 
 export interface CatalogNavigationItem {
-  id: string
-  label: string
-  code: string
-  count: number
-  parentId?: string
-  depth: number
-  nodeType: 'library' | 'family' | 'type'
-  categoryCode?: string
-  partTypeCode?: string
-  descendantCategoryCodes: string[]
+  id: string;
+  label: string;
+  code: string;
+  count: number;
+  parentId?: string;
+  depth: number;
+  nodeType: 'library' | 'family' | 'type';
+  categoryCode?: string;
+  partTypeCode?: string;
+  descendantCategoryCodes: string[];
 }
 
 /**
@@ -34,9 +34,9 @@ export function buildCatalogNavigation(
   parentId?: string,
   depth = 0
 ): CatalogNavigationItem[] {
-  const result: CatalogNavigationItem[] = []
+  const result: CatalogNavigationItem[] = [];
   for (const node of nodes) {
-    if (!['library', 'family', 'type'].includes(node.node_type)) continue
+    if (!['library', 'family', 'type'].includes(node.node_type)) continue;
     result.push({
       id: node.id,
       label: node.node_type === 'library' ? node.label : `${node.label}${node.label_en ? ` · ${node.label_en}` : ''}`,
@@ -48,25 +48,25 @@ export function buildCatalogNavigation(
       categoryCode: node.category_code || undefined,
       partTypeCode: node.part_type_code || undefined,
       descendantCategoryCodes: collectCategoryCodes(node)
-    })
-    result.push(...buildCatalogNavigation(node.children, node.id, depth + 1))
+    });
+    result.push(...buildCatalogNavigation(node.children, node.id, depth + 1));
   }
-  return result
+  return result;
 }
 
 /**
  * 用途：收集某目录全部后代分类编码，供选择系统库根时过滤其下所有零件。
  */
 export function collectCategoryCodes(node: CatalogTreeNodeLike): string[] {
-  const values = node.category_code ? [node.category_code] : []
-  for (const child of node.children) values.push(...collectCategoryCodes(child))
-  return [...new Set(values)]
+  const values = node.category_code ? [node.category_code] : [];
+  for (const child of node.children) values.push(...collectCategoryCodes(child));
+  return [...new Set(values)];
 }
 
 /**
  * 用途：只统计真实 build 叶子，使系统库根和分类数量采用同一口径。
  */
 export function countBuildNodes(node: CatalogTreeNodeLike): number {
-  if (node.node_type === 'build') return 1
-  return node.children.reduce((total, child) => total + countBuildNodes(child), 0)
+  if (node.node_type === 'build') return 1;
+  return node.children.reduce((total, child) => total + countBuildNodes(child), 0);
 }

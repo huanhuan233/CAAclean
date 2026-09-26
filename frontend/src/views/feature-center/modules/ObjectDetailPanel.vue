@@ -6,6 +6,9 @@ import type { FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree
 import type { DetailPanelLayout } from './detail-panel';
 import type { SelectionContext, SelectionTarget } from './viewer-selection';
 import {
+  type DetailField,
+  type GeometryLink,
+  type ParameterField,
   bomRows,
   detailRowsFromRecord,
   faceRows,
@@ -15,10 +18,7 @@ import {
   normalizeParameterRows,
   parameterSourceFor,
   recognizedFeatureRows,
-  selectionEvidenceRows,
-  type DetailField,
-  type GeometryLink,
-  type ParameterField
+  selectionEvidenceRows
 } from './object-detail-panel';
 
 defineOptions({ name: 'ObjectDetailPanel' });
@@ -112,10 +112,10 @@ const geometryRows = computed<GeometryLink[]>(() =>
 
 const advancedRows = computed(() =>
   detailRowsFromRecord(
-    (props.selectedFace ||
-      props.selectedNativeFeature ||
-      props.selectedFeature ||
-      props.detailNode) as Record<string, unknown> | null,
+    (props.selectedFace || props.selectedNativeFeature || props.selectedFeature || props.detailNode) as Record<
+      string,
+      unknown
+    > | null,
     []
   )
 );
@@ -141,9 +141,17 @@ const StatusValue = defineComponent({
       const value = props.field.value;
       const content = value.fullText;
       const inner = value.statusTone
-        ? h(ElTag, { type: value.statusTone === 'primary' ? undefined : value.statusTone, effect: 'light', size: 'small' }, () => value.text)
+        ? h(
+            ElTag,
+            { type: value.statusTone === 'primary' ? undefined : value.statusTone, effect: 'light', size: 'small' },
+            () => value.text
+          )
         : h('span', { class: ['field-value-text', { empty: value.empty }] }, value.text);
-      return h(ElTooltip, { content, placement: 'top', showAfter: 450 }, { default: () => h('span', { class: 'field-value' }, [inner]) });
+      return h(
+        ElTooltip,
+        { content, placement: 'top', showAfter: 450 },
+        { default: () => h('span', { class: 'field-value' }, [inner]) }
+      );
     };
   }
 });
@@ -189,14 +197,22 @@ const DetailSection = defineComponent({
             : null,
           h('div', { class: 'section-content' }, [
             props.rows.length
-              ? h('div', { class: 'field-list' }, props.rows.map(row =>
-                  h('div', { key: row.key, class: 'field-row' }, [
-                    h(ElTooltip, { content: row.label, placement: 'top', showAfter: 450 }, {
-                      default: () => h('span', { class: 'field-label' }, row.label)
-                    }),
-                    h(StatusValue, { field: row })
-                  ])
-                ))
+              ? h(
+                  'div',
+                  { class: 'field-list' },
+                  props.rows.map(row =>
+                    h('div', { key: row.key, class: 'field-row' }, [
+                      h(
+                        ElTooltip,
+                        { content: row.label, placement: 'top', showAfter: 450 },
+                        {
+                          default: () => h('span', { class: 'field-label' }, row.label)
+                        }
+                      ),
+                      h(StatusValue, { field: row })
+                    ])
+                  )
+                )
               : h('div', { class: 'compact-empty' }, props.emptyText)
           ])
         ])
@@ -265,7 +281,13 @@ const DetailSection = defineComponent({
                   </ElTooltip>
                   <StatusValue :field="row" />
                   <ElTooltip content="复制完整值" placement="top">
-                    <ElButton class="copy-button" text circle aria-label="复制参数值" @click="copyValue(row.value.fullText)">
+                    <ElButton
+                      class="copy-button"
+                      text
+                      circle
+                      aria-label="复制参数值"
+                      @click="copyValue(row.value.fullText)"
+                    >
                       <SvgIcon icon="lucide:copy" />
                     </ElButton>
                   </ElTooltip>

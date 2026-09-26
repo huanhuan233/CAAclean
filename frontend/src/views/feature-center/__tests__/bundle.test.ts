@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  buildFaceToFeatureIndex,
-  facesForFeature,
-  parseJsonLines
-} from '../modules/feature-center-bundle';
+import { buildFaceToFeatureIndex, facesForFeature, parseJsonLines } from '../modules/feature-center-bundle';
 
 // 用途：验证 Feature 列表选择能够通过 Bundle 映射得到真实 Face，而非名称或颜色猜测。
 test('feature selection resolves stable face ids', () => {

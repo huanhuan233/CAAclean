@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from app.component_builds.ingest import (
 )
 from app.component_builds.fusion import FusionSourceUnavailable
 from app.component_builds.fusion_sources import SqlAlchemyFusionSourceReader
+from app.component_builds.caa_new_bundle import CaaNewBundleError
 from app.component_builds.repository import SqlAlchemyComponentBuildRepository
 from app.component_builds.schemas import ComponentBuildFusionIn, ComponentBuildRetryIn, ComponentSpecDraftIn
 from app.component_builds.component_spec_document import ComponentSpecDocumentError
@@ -201,14 +202,93 @@ async def component_build_viewer_asset(
     urls.extend(value for key, value in (contract.get("feature_center") or {}).items() if key.endswith("_url") and value)
     urls.extend(value for key, value in (contract.get("native_semantics") or {}).items() if key.endswith("_url") and value)
     requested_suffix = f"/viewer/assets/{asset_path}"
-    is_part_feature_tree_asset = asset_path.startswith("native-caa/part-feature-trees/")
-    if not is_part_feature_tree_asset and not any(str(url).endswith(requested_suffix) for url in urls):
+    if not any(str(url).endswith(requested_suffix) for url in urls):
         raise HTTPException(status_code=404, detail={"code": "VIEWER_ASSET_NOT_LISTED", "message": "资产不在发布清单中"})
     path = safe_asset_path(Path(settings.cad_work_dir) / contract["task_id"], asset_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail={"code": "VIEWER_ASSET_MISSING", "message": "资产文件不存在"})
     media_type = "model/gltf-binary" if path.suffix.lower() == ".glb" else "application/json"
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+@router.get("/{build_id}/viewer/native/tree")
+async def component_build_native_tree(
+    build_id: UUID,
+    include_supplemental: bool = False,
+    parent_id: str | None = None,
+    offset: int = Query(0, ge=0),
+    page_size: int | None = Query(None, ge=1, le=500),
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await service.get_native_tree(
+            build_id,
+            settings,
+            include_supplemental=include_supplemental,
+            parent_id=parent_id,
+            offset=offset,
+            page_size=page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/native/nodes/{node_id}")
+async def component_build_native_node(
+    build_id: UUID,
+    node_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await service.get_native_node(build_id, node_id, settings)
+    except CaaNewBundleError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_NODE_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/native/nodes/{node_id}/properties")
+async def component_build_native_node_properties(
+    build_id: UUID,
+    node_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await service.get_native_node_properties(build_id, node_id, settings)
+    except CaaNewBundleError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_PROPERTIES_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/native/topology")
+async def component_build_native_topology(
+    build_id: UUID,
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await service.get_native_topology(build_id, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_TOPOLOGY_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/native/nodes/{node_id}/selection")
+async def component_build_native_node_selection(
+    build_id: UUID,
+    node_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await service.get_native_node_selection(build_id, node_id, settings)
+    except CaaNewBundleError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_SELECTION_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @router.get("/{build_id}/component-spec")

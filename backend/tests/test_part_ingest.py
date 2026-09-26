@@ -215,6 +215,15 @@ async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sideca
         async def update_revision_manifest(self, requested_id, payload):
             assert requested_id == revision_id
 
+        async def replace_native_tree_entities(self, requested_id, rows, expected_count):
+            assert requested_id == revision_id
+            assert len(rows) == expected_count
+            return expected_count
+
+        async def replace_native_property_facts(self, requested_id, rows):
+            assert requested_id == revision_id
+            return len(list(rows))
+
     class Client:
         def __init__(self, **_kwargs):
             pass
@@ -223,7 +232,19 @@ async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sideca
             import zipfile
             download_root.mkdir(parents=True)
             with zipfile.ZipFile(download_root / "native_bundle.zip", "w") as archive:
-                archive.writestr("features.jsonl", "{}\n")
+                archive.writestr(
+                    "manifest.json",
+                    '{"schema_version":"caa_capture_v1","parser_version":"0.2.0","capture_status":"complete"}',
+                )
+                archive.writestr(
+                    "product_occurrences.jsonl",
+                    '{"occurrence_id":"product_occurrence_1","parent_occurrence_id":"",'
+                    '"reference_id":"ref_1","referenced_document_id":"doc_1",'
+                    '"instance_name":"Root","part_number":"Root","source_index":0}\n',
+                )
+                archive.writestr("object_entities.jsonl", "")
+                archive.writestr("tree_occurrences.jsonl", "")
+                archive.writestr("property_facts.jsonl", "")
             (download_root / "exported.stp").write_bytes(b"STEP")
             await report_stage({"stage": "publishing_artifacts", "progress": 65})
             return SimpleNamespace(worker_job_id="worker-1", status="completed", stage="completed")
@@ -239,3 +260,103 @@ async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sideca
     await _run_remote_catpart_worker(Repository(), revision_id, settings, str(source), tmp_path / str(revision_id))
 
     assert all(update.get("status") != "completed" for update in status_updates)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supplemental_parent", [False, True])
+async def test_native_progress_is_published_before_feature_center_finishes(tmp_path, supplemental_parent):
+    revision_id = uuid4()
+    native_bundle = tmp_path / "native-caa"
+    native_bundle.mkdir()
+    (native_bundle / "manifest.json").write_text(
+        '{"schema_version":"caa_capture_v1","parser_version":"0.2.0","capture_status":"complete"}',
+        encoding="utf-8",
+    )
+    (native_bundle / "product_occurrences.jsonl").write_text(
+        '{"occurrence_id":"product_occurrence_1","parent_occurrence_id":"","reference_id":"ref_1",'
+        '"referenced_document_id":"doc_1","instance_name":"Root","part_number":"Root","source_index":0}\n',
+        encoding="utf-8",
+    )
+    (native_bundle / "tree_occurrences.jsonl").write_text(
+        '{"occurrence_id":"occurrence_1","parent_occurrence_id":"product_occurrence_1",'
+        '"object_id":"object_1","document_id":"doc_1","source_index":0,"occurrence_kind":"native_feature"}\n',
+        encoding="utf-8",
+    )
+    (native_bundle / "object_entities.jsonl").write_text(
+        '{"object_id":"object_1","document_id":"doc_1","object_kind":"catia_document",'
+        '"display_name":"Root.CATProduct","internal_name":"CATDocument","startup_type":"CATDocument"}\n',
+        encoding="utf-8",
+    )
+    (native_bundle / "property_facts.jsonl").write_text("{}\n", encoding="utf-8")
+    if supplemental_parent:
+        with (native_bundle / "tree_occurrences.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(
+                '{"occurrence_id":"supplemental","parent_occurrence_id":"occurrence_1",'
+                '"presentation_status":"non_primary"}\n'
+                '{"occurrence_id":"visible_child","parent_occurrence_id":"supplemental",'
+                '"presentation_status":"visible"}\n'
+            )
+    expected_count = 4 if supplemental_parent else 2
+    updates = []
+    persisted_rows = []
+    persisted_properties = []
+
+    class Repository:
+        async def replace_native_tree_entities(self, requested_id, rows, expected_count):
+            assert requested_id == revision_id
+            assert len(rows) == expected_count == (4 if supplemental_parent else 2)
+            seen = set()
+            for row in rows:
+                assert row["parent_entity_id"] is None or row["parent_entity_id"] in seen
+                seen.add(row["id"])
+            persisted_rows.extend(rows)
+            return len(rows)
+
+        async def replace_native_property_facts(self, requested_id, rows):
+            assert requested_id == revision_id
+            persisted_properties.extend(rows)
+            return len(persisted_properties)
+
+        async def update_revision_manifest(self, requested_id, payload):
+            assert requested_id == revision_id
+            updates.append(payload)
+
+    await ingest_module._publish_native_progress(Repository(), revision_id, native_bundle)
+
+    assert updates[-1]["native_capture"]["available"] is True
+    assert updates[-1]["native_capture"]["has_tree"] is True
+    assert updates[-1]["native_semantics"]["available"] is True
+    assert updates[-1]["native_semantics"]["tree_occurrences"] == "native-caa/tree_occurrences.jsonl"
+    assert updates[-1]["viewer_summary"]["native_feature_count"] == 0
+    assert updates[-1]["native_property_storage"] == {
+        "backend": "postgresql", "fact_count": 0, "complete": True
+    }
+    assert len(persisted_rows) == expected_count
+
+
+@pytest.mark.asyncio
+async def test_native_progress_is_not_published_when_database_count_mismatches(tmp_path):
+    revision_id = uuid4()
+    native_bundle = tmp_path / "native-caa"
+    native_bundle.mkdir()
+    (native_bundle / "manifest.json").write_text(
+        '{"schema_version":"caa_capture_v1","parser_version":"0.2.0","capture_status":"complete"}',
+        encoding="utf-8",
+    )
+    (native_bundle / "product_occurrences.jsonl").write_text(
+        '{"occurrence_id":"product_occurrence_1","parent_occurrence_id":"","instance_name":"Root","source_index":0}\n',
+        encoding="utf-8",
+    )
+    updates = []
+
+    class Repository:
+        async def replace_native_tree_entities(self, _revision_id, _rows, _expected_count):
+            return 0
+
+        async def update_revision_manifest(self, _revision_id, payload):
+            updates.append(payload)
+
+    with pytest.raises(ValueError, match="database count mismatch"):
+        await ingest_module._publish_native_progress(Repository(), revision_id, native_bundle)
+
+    assert updates == []

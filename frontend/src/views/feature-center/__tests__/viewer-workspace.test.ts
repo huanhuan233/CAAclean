@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   defaultBomVisible,
   geometryDisplayId,
+  shouldBlockWorkspaceDuringLoad,
+  shouldLoadNativeTreeDuringProcessing,
   tabsForSource,
   workerStageLabel
 } from '../modules/viewer-workspace';
@@ -31,4 +33,28 @@ test('catia stages use explicit worker labels', () => {
   assert.equal(workerStageLabel('running_caa'), 'CAA 原生解析');
   assert.equal(workerStageLabel('running_freecad'), 'STEP 几何解析');
   assert.notEqual(workerStageLabel('exporting_step'), 'STEP 几何解析');
+});
+
+test('processing viewer contract exposes native tree before geometry is ready', () => {
+  assert.equal(
+    shouldLoadNativeTreeDuringProcessing({
+      status: 'processing',
+      native_capture: { has_tree: true },
+      viewer_asset: null
+    }),
+    true
+  );
+  assert.equal(
+    shouldLoadNativeTreeDuringProcessing({
+      status: 'processing',
+      native_capture: { has_tree: false },
+      viewer_asset: null
+    }),
+    false
+  );
+});
+
+test('background geometry polling does not cover an already loaded tree', () => {
+  assert.equal(shouldBlockWorkspaceDuringLoad(false), true);
+  assert.equal(shouldBlockWorkspaceDuringLoad(true), false);
 });

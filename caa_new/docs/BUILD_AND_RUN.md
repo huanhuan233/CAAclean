@@ -22,6 +22,8 @@ These tests compile only API-independent modules and do not require CATIA header
 
 ## CAA Build
 
+Choose the native target for the installed CATIA runtime. On a 32-bit-only toolchain use `tools\build_r21_x86.bat` and `tools\run_r21_x86.bat` (`intel_a/32`). The commands below describe an equipped x64 host (`win_b64/64`), not an automatic conversion of an x86 executable. See [semantic capture and caller configuration](SEMANTIC_CAPTURE.md) for Python worker target selection and current validation limits.
+
 ```bat
 call tools\build_r21_x64.bat
 ```

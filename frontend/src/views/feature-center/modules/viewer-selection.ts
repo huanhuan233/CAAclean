@@ -15,12 +15,7 @@ export type SelectionTargetKind =
   | 'edge'
   | 'vertex';
 
-export type SelectionMappingStatus =
-  | 'exact'
-  | 'runtime_current_revision'
-  | 'candidate'
-  | 'ambiguous'
-  | 'unavailable';
+export type SelectionMappingStatus = 'exact' | 'runtime_current_revision' | 'candidate' | 'ambiguous' | 'unavailable';
 
 export interface SelectionTarget {
   kind: SelectionTargetKind;
@@ -93,7 +88,10 @@ export interface TopologySelectionRecord {
 
 export interface SelectionResources {
   selectionIndex?: ViewerSelectionIndex | null;
-  faceMeshMap?: { faces?: Record<string, { mesh_primitive_id?: string }>; primitive_to_face?: Record<string, string> } | null;
+  faceMeshMap?: {
+    faces?: Record<string, { mesh_primitive_id?: string }>;
+    primitive_to_face?: Record<string, string>;
+  } | null;
   featureMeshMap?: FeatureMeshMap | null;
   bomNodes?: Api.ComponentBuild.ViewerBomNode[];
   canonicalFeatures?: CanonicalFeatureRecord[];
@@ -161,8 +159,13 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
   if (target.kind === 'native_feature') {
     push(context.nativeFeatureIds, target.id);
     pushMany(context.nativeFaceIds, index?.native_feature_to_native_faces?.[target.id]);
-    const linked = (resources.canonicalFeatures || []).filter(feature => feature.native_feature_ids.includes(target.id));
-    pushMany(context.recognizedFeatureIds, linked.map(feature => feature.feature_center_id));
+    const linked = (resources.canonicalFeatures || []).filter(feature =>
+      feature.native_feature_ids.includes(target.id)
+    );
+    pushMany(
+      context.recognizedFeatureIds,
+      linked.map(feature => feature.feature_center_id)
+    );
     for (const feature of linked) {
       pushMany(context.renderFaceIds, feature.geometry_refs.face_ids);
       pushMany(context.primitiveIds, resources.featureMeshMap?.features[feature.feature_center_id]?.mesh_primitive_ids);
@@ -184,7 +187,8 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     push(context.renderFaceIds, target.id);
     pushMany(context.primitiveIds, index?.render_face_to_primitives?.[target.id]);
     push(context.primitiveIds, resources.faceMeshMap?.faces?.[target.id]?.mesh_primitive_id);
-    const featureIds = index?.render_face_to_recognized_features?.[target.id] ||
+    const featureIds =
+      index?.render_face_to_recognized_features?.[target.id] ||
       reverseFeaturesForFace(resources.featureMeshMap, target.id);
     pushMany(context.recognizedFeatureIds, featureIds);
     context.mappingStatus = context.primitiveIds.length ? 'exact' : 'unavailable';

@@ -2,7 +2,7 @@ BUILT_OBJECT_TYPE=LOAD MODULE
 
 OS = COMMON
 
-LOCAL_CCFLAGS = /EHsc /I"src"
+LOCAL_CCFLAGS = /EHsc /Y- /I"src"
 
 LINK_WITH = \
   JS0GROUP \
@@ -17,6 +17,12 @@ LINK_WITH = \
   CATTPSItf \
   CATTPSUUID \
   KnowledgeItf \
+  CAACompositesItf \
+  CAACompositesItfUUID \
+  CATCompositesPubIDL \
+  CATMatInterfaces \
+  CATVisualization \
+  CATGraphicProperties \
   CATPartInterfaces \
   PartInterfacesUUID \
   CATProductStructure1 \

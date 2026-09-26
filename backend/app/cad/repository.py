@@ -4,10 +4,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadRelation, ComponentBuild
+from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadNativePropertyFact, CadRelation, ComponentBuild
+from app.component_builds.native_tree_store import NATIVE_SOURCE_PREFIX, order_native_tree_rows
 
 
 def now_utc() -> datetime:
@@ -94,6 +95,83 @@ class CadRepository:
                 merged[key] = value
         revision.parse_manifest = merged
         await self.session.commit()
+
+    async def replace_native_tree_entities(
+        self,
+        revision_id: uuid.UUID,
+        rows: list[dict[str, Any]],
+        expected_count: int,
+    ) -> int:
+        """原子替换一笔 Revision 的完整 CAA 树；数量不一致时禁止提交。"""
+        try:
+            if len(rows) != expected_count:
+                raise ValueError(
+                    f"native tree database count mismatch: expected={expected_count}, actual={len(rows)}"
+                )
+            if any(row["revision_id"] != revision_id for row in rows):
+                raise ValueError("native tree contains rows from a different revision")
+            rows = order_native_tree_rows(rows)
+            await self.session.execute(
+                delete(CadEntity).where(
+                    CadEntity.revision_id == revision_id,
+                    CadEntity.source_ref.like(f"{NATIVE_SOURCE_PREFIX}%"),
+                )
+            )
+            for start in range(0, len(rows), 1000):
+                await self.session.execute(insert(CadEntity), rows[start:start + 1000])
+            stored_count = int(
+                await self.session.scalar(
+                    select(func.count()).select_from(CadEntity).where(
+                        CadEntity.revision_id == revision_id,
+                        CadEntity.source_ref.like(f"{NATIVE_SOURCE_PREFIX}%"),
+                    )
+                )
+                or 0
+            )
+            if stored_count != expected_count:
+                raise ValueError(
+                    f"native tree database count mismatch: expected={expected_count}, stored={stored_count}"
+                )
+            await self.session.commit()
+            return stored_count
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def replace_native_property_facts(self, revision_id: uuid.UUID, rows) -> int:
+        """流式、原子替换一笔 Revision 的 CAA 属性事实。"""
+        try:
+            await self.session.execute(
+                delete(CadNativePropertyFact).where(CadNativePropertyFact.revision_id == revision_id)
+            )
+            count = 0
+            chunk: list[dict[str, Any]] = []
+            for row in rows:
+                chunk.append(row)
+                if len(chunk) >= 1000:
+                    await self.session.execute(insert(CadNativePropertyFact), chunk)
+                    count += len(chunk)
+                    chunk = []
+            if chunk:
+                await self.session.execute(insert(CadNativePropertyFact), chunk)
+                count += len(chunk)
+            stored_count = int(
+                await self.session.scalar(
+                    select(func.count()).select_from(CadNativePropertyFact).where(
+                        CadNativePropertyFact.revision_id == revision_id
+                    )
+                )
+                or 0
+            )
+            if stored_count != count:
+                raise ValueError(
+                    f"native property database count mismatch: expected={count}, stored={stored_count}"
+                )
+            await self.session.commit()
+            return stored_count
+        except Exception:
+            await self.session.rollback()
+            raise
 
     async def persist_parser_result(self, revision_id: uuid.UUID, result: Any) -> None:
         try:
