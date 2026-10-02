@@ -71,3 +71,20 @@ def test_tube_geometry_and_formula_roundtrip_preserves_provenance():
     assert result["property_count"] == 2
     fields = [field for tab in result["tabs"] for group in tab["groups"] for field in group["fields"]]
     assert {f["raw_value"] for f in fields} == {f["raw_value"] for f in facts}
+
+
+def test_geometry_status_roundtrip_only_when_native_fact_exists():
+    """几何状态必须来自已入库的 CAA 事实，旧包不能由后端猜测补齐。"""
+    node = {"node_id": "occurrence_3", "object_id": "object_3"}
+    old = build_database_properties("occurrence_3", node, [])
+    assert old["property_count"] == 0
+    fact = {"subject_id": "object_3", "key": "geometry_status", "raw_value": "topology_only",
+            "display_value": "topology_only", "source_api": "GeometryStatusProjector",
+            "tab_id": "attributes", "group_id": "identity"}
+    rows = native_property_rows(uuid4(), [fact])
+    persisted = [SimpleNamespace(subject_id=row["subject_id"], payload=row["payload"]) for row in rows]
+    result = build_database_properties("occurrence_3", node, persisted)
+    field = result["tabs"][0]["groups"][0]["fields"][0]
+    assert field["key"] == "geometry_status"
+    assert field["display_value"] == "topology_only"
+    assert field["source_api"] == "GeometryStatusProjector"

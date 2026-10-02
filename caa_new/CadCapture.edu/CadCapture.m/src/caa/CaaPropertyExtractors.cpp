@@ -442,9 +442,6 @@ bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
             "document_id", "Document ID", object.document_id, "string", "ObjectEntity", 50);
     AddFact(ids, package, object.object_id, "attributes", "Attributes", "identity", "Identity",
             "object_id", "Object ID", object.object_id, "string", "ObjectEntity", 60);
-    AddFact(ids, package, object.object_id, "attributes", "Attributes", "identity", "Identity",
-            "geometry_status", "Geometry status", package.geometry.empty() ? "not_available" : "available", "string", "GeometryIR", 70);
-
     CATISpecObject* spec = bindings.FindSpec(object.object_id);
     AddGraphicPropertyFacts(ids, broker, package, object, spec);
     AddMechanicalInertiaFacts(ids, broker, package, object, spec);

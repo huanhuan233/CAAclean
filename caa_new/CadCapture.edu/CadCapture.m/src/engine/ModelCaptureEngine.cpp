@@ -15,6 +15,7 @@
 #include "caa/CaaTessellationExtractor.h"
 #include "caa/CaaTopologyExtractor.h"
 #include "model/CaptureIdRegistry.h"
+#include "model/GeometryStatusProjector.h"
 #include "output/ArtifactRepository.h"
 #include "reconstruction/ReconstructionPlanner.h"
 #include "reconstruction/ReconstructionValidator.h"
@@ -333,6 +334,8 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   topology_extractor.Extract(document_handle, ids, package);
   geometry_extractor.Extract(package);
   tessellation_extractor.Extract(package);
+  // 中文：所有文档拓扑完成后按对象投影状态，再交由入库属性事实消费。
+  GeometryStatusProjector().Apply(ids, package);
   fta_extractor.Extract(document_handle, ids, broker, package);
   identity_resolver.Resolve(ids, package);
 

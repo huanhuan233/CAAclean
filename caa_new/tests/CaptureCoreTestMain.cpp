@@ -7,6 +7,7 @@
 #include "model/ReconstructionPackage.h"
 #include "model/SdkCatalog.h"
 #include "model/CaptureIdRegistry.h"
+#include "model/GeometryStatusProjector.h"
 #include "output/ArtifactRepository.h"
 #include "output/JsonSupport.h"
 #include "output/LegacyArtifactProjection.h"
@@ -15,6 +16,7 @@
 #include <direct.h>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <windows.h>
@@ -610,6 +612,71 @@ int main()
   Check(CountLines(rollback_output + "\\product_references.jsonl") ==
         static_cast<long>(product_package.product_references.size()),
         "previous output restored after commit failure");
+  // 中文：状态必须来自同一对象的最终拓扑；文档根可继承自身最终体，兄弟对象不可串用。
+  ReconstructionPackage geometry_package;
+  DocumentEntity geometry_document;
+  geometry_document.document_id = "geometry_doc_1";
+  geometry_document.document_kind = "catpart";
+  geometry_package.document_graph.AddDocument(geometry_document);
+  ObjectEntity geometry_root;
+  geometry_root.object_id = "geometry_root";
+  geometry_root.document_id = "geometry_doc_1";
+  geometry_root.object_kind = "catia_document";
+  geometry_package.objects.push_back(geometry_root);
+  ObjectEntity geometry_part;
+  geometry_part.object_id = "geometry_part";
+  geometry_part.document_id = "geometry_doc_1";
+  geometry_part.startup_type = "MechanicalPart";
+  geometry_package.objects.push_back(geometry_part);
+  ObjectEntity geometry_pad;
+  geometry_pad.object_id = "geometry_pad";
+  geometry_pad.document_id = "geometry_doc_1";
+  geometry_pad.startup_type = "Pad";
+  geometry_package.objects.push_back(geometry_pad);
+  ObjectEntity geometry_empty;
+  geometry_empty.object_id = "geometry_empty";
+  geometry_empty.document_id = "geometry_doc_1";
+  geometry_package.objects.push_back(geometry_empty);
+  TopologyEntity exact_face;
+  exact_face.topology_id = "exact_face";
+  exact_face.subject_id = "geometry_doc_1";
+  exact_face.topology_kind = "face";
+  exact_face.geometry_status = "exact";
+  geometry_package.topology.push_back(exact_face);
+  TopologyEntity pad_result;
+  pad_result.topology_id = "pad_result";
+  pad_result.subject_id = "geometry_pad";
+  pad_result.topology_kind = "feature_result_body";
+  geometry_package.topology.push_back(pad_result);
+  GeometryStatusProjector().Apply(ids, geometry_package);
+  std::map<std::string, std::string> geometry_statuses;
+  for (size_t status_index = 0; status_index < geometry_package.properties.size(); ++status_index)
+  {
+    const PropertyFact& status = geometry_package.properties[status_index];
+    if (status.key == "geometry_status")
+      geometry_statuses[status.subject_id] = status.raw_value;
+  }
+  Check(geometry_statuses["geometry_root"] == "exact", "document root receives its exact geometry");
+  Check(geometry_statuses["geometry_part"] == "exact", "MechanicalPart receives document geometry");
+  Check(geometry_statuses["geometry_pad"] == "topology_only", "feature result body is not overstated as exact");
+  Check(geometry_statuses["geometry_empty"] == "not_available", "sibling without evidence has no geometry");
+  const size_t first_geometry_fact_count = geometry_package.properties.size();
+  GeometryStatusProjector().Apply(ids, geometry_package);
+  Check(geometry_package.properties.size() == first_geometry_fact_count,
+        "geometry status projection is idempotent");
+  TopologyEntity failed_face;
+  failed_face.topology_id = "failed_face";
+  failed_face.subject_id = "geometry_pad";
+  failed_face.topology_kind = "face";
+  failed_face.geometry_status = "failed";
+  geometry_package.topology.push_back(failed_face);
+  GeometryStatusProjector().Apply(ids, geometry_package);
+  for (size_t failed_index = 0; failed_index < geometry_package.properties.size(); ++failed_index)
+  {
+    const PropertyFact& status = geometry_package.properties[failed_index];
+    if (status.key == "geometry_status" && status.subject_id == "geometry_pad")
+      Check(status.raw_value == "partial", "mixed topology failure remains partial");
+  }
   // 中文：即使有合法 manifest，目录内混入未知文件也不能整目录替换。
   std::ostringstream mixed_name;
   mixed_name << "build_core\\mixed_output_test_" << GetCurrentProcessId() << "_" << GetTickCount();

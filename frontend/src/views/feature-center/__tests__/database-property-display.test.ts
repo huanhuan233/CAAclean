@@ -24,7 +24,8 @@ test('数据库铺层分组不被 CATIA 旧属性页声明隐藏，零度角仍�
   const { apiTabsToCatiaTabs } = pageFunctions([
     'apiTabsToCatiaTabs', 'normalizeCatiaToken', 'normalizeCatiaTabId', 'catiaDisplayLabel',
     'catiaFieldLabel', 'apiPropertyValueText', 'isHiddenCatiaApiField', 'mergeCatiaGroups',
-    'catiaTabLabelMap', 'catiaGroupLabelMap', 'catiaFieldLabelMap', 'hiddenCatiaPropertyKeys'
+    'catiaTabLabelMap', 'catiaGroupLabelMap', 'catiaFieldLabelMap', 'hiddenCatiaPropertyKeys',
+    'geometryStatusLabelMap', 'apiFieldValueText'
   ]);
   const result = apiTabsToCatiaTabs([
     { tab_id: 'mechanical', groups: [{ group_id: 'native', fields: [
@@ -43,6 +44,24 @@ test('数据库铺层分组不被 CATIA 旧属性页声明隐藏，零度角仍�
   assert.ok(result.every((tab: { groups: { rows: { key: string }[] }[] }) =>
     tab.groups.every(group => group.rows.every(row => !row.key.startsWith('__catia_property_tab__')))),
   '属性页声明是内部元数据，不应混入业务字段');
+});
+
+test('几何状态仅展示数据库已有事实，并翻译为中文', () => {
+  const { apiTabsToCatiaTabs } = pageFunctions([
+    'apiTabsToCatiaTabs', 'normalizeCatiaToken', 'normalizeCatiaTabId', 'catiaDisplayLabel',
+    'catiaFieldLabel', 'apiPropertyValueText', 'isHiddenCatiaApiField', 'mergeCatiaGroups',
+    'catiaTabLabelMap', 'catiaGroupLabelMap', 'catiaFieldLabelMap', 'hiddenCatiaPropertyKeys',
+    'geometryStatusLabelMap', 'apiFieldValueText'
+  ]);
+  const withStatus = apiTabsToCatiaTabs([{ tab_id: 'attributes', groups: [{ group_id: 'identity', fields: [
+    { key: 'geometry_status', display_name: 'Geometry status', display_value: 'topology_only' }
+  ] }] }]);
+  assert.equal(withStatus[0].groups[0].rows[0].label, '几何状态');
+  assert.equal(withStatus[0].groups[0].rows[0].value, '仅有拓扑');
+  const oldBundle = apiTabsToCatiaTabs([{ tab_id: 'attributes', groups: [{ group_id: 'identity', fields: [
+    { key: 'name', display_name: '名称', display_value: 'Part1' }
+  ] }] }]);
+  assert.ok(oldBundle[0].groups[0].rows.every((row: { key: string }) => row.key !== 'geometry_status'));
 });
 
 test('接口返回错误时不能伪装成数据库没有属性', async () => {

@@ -672,6 +672,7 @@ const catiaFieldLabelMap: Record<string, string> = {
   startup_type: '类型',
   part_number: '零件编号',
   update_status: '更新状态',
+  geometry_status: '几何状态',
   catia_property_mechanical_status: '机械状态',
   catia_property_density_kg_m3: '密度',
   catia_property_mass_kg: '质量',
@@ -708,7 +709,6 @@ const hiddenCatiaPropertyKeys = new Set([
   'occurrence_id',
   'product_occurrence_id',
   'reference_id',
-  'geometry_status',
   'source_file_name',
   'source_file',
   'load_status',
@@ -823,6 +823,23 @@ function apiPropertyValueText(value: unknown) {
   return String(value);
 }
 
+const geometryStatusLabelMap: Record<string, string> = {
+  exact: '精确几何',
+  mesh_available: '网格可用',
+  topology_only: '仅有拓扑',
+  partial: '部分可用',
+  failed: '读取失败',
+  not_available: '未取得几何',
+  available: '几何可用'
+};
+
+// 中文：仅翻译数据库明确返回的状态；旧包缺字段时不推断或生成状态。
+function apiFieldValueText(field: Api.ComponentBuild.NativePropertyField) {
+  const value = apiPropertyValueText(field.display_value ?? field.raw_value);
+  if (field.key !== 'geometry_status') return value;
+  return geometryStatusLabelMap[value] || value;
+}
+
 // 隐藏内部属性页标记，业务字段仍按数据库返回值展示。
 function isHiddenCatiaApiField(field: Api.ComponentBuild.NativePropertyField) {
   if ((field.key || '').trim().toLowerCase().startsWith('__catia_property_tab__')) return true;
@@ -854,7 +871,7 @@ function apiTabsToCatiaTabs(tabs: Api.ComponentBuild.NativePropertyTab[]) {
           const rows = group.fields
             .filter(field => !isHiddenCatiaApiField(field))
             .map(field => {
-              const value = apiPropertyValueText(field.display_value ?? field.raw_value);
+              const value = apiFieldValueText(field);
               if (!value) return null;
               return {
                 key: field.key,
