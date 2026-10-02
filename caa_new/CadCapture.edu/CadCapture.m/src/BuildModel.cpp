@@ -3,3 +3,5 @@
 #include "model/GeometryStatusProjector.cpp"
 #include "engine/CaptureOutcome.cpp"
 #include "model/CaptureEvidenceSummary.cpp"
+#include "platform/WindowsPathCodec.cpp"
+#include "platform/WindowsDirectoryAlias.cpp"

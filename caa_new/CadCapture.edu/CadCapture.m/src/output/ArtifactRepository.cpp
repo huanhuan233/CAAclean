@@ -1,7 +1,8 @@
-#include "output/ArtifactRepository.h"
+﻿#include "output/ArtifactRepository.h"
 #include "output/JsonSupport.h"
 #include "output/LegacyArtifactProjection.h"
 #include "output/NormalizedArtifactWriter.h"
+#include "platform/WindowsPathCodec.h"
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -37,20 +38,12 @@ static bool NormalizeOutputPath(const std::string& input, std::string& output, s
     error = "output path is empty or uses an unsupported network/device path";
     return false;
   }
-  const DWORD needed = GetFullPathNameA(input.c_str(), 0, NULL, NULL);
-  if (needed == 0)
+  output = WindowsPathCodec::FullPath(input);
+  if (output.empty())
   {
     error = "cannot resolve output path";
     return false;
   }
-  std::vector<char> buffer(needed + 1, 0);
-  const DWORD length = GetFullPathNameA(input.c_str(), static_cast<DWORD>(buffer.size()), &buffer[0], NULL);
-  if (length == 0 || length >= buffer.size())
-  {
-    error = "cannot resolve output path";
-    return false;
-  }
-  output.assign(&buffer[0], length);
   while (output.size() > 3 && (output[output.size() - 1] == '\\' || output[output.size() - 1] == '/'))
     output.erase(output.size() - 1);
   if (IsVolumeRoot(output) || output.size() < 4)
@@ -70,7 +63,7 @@ static bool CheckPathComponents(const std::string& path, std::string& error)
     if (i != path.size() && path[i] != '\\' && path[i] != '/')
       continue;
     const std::string component = path.substr(0, i);
-    const DWORD attributes = GetFileAttributesA(component.c_str());
+    const DWORD attributes = WindowsPathCodec::Attributes(component);
     if (attributes == INVALID_FILE_ATTRIBUTES)
       continue;
     if (attributes & FILE_ATTRIBUTE_REPARSE_POINT)
@@ -91,23 +84,22 @@ static bool CheckPathComponents(const std::string& path, std::string& error)
 static bool IsEmptyDirectory(const std::string& path, bool& empty, std::string& error)
 {
   empty = true;
-  WIN32_FIND_DATAA data;
-  HANDLE find = FindFirstFileA(JoinPath(path, "*").c_str(), &data);
-  if (find == INVALID_HANDLE_VALUE)
+  std::vector<std::string> names;
+  std::vector<unsigned long> attributes;
+  if (!WindowsPathCodec::List(path, names, attributes))
   {
     error = "cannot enumerate existing output directory";
     return false;
   }
-  do
+  for (size_t i = 0; i < names.size(); ++i)
   {
-    const std::string name = data.cFileName;
+    const std::string& name = names[i];
     if (name != "." && name != "..")
     {
       empty = false;
       break;
     }
-  } while (FindNextFileA(find, &data));
-  FindClose(find);
+  }
   return true;
 }
 
@@ -141,31 +133,30 @@ static bool IsKnownCaptureFile(const std::string& name)
 // 中文：逐项确认旧目录只含已知产物，子目录与重解析文件都不视为解析器所有。
 static bool ContainsOnlyCaptureFiles(const std::string& path)
 {
-  WIN32_FIND_DATAA data;
-  HANDLE find = FindFirstFileA(JoinPath(path, "*").c_str(), &data);
-  if (find == INVALID_HANDLE_VALUE)
+  std::vector<std::string> names;
+  std::vector<unsigned long> attributes;
+  if (!WindowsPathCodec::List(path, names, attributes))
     return false;
   bool valid = true;
-  do
+  for (size_t i = 0; i < names.size(); ++i)
   {
-    const std::string name = data.cFileName;
+    const std::string& name = names[i];
     if (name == "." || name == "..")
       continue;
-    if ((data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+    if ((attributes[i] & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
         !IsKnownCaptureFile(name))
     {
       valid = false;
       break;
     }
-  } while (FindNextFileA(find, &data));
-  FindClose(find);
+  }
   return valid;
 }
 
 // 中文：兼容旧版无所有权标记的采集包，只接受结构完整且没有未知内容的 manifest。
 static bool HasCaptureManifest(const std::string& path)
 {
-  std::ifstream manifest(JoinPath(path, "manifest.json").c_str(), std::ios::in | std::ios::binary);
+  std::ifstream manifest(WindowsPathCodec::Decode(JoinPath(path, "manifest.json")).c_str(), std::ios::in | std::ios::binary);
   if (!manifest)
     return false;
   std::ostringstream content;
@@ -173,9 +164,9 @@ static bool HasCaptureManifest(const std::string& path)
   const std::string body = content.str();
   return body.find("\"schema_version\"") != std::string::npos &&
          body.find("caa_capture_") != std::string::npos &&
-         GetFileAttributesA(JoinPath(path, "capture_report.json").c_str()) != INVALID_FILE_ATTRIBUTES &&
-         GetFileAttributesA(JoinPath(path, "object_entities.jsonl").c_str()) != INVALID_FILE_ATTRIBUTES &&
-         GetFileAttributesA(JoinPath(path, "tree_occurrences.jsonl").c_str()) != INVALID_FILE_ATTRIBUTES &&
+         WindowsPathCodec::Attributes(JoinPath(path, "capture_report.json")) != INVALID_FILE_ATTRIBUTES &&
+         WindowsPathCodec::Attributes(JoinPath(path, "object_entities.jsonl")) != INVALID_FILE_ATTRIBUTES &&
+         WindowsPathCodec::Attributes(JoinPath(path, "tree_occurrences.jsonl")) != INVALID_FILE_ATTRIBUTES &&
          ContainsOnlyCaptureFiles(path);
 }
 
@@ -184,7 +175,7 @@ static bool ValidateOutputTarget(const std::string& path, std::string& error)
 {
   if (!CheckPathComponents(path, error))
     return false;
-  const DWORD attributes = GetFileAttributesA(path.c_str());
+  const DWORD attributes = WindowsPathCodec::Attributes(path);
   if (attributes == INVALID_FILE_ATTRIBUTES)
     return true;
   if (!(attributes & FILE_ATTRIBUTE_DIRECTORY))
@@ -206,7 +197,7 @@ static bool ValidateOutputTarget(const std::string& path, std::string& error)
 // 中文：写入本次事务标记，供失败清理和备份回收做身份校验。
 static bool WriteOwnerMarker(const std::string& path, const char* marker, const std::string& token)
 {
-  std::ofstream out(JoinPath(path, marker).c_str(), std::ios::out | std::ios::binary);
+  std::ofstream out(WindowsPathCodec::Decode(JoinPath(path, marker)).c_str(), std::ios::out | std::ios::binary);
   out << token;
   out.close();
   return !!out;
@@ -215,7 +206,7 @@ static bool WriteOwnerMarker(const std::string& path, const char* marker, const 
 // 中文：核对事务标记，拒绝清理非本次创建的目录。
 static bool HasOwnerMarker(const std::string& path, const char* marker, const std::string& token)
 {
-  std::ifstream in(JoinPath(path, marker).c_str(), std::ios::in | std::ios::binary);
+  std::ifstream in(WindowsPathCodec::Decode(JoinPath(path, marker)).c_str(), std::ios::in | std::ios::binary);
   std::string actual;
   std::getline(in, actual);
   return !!in && actual == token;
@@ -224,7 +215,7 @@ static bool HasOwnerMarker(const std::string& path, const char* marker, const st
 // 中文：递归删除本事务已核对所有权的目录，遇重解析点立即停止。
 static bool RemoveOwnedContents(const std::string& path, std::string& error)
 {
-  const DWORD attributes = GetFileAttributesA(path.c_str());
+  const DWORD attributes = WindowsPathCodec::Attributes(path);
   if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
   {
     error = "owned path missing or contains reparse point: " + path;
@@ -232,34 +223,33 @@ static bool RemoveOwnedContents(const std::string& path, std::string& error)
   }
   if (!(attributes & FILE_ATTRIBUTE_DIRECTORY))
   {
-    SetFileAttributesA(path.c_str(), FILE_ATTRIBUTE_NORMAL);
-    if (DeleteFileA(path.c_str()))
+    WindowsPathCodec::SetNormalAttributes(path);
+    if (WindowsPathCodec::DeleteUtf8File(path))
       return true;
     error = "cannot remove owned file: " + path;
     return false;
   }
-  WIN32_FIND_DATAA data;
-  HANDLE find = FindFirstFileA(JoinPath(path, "*").c_str(), &data);
-  if (find == INVALID_HANDLE_VALUE)
+  std::vector<std::string> names;
+  std::vector<unsigned long> entry_attributes;
+  if (!WindowsPathCodec::List(path, names, entry_attributes))
   {
     error = "cannot enumerate owned directory: " + path;
     return false;
   }
   bool success = true;
-  do
+  for (size_t i = 0; i < names.size(); ++i)
   {
-    const std::string name = data.cFileName;
+    const std::string& name = names[i];
     if (name != "." && name != ".." && !RemoveOwnedContents(JoinPath(path, name.c_str()), error))
     {
       success = false;
       break;
     }
-  } while (FindNextFileA(find, &data));
-  FindClose(find);
+  }
   if (!success)
     return false;
-  SetFileAttributesA(path.c_str(), FILE_ATTRIBUTE_NORMAL);
-  if (RemoveDirectoryA(path.c_str()))
+  WindowsPathCodec::SetNormalAttributes(path);
+  if (WindowsPathCodec::RemoveUtf8Directory(path))
     return true;
   error = "cannot remove owned directory: " + path;
   return false;
@@ -288,7 +278,7 @@ static bool CreateOwnedStaging(const std::string& output_dir, std::string& stagi
     suffix << GetCurrentProcessId() << "." << GetTickCount() << "." << attempt;
     token = suffix.str();
     staging = output_dir + ".cadcapture_stage." + token;
-    if (!CreateDirectoryA(staging.c_str(), NULL))
+    if (!WindowsPathCodec::CreateUtf8Directory(staging))
     {
       if (GetLastError() == ERROR_ALREADY_EXISTS)
         continue;
@@ -298,7 +288,7 @@ static bool CreateOwnedStaging(const std::string& output_dir, std::string& stagi
     if (!WriteOwnerMarker(staging, ".cadcapture_stage_owner", token))
     {
       error = "cannot mark transaction staging directory: " + staging;
-      RemoveDirectoryA(staging.c_str());
+      WindowsPathCodec::RemoveUtf8Directory(staging);
       return false;
     }
     return true;
@@ -309,13 +299,13 @@ static bool CreateOwnedStaging(const std::string& output_dir, std::string& stagi
 
 static bool ReadableFileExists(const std::string& path)
 {
-  std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+  std::ifstream in(WindowsPathCodec::Decode(path).c_str(), std::ios::in | std::ios::binary);
   return !!in;
 }
 
 static long CountLines(const std::string& path)
 {
-  std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+  std::ifstream in(WindowsPathCodec::Decode(path).c_str(), std::ios::in | std::ios::binary);
   long count = 0;
   std::string line;
   while (std::getline(in, line))
@@ -525,7 +515,7 @@ static bool ChooseBackupPath(const std::string& output_dir, const std::string& t
     std::ostringstream candidate;
     candidate << output_dir << ".cadcapture_backup." << token << "." << attempt;
     backup = candidate.str();
-    if (GetFileAttributesA(backup.c_str()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND)
+    if (WindowsPathCodec::Attributes(backup) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND)
       return true;
   }
   error = "cannot allocate unique transaction backup path";
@@ -538,18 +528,18 @@ static bool CommitStaging(const std::string& staging, const std::string& output_
 {
   if (!ValidateOutputTarget(output_dir, error))
     return false;
-  const bool had_output = GetFileAttributesA(output_dir.c_str()) != INVALID_FILE_ATTRIBUTES;
+  const bool had_output = WindowsPathCodec::Attributes(output_dir) != INVALID_FILE_ATTRIBUTES;
   std::string backup;
   if (had_output && !ChooseBackupPath(output_dir, token, backup, error))
     return false;
-  if (had_output && !MoveFileA(output_dir.c_str(), backup.c_str()))
+  if (had_output && !WindowsPathCodec::Move(output_dir, backup))
   {
     error = "cannot move previous output to transaction backup";
     return false;
   }
   if (had_output && !WriteOwnerMarker(backup, ".cadcapture_backup_owner", token))
   {
-    if (!MoveFileA(backup.c_str(), output_dir.c_str()))
+    if (!WindowsPathCodec::Move(backup, output_dir))
       error = "cannot mark backup; previous output retained at: " + backup;
     else
       error = "cannot mark transaction backup";
@@ -560,16 +550,16 @@ static bool CommitStaging(const std::string& staging, const std::string& output_
 #ifdef CADCAPTURE_TESTING
   if (GetEnvironmentVariableA("CADCAPTURE_TEST_FAIL_AFTER_BACKUP", NULL, 0) == 0)
 #endif
-    moved_staging = MoveFileA(staging.c_str(), output_dir.c_str()) != 0;
+    moved_staging = WindowsPathCodec::Move(staging, output_dir);
   if (!moved_staging)
   {
-    if (had_output && !MoveFileA(backup.c_str(), output_dir.c_str()))
+    if (had_output && !WindowsPathCodec::Move(backup, output_dir))
       error = "cannot commit staging or restore previous output; backup retained at: " + backup;
     else
       error = "cannot commit transaction staging directory";
     return false;
   }
-  if (!DeleteFileA(JoinPath(output_dir, ".cadcapture_stage_owner").c_str()))
+  if (!WindowsPathCodec::DeleteUtf8File(JoinPath(output_dir, ".cadcapture_stage_owner")))
     error = "capture committed, but transaction marker remains in output: " + output_dir;
   if (had_output)
   {

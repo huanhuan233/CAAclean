@@ -1,7 +1,9 @@
-#include "engine/CapturePolicy.h"
+﻿#include "engine/CapturePolicy.h"
 #include "engine/CaptureOutcome.h"
 #include "model/CaptureEvidenceSummary.h"
 #include "reconstruction/BrepCompleteness.h"
+#include "platform/WindowsPathCodec.h"
+#include "platform/WindowsDirectoryAlias.h"
 #include "engine/CaptureReport.h"
 #include "model/DocumentGraph.h"
 #include "model/ObjectIdentity.h"
@@ -22,6 +24,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <windows.h>
 #include <windows.h>
 
 using namespace cadcapture;
@@ -331,6 +334,46 @@ int main()
   Check(graph.documents.size() == 1, "DocumentGraph AddDocument");
 
   CaptureIdRegistry ids;
+  // 中文：中文路径应能在 UTF-8、UTF-16 与 VS2008 文件流之间往返。
+  const std::wstring chinese_name = L"build_core\\\x4e2d\x6587\x8def\x5f84\x6d4b\x8bd5.txt";
+  const std::string chinese_utf8 = WindowsPathCodec::Encode(chinese_name);
+  Check(WindowsPathCodec::Decode(chinese_utf8) == chinese_name, "UTF-8 path roundtrip");
+  {
+    std::ofstream unicode_file(chinese_name.c_str(), std::ios::out | std::ios::binary);
+    unicode_file << "unicode-output-ok";
+    Check(!!unicode_file, "VS2008 wide-path output stream");
+  }
+  {
+    std::ifstream unicode_file(chinese_name.c_str(), std::ios::in | std::ios::binary);
+    std::string line;
+    unicode_file >> line;
+    Check(line == "unicode-output-ok", "VS2008 wide-path input stream");
+  }
+  // 中文：接合点只提供英文入口，读取内容后清除入口仍须保留原模型目录和文件。
+  const std::wstring alias_source_dir = L"build_core\\\x4e2d\x6587\x76ee\x5f55\x6d4b\x8bd5";
+  CreateDirectoryW(alias_source_dir.c_str(), NULL);
+  const std::wstring alias_source_file = alias_source_dir + L"\\sample.CATPart";
+  {
+    std::ofstream source(alias_source_file.c_str(), std::ios::binary);
+    source << "alias-content";
+  }
+  std::string aliased_file, alias_error;
+  {
+    WindowsDirectoryAlias alias;
+    Check(alias.OpenForFile(WindowsPathCodec::Encode(alias_source_file), aliased_file, alias_error),
+          "Unicode directory has an ASCII junction alias");
+    const std::wstring wide_alias = WindowsPathCodec::Decode(aliased_file);
+    Check(wide_alias.find(L"CadCaptureAlias_") != std::wstring::npos,
+          "junction alias uses owned ASCII name");
+    std::ifstream via_alias(wide_alias.c_str(), std::ios::binary);
+    std::string content;
+    via_alias >> content;
+    Check(content == "alias-content", "junction resolves original file without copying");
+  }
+  Check(GetFileAttributesW(WindowsPathCodec::Decode(aliased_file).c_str()) == INVALID_FILE_ATTRIBUTES,
+        "junction alias is removed after close");
+  Check(GetFileAttributesW(alias_source_file.c_str()) != INVALID_FILE_ATTRIBUTES,
+        "junction cleanup preserves original file");
   Check(ids.NextDocumentId() != ids.NextDocumentId(), "CaptureIdRegistry document ids are unique");
   Check(ids.NextProductReferenceId().find("product_reference_") == 0, "CaptureIdRegistry product reference ids");
 
@@ -642,6 +685,20 @@ int main()
   if (!committed)
     std::cerr << "transaction error: " << error << "\n";
   Check(committed, "ArtifactRepository transactional commit");
+  // 中文：中文输出目录必须经历暂存、写全产物、替换旧包和二次提交，而非仅能创建空文件。
+  std::ostringstream unicode_suffix;
+  unicode_suffix << GetCurrentProcessId() << "_" << GetTickCount();
+  const std::string unicode_output = "build_core\\" + WindowsPathCodec::Encode(L"\x4e2d\x6587\x91c7\x96c6") + unicode_suffix.str();
+  error.clear();
+  Check(repository.Commit(package, output_report, unicode_output, true, error),
+        "ArtifactRepository commits all artifacts to Unicode path");
+  Check(repository.Commit(package, output_report, unicode_output, true, error),
+        "ArtifactRepository replaces owned Unicode output");
+  {
+    const std::wstring manifest_path = WindowsPathCodec::Decode(unicode_output + "\\manifest.json");
+    std::ifstream unicode_manifest(manifest_path.c_str(), std::ios::in | std::ios::binary);
+    Check(!!unicode_manifest, "Unicode output manifest is readable");
+  }
   {
     std::ifstream annotations((output_dir + "\\fta_semantics.jsonl").c_str());
     std::string line;

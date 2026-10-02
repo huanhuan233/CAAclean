@@ -1,19 +1,13 @@
-#include "output/NormalizedArtifactWriter.h"
+﻿#include "output/NormalizedArtifactWriter.h"
+#include "platform/WindowsPathCodec.h"
 #include "output/JsonSupport.h"
-#include <direct.h>
-#include <errno.h>
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h>
+#include <windows.h>
 
 namespace cadcapture {
 
-static bool DirectoryExists(const std::string& path)
-{
-  struct _stat info;
-  return _stat(path.c_str(), &info) == 0 && (info.st_mode & _S_IFDIR);
-}
-
+// 中文：输出目录检查与实际写盘共用宽字符路径，不允许代码页转换后指向另一位置。
 static bool EnsureDirectory(const std::string& path, std::string& error)
 {
   if (path.empty())
@@ -21,9 +15,10 @@ static bool EnsureDirectory(const std::string& path, std::string& error)
     error = "output directory is empty";
     return false;
   }
-  if (_mkdir(path.c_str()) == 0)
+  if (WindowsPathCodec::CreateUtf8Directory(path))
     return true;
-  if (errno == EEXIST && DirectoryExists(path))
+  const unsigned long attributes = WindowsPathCodec::Attributes(path);
+  if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))
     return true;
   error = "failed to create output directory: " + path;
   return false;
@@ -43,7 +38,7 @@ static std::string NewLine(bool pretty)
 
 static bool WriteText(const std::string& path, const std::string& text, std::string& error)
 {
-  std::ofstream out(path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream out(WindowsPathCodec::Decode(path).c_str(), std::ios::out | std::ios::binary);
   if (!out)
   {
     error = "failed to open output file: " + path;
@@ -104,7 +99,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
 {
   size_t i;
   const std::string references_path = output_dir + "\\product_references.jsonl";
-  std::ofstream references(references_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream references(WindowsPathCodec::Decode(references_path).c_str(), std::ios::out | std::ios::binary);
   if (!references)
   {
     error = "failed to open output file: " + references_path;
@@ -134,7 +129,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string product_occurrences_path = output_dir + "\\product_occurrences.jsonl";
-  std::ofstream product_occurrences(product_occurrences_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream product_occurrences(WindowsPathCodec::Decode(product_occurrences_path).c_str(), std::ios::out | std::ios::binary);
   if (!product_occurrences)
   {
     error = "failed to open output file: " + product_occurrences_path;
@@ -181,7 +176,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string links_path = output_dir + "\\document_links.jsonl";
-  std::ofstream links(links_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream links(WindowsPathCodec::Decode(links_path).c_str(), std::ios::out | std::ios::binary);
   if (!links)
   {
     error = "failed to open output file: " + links_path;
@@ -209,7 +204,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string object_path = output_dir + "\\object_entities.jsonl";
-  std::ofstream objects(object_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream objects(WindowsPathCodec::Decode(object_path).c_str(), std::ios::out | std::ios::binary);
   if (!objects)
   {
     error = "failed to open output file: " + object_path;
@@ -245,7 +240,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string occurrence_path = output_dir + "\\tree_occurrences.jsonl";
-  std::ofstream occurrences(occurrence_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream occurrences(WindowsPathCodec::Decode(occurrence_path).c_str(), std::ios::out | std::ios::binary);
   if (!occurrences)
   {
     error = "failed to open output file: " + occurrence_path;
@@ -283,7 +278,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string properties_path = output_dir + "\\property_facts.jsonl";
-  std::ofstream properties(properties_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream properties(WindowsPathCodec::Decode(properties_path).c_str(), std::ios::out | std::ios::binary);
   if (!properties)
   {
     error = "failed to open output file: " + properties_path;
@@ -332,7 +327,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string semantic_path = output_dir + "\\semantic_facets.jsonl";
-  std::ofstream semantic(semantic_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream semantic(WindowsPathCodec::Decode(semantic_path).c_str(), std::ios::out | std::ios::binary);
   if (!semantic)
   {
     error = "failed to open output file: " + semantic_path;
@@ -363,7 +358,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string topology_path = output_dir + "\\topology_entities.jsonl";
-  std::ofstream topology(topology_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream topology(WindowsPathCodec::Decode(topology_path).c_str(), std::ios::out | std::ios::binary);
   if (!topology)
   {
     error = "failed to open output file: " + topology_path;
@@ -421,7 +416,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string geometry_path = output_dir + "\\geometry_entities.jsonl";
-  std::ofstream geometry(geometry_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream geometry(WindowsPathCodec::Decode(geometry_path).c_str(), std::ios::out | std::ios::binary);
   if (!geometry)
   {
     error = "failed to open output file: " + geometry_path;
@@ -460,7 +455,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string pmi_path = output_dir + "\\pmi_entities.jsonl";
-  std::ofstream pmi(pmi_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream pmi(WindowsPathCodec::Decode(pmi_path).c_str(), std::ios::out | std::ios::binary);
   if (!pmi)
   {
     error = "failed to open output file: " + pmi_path;
@@ -490,7 +485,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string dependencies_path = output_dir + "\\feature_dependencies.jsonl";
-  std::ofstream dependencies(dependencies_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream dependencies(WindowsPathCodec::Decode(dependencies_path).c_str(), std::ios::out | std::ios::binary);
   if (!dependencies)
   {
     error = "failed to open output file: " + dependencies_path;
@@ -515,7 +510,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string topology_relations_path = output_dir + "\\topology_relations.jsonl";
-  std::ofstream topology_relations(topology_relations_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream topology_relations(WindowsPathCodec::Decode(topology_relations_path).c_str(), std::ios::out | std::ios::binary);
   if (!topology_relations)
   {
     error = "failed to open output file: " + topology_relations_path;
@@ -540,7 +535,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string pmi_associations_path = output_dir + "\\pmi_associations.jsonl";
-  std::ofstream pmi_associations(pmi_associations_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream pmi_associations(WindowsPathCodec::Decode(pmi_associations_path).c_str(), std::ios::out | std::ios::binary);
   if (!pmi_associations)
   {
     error = "failed to open output file: " + pmi_associations_path;
@@ -565,7 +560,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
     return false;
 
   const std::string diagnostics_path = output_dir + "\\diagnostics.jsonl";
-  std::ofstream diagnostics(diagnostics_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream diagnostics(WindowsPathCodec::Decode(diagnostics_path).c_str(), std::ios::out | std::ios::binary);
   if (!diagnostics)
   {
     error = "failed to open output file: " + diagnostics_path;

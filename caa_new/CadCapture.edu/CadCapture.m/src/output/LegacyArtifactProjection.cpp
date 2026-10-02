@@ -1,5 +1,6 @@
 ﻿#include "output/LegacyArtifactProjection.h"
 #include "output/JsonSupport.h"
+#include "platform/WindowsPathCodec.h"
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -14,7 +15,7 @@ std::string LegacyArtifactProjection::ProjectionStatus(const ReconstructionPacka
 
 static bool WriteLegacyText(const std::string& path, const std::string& text, std::string& error)
 {
-  std::ofstream out(path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream out(WindowsPathCodec::Decode(path).c_str(), std::ios::out | std::ios::binary);
   if (!out)
   {
     error = "failed to open output file: " + path;
@@ -159,7 +160,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                                      std::string& error) const
 {
   const std::string features_path = output_dir + "\\features.jsonl";
-  std::ofstream features(features_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream features(WindowsPathCodec::Decode(features_path).c_str(), std::ios::out | std::ios::binary);
   if (!features)
   {
     error = "failed to open output file: " + features_path;
@@ -230,7 +231,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string relations_path = output_dir + "\\relations.jsonl";
-  std::ofstream relations(relations_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream relations(WindowsPathCodec::Decode(relations_path).c_str(), std::ios::out | std::ios::binary);
   if (!relations)
   {
     error = "failed to open output file: " + relations_path;
@@ -277,7 +278,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string parameters_path = output_dir + "\\parameters.jsonl";
-  std::ofstream parameters(parameters_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream parameters(WindowsPathCodec::Decode(parameters_path).c_str(), std::ios::out | std::ios::binary);
   if (!parameters)
   {
     error = "failed to open output file: " + parameters_path;
@@ -320,7 +321,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_features_path = output_dir + "\\native_features.jsonl";
-  std::ofstream native_features(native_features_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_features(WindowsPathCodec::Decode(native_features_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_features)
   {
     error = "failed to open output file: " + native_features_path;
@@ -353,7 +354,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_topology_path = output_dir + "\\native_topology.jsonl";
-  std::ofstream native_topology(native_topology_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_topology(WindowsPathCodec::Decode(native_topology_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_topology)
   {
     error = "failed to open output file: " + native_topology_path;
@@ -408,7 +409,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_topology_bodies_path = output_dir + "\\native_topology_bodies.jsonl";
-  std::ofstream native_topology_bodies(native_topology_bodies_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_topology_bodies(WindowsPathCodec::Decode(native_topology_bodies_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_topology_bodies)
   {
     error = "failed to open output file: " + native_topology_bodies_path;
@@ -426,7 +427,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_topology_cells_path = output_dir + "\\native_topology_cells.jsonl";
-  std::ofstream native_topology_cells(native_topology_cells_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_topology_cells(WindowsPathCodec::Decode(native_topology_cells_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_topology_cells)
   {
     error = "failed to open output file: " + native_topology_cells_path;
@@ -444,7 +445,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_topology_wires_path = output_dir + "\\native_topology_wires.jsonl";
-  std::ofstream native_topology_wires(native_topology_wires_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_topology_wires(WindowsPathCodec::Decode(native_topology_wires_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_topology_wires)
   {
     error = "failed to open output file: " + native_topology_wires_path;
@@ -474,7 +475,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_topology_coedges_path = output_dir + "\\native_topology_coedges.jsonl";
-  std::ofstream native_topology_coedges(native_topology_coedges_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_topology_coedges(WindowsPathCodec::Decode(native_topology_coedges_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_topology_coedges)
   {
     error = "failed to open output file: " + native_topology_coedges_path;
@@ -507,7 +508,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_mesh_path = output_dir + "\\native_mesh_face_map.jsonl";
-  std::ofstream native_mesh(native_mesh_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_mesh(WindowsPathCodec::Decode(native_mesh_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_mesh)
   {
     error = "failed to open output file: " + native_mesh_path;
@@ -544,7 +545,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string native_mesh_triangles_path = output_dir + "\\native_mesh_triangles.jsonl";
-  std::ofstream native_mesh_triangles(native_mesh_triangles_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream native_mesh_triangles(WindowsPathCodec::Decode(native_mesh_triangles_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_mesh_triangles)
   {
     error = "failed to open output file: " + native_mesh_triangles_path;
@@ -589,7 +590,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string fta_sets_path = output_dir + "\\fta_sets.jsonl";
-  std::ofstream fta_sets(fta_sets_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream fta_sets(WindowsPathCodec::Decode(fta_sets_path).c_str(), std::ios::out | std::ios::binary);
   if (!fta_sets)
   {
     error = "failed to open output file: " + fta_sets_path;
@@ -618,7 +619,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string feature_results_path = output_dir + "\\native_feature_results.jsonl";
-  std::ofstream feature_results(feature_results_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream feature_results(WindowsPathCodec::Decode(feature_results_path).c_str(), std::ios::out | std::ios::binary);
   if (!feature_results)
   {
     error = "failed to open output file: " + feature_results_path;
@@ -650,7 +651,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string feature_result_cells_path = output_dir + "\\native_feature_result_cells.jsonl";
-  std::ofstream feature_result_cells(feature_result_cells_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream feature_result_cells(WindowsPathCodec::Decode(feature_result_cells_path).c_str(), std::ios::out | std::ios::binary);
   if (!feature_result_cells)
   {
     error = "failed to open output file: " + feature_result_cells_path;
@@ -698,7 +699,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(feature_result_cells, feature_result_cells_path, error))
     return false;
   const std::string feature_topology_links_path = output_dir + "\\native_feature_topology_links.jsonl";
-  std::ofstream feature_topology_links(feature_topology_links_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream feature_topology_links(WindowsPathCodec::Decode(feature_topology_links_path).c_str(), std::ios::out | std::ios::binary);
   if (!feature_topology_links)
   {
     error = "failed to open output file: " + feature_topology_links_path;
@@ -738,7 +739,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     return false;
 
   const std::string fta_semantics_path = output_dir + "\\fta_semantics.jsonl";
-  std::ofstream fta_semantics(fta_semantics_path.c_str(), std::ios::out | std::ios::binary);
+  std::ofstream fta_semantics(WindowsPathCodec::Decode(fta_semantics_path).c_str(), std::ios::out | std::ios::binary);
   if (!fta_semantics)
   {
     error = "failed to open output file: " + fta_semantics_path;

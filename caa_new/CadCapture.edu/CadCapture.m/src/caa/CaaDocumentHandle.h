@@ -2,6 +2,7 @@
 #define CADCAPTURE_CAA_CAADOCUMENTHANDLE_H
 
 #include <string>
+#include "platform/WindowsDirectoryAlias.h"
 
 namespace cadcapture {
 
@@ -23,6 +24,7 @@ private:
   CaaDocumentHandle& operator=(const CaaDocumentHandle&);
 
   void* _document;
+  WindowsDirectoryAlias _path_alias;
 };
 
 }
