@@ -26,6 +26,7 @@ set "OBJ3=%OUT%\ReconstructionValidator.obj"
 if exist "%OBJ1%" del /q "%OBJ1%"
 if exist "%OBJ2%" del /q "%OBJ2%"
 if exist "%OBJ3%" del /q "%OBJ3%"
+if exist "%OUT%\BrepCompleteness.obj" del /q "%OUT%\BrepCompleteness.obj"
 if exist "%OUT%\SdkCatalog.obj" del /q "%OUT%\SdkCatalog.obj"
 if exist "%OUT%\CaptureIdRegistry.obj" del /q "%OUT%\CaptureIdRegistry.obj"
 if exist "%OUT%\GeometryStatusProjector.obj" del /q "%OUT%\GeometryStatusProjector.obj"
@@ -40,6 +41,8 @@ if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionPlanner.cpp" /Fo"%OBJ2%"
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\ReconstructionValidator.cpp" /Fo"%OBJ3%"
+if errorlevel 1 exit /b 4
+cl /nologo /EHsc /I"%SRC%" /c "%SRC%\reconstruction\BrepCompleteness.cpp" /Fo"%OUT%\BrepCompleteness.obj"
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\SdkCatalog.cpp" /Fo"%OUT%\SdkCatalog.obj"
 if errorlevel 1 exit /b 4
@@ -58,7 +61,7 @@ if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\LegacyArtifactProjection.cpp" /Fo"%OUT%\LegacyArtifactProjection.obj"
 if errorlevel 1 exit /b 4
 
-link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\SdkCatalog.obj" "%OUT%\CaptureIdRegistry.obj" "%OUT%\GeometryStatusProjector.obj" "%OUT%\CaptureOutcome.obj" "%OUT%\CaptureEvidenceSummary.obj" "%OUT%\ArtifactRepository.obj" "%OUT%\NormalizedArtifactWriter.obj" "%OUT%\LegacyArtifactProjection.obj" /OUT:"%EXE%"
+link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\BrepCompleteness.obj" "%OUT%\SdkCatalog.obj" "%OUT%\CaptureIdRegistry.obj" "%OUT%\GeometryStatusProjector.obj" "%OUT%\CaptureOutcome.obj" "%OUT%\CaptureEvidenceSummary.obj" "%OUT%\ArtifactRepository.obj" "%OUT%\NormalizedArtifactWriter.obj" "%OUT%\LegacyArtifactProjection.obj" /OUT:"%EXE%"
 if errorlevel 1 exit /b 4
 
 "%EXE%"

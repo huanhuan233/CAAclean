@@ -1,4 +1,4 @@
-#ifndef CADCAPTURE_MODEL_RECONSTRUCTIONPACKAGE_H
+﻿#ifndef CADCAPTURE_MODEL_RECONSTRUCTIONPACKAGE_H
 #define CADCAPTURE_MODEL_RECONSTRUCTIONPACKAGE_H
 
 #include "model/DocumentGraph.h"
@@ -48,9 +48,13 @@ struct ReconstructionPackage
   std::vector<FtaSemanticEntity> fta_semantics;
   std::vector<Diagnostic> diagnostics;
   std::string reconstruction_plan;
+  size_t exact_brep_body_count;
+  size_t incomplete_brep_body_count;
   std::string capture_status;
 
-  ReconstructionPackage() : capture_status("bootstrap") {}
+  // 中文：新包默认没有经过逐体 B-Rep 判定，不能凭空声明精确体。
+  ReconstructionPackage() : exact_brep_body_count(0), incomplete_brep_body_count(0),
+                            capture_status("bootstrap") {}
 };
 
 }

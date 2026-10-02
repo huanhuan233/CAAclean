@@ -1,6 +1,7 @@
 #include "engine/CapturePolicy.h"
 #include "engine/CaptureOutcome.h"
 #include "model/CaptureEvidenceSummary.h"
+#include "reconstruction/BrepCompleteness.h"
 #include "engine/CaptureReport.h"
 #include "model/DocumentGraph.h"
 #include "model/ObjectIdentity.h"
@@ -394,6 +395,9 @@ int main()
   ReconstructionPackage tessellation_package;
   mesh_range.representation_status = "triangles_available";
   tessellation_package.geometry.push_back(mesh_range);
+  MeshTriangleEntity tessellation_triangle;
+  tessellation_triangle.triangle_id = "triangle_coordinates_1";
+  tessellation_package.mesh_triangles.push_back(tessellation_triangle);
   planner.Plan(tessellation_package);
   Check(tessellation_package.reconstruction_plan == "tessellation",
         "ReconstructionPlanner selects tessellation only when triangle coordinates are available");
@@ -402,33 +406,98 @@ int main()
   TopologyEntity body;
   body.topology_id = "body_1";
   body.topology_kind = "body";
+  body.read_status = "success";
+  body.face_count = 1;
+  body.edge_count = 1;
+  body.vertex_count = 1;
+  body.volume_count = 1;
   exact_package.topology.push_back(body);
   TopologyEntity face;
   face.topology_id = "face_1";
   face.topology_kind = "face";
-  face.geometry_status = "exact_surface";
+  face.read_status = "success";
+  face.parent_topology_id = "body_1";
+  face.geometry_status = "exact";
+  face.exact_geometry_type = "plane";
+  face.geometry_parameters_json = "{\"normal\":[0,0,1]}";
+  face.boundary_cell_ids.push_back("edge_1");
   exact_package.topology.push_back(face);
   TopologyEntity edge;
   edge.topology_id = "edge_1";
   edge.topology_kind = "edge";
+  edge.read_status = "success";
+  edge.parent_topology_id = "body_1";
+  edge.geometry_status = "exact";
+  edge.exact_geometry_type = "line";
+  edge.geometry_parameters_json = "{\"origin\":[0,0,0]}";
+  edge.boundary_cell_ids.push_back("vertex_1");
   exact_package.topology.push_back(edge);
   TopologyEntity vertex;
   vertex.topology_id = "vertex_1";
   vertex.topology_kind = "vertex";
+  vertex.read_status = "success";
+  vertex.parent_topology_id = "body_1";
   exact_package.topology.push_back(vertex);
-  TopologyEntity wire;
-  wire.topology_id = "wire_1";
-  wire.topology_kind = "wire";
-  exact_package.topology.push_back(wire);
+  TopologyEntity volume;
+  volume.topology_id = "volume_1";
+  volume.topology_kind = "volume";
+  volume.read_status = "success";
+  volume.parent_topology_id = "body_1";
+  exact_package.topology.push_back(volume);
+  TopologyEntity wire_cell;
+  wire_cell.topology_id = "wire_cell_1";
+  wire_cell.topology_kind = "wire";
+  wire_cell.parent_topology_id = "body_1";
+  exact_package.topology.push_back(wire_cell);
+  NativeTopologyWireEntity exact_wire;
+  exact_wire.wire_id = "wire_1";
+  exact_wire.body_id = "body_1";
+  exact_wire.owning_face_id = "face_1";
+  exact_wire.edge_count = 1;
+  exact_wire.closed_status = "closed_by_edge_vertex_continuity";
+  exact_package.topology_wires.push_back(exact_wire);
+  NativeTopologyCoedgeEntity exact_coedge;
+  exact_coedge.coedge_id = "coedge_1";
+  exact_coedge.body_id = "body_1";
+  exact_coedge.wire_id = "wire_1";
+  exact_coedge.owning_face_id = "face_1";
+  exact_coedge.edge_cell_id = "edge_1";
+  exact_coedge.previous_coedge_id = "coedge_1";
+  exact_coedge.next_coedge_id = "coedge_1";
+  exact_package.topology_coedges.push_back(exact_coedge);
   TopologyRelation boundary;
   boundary.from_topology_id = "face_1";
-  boundary.to_topology_id = "wire_1";
+  boundary.to_topology_id = "edge_1";
   boundary.relation_kind = "boundary";
   boundary.read_status = "available";
   exact_package.topology_relations.push_back(boundary);
   planner.Plan(exact_package);
   Check(exact_package.reconstruction_plan == "exact_brep",
         "ReconstructionPlanner exact_brep requires complete topology evidence");
+  exact_package.topology[2].geometry_parameters_json.clear();
+  planner.Plan(exact_package);
+  Check(exact_package.reconstruction_plan != "exact_brep",
+        "one edge without exact parameters downgrades the body");
+  exact_package.topology[2].geometry_parameters_json = "{\"origin\":[0,0,0]}";
+  TopologyEntity second_body = body;
+  second_body.topology_id = "body_2";
+  second_body.topology_kind = "feature_result_body";
+  second_body.source_kind = "catishapefeaturebody_resultout";
+  exact_package.topology.push_back(second_body);
+  planner.Plan(exact_package);
+  Check(exact_package.reconstruction_plan != "exact_brep",
+        "an incomplete sibling ResultOUT body downgrades the package");
+  BrepCompleteness mixed_brep = BrepCompletenessEvaluator().Evaluate(exact_package);
+  Check(mixed_brep.exact_body_count == 1 && mixed_brep.incomplete_body_count == 1,
+        "mixed body evidence is counted per body");
+  exact_package.topology.pop_back();
+  exact_package.topology_wires[0].closed_status = "open";
+  Check(BrepCompletenessEvaluator().Evaluate(exact_package).exact_body_count == 0,
+        "open wire prevents exact body reconstruction");
+  exact_package.topology_wires[0].closed_status = "closed_by_edge_vertex_continuity";
+  exact_package.topology_coedges[0].next_coedge_id = "missing_coedge";
+  Check(BrepCompletenessEvaluator().Evaluate(exact_package).exact_body_count == 0,
+        "dangling coedge prevents exact body reconstruction");
 
   ReconstructionValidator validator;
   std::string error;

@@ -624,6 +624,8 @@ bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
            << i1 << JsonQuote("topology_relation_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.topology_relations.size()) << "," << nl
            << i1 << JsonQuote("pmi_association_count") << ":" << (pretty ? " " : "") << static_cast<int>(package.pmi_associations.size()) << "," << nl
            << i1 << JsonQuote("selected_reconstruction_route") << ":" << (pretty ? " " : "") << JsonQuote(package.reconstruction_plan) << "," << nl
+           << i1 << JsonQuote("exact_brep_body_count") << ":" << (pretty ? " " : "") << package.exact_brep_body_count << "," << nl
+           << i1 << JsonQuote("incomplete_brep_body_count") << ":" << (pretty ? " " : "") << package.incomplete_brep_body_count << "," << nl
            << i1 << JsonQuote("capture_status") << ":" << (pretty ? " " : "") << JsonQuote(package.capture_status) << "," << nl
            << i1 << JsonQuote("native_document_open_status") << ":" << (pretty ? " " : "") << JsonQuote(package.document_graph.documents.empty() ? "unavailable" : package.document_graph.documents[0].native_document_open_status) << "," << nl
            << i1 << JsonQuote("legacy_projection_status") << ":" << (pretty ? " " : "") << JsonQuote(legacy_projection_status) << nl

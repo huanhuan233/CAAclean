@@ -470,6 +470,8 @@ declare namespace Api {
         capture_bitness?: number | null;
         document_kind?: string | null;
         selected_reconstruction_route?: string | null;
+        exact_brep_body_count?: number | null;
+        incomplete_brep_body_count?: number | null;
         has_tree: boolean;
         has_properties: boolean;
         has_topology: boolean;

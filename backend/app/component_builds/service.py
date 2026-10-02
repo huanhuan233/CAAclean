@@ -619,6 +619,8 @@ class ComponentBuildService:
             "capture_bitness": native.get("capture_bitness") or (32 if is_caa_new_capture else None),
             "document_kind": native.get("document_kind"),
             "selected_reconstruction_route": native.get("selected_reconstruction_route"),
+            "exact_brep_body_count": native.get("exact_brep_body_count"),
+            "incomplete_brep_body_count": native.get("incomplete_brep_body_count"),
             "has_tree": bool(native.get("has_tree") or native_semantics.get("tree_occurrences") or native_semantics.get("features")),
             "has_properties": bool(native.get("has_properties") or native_semantics.get("property_facts")),
             "has_topology": bool(native.get("has_topology") or native_semantics.get("topology_entities")),

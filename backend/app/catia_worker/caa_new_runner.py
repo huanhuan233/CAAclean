@@ -25,6 +25,8 @@ class CaaNewCaptureResult:
     capability_summary: dict[str, Any]
     has_geometry: bool
     selected_reconstruction_route: str
+    exact_brep_body_count: int | None = None
+    incomplete_brep_body_count: int | None = None
 
 
 class CaaNewRunnerError(RuntimeError):
@@ -149,6 +151,8 @@ class CaaNewRunner:
             capability_summary=self._read_optional_json(output_dir / "capabilities.json"),
             has_geometry=int(manifest.get("geometry_count") or 0) > 0,
             selected_reconstruction_route=str(manifest.get("selected_reconstruction_route") or ""),
+            exact_brep_body_count=int(manifest["exact_brep_body_count"]) if "exact_brep_body_count" in manifest else None,
+            incomplete_brep_body_count=int(manifest["incomplete_brep_body_count"]) if "incomplete_brep_body_count" in manifest else None,
         )
 
     @staticmethod

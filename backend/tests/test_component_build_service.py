@@ -16,6 +16,18 @@ from app.component_builds.service import ComponentBuildService, SqlAlchemySource
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
+def test_native_brep_completeness_contract_preserves_database_values_and_old_bundles():
+    """逐体完整性只透传数据库清单，旧包缺字段时不伪造零值。"""
+    new_manifest = {"native_capture": {"available": True, "status": "complete",
+                                       "exact_brep_body_count": 1, "incomplete_brep_body_count": 3}}
+    new = ComponentBuildService._native_capture_contract("", new_manifest)
+    assert new["exact_brep_body_count"] == 1
+    assert new["incomplete_brep_body_count"] == 3
+    old = ComponentBuildService._native_capture_contract("", {"native_capture": {"available": True}})
+    assert old["exact_brep_body_count"] is None
+    assert old["incomplete_brep_body_count"] is None
+
+
 def find_build_node(nodes: list[dict], build_id: str) -> dict:
     for node in nodes:
         if node.get("node_type") == "build" and node.get("build_id") == build_id:

@@ -824,7 +824,7 @@ function apiPropertyValueText(value: unknown) {
 }
 
 const geometryStatusLabelMap: Record<string, string> = {
-  exact: '精确几何',
+  exact: '有精确几何证据',
   mesh_available: '网格可用',
   topology_only: '仅有拓扑',
   partial: '部分可用',
@@ -2231,6 +2231,14 @@ onBeforeUnmount(() => {
         <span v-if="contract">{{ contract.summary.recognized_feature_count }} 个识别特征</span>
         <span v-if="contract" :class="mappingAvailable ? 'available' : 'muted'">
           Feature–Face {{ mappingAvailable ? '映射可用' : '映射不可用' }}
+        </span>
+        <span v-if="contract?.native_capture?.exact_brep_body_count != null && contract?.native_capture?.incomplete_brep_body_count != null &&
+                    contract.native_capture.exact_brep_body_count + contract.native_capture.incomplete_brep_body_count > 0"
+              :class="contract.native_capture.incomplete_brep_body_count ? 'muted' : 'available'"
+              title="来自 PostgreSQL 中的 CAA 重建完整性结果">
+          精确 B-Rep {{ contract.native_capture.exact_brep_body_count }}/{{
+            contract.native_capture.exact_brep_body_count + contract.native_capture.incomplete_brep_body_count
+          }} 体
         </span>
         <span v-if="contract" class="stage-badge" :class="contract.status">
           {{ workerStageLabel(contract.current_stage) }}
