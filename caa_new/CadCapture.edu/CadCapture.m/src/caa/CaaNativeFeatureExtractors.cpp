@@ -1,4 +1,5 @@
 #include "caa/CaaNativeFeatureExtractors.h"
+#include "caa/CaaNativeBindingIndex.h"
 
 #include <CATIAAngle.h>
 #include <CATIAHole.h>
@@ -91,18 +92,6 @@ static std::string BstrToUtf8(const CATBSTR value)
   std::vector<char> buffer(static_cast<size_t>(byte_length));
   WideCharToMultiByte(CP_UTF8, 0, value, wide_length, &buffer[0], byte_length, 0, 0);
   return std::string(&buffer[0], static_cast<size_t>(byte_length));
-}
-
-static CATISpecObject* FindNativeSpecObject(const ReconstructionPackage& package,
-                                            const std::string& object_id)
-{
-  size_t i;
-  for (i = 0; i < package.native_object_bindings.size(); ++i)
-  {
-    if (package.native_object_bindings[i].object_id == object_id)
-      return static_cast<CATISpecObject*>(package.native_object_bindings[i].native_spec_object);
-  }
-  return 0;
 }
 
 static const char* CanonicalFromStartupType(const std::string& startup_type)
@@ -654,6 +643,8 @@ static bool ExtractScoped(CaptureIdRegistry& ids,
                           ReconstructionPackage& package,
                           const std::string& document_id)
 {
+  // 中文：类型化解码在本次调用只建一次对象索引。
+  CaaNativeBindingIndex bindings(package);
   size_t i;
   long type_only_count = 0;
   long generic_count = 0;
@@ -685,7 +676,7 @@ static bool ExtractScoped(CaptureIdRegistry& ids,
       facet.decode_level = "type_only";
       facet.decode_status = "type_only";
       facet.payload_extraction_status = "not_available";
-      CATISpecObject* spec = FindNativeSpecObject(package, object.object_id);
+      CATISpecObject* spec = bindings.FindSpec(object.object_id);
       std::string payload_json;
       if (facet.canonical_family == "hole" &&
           TryBuildHolePayload(spec, broker, package, object, payload_json))

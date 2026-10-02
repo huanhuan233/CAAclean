@@ -32,8 +32,10 @@ template<class T> bool Acquire(CATBaseUnknown* object, const IID& iid, CaaInterf
 class Capture
 {
 public:
-  Capture(const std::string& subject, CaptureIdRegistry& ids, ReconstructionPackage& package)
-    : _subject(subject), _ids(ids), _package(package) {}
+  // 中文：同一文档的属性通道共享已构建的原生对象索引。
+  Capture(const std::string& subject, CaptureIdRegistry& ids, ReconstructionPackage& package,
+          CaaNativeBindingIndex& bindings)
+    : _subject(subject), _ids(ids), _package(package), _bindings(bindings) {}
 
   void Put(const std::string& key, PropertyFact fact, const std::string& group = "composites")
   {
@@ -45,12 +47,7 @@ public:
     if (reference == NULL_var) { Put(key, evidence::Failure("unavailable", api)); return; }
     Put(key, evidence::Text(evidence::Utf8(reference->GetDisplayName()), api));
     // 名称允许重复，另存已发现对象的 ID；未发现时明确记录，不凭名称建立关系。
-    std::string object_id;
-    for (size_t i = 0; i < _package.native_object_bindings.size(); ++i)
-    {
-      CATISpecObject* native = static_cast<CATISpecObject*>(_package.native_object_bindings[i].native_spec_object);
-      if (native && native->IsEqual(reference)) { object_id = _package.native_object_bindings[i].object_id; break; }
-    }
+    const std::string object_id = _bindings.Resolve(reference);
     Put(key + "_object_id", object_id.empty() ? evidence::Failure("not_captured", api) : evidence::Text(object_id, api));
   }
 
@@ -238,14 +235,17 @@ private:
   std::string _subject;
   CaptureIdRegistry& _ids;
   ReconstructionPackage& _package;
+  CaaNativeBindingIndex& _bindings;
 };
 }
 
+// 中文：每个接口通道独立容错，属性事实只追加到本次采集包。
 void CaaSemanticPropertyExtractor::Extract(CATISpecObject* spec, const std::string& subject,
-                                           CaptureIdRegistry& ids, ReconstructionPackage& package)
+                                           CaptureIdRegistry& ids, ReconstructionPackage& package,
+                                           CaaNativeBindingIndex& bindings)
 {
   if (!spec) return;
-  Capture capture(subject, ids, package);
+  Capture capture(subject, ids, package, bindings);
   // 每条通道独立保护；一个旧模型接口抛异常，不影响其余属性、后续零件的采集。
   try { CaaInterfaceGuard<CATICkeParm> value; if (Acquire(spec, IID_CATICkeParm, value)) capture.Knowledge(value.Get()); }
   catch (...) { capture.Put("catia_parameter_value_status", evidence::Failure("exception", "CATICkeParm"), "knowledgeware"); }

@@ -3,6 +3,7 @@
 
 #include "model/CaptureIdRegistry.h"
 #include "model/ReconstructionPackage.h"
+#include "caa/CaaNativeBindingIndex.h"
 class CATISpecObject;
 
 namespace cadcapture {
@@ -12,8 +13,10 @@ namespace cadcapture {
 class CaaSemanticPropertyExtractor
 {
 public:
+  // 中文：读取本对象的可复用语义属性，引用身份由当前文档的绑定索引解析。
   void Extract(CATISpecObject* spec, const std::string& subject,
-               CaptureIdRegistry& ids, ReconstructionPackage& package);
+               CaptureIdRegistry& ids, ReconstructionPackage& package,
+               CaaNativeBindingIndex& bindings);
 };
 }
 #endif

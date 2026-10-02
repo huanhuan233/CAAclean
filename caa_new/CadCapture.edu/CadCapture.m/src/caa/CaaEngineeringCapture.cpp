@@ -1,5 +1,6 @@
 ﻿#include "caa/CaaEngineeringCapture.h"
 #include "caa/CaaGuards.h"
+#include "caa/CaaNativeBindingIndex.h"
 #include "caa/CaaPropertyEvidence.h"
 #include "model/TubePath.h"
 #include "output/JsonSupport.h"
@@ -54,24 +55,15 @@ void ProjectPaths(ReconstructionPackage& package)
 class Capture {
   CaptureIdRegistry& ids;
   ReconstructionPackage& package;
-  std::map<CATISpecObject*,std::string> bindings;
+  CaaNativeBindingIndex bindings;
 public:
   // 建立本次采集内的原生对象索引，不依赖名称或跨文件固定编号。
-  Capture(CaptureIdRegistry& registry,ReconstructionPackage& target):ids(registry),package(target)
-  {
-    for(size_t i=0;i<package.native_object_bindings.size();++i)
-      bindings[static_cast<CATISpecObject*>(package.native_object_bindings[i].native_spec_object)]=package.native_object_bindings[i].object_id;
-  }
+  Capture(CaptureIdRegistry& registry,ReconstructionPackage& target,size_t first_binding)
+    :ids(registry),package(target),bindings(target,first_binding) {}
   // 解析引用的真实身份；无法解析时不制造悬空外键。
   std::string Identity(const CATISpecObject_var& object)
   {
-    if(object==NULL_var) return "";
-    CATISpecObject* ptr=object;
-    std::map<CATISpecObject*,std::string>::const_iterator found=bindings.find(ptr);
-    if(found!=bindings.end()) return found->second;
-    for(std::map<CATISpecObject*,std::string>::const_iterator i=bindings.begin();i!=bindings.end();++i)
-      if(i->first&&i->first->IsEqual(object)) return i->second;
-    return "";
+    return bindings.Resolve(object);
   }
   // 统一写入带读取状态的属性，供原有 JSONL、数据库和属性面板消费。
   void Put(const std::string& subject,const std::string& key,PropertyFact value,const std::string& group="engineering")
@@ -290,7 +282,7 @@ public:
 // 为每个对象独立保护公式、引用和扫掠读取，某一接口失败不影响其他零件。
 void CaaEngineeringCapture::Extract(CaptureIdRegistry& ids,ReconstructionPackage& package,size_t first_binding)
 {
-  Capture capture(ids,package);
+  Capture capture(ids,package,first_binding);
   for(size_t i=first_binding;i<package.native_object_bindings.size();++i) {
     const std::string subject=package.native_object_bindings[i].object_id;
     CATISpecObject* spec=static_cast<CATISpecObject*>(package.native_object_bindings[i].native_spec_object);

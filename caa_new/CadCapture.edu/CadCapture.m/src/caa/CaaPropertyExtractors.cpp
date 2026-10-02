@@ -1,5 +1,6 @@
 #include "caa/CaaPropertyExtractors.h"
 #include "caa/CaaSemanticPropertyExtractor.h"
+#include "caa/CaaNativeBindingIndex.h"
 
 #include <CATBaseUnknown.h>
 #include <CATICkeInst.h>
@@ -264,18 +265,6 @@ static std::string ParameterLeafName(const std::string& qualified_name)
   return separator == std::string::npos ? qualified_name : qualified_name.substr(separator + 1);
 }
 
-static CATISpecObject* FindNativeSpecObject(const ReconstructionPackage& package,
-                                            const std::string& object_id)
-{
-  size_t i;
-  for (i = 0; i < package.native_object_bindings.size(); ++i)
-  {
-    if (package.native_object_bindings[i].object_id == object_id)
-      return static_cast<CATISpecObject*>(package.native_object_bindings[i].native_spec_object);
-  }
-  return 0;
-}
-
 static void AddMechanicalInertiaFacts(CaptureIdRegistry& ids,
                                       CaaCapabilityBroker& broker,
                                       ReconstructionPackage& package,
@@ -396,6 +385,8 @@ bool CaaPropertyExtractors::ExtractNativeFactsForDocument(CaptureIdRegistry& ids
                                                           ReconstructionPackage& package,
                                                           const std::string& document_id)
 {
+  // 中文：本次文档只建一次绑定索引，属性、惯量和复材引用共同使用。
+  CaaNativeBindingIndex bindings(package);
   size_t i;
   for (i = 0; i < package.objects.size(); ++i)
   {
@@ -403,10 +394,10 @@ bool CaaPropertyExtractors::ExtractNativeFactsForDocument(CaptureIdRegistry& ids
     if (object.document_id != document_id)
       continue;
 
-    CATISpecObject* spec = FindNativeSpecObject(package, object.object_id);
+    CATISpecObject* spec = bindings.FindSpec(object.object_id);
     AddGraphicPropertyFacts(ids, broker, package, object, spec);
     AddMechanicalInertiaFacts(ids, broker, package, object, spec);
-    CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package);
+    CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package, bindings);
   }
   return true;
 }
@@ -415,6 +406,8 @@ bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
                                     CaaCapabilityBroker& broker,
                                     ReconstructionPackage& package)
 {
+  // 中文：根链路一次构建原生索引，避免为每个对象扫描整棵绑定表。
+  CaaNativeBindingIndex bindings(package);
   size_t i;
   for (i = 0; i < package.document_graph.documents.size(); ++i)
   {
@@ -452,10 +445,10 @@ bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
     AddFact(ids, package, object.object_id, "attributes", "Attributes", "identity", "Identity",
             "geometry_status", "Geometry status", package.geometry.empty() ? "not_available" : "available", "string", "GeometryIR", 70);
 
-    CATISpecObject* spec = FindNativeSpecObject(package, object.object_id);
+    CATISpecObject* spec = bindings.FindSpec(object.object_id);
     AddGraphicPropertyFacts(ids, broker, package, object, spec);
     AddMechanicalInertiaFacts(ids, broker, package, object, spec);
-    CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package);
+    CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package, bindings);
   }
 
   for (i = 0; i < package.occurrence_graph.object_occurrences.size(); ++i)

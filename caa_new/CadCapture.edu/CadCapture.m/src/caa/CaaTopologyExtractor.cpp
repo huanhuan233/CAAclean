@@ -139,40 +139,38 @@ public:
   FeatureSubjectMatcher(const ReconstructionPackage& package,
                         const std::string& document_id,
                         const std::string& fallback_subject)
-    : _package(package), _document_id(document_id), _fallback_subject(fallback_subject),
-      _used(package.objects.size(), false)
+    : _fallback_subject(fallback_subject)
   {
+    size_t i;
+    for (i = 0; i < package.objects.size(); ++i)
+    {
+      const ObjectEntity& object = package.objects[i];
+      if (object.document_id == document_id && object.object_kind == "catia_spec_object")
+        _by_key[ObjectKey(object.display_name, object.internal_name, object.startup_type)]
+          .push_back(object.object_id);
+    }
   }
 
-  // 中文：在指定文档内按原生身份文字匹配一次出现的特征对象。
+  // 中文：在指定文档内按原生身份文字消费下一项同名对象，避免逐个扫描全包。
   std::string Match(CATISpecObject* spec)
   {
     const std::string key = SpecKey(spec);
-    size_t i;
-    for (i = 0; i < _package.objects.size(); ++i)
-    {
-      if (_used[i])
-        continue;
-      const ObjectEntity& object = _package.objects[i];
-      if (object.object_kind != "catia_spec_object" || object.document_id != _document_id)
-        continue;
-      if (ObjectKey(object.display_name, object.internal_name, object.startup_type) == key)
-      {
-        _used[i] = true;
-        return object.object_id;
-      }
-    }
-    return "";
+    std::map<std::string, std::vector<std::string> >::const_iterator found = _by_key.find(key);
+    if (found == _by_key.end())
+      return "";
+    size_t& next = _next[key];
+    if (next >= found->second.size())
+      return "";
+    return found->second[next++];
   }
 
   // 中文：提供本次关联文档的诊断归属节点。
   const std::string& FallbackSubject() const { return _fallback_subject; }
 
 private:
-  const ReconstructionPackage& _package;
-  std::string _document_id;
   std::string _fallback_subject;
-  std::vector<bool> _used;
+  std::map<std::string, std::vector<std::string> > _by_key;
+  std::map<std::string, size_t> _next;
 };
 
 static const char* TopologyCellKind(short dimension)
@@ -1372,25 +1370,6 @@ static void AppendFaceWires(ReconstructionPackage& package,
   }
 }
 
-static TopologyEntity* FindTopologyEntity(ReconstructionPackage& package, const std::string& topology_id)
-{
-  size_t i;
-  for (i = 0; i < package.topology.size(); ++i)
-    if (package.topology[i].topology_id == topology_id)
-      return &package.topology[i];
-  return 0;
-}
-
-static NativeTopologyWireEntity* FindTopologyWire(ReconstructionPackage& package,
-                                                  const std::string& wire_id)
-{
-  size_t i;
-  for (i = 0; i < package.topology_wires.size(); ++i)
-    if (package.topology_wires[i].wire_id == wire_id)
-      return &package.topology_wires[i];
-  return 0;
-}
-
 static bool EdgesShareVertex(const std::string& first_edge,
                              const std::string& second_edge,
                              const std::map<std::string, std::set<std::string> >& edge_vertices)
@@ -1406,16 +1385,23 @@ static bool EdgesShareVertex(const std::string& first_edge,
   return false;
 }
 
-static void FinalizeBrepTopologyGraph(ReconstructionPackage& package)
+// 中文：仅整理本次文档新增的拓扑，按 ID 建局部索引而不重复扫描旧文档实体。
+static void FinalizeBrepTopologyGraph(ReconstructionPackage& package,
+                                      size_t first_topology,
+                                      size_t first_wire,
+                                      size_t first_coedge)
 {
+  std::map<std::string, TopologyEntity*> cells;
+  std::map<std::string, NativeTopologyWireEntity*> wires;
   std::map<std::string, std::vector<size_t> > coedges_by_wire;
   std::map<std::string, std::set<std::string> > edge_to_faces;
   std::map<std::string, std::set<std::string> > edge_to_vertices;
 
   size_t i;
-  for (i = 0; i < package.topology.size(); ++i)
+  for (i = first_topology; i < package.topology.size(); ++i)
   {
-    const TopologyEntity& cell = package.topology[i];
+    TopologyEntity& cell = package.topology[i];
+    cells[cell.topology_id] = &cell;
     if (cell.dimension != 1)
       continue;
     size_t j;
@@ -1423,15 +1409,18 @@ static void FinalizeBrepTopologyGraph(ReconstructionPackage& package)
       edge_to_vertices[cell.topology_id].insert(cell.boundary_cell_ids[j]);
   }
 
-  for (i = 0; i < package.topology_coedges.size(); ++i)
+  for (i = first_wire; i < package.topology_wires.size(); ++i)
+    wires[package.topology_wires[i].wire_id] = &package.topology_wires[i];
+
+  for (i = first_coedge; i < package.topology_coedges.size(); ++i)
   {
     NativeTopologyCoedgeEntity& coedge = package.topology_coedges[i];
     coedges_by_wire[coedge.wire_id].push_back(i);
     if (!coedge.edge_cell_id.empty() && !coedge.owning_face_id.empty())
       edge_to_faces[coedge.edge_cell_id].insert(coedge.owning_face_id);
-    TopologyEntity* face = FindTopologyEntity(package, coedge.owning_face_id);
-    if (face)
-      AddUniqueString(face->boundary_cell_ids, coedge.edge_cell_id);
+    std::map<std::string, TopologyEntity*>::iterator face = cells.find(coedge.owning_face_id);
+    if (face != cells.end())
+      AddUniqueString(face->second->boundary_cell_ids, coedge.edge_cell_id);
   }
 
   std::map<std::string, std::vector<size_t> >::iterator wire_group = coedges_by_wire.begin();
@@ -1453,8 +1442,8 @@ static void FinalizeBrepTopologyGraph(ReconstructionPackage& package)
       AddUniqueString(edge_ids, coedge.edge_cell_id);
     }
 
-    NativeTopologyWireEntity* wire = FindTopologyWire(package, wire_group->first);
-    if (wire)
+    std::map<std::string, NativeTopologyWireEntity*>::iterator wire = wires.find(wire_group->first);
+    if (wire != wires.end())
     {
       bool closed_by_vertices = !edge_ids.empty();
       for (j = 0; j < edge_ids.size(); ++j)
@@ -1467,30 +1456,30 @@ static void FinalizeBrepTopologyGraph(ReconstructionPackage& package)
           break;
         }
       }
-      wire->closed_status = closed_by_vertices ?
+      wire->second->closed_status = closed_by_vertices ?
         "closed_by_edge_vertex_continuity" : "ordered_by_cat_boundary_iterator_unverified";
-      wire->edge_count = static_cast<long>(edge_ids.size());
+      wire->second->edge_count = static_cast<long>(edge_ids.size());
     }
   }
 
   std::map<std::string, std::set<std::string> >::iterator edge_faces = edge_to_faces.begin();
   for (; edge_faces != edge_to_faces.end(); ++edge_faces)
   {
-    TopologyEntity* edge = FindTopologyEntity(package, edge_faces->first);
-    if (!edge)
+    std::map<std::string, TopologyEntity*>::iterator edge = cells.find(edge_faces->first);
+    if (edge == cells.end())
       continue;
     std::set<std::string>::const_iterator face = edge_faces->second.begin();
     for (; face != edge_faces->second.end(); ++face)
-      AddUniqueString(edge->adjacent_cell_ids, *face);
+      AddUniqueString(edge->second->adjacent_cell_ids, *face);
     for (face = edge_faces->second.begin(); face != edge_faces->second.end(); ++face)
     {
-      TopologyEntity* face_cell = FindTopologyEntity(package, *face);
-      if (!face_cell)
+      std::map<std::string, TopologyEntity*>::iterator face_cell = cells.find(*face);
+      if (face_cell == cells.end())
         continue;
       std::set<std::string>::const_iterator other = edge_faces->second.begin();
       for (; other != edge_faces->second.end(); ++other)
         if (*other != *face)
-          AddUniqueString(face_cell->adjacent_cell_ids, *other);
+          AddUniqueString(face_cell->second->adjacent_cell_ids, *other);
     }
   }
 }
@@ -2034,6 +2023,10 @@ bool CaaTopologyExtractor::ExtractForDocument(CaaDocumentHandle& document_handle
     return true;
   }
 
+  // 中文：标记当前文档新增区间，避免关联件逐个打开时反复整理先前文档拓扑。
+  const size_t first_topology = package.topology.size();
+  const size_t first_wire = package.topology_wires.size();
+  const size_t first_coedge = package.topology_coedges.size();
   const std::string subject_id = FindCatPartSubject(package, document_id);
   CATISpecObject* part_spec = GetRootPartSpec(document_handle, package, subject_id);
   if (!part_spec)
@@ -2229,7 +2222,7 @@ bool CaaTopologyExtractor::ExtractForDocument(CaaDocumentHandle& document_handle
     AppendFaceWires(package, face, body_id, face_ids[i], static_cast<long>(i + 1),
                     cell_ids, next_wire_index, next_coedge_index);
   }
-  FinalizeBrepTopologyGraph(package);
+  FinalizeBrepTopologyGraph(package, first_topology, first_wire, first_coedge);
 
   FeatureSubjectMatcher matcher(package, document_id, subject_id);
   TraverseResultOutSpecs(part_spec, ids, package, matcher);

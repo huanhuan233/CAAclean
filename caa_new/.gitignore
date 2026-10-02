@@ -6,6 +6,7 @@ CadCapture.edu/various/
 
 build_core/
 build_linked_*/
+build_perf_*/
 intel_a/
 win_b64/
 selftest_output/
