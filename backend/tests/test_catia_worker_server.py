@@ -165,6 +165,7 @@ def test_caa_new_runner_inspects_normalized_manifest(tmp_path):
     (native_dir / "object_entities.jsonl").write_text("{}\n", encoding="utf-8")
     (native_dir / "tree_occurrences.jsonl").write_text("{}\n", encoding="utf-8")
     (native_dir / "property_facts.jsonl").write_text("{}\n", encoding="utf-8")
+    (native_dir / ".cadcapture_stage_owner").write_text("stale-marker", encoding="utf-8")
 
     result = CaaNewRunner(project_root=tmp_path, runner=tmp_path / "run_r21_x86.bat").inspect(native_dir)
 
@@ -172,3 +173,4 @@ def test_caa_new_runner_inspects_normalized_manifest(tmp_path):
     assert result.parser_version == "0.2.0"
     assert result.capture_status == "partial"
     assert result.has_geometry is False
+    assert ".cadcapture_stage_owner" not in result.artifact_paths

@@ -129,7 +129,8 @@ class CaaNewRunner:
 
         artifact_paths: dict[str, Path] = {}
         for path in sorted(output_dir.iterdir()):
-            if path.is_file() and path.name != "caa_new_runner.log":
+            # 事务标记只是原生写出内部状态，绝不作为采集产物上传或入库。
+            if path.is_file() and path.name != "caa_new_runner.log" and not path.name.startswith(".cadcapture_"):
                 artifact_paths[path.name] = path
 
         required = ("manifest.json", "object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl")

@@ -15,7 +15,9 @@
 #include <direct.h>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <windows.h>
 
 using namespace cadcapture;
 
@@ -512,7 +514,11 @@ int main()
   text_annotation.annotation_text_status = "available";
   text_annotation.annotation_text_source = "CATITPSText.GetText";
   package.fta_semantics.push_back(text_annotation);
-  Check(repository.Commit(package, output_report, output_dir, true, error), "ArtifactRepository transactional commit");
+  // 中文：输出事务失败时保留原始错误，便于区分既有基线问题与本次安全检查。
+  const bool committed = repository.Commit(package, output_report, output_dir, true, error);
+  if (!committed)
+    std::cerr << "transaction error: " << error << "\n";
+  Check(committed, "ArtifactRepository transactional commit");
   {
     std::ifstream annotations((output_dir + "\\fta_semantics.jsonl").c_str());
     std::string line;
@@ -545,6 +551,70 @@ int main()
         static_cast<long>(product_package.occurrence_graph.object_occurrences.size() +
                           product_package.product_occurrences.size()),
         "Legacy product features include product and feature nodes");
+  // 中文：安全回归仅在测试生成目录建立哨兵，验证未知业务文件绝不会被事务替换。
+  const std::string foreign_output = "build_core\\foreign_output_test_v2";
+  _mkdir(foreign_output.c_str());
+  {
+    std::ofstream sentinel((foreign_output + "\\sentinel.txt").c_str(), std::ios::out | std::ios::binary);
+    sentinel << "must survive";
+  }
+  error.clear();
+  Check(!repository.Commit(package, output_report, foreign_output, true, error),
+        "unknown nonempty output is rejected");
+  {
+    std::ifstream sentinel((foreign_output + "\\sentinel.txt").c_str(), std::ios::in | std::ios::binary);
+    Check(!!sentinel, "unknown output sentinel survives");
+  }
+  // 中文：历史固定名字的暂存目录不属于本次运行，提交时不可顺手清理。
+  const std::string legacy_stage = "build_core\\stage_collision_test.cadcapture_stage";
+  const std::string legacy_backup = "build_core\\stage_collision_test.cadcapture_backup";
+  _mkdir(legacy_stage.c_str());
+  _mkdir(legacy_backup.c_str());
+  {
+    std::ofstream sentinel((legacy_stage + "\\sentinel.txt").c_str(), std::ios::out | std::ios::binary);
+    sentinel << "must survive";
+  }
+  {
+    std::ofstream sentinel((legacy_backup + "\\sentinel.txt").c_str(), std::ios::out | std::ios::binary);
+    sentinel << "must survive";
+  }
+  error.clear();
+  Check(repository.Commit(product_package, output_report, "build_core\\stage_collision_test", true, error),
+        "transaction ignores unrelated legacy stage");
+  {
+    std::ifstream sentinel((legacy_stage + "\\sentinel.txt").c_str(), std::ios::in | std::ios::binary);
+    Check(!!sentinel, "legacy stage sentinel survives");
+  }
+  {
+    std::ifstream sentinel((legacy_backup + "\\sentinel.txt").c_str(), std::ios::in | std::ios::binary);
+    Check(!!sentinel, "legacy backup sentinel survives");
+  }
+  // 中文：后端会预建空目录；原生提交必须继续接受该调用方式。
+  const std::string empty_output = "build_core\\precreated_empty_output_test";
+  _mkdir(empty_output.c_str());
+  error.clear();
+  Check(repository.Commit(product_package, output_report, empty_output, true, error),
+        "precreated empty output commits");
+  Check(GetFileAttributesA((empty_output + "\\.cadcapture_stage_owner").c_str()) == INVALID_FILE_ATTRIBUTES,
+        "committed output excludes transaction marker");
+  // 中文：即使有合法 manifest，目录内混入未知文件也不能整目录替换。
+  std::ostringstream mixed_name;
+  mixed_name << "build_core\\mixed_output_test_" << GetCurrentProcessId() << "_" << GetTickCount();
+  const std::string mixed_output = mixed_name.str();
+  error.clear();
+  Check(repository.Commit(product_package, output_report, mixed_output, true, error),
+        "owned output fixture commits");
+  {
+    std::ofstream sentinel((mixed_output + "\\user-note.txt").c_str(), std::ios::out | std::ios::binary);
+    sentinel << "must survive";
+  }
+  error.clear();
+  Check(!repository.Commit(product_package, output_report, mixed_output, true, error),
+        "owned output with unknown file is rejected");
+  {
+    std::ifstream sentinel((mixed_output + "\\user-note.txt").c_str(), std::ios::in | std::ios::binary);
+    Check(!!sentinel, "mixed output sentinel survives");
+  }
   {
     std::ofstream marker("build_core\\not_a_dir", std::ios::out | std::ios::binary);
     marker << "file parent";
