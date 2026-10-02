@@ -17,6 +17,8 @@ LINK_WITH = \
   CATTPSItf \
   CATTPSUUID \
   KnowledgeItf \
+  CATGitInterfaces \
+  CATMeasureGeometryInterfaces \
   CAACompositesItf \
   CAACompositesItfUUID \
   CATCompositesPubIDL \

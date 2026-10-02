@@ -47,3 +47,27 @@ def test_native_property_rows_preserve_all_facts_and_build_tabs_without_files():
     fields = result["tabs"][0]["groups"][0]["fields"]
     assert [field["display_name"] for field in fields] == ["名称", "路径"]
     assert fields[1]["display_value"] == r"<local_path>\Part.CATPart"
+
+
+def test_tube_geometry_and_formula_roundtrip_preserves_provenance():
+    """验证新增工程属性完整通过数据库行与属性面板投影，不回读 JSONL。"""
+    facts = [
+        {"subject_id": "object_27", "key": "tube_bending_geometry",
+         "value_type": "json", "raw_value": '{"segments":[{"rotation_deg":null}]}',
+         "authority": "derived_geometry", "source_api": "AnalyzeTubePath",
+         "read_status": "available", "tab_id": "tube_process", "group_id": "geometry"},
+        {"subject_id": "object_27", "key": "formula_expression", "raw_value": "D / 2",
+         "authority": "captured_native_tree", "source_api": "CATICkeRelationExp.Body(0)",
+         "read_status": "available", "tab_id": "knowledgeware", "group_id": "formulas"},
+    ]
+    rows = native_property_rows(uuid4(), facts)
+    for row, fact in zip(rows, facts):
+        for key in ("raw_value", "source_api", "authority", "read_status"):
+            assert row["payload"][key] == fact[key]
+    result = build_database_properties(
+        "object_27", {"node_id": "object_27", "object_id": "object_27"},
+        [SimpleNamespace(subject_id=r["subject_id"], sort_order=r["sort_order"], payload=r["payload"]) for r in rows],
+    )
+    assert result["property_count"] == 2
+    fields = [field for tab in result["tabs"] for group in tab["groups"] for field in group["fields"]]
+    assert {f["raw_value"] for f in fields} == {f["raw_value"] for f in facts}

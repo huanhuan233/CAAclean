@@ -1,7 +1,8 @@
-#include "engine/ModelCaptureEngine.h"
+﻿#include "engine/ModelCaptureEngine.h"
 #include "caa/CaaCapabilityBroker.h"
 #include "caa/CaaDocumentScanner.h"
 #include "caa/CaaFtaExtractor.h"
+#include "caa/CaaEngineeringCapture.h"
 #include "caa/CaaGeometryExtractor.h"
 #include "caa/CaaIdentityResolver.h"
 #include "caa/CaaLinkedDocumentResolver.h"
@@ -115,6 +116,7 @@ static ProductReferenceEntity* FindProductReference(ReconstructionPackage& packa
   return 0;
 }
 
+// 在关联文档关闭前采集零件定义及工程属性，再释放临时原生绑定。
 static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
                                              CaaPropertyExtractors& property_extractors,
                                              CaaCapabilityBroker& broker,
@@ -161,6 +163,7 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
       continue;
     }
     property_extractors.ExtractNativeFactsForDocument(ids, broker, package, reference.referenced_document_id);
+    CaaEngineeringCapture().Extract(ids, package, binding_count_before);
     package.native_object_bindings.resize(binding_count_before);
     reference.definition_status = "definition_captured";
     definitions_by_document[reference.referenced_document_id] = definition;
@@ -192,6 +195,7 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
   return true;
 }
 
+// 编排原生采集与工程语义，统一验证并提交完整输出包。
 bool ModelCaptureEngine::Capture(const CaptureRequest& request,
                                  const CapturePolicy& policy,
                                  ReconstructionPackage& package,
@@ -317,6 +321,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   linked_document_resolver.Resolve(document_handle, ids, package);
   property_extractors.Extract(ids, broker, package);
   native_feature_extractors.Extract(ids, broker, package);
+  CaaEngineeringCapture().Extract(ids, package);
   sketch_extractor.Extract(package);
   topology_extractor.Extract(document_handle, ids, package);
   geometry_extractor.Extract(package);

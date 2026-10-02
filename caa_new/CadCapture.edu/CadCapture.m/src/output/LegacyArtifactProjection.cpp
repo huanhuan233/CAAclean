@@ -1,4 +1,4 @@
-#include "output/LegacyArtifactProjection.h"
+﻿#include "output/LegacyArtifactProjection.h"
 #include "output/JsonSupport.h"
 #include <fstream>
 #include <map>
@@ -153,6 +153,7 @@ static bool WriteTopologyRelationJson(std::ofstream& out,
   return true;
 }
 
+// 投影兼容格式；工程依赖增加后，实体结果数量仍只统计 ResultOUT 关联。
 bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                                      const std::string& output_dir,
                                      std::string& error) const
@@ -806,6 +807,9 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
     }
   }
 
+  size_t resultout_count = 0;
+  for (i = 0; i < package.feature_dependencies.size(); ++i)
+    if (package.feature_dependencies[i].dependency_kind == "has_resultout_body") ++resultout_count;
   std::ostringstream capabilities;
   capabilities << "{"
                << JsonQuote("spec_tree_extraction") << ":" << JsonQuote(package.occurrence_graph.object_occurrences.empty() ? "not_available" : "partial") << ","
@@ -813,7 +817,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                << JsonQuote("topology_extraction") << ":" << JsonQuote(package.topology.empty() ? "not_available" : "partial") << ","
                << JsonQuote("mesh_face_mapping") << ":" << JsonQuote(package.geometry.empty() ? "not_available" : "partial") << ","
                << JsonQuote("fta_extraction") << ":" << JsonQuote(package.pmi.empty() ? "set_scan_complete_zero_sets_or_unavailable" : "set_level_counts") << ","
-               << JsonQuote("feature_result_extraction") << ":" << JsonQuote(package.feature_dependencies.empty() ? "not_available" : "resultout_body_counts") << ","
+               << JsonQuote("feature_result_extraction") << ":" << JsonQuote(resultout_count == 0 ? "not_available" : "resultout_body_counts") << ","
                << JsonQuote("product_instance_extraction") << ":" << JsonQuote(package.product_occurrences.empty() ? "not_available" : "complete") << ","
                << JsonQuote("native_feature_record_count") << ":" << package.semantic_facets.size() << ","
                << JsonQuote("native_topology_cell_count") << ":" << package.topology.size() << ","
@@ -821,7 +825,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                << JsonQuote("fta_set_count") << ":" << package.pmi.size() << ","
                << JsonQuote("product_reference_count") << ":" << package.product_references.size() << ","
                << JsonQuote("product_instance_count") << ":" << package.product_occurrences.size() << ","
-               << JsonQuote("native_feature_result_count") << ":" << package.feature_dependencies.size()
+               << JsonQuote("native_feature_result_count") << ":" << resultout_count
                << "}\n";
   if (!WriteLegacyText(output_dir + "\\capabilities.json", capabilities.str(), error))
     return false;

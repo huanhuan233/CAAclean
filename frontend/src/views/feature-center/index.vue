@@ -823,10 +823,11 @@ function apiPropertyValueText(value: unknown) {
   return String(value);
 }
 
+// 隐藏内部属性页标记，业务字段仍按数据库返回值展示。
 function isHiddenCatiaApiField(field: Api.ComponentBuild.NativePropertyField) {
+  if ((field.key || '').trim().toLowerCase().startsWith('__catia_property_tab__')) return true;
   const key = normalizeCatiaToken(field.key || '').replace(/\s+/g, '_');
   if (hiddenCatiaPropertyKeys.has(key)) return true;
-  if (key.startsWith('__catia_property_tab__')) return true;
   const value = apiPropertyValueText(field.display_value ?? field.raw_value);
   return /^<local_path>\\/.test(value) || /^[a-z]:\\/i.test(value);
 }
@@ -841,20 +842,11 @@ function mergeCatiaGroups(groups: CatiaPropertyGroup[]) {
   return [...merged.values()];
 }
 
+// 数据库业务分组不受 CATIA 原生属性页声明限制，包括铺层、公式和工艺属性。
 function apiTabsToCatiaTabs(tabs: Api.ComponentBuild.NativePropertyTab[]) {
-  const declaredTabs = new Set<string>();
-  for (const tab of tabs) {
-    for (const group of tab.groups) {
-      for (const field of group.fields) {
-        const key = normalizeCatiaToken(field.key || '').replace(/\s+/g, '_');
-        if (key.startsWith('__catia_property_tab__')) declaredTabs.add(normalizeCatiaTabId(tab.tab_id || tab.tab_label));
-      }
-    }
-  }
   const mappedTabs = tabs
     .map<CatiaPropertyTab | null>(tab => {
       const name = normalizeCatiaTabId(tab.tab_id || tab.tab_label);
-      if (declaredTabs.size && !declaredTabs.has(name)) return null;
       const groups = mergeCatiaGroups(
         tab.groups.map(group => {
           const rawGroupLabel = group.group_label || group.group_id;
@@ -938,11 +930,6 @@ function propertyRow(label: string, value: unknown, unit = '') {
 
 function compactRows(rows: Array<{ label: string; value: string } | null>) {
   return rows.filter(Boolean) as Array<{ label: string; value: string }>;
-}
-
-function isCatiaPropertyTarget(node: FeatureTreeNode) {
-  const typeText = `${node.kind} ${node.nativeType || ''} ${node.raw?.startup_type || ''} ${node.raw?.native_type || ''}`.toLowerCase();
-  return ['catpart', 'catproduct', 'product', 'mechanicalpart', 'part'].some(token => typeText.includes(token));
 }
 
 function buildMechanicalRows(node: FeatureTreeNode | null) {
@@ -1650,11 +1637,12 @@ async function loadNativeTreeChildren(node: FeatureTreeNode) {
   }
 }
 
-// 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
+// 属性弹窗仅消费 PostgreSQL 接口；失败时不使用本地属性或文件兜底。
 async function showNativeTreeNodeProperties(node: FeatureTreeNode) {
   selectNativeTreeNode(node);
   catiaPropertyNode.value = node;
   catiaPropertyApiTabs.value = null;
+  catiaPropertyDialogOpen.value = false;
   const buildId = contract.value?.part_id;
   if (buildId) {
     try {
@@ -1676,17 +1664,11 @@ async function showNativeTreeNodeProperties(node: FeatureTreeNode) {
       return;
     } catch {
       catiaPropertyApiTabs.value = null;
+      window.$message?.error('数据库属性读取失败，请重试');
+      return;
     }
   }
-  if (!isCatiaPropertyTarget(node)) {
-    window.$message?.info('该节点没有可显示属性');
-    return;
-  }
-  const mechanical = buildMechanicalRows(node);
-  catiaPropertyTab.value = mechanical.characteristic.length || mechanical.center.length || mechanical.inertia.length
-    ? 'mechanical'
-    : 'product';
-  catiaPropertyDialogOpen.value = true;
+  window.$message?.error('当前节点没有数据库版本，无法读取属性');
 }
 
 function selectBom(node: Api.ComponentBuild.ViewerBomNode) {

@@ -47,13 +47,15 @@ export async function loadCaaNewNativeChildPage(
   return { records, nextOffset: response.data.next_offset ?? null };
 }
 
+// 仅接受数据库属性接口的成功响应，读取失败不能伪装成空属性。
 export async function loadCaaNewNodeProperties(
   buildId: string,
   nodeId: string,
   options?: { signal?: AbortSignal; silent?: boolean }
 ) {
   const response = await fetchComponentBuildNativeNodeProperties(buildId, nodeId, options);
-  return response.data ?? { node_id: nodeId, property_count: 0, tabs: [] };
+  if (response.error || !response.data) throw new Error('数据库属性读取失败，请重试');
+  return response.data;
 }
 
 function flattenNativeTreeNode(

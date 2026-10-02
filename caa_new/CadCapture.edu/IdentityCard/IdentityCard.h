@@ -10,6 +10,8 @@ AddPrereqComponent("GMModelInterfaces", Public);
 AddPrereqComponent("GeometricObjects", Public);
 AddPrereqComponent("CATTPSInterfaces", Public);
 AddPrereqComponent("KnowledgeInterfaces", Public);
+AddPrereqComponent("GSMInterfaces", Public);
+AddPrereqComponent("MeasureGeometryInterfaces", Public);
 AddPrereqComponent("CAACompositesItf", Public);
 AddPrereqComponent("CATMatInterfaces", Public);
 AddPrereqComponent("PartInterfaces", Public);
