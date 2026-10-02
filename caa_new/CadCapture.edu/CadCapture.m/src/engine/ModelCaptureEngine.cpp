@@ -16,6 +16,7 @@
 #include "caa/CaaTopologyExtractor.h"
 #include "model/CaptureIdRegistry.h"
 #include "model/GeometryStatusProjector.h"
+#include "engine/CaptureOutcome.h"
 #include "output/ArtifactRepository.h"
 #include "reconstruction/ReconstructionPlanner.h"
 #include "reconstruction/ReconstructionValidator.h"
@@ -208,7 +209,6 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
                                  CaptureReport& report,
                                  std::string& error)
 {
-  (void)policy;
   report.stage = "validate_request";
   if (request.self_test && request.probe_runtime)
   {
@@ -340,8 +340,15 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   identity_resolver.Resolve(ids, package);
 
   planner.Plan(package);
-  package.capture_status = "partial";
   UpdateReportCounts(package, report);
+  // 中文：主树或必需阶段缺失时，严格策略拒绝提交；默认策略保留带诊断的部分包。
+  if (!CaptureOutcome::Finalize(package, policy, error))
+  {
+    report.message = error;
+    report.exit_code = 1;
+    SyncReportDiagnostics(package, report);
+    return false;
+  }
   if (policy.validate_before_commit && !validator.Validate(package, error))
   {
     report.message = error;

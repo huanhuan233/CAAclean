@@ -1,4 +1,5 @@
 #include "engine/CapturePolicy.h"
+#include "engine/CaptureOutcome.h"
 #include "engine/CaptureReport.h"
 #include "model/DocumentGraph.h"
 #include "model/ObjectIdentity.h"
@@ -267,9 +268,31 @@ int main()
 {
   CapturePolicy policy;
   Check(policy.allow_partial_capture, "CapturePolicy allow_partial_capture");
-  Check(policy.preserve_unknown_objects, "CapturePolicy preserve_unknown_objects");
-  Check(policy.enable_legacy_projection, "CapturePolicy enable_legacy_projection");
   Check(policy.validate_before_commit, "CapturePolicy validate_before_commit");
+  // 中文：可选能力未编译不应把已完成的树采集误判为部分失败；关联件失败则必须可见。
+  ReconstructionPackage outcome_package;
+  DocumentEntity outcome_document;
+  outcome_document.document_id = "outcome_doc";
+  outcome_package.document_graph.AddDocument(outcome_document);
+  outcome_package.objects.push_back(ObjectEntity());
+  outcome_package.occurrence_graph.object_occurrences.push_back(ObjectOccurrence());
+  outcome_package.diagnostics.push_back(MakeDiagnostic("warning", "capability_unsupported", "optional",
+                                                        "optional capability unavailable", "capability_broker"));
+  std::string outcome_error;
+  Check(CaptureOutcome::Finalize(outcome_package, policy, outcome_error),
+        "optional unsupported capability does not block capture");
+  Check(outcome_package.capture_status == "complete", "successful capture is complete");
+  outcome_package.diagnostics.push_back(MakeDiagnostic("warning", "linked_catpart_open_failed", "part",
+                                                        "linked CATPart failed", "model_capture_engine"));
+  Check(CaptureOutcome::Finalize(outcome_package, policy, outcome_error),
+        "default policy permits partial capture");
+  Check(outcome_package.capture_status == "partial", "required stage failure is partial");
+  CapturePolicy strict_policy;
+  strict_policy.allow_partial_capture = false;
+  Check(!CaptureOutcome::Finalize(outcome_package, strict_policy, outcome_error),
+        "strict policy blocks partial capture");
+  Check(outcome_error.find("linked_catpart_open_failed") != std::string::npos,
+        "strict failure retains diagnostic code");
 
   DocumentGraph graph;
   DocumentEntity document;
