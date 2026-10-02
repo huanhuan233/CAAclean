@@ -1,5 +1,6 @@
 #include "engine/CapturePolicy.h"
 #include "engine/CaptureOutcome.h"
+#include "model/CaptureEvidenceSummary.h"
 #include "engine/CaptureReport.h"
 #include "model/DocumentGraph.h"
 #include "model/ObjectIdentity.h"
@@ -293,6 +294,34 @@ int main()
         "strict policy blocks partial capture");
   Check(outcome_error.find("linked_catpart_open_failed") != std::string::npos,
         "strict failure retains diagnostic code");
+  // 中文：几何记录不等于真实三角形，关联文档状态要由真实链接和定义状态决定。
+  ReconstructionPackage evidence_package;
+  GeometryEntity empty_mesh;
+  empty_mesh.geometry_id = "mesh_range_empty";
+  empty_mesh.representation_status = "success";
+  evidence_package.geometry.push_back(empty_mesh);
+  Check(!CaptureEvidenceSummary::HasMesh(evidence_package), "empty mesh range is not usable mesh");
+  MeshTriangleEntity actual_triangle;
+  actual_triangle.triangle_id = "triangle_1";
+  evidence_package.mesh_triangles.push_back(actual_triangle);
+  Check(CaptureEvidenceSummary::HasMesh(evidence_package), "actual triangle is usable mesh");
+  Check(CaptureEvidenceSummary::LinkedDocuments(evidence_package) == "not_applicable",
+        "CATPart without links does not claim linked resolution");
+  ProductReferenceEntity unresolved_reference;
+  unresolved_reference.reference_id = "reference_1";
+  unresolved_reference.reference_document_kind = "catpart";
+  unresolved_reference.definition_status = "broken_reference_document";
+  evidence_package.product_references.push_back(unresolved_reference);
+  Check(CaptureEvidenceSummary::LinkedDocuments(evidence_package) == "partial",
+        "broken linked CATPart is partial");
+  evidence_package.product_references[0].definition_status = "definition_captured";
+  evidence_package.product_references[0].referenced_document_id = "linked_doc";
+  DocumentLink loaded_link;
+  loaded_link.reference_id = "reference_1";
+  loaded_link.link_status = "loaded";
+  evidence_package.document_graph.links.push_back(loaded_link);
+  Check(CaptureEvidenceSummary::LinkedDocuments(evidence_package) == "available",
+        "captured linked CATPart and document link are available");
 
   DocumentGraph graph;
   DocumentEntity document;

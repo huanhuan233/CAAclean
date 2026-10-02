@@ -1,20 +1,22 @@
 #include "caa/CaaGeometryExtractor.h"
+#include "model/CaptureEvidenceSummary.h"
 
 namespace cadcapture {
 
-bool CaaGeometryExtractor::Extract(ReconstructionPackage& package)
+// 中文：按精确参数与真实网格分级，不把任意空摘要标为可用几何。
+void CaaGeometryExtractor::Extract(ReconstructionPackage& package)
 {
-  if (!package.geometry.empty())
+  if (CaptureEvidenceSummary::HasExactGeometry(package))
   {
-    package.diagnostics.push_back(MakeDiagnostic("info", "geometry_summary_available", "geometry",
-                                                 "Geometry/tessellation summary records were emitted by topology extraction",
+    package.diagnostics.push_back(MakeDiagnostic("info", "exact_geometry_evidence_available", "geometry",
+                                                 "Exact geometry parameters were emitted by topology extraction",
                                                  "geometry_extractor"));
-    return true;
+    return;
   }
-  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "geometry",
-                                               "Geometry extraction is planned until legacy exact geometry evidence is migrated",
+  package.diagnostics.push_back(MakeDiagnostic("info", CaptureEvidenceSummary::HasMesh(package) ? "mesh_geometry_evidence_available" : "exact_geometry_unavailable", "geometry",
+                                               CaptureEvidenceSummary::HasMesh(package) ? "Only tessellation evidence is available; exact geometry was not established"
+                                                                                        : "No exact geometry evidence was established",
                                                "geometry_extractor"));
-  return true;
 }
 
 }

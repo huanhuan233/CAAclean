@@ -30,6 +30,7 @@ if exist "%OUT%\SdkCatalog.obj" del /q "%OUT%\SdkCatalog.obj"
 if exist "%OUT%\CaptureIdRegistry.obj" del /q "%OUT%\CaptureIdRegistry.obj"
 if exist "%OUT%\GeometryStatusProjector.obj" del /q "%OUT%\GeometryStatusProjector.obj"
 if exist "%OUT%\CaptureOutcome.obj" del /q "%OUT%\CaptureOutcome.obj"
+if exist "%OUT%\CaptureEvidenceSummary.obj" del /q "%OUT%\CaptureEvidenceSummary.obj"
 if exist "%OUT%\ArtifactRepository.obj" del /q "%OUT%\ArtifactRepository.obj"
 if exist "%OUT%\NormalizedArtifactWriter.obj" del /q "%OUT%\NormalizedArtifactWriter.obj"
 if exist "%OUT%\LegacyArtifactProjection.obj" del /q "%OUT%\LegacyArtifactProjection.obj"
@@ -48,6 +49,8 @@ cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\GeometryStatusProjector.cpp" /Fo"%OUT
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\engine\CaptureOutcome.cpp" /Fo"%OUT%\CaptureOutcome.obj"
 if errorlevel 1 exit /b 4
+cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\CaptureEvidenceSummary.cpp" /Fo"%OUT%\CaptureEvidenceSummary.obj"
+if errorlevel 1 exit /b 4
 cl /nologo /EHsc /DCADCAPTURE_TESTING /I"%SRC%" /c "%SRC%\output\ArtifactRepository.cpp" /Fo"%OUT%\ArtifactRepository.obj"
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\NormalizedArtifactWriter.cpp" /Fo"%OUT%\NormalizedArtifactWriter.obj"
@@ -55,7 +58,7 @@ if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\LegacyArtifactProjection.cpp" /Fo"%OUT%\LegacyArtifactProjection.obj"
 if errorlevel 1 exit /b 4
 
-link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\SdkCatalog.obj" "%OUT%\CaptureIdRegistry.obj" "%OUT%\GeometryStatusProjector.obj" "%OUT%\CaptureOutcome.obj" "%OUT%\ArtifactRepository.obj" "%OUT%\NormalizedArtifactWriter.obj" "%OUT%\LegacyArtifactProjection.obj" /OUT:"%EXE%"
+link /nologo "%OBJ1%" "%OBJ2%" "%OBJ3%" "%OUT%\SdkCatalog.obj" "%OUT%\CaptureIdRegistry.obj" "%OUT%\GeometryStatusProjector.obj" "%OUT%\CaptureOutcome.obj" "%OUT%\CaptureEvidenceSummary.obj" "%OUT%\ArtifactRepository.obj" "%OUT%\NormalizedArtifactWriter.obj" "%OUT%\LegacyArtifactProjection.obj" /OUT:"%EXE%"
 if errorlevel 1 exit /b 4
 
 "%EXE%"

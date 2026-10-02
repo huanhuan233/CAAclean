@@ -1,4 +1,4 @@
-#ifndef CADCAPTURE_CAA_CAALINKEDDOCUMENTRESOLVER_H
+﻿#ifndef CADCAPTURE_CAA_CAALINKEDDOCUMENTRESOLVER_H
 #define CADCAPTURE_CAA_CAALINKEDDOCUMENTRESOLVER_H
 
 #include "caa/CaaDocumentHandle.h"
@@ -10,9 +10,8 @@ namespace cadcapture {
 class CaaLinkedDocumentResolver
 {
 public:
-  bool Resolve(CaaDocumentHandle& document_handle,
-               CaptureIdRegistry& ids,
-               ReconstructionPackage& package);
+  // 中文：审计上游文档链接和关联定义，不在此重复打开或伪造关联文档。
+  void Resolve(ReconstructionPackage& package);
 };
 
 }

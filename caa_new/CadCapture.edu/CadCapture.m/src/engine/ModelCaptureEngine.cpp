@@ -326,7 +326,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     SyncReportDiagnostics(package, report);
     return false;
   }
-  linked_document_resolver.Resolve(document_handle, ids, package);
+  linked_document_resolver.Resolve(package);
   property_extractors.Extract(ids, broker, package);
   native_feature_extractors.Extract(ids, broker, package);
   CaaEngineeringCapture().Extract(ids, package);
@@ -337,7 +337,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   // 中文：所有文档拓扑完成后按对象投影状态，再交由入库属性事实消费。
   GeometryStatusProjector().Apply(ids, package);
   fta_extractor.Extract(document_handle, ids, broker, package);
-  identity_resolver.Resolve(ids, package);
+  identity_resolver.Resolve(package);
 
   planner.Plan(package);
   UpdateReportCounts(package, report);

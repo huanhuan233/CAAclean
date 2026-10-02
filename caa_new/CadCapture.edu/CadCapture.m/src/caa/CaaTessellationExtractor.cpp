@@ -1,20 +1,21 @@
 #include "caa/CaaTessellationExtractor.h"
+#include "model/CaptureEvidenceSummary.h"
 
 namespace cadcapture {
 
-bool CaaTessellationExtractor::Extract(ReconstructionPackage& package)
+// 中文：无三角形时明确报告不可用，即使 CAA 已创建空的面网格范围。
+void CaaTessellationExtractor::Extract(ReconstructionPackage& package)
 {
-  if (!package.geometry.empty() || !package.mesh_triangles.empty())
+  if (CaptureEvidenceSummary::HasMesh(package))
   {
-    package.diagnostics.push_back(MakeDiagnostic("info", "tessellation_ranges_available", "tessellation",
-                                                 "Face tessellation ranges and triangle payloads were emitted from CATICGMBodyTessellator",
+    package.diagnostics.push_back(MakeDiagnostic("info", "tessellation_triangles_available", "tessellation",
+                                                 "Nonzero triangle payloads were emitted by topology extraction",
                                                  "tessellation_extractor"));
-    return true;
+    return;
   }
-  package.diagnostics.push_back(MakeDiagnostic("info", "planned", "tessellation",
-                                               "Tessellation extraction is planned until legacy mesh evidence is migrated",
+  package.diagnostics.push_back(MakeDiagnostic("info", "tessellation_unavailable", "tessellation",
+                                               "No usable triangle payload was captured",
                                                "tessellation_extractor"));
-  return true;
 }
 
 }
