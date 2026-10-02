@@ -597,6 +597,19 @@ int main()
         "precreated empty output commits");
   Check(GetFileAttributesA((empty_output + "\\.cadcapture_stage_owner").c_str()) == INVALID_FILE_ATTRIBUTES,
         "committed output excludes transaction marker");
+  // 中文：模拟旧输出已移到备份但新暂存无法落位，旧文件必须自动恢复。
+  const std::string rollback_output = "build_core\\rollback_output_test";
+  error.clear();
+  Check(repository.Commit(product_package, output_report, rollback_output, true, error),
+        "rollback fixture commits previous output");
+  SetEnvironmentVariableA("CADCAPTURE_TEST_FAIL_AFTER_BACKUP", "1");
+  error.clear();
+  const bool injected_commit = repository.Commit(package, output_report, rollback_output, true, error);
+  SetEnvironmentVariableA("CADCAPTURE_TEST_FAIL_AFTER_BACKUP", NULL);
+  Check(!injected_commit, "injected commit failure is reported");
+  Check(CountLines(rollback_output + "\\product_references.jsonl") ==
+        static_cast<long>(product_package.product_references.size()),
+        "previous output restored after commit failure");
   // 中文：即使有合法 manifest，目录内混入未知文件也不能整目录替换。
   std::ostringstream mixed_name;
   mixed_name << "build_core\\mixed_output_test_" << GetCurrentProcessId() << "_" << GetTickCount();

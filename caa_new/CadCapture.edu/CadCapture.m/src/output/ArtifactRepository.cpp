@@ -555,7 +555,13 @@ static bool CommitStaging(const std::string& staging, const std::string& output_
       error = "cannot mark transaction backup";
     return false;
   }
-  if (!MoveFileA(staging.c_str(), output_dir.c_str()))
+  // 中文：测试构建可在备份完成后注入失败，验证旧输出确实能够恢复。
+  bool moved_staging = false;
+#ifdef CADCAPTURE_TESTING
+  if (GetEnvironmentVariableA("CADCAPTURE_TEST_FAIL_AFTER_BACKUP", NULL, 0) == 0)
+#endif
+    moved_staging = MoveFileA(staging.c_str(), output_dir.c_str()) != 0;
+  if (!moved_staging)
   {
     if (had_output && !MoveFileA(backup.c_str(), output_dir.c_str()))
       error = "cannot commit staging or restore previous output; backup retained at: " + backup;

@@ -42,7 +42,7 @@ cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\SdkCatalog.cpp" /Fo"%OUT%\SdkCatalog.
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\model\CaptureIdRegistry.cpp" /Fo"%OUT%\CaptureIdRegistry.obj"
 if errorlevel 1 exit /b 4
-cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\ArtifactRepository.cpp" /Fo"%OUT%\ArtifactRepository.obj"
+cl /nologo /EHsc /DCADCAPTURE_TESTING /I"%SRC%" /c "%SRC%\output\ArtifactRepository.cpp" /Fo"%OUT%\ArtifactRepository.obj"
 if errorlevel 1 exit /b 4
 cl /nologo /EHsc /I"%SRC%" /c "%SRC%\output\NormalizedArtifactWriter.cpp" /Fo"%OUT%\NormalizedArtifactWriter.obj"
 if errorlevel 1 exit /b 4
