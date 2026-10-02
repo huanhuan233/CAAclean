@@ -16,6 +16,7 @@
 #include <CATSafeArray.h>
 #include <windows.h>
 #include <iomanip>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -647,16 +648,28 @@ static bool TryBuildPrismPayload(CATISpecObject* spec,
   return true;
 }
 
-bool CaaNativeFeatureExtractors::Extract(CaptureIdRegistry& ids,
-                                         CaaCapabilityBroker& broker,
-                                         ReconstructionPackage& package)
+// 中文：以文档为采集边界生成语义特征，已完成的对象不会在根链路中重复输出。
+static bool ExtractScoped(CaptureIdRegistry& ids,
+                          CaaCapabilityBroker& broker,
+                          ReconstructionPackage& package,
+                          const std::string& document_id)
 {
   size_t i;
   long type_only_count = 0;
   long generic_count = 0;
+  std::set<std::string> completed_subjects;
+  for (i = 0; i < package.semantic_facets.size(); ++i)
+  {
+    const SemanticFacet& existing = package.semantic_facets[i];
+    if (existing.facet_kind == "native_feature_type" || existing.facet_kind == "opaque_native_object")
+      completed_subjects.insert(existing.subject_id);
+  }
   for (i = 0; i < package.objects.size(); ++i)
   {
     const ObjectEntity& object = package.objects[i];
+    if ((!document_id.empty() && object.document_id != document_id) ||
+        completed_subjects.find(object.object_id) != completed_subjects.end())
+      continue;
     SemanticFacet facet;
     facet.facet_id = ids.NextSemanticFacetId();
     facet.subject_id = object.object_id;
@@ -715,6 +728,23 @@ bool CaaNativeFeatureExtractors::Extract(CaptureIdRegistry& ids,
   (void)type_only_count;
   (void)generic_count;
   return true;
+}
+
+// 中文：根链路补齐尚未采集的文档对象，保持原有公开接口兼容。
+bool CaaNativeFeatureExtractors::Extract(CaptureIdRegistry& ids,
+                                         CaaCapabilityBroker& broker,
+                                         ReconstructionPackage& package)
+{
+  return ExtractScoped(ids, broker, package, "");
+}
+
+// 中文：在关联文档生命周期内完成指定文档的类型化解码。
+bool CaaNativeFeatureExtractors::ExtractForDocument(CaptureIdRegistry& ids,
+                                                     CaaCapabilityBroker& broker,
+                                                     ReconstructionPackage& package,
+                                                     const std::string& document_id)
+{
+  return ExtractScoped(ids, broker, package, document_id);
 }
 
 }

@@ -119,6 +119,8 @@ static ProductReferenceEntity* FindProductReference(ReconstructionPackage& packa
 // 在关联文档关闭前采集零件定义及工程属性，再释放临时原生绑定。
 static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
                                              CaaPropertyExtractors& property_extractors,
+                                             CaaNativeFeatureExtractors& native_feature_extractors,
+                                             CaaTopologyExtractor& topology_extractor,
                                              CaaCapabilityBroker& broker,
                                              CaptureIdRegistry& ids,
                                              ReconstructionPackage& package,
@@ -164,6 +166,9 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
     }
     property_extractors.ExtractNativeFactsForDocument(ids, broker, package, reference.referenced_document_id);
     CaaEngineeringCapture().Extract(ids, package, binding_count_before);
+    // 中文：关联件的类型化参数与结果体必须在文档关闭及原生绑定裁剪之前读取。
+    native_feature_extractors.ExtractForDocument(ids, broker, package, reference.referenced_document_id);
+    topology_extractor.ExtractForDocument(linked_handle, ids, package, reference.referenced_document_id);
     package.native_object_bindings.resize(binding_count_before);
     reference.definition_status = "definition_captured";
     definitions_by_document[reference.referenced_document_id] = definition;
@@ -310,7 +315,9 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     SyncReportDiagnostics(package, report);
     return false;
   }
-  if (!ProjectLinkedCatPartDefinitions(part_enumerator, property_extractors, broker, ids, package, error))
+  if (!ProjectLinkedCatPartDefinitions(part_enumerator, property_extractors,
+                                       native_feature_extractors, topology_extractor,
+                                       broker, ids, package, error))
   {
     report.message = error;
     report.exit_code = 1;

@@ -135,11 +135,16 @@ static std::string SpecKey(CATISpecObject* spec)
 class FeatureSubjectMatcher
 {
 public:
-  explicit FeatureSubjectMatcher(const ReconstructionPackage& package)
-    : _package(package), _used(package.objects.size(), false)
+  // 中文：限定 ResultOUT 对象匹配范围，避免同名关联零件之间串配。
+  FeatureSubjectMatcher(const ReconstructionPackage& package,
+                        const std::string& document_id,
+                        const std::string& fallback_subject)
+    : _package(package), _document_id(document_id), _fallback_subject(fallback_subject),
+      _used(package.objects.size(), false)
   {
   }
 
+  // 中文：在指定文档内按原生身份文字匹配一次出现的特征对象。
   std::string Match(CATISpecObject* spec)
   {
     const std::string key = SpecKey(spec);
@@ -149,7 +154,7 @@ public:
       if (_used[i])
         continue;
       const ObjectEntity& object = _package.objects[i];
-      if (object.object_kind != "catia_spec_object")
+      if (object.object_kind != "catia_spec_object" || object.document_id != _document_id)
         continue;
       if (ObjectKey(object.display_name, object.internal_name, object.startup_type) == key)
       {
@@ -160,8 +165,13 @@ public:
     return "";
   }
 
+  // 中文：提供本次关联文档的诊断归属节点。
+  const std::string& FallbackSubject() const { return _fallback_subject; }
+
 private:
   const ReconstructionPackage& _package;
+  std::string _document_id;
+  std::string _fallback_subject;
   std::vector<bool> _used;
 };
 
@@ -174,28 +184,38 @@ static const char* TopologyCellKind(short dimension)
   return "unknown";
 }
 
-static std::string FindRootCatPartSubject(const ReconstructionPackage& package)
+// 中文：按文档 ID 定位零件根对象，避免关联件诊断落到装配根节点。
+static std::string FindCatPartSubject(const ReconstructionPackage& package,
+                                      const std::string& document_id)
 {
   size_t i;
   for (i = 0; i < package.objects.size(); ++i)
   {
     const ObjectEntity& object = package.objects[i];
-    if (object.startup_type == "Part" || object.internal_name == "Part")
+    if (object.document_id == document_id &&
+        (object.startup_type == "Part" || object.internal_name == "Part"))
       return object.object_id;
   }
-  if (!package.document_graph.documents.empty())
-    return package.document_graph.documents[0].document_id;
-  return "";
+  return document_id;
 }
 
-static bool IsRootCatPart(const ReconstructionPackage& package)
+// 中文：只对已登记为 CATPart 的文档尝试最终体采集。
+static bool IsCatPartDocument(const ReconstructionPackage& package,
+                              const std::string& document_id)
 {
-  return !package.document_graph.documents.empty() &&
-         package.document_graph.documents[0].document_kind == "catpart";
+  size_t i;
+  for (i = 0; i < package.document_graph.documents.size(); ++i)
+  {
+    if (package.document_graph.documents[i].document_id == document_id)
+      return package.document_graph.documents[i].document_kind == "catpart";
+  }
+  return false;
 }
 
+// 中文：从当前打开的文档取得零件根规格对象，调用方持有返回引用。
 static CATISpecObject* GetRootPartSpec(CaaDocumentHandle& document_handle,
-                                       ReconstructionPackage& package)
+                                       ReconstructionPackage& package,
+                                       const std::string& subject_id)
 {
   CATDocument* document = static_cast<CATDocument*>(document_handle.NativeDocumentForCaaOnly());
   if (!document)
@@ -210,7 +230,7 @@ static CATISpecObject* GetRootPartSpec(CaaDocumentHandle& document_handle,
   catch (...)
   {
     package.diagnostics.push_back(MakeDiagnostic("warning", "topology_catinit_query_failed",
-                                                 FindRootCatPartSubject(package),
+                                                 subject_id,
                                                  "CATInit QueryInterface raised an exception",
                                                  "topology_extractor"));
     return 0;
@@ -225,7 +245,7 @@ static CATISpecObject* GetRootPartSpec(CaaDocumentHandle& document_handle,
   catch (...)
   {
     package.diagnostics.push_back(MakeDiagnostic("warning", "topology_root_container_failed",
-                                                 FindRootCatPartSubject(package),
+                                                 subject_id,
                                                  "CATInit::GetRootContainer raised an exception",
                                                  "topology_extractor"));
     return 0;
@@ -244,7 +264,7 @@ static CATISpecObject* GetRootPartSpec(CaaDocumentHandle& document_handle,
   catch (...)
   {
     package.diagnostics.push_back(MakeDiagnostic("warning", "topology_prt_container_query_failed",
-                                                 FindRootCatPartSubject(package),
+                                                 subject_id,
                                                  "CATIPrtContainer QueryInterface raised an exception",
                                                  "topology_extractor"));
     return 0;
@@ -259,7 +279,7 @@ static CATISpecObject* GetRootPartSpec(CaaDocumentHandle& document_handle,
   catch (...)
   {
     package.diagnostics.push_back(MakeDiagnostic("warning", "topology_get_part_failed",
-                                                 FindRootCatPartSubject(package),
+                                                 subject_id,
                                                  "CATIPrtContainer::GetPart raised an exception",
                                                  "topology_extractor"));
     return 0;
@@ -1890,7 +1910,7 @@ static void CaptureResultOutForSpec(CATISpecObject* spec,
   catch (...)
   {
     package.diagnostics.push_back(MakeDiagnostic("warning", "shape_feature_body_query_exception",
-                                                 FindRootCatPartSubject(package),
+                                                 matcher.FallbackSubject(),
                                                  "CATIShapeFeatureBody QueryInterface raised an exception",
                                                  "topology_extractor"));
     return;
@@ -1968,7 +1988,7 @@ static void TraverseResultOutSpecs(CATISpecObject* spec,
   catch (...)
   {
     package.diagnostics.push_back(MakeDiagnostic("warning", "feature_result_children_failed",
-                                                 FindRootCatPartSubject(package),
+                                                 matcher.FallbackSubject(),
                                                  "CATISpecObject::ListComponents failed during ResultOUT scan",
                                                  "topology_extractor"));
     return;
@@ -1988,11 +2008,24 @@ static void TraverseResultOutSpecs(CATISpecObject* spec,
   }
 }
 
+// 中文：根链路使用根文档 ID，具体拓扑采集复用按文档入口。
 bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
                                    CaptureIdRegistry& ids,
                                    ReconstructionPackage& package)
 {
-  if (!IsRootCatPart(package))
+  if (package.document_graph.documents.empty())
+    return true;
+  return ExtractForDocument(document_handle, ids, package,
+                            package.document_graph.documents[0].document_id);
+}
+
+// 中文：在指定 CATPart 仍打开时采集最终体及 ResultOUT，并把关联对象限制在同一文档。
+bool CaaTopologyExtractor::ExtractForDocument(CaaDocumentHandle& document_handle,
+                                              CaptureIdRegistry& ids,
+                                              ReconstructionPackage& package,
+                                              const std::string& document_id)
+{
+  if (!IsCatPartDocument(package, document_id))
   {
     package.diagnostics.push_back(MakeDiagnostic("info", "topology_root_not_catpart",
                                                  "topology",
@@ -2001,8 +2034,8 @@ bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
     return true;
   }
 
-  const std::string subject_id = FindRootCatPartSubject(package);
-  CATISpecObject* part_spec = GetRootPartSpec(document_handle, package);
+  const std::string subject_id = FindCatPartSubject(package, document_id);
+  CATISpecObject* part_spec = GetRootPartSpec(document_handle, package, subject_id);
   if (!part_spec)
   {
     package.diagnostics.push_back(MakeDiagnostic("info", "topology_part_root_unavailable",
@@ -2198,7 +2231,7 @@ bool CaaTopologyExtractor::Extract(CaaDocumentHandle& document_handle,
   }
   FinalizeBrepTopologyGraph(package);
 
-  FeatureSubjectMatcher matcher(package);
+  FeatureSubjectMatcher matcher(package, document_id, subject_id);
   TraverseResultOutSpecs(part_spec, ids, package, matcher);
 
   package.diagnostics.push_back(MakeDiagnostic("info", "catpart_final_body_topology_captured",

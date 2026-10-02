@@ -78,3 +78,17 @@ async def test_existing_caa_bundles_with_real_foreign_keys():
         rows = native_tree_rows(revision_id, tree)
         await check_database_rows(rows, revision_id)
         print(f"verified {manifest.parent.parent.name}: {len(rows)} nodes", flush=True)
+
+
+@pytest.mark.asyncio
+async def test_linked_catproduct_bundle_with_real_foreign_keys():
+    """关联 CATPart 的新增类型化/拓扑证据不得破坏完整树入库顺序。"""
+    bundle_path = os.environ.get("CAA_LINKED_BUNDLE")
+    if not bundle_path:
+        pytest.skip("set CAA_LINKED_BUNDLE to a captured CATProduct bundle")
+    reader = CaaNewBundleReader(Path(bundle_path))
+    tree = reader.build_tree(include_supplemental=True)
+    revision_id = uuid4()
+    rows = native_tree_rows(revision_id, tree)
+    assert rows
+    await check_database_rows(rows, revision_id)
