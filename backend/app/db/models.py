@@ -142,6 +142,19 @@ class CadNativePropertyFact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class CadNativeEvidence(Base):
+    """经 Worker 校验并入库的原生语义记录；按类型及原始顺序分页读取。"""
+
+    __tablename__ = "cad_native_evidence"
+
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cad_model_revisions.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
 class CadRelation(Base):
     __tablename__ = "cad_relations"
 

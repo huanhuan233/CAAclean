@@ -23,9 +23,8 @@ from app.component_builds.component_spec_document import (
     unpack_component_spec_document,
     validate_component_spec_yaml,
 )
-from app.component_builds.ingest import safe_asset_path
+from app.component_builds.ingest import FEATURE_EVIDENCE_KINDS, NATIVE_EVIDENCE_FILES
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
-from app.component_builds.caa_new_bundle import CaaNewBundleError, CaaNewBundleReader
 from app.component_builds.native_property_store import (
     build_database_properties,
     native_parameter_values,
@@ -515,8 +514,14 @@ class ComponentBuildService:
         return page
 
     async def get_native_node(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
-        reader = await self._native_bundle_reader(build_id, settings)
-        return reader.get_node(node_id)
+        del settings
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("native capture source is not attached")
+        entity = await self.repository.get_native_tree_entity(build.cad_revision_id, node_id)
+        if entity is None:
+            raise ValueError(f"native tree node not found: {node_id}")
+        return build_database_tree([entity], total_node_count=1)["roots"][0]
 
     async def get_native_node_properties(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
         del settings
@@ -538,27 +543,55 @@ class ComponentBuildService:
         return build_database_properties(node_id, metadata, facts)
 
     async def get_native_topology(self, build_id: UUID, settings: Settings) -> dict:
-        reader = await self._native_bundle_reader(build_id, settings)
-        return reader.get_topology()
+        del settings
+        result = {}
+        for kind in ("topology_entities", "topology_relations", "geometry_entities"):
+            page = await self.get_native_evidence(build_id, kind, 0, 50000)
+            if page["has_more"]:
+                raise ValueError(f"native topology {kind} exceeds single-response limit")
+            result[kind] = page["records"]
+        return result
 
-    async def get_native_node_selection(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
-        reader = await self._native_bundle_reader(build_id, settings)
-        return reader.get_selection(node_id)
-
-    async def _native_bundle_reader(self, build_id: UUID, settings: Settings) -> CaaNewBundleReader:
+    async def get_native_evidence(self, build_id: UUID, kind: str, offset: int, limit: int) -> dict:
+        """只从已完整导入 PostgreSQL 的原生证据提供分页记录。"""
+        if kind not in NATIVE_EVIDENCE_FILES:
+            raise ValueError(f"unknown native evidence kind: {kind}")
         build = await self._require_build(build_id)
         if build.cad_revision_id is None:
             raise ValueError("native capture source is not attached")
         revision = await self.repository.get_raw_revision(build.cad_revision_id)
         if revision is None:
             raise ValueError("native capture revision is missing")
-        manifest = revision.parse_manifest or {}
-        native = manifest.get("native_semantics") or {}
-        if not native.get("available"):
-            raise CaaNewBundleError("native capture bundle is not available")
-        manifest_asset = native.get("manifest") or "native-caa/manifest.json"
-        manifest_path = safe_asset_path(Path(settings.cad_work_dir) / str(revision.id), str(manifest_asset))
-        return CaaNewBundleReader(manifest_path.parent)
+        storage_key = "feature_evidence_storage" if kind in FEATURE_EVIDENCE_KINDS else "native_evidence_storage"
+        storage = dict((revision.parse_manifest or {}).get(storage_key) or {})
+        if storage.get("backend") != "postgresql" or not storage.get("complete"):
+            raise ValueError("native evidence is not persisted in PostgreSQL")
+        if offset < 0 or not 1 <= limit <= 50000:
+            raise ValueError("invalid native evidence page")
+        total = int((storage.get("counts") or {}).get(kind) or 0)
+        records = await self.repository.list_native_evidence(revision.id, kind, offset, limit + 1)
+        if min(limit, max(0, total - offset)) != min(limit, len(records)):
+            raise ValueError(f"native evidence database count mismatch: {kind}")
+        has_more = len(records) > limit
+        if has_more != (offset + limit < total):
+            raise ValueError(f"native evidence database count mismatch: {kind}")
+        return {"kind": kind, "records": records[:limit], "total": total,
+                "has_more": has_more, "next_offset": offset + limit if has_more else None}
+
+    async def get_native_node_selection(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
+        del settings
+        node = await self.get_native_node(build_id, node_id, None)
+        object_id = node.get("object_id")
+        candidates = []
+        if object_id:
+            await self.get_native_evidence(build_id, "feature_dependencies", 0, 1)
+            build = await self._require_build(build_id)
+            for record in await self.repository.list_native_dependency_candidates(build.cad_revision_id, object_id):
+                status = str(record.get("mapping_status") or record.get("link_status") or "")
+                candidates.append({**record, "selectable": status in {
+                    "confirmed", "runtime_matched", "runtime_current_revision", "survives_to_final",
+                    "exact", "authoritative"}})
+        return {"node_id": node_id, "candidates": candidates}
 
     @staticmethod
     def _native_semantics_contract(asset_base: str, native: dict) -> dict:

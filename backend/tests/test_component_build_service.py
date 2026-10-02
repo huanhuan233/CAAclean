@@ -16,6 +16,35 @@ from app.component_builds.service import ComponentBuildService, SqlAlchemySource
 from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
+@pytest.mark.asyncio
+async def test_native_evidence_requires_complete_postgresql_storage_and_pages_in_order():
+    revision_id = uuid4()
+    build_id = uuid4()
+    manifest = {"native_evidence_storage": {
+        "backend": "postgresql", "complete": True, "counts": {"topology_cells": 2}
+    }}
+
+    class Repository:
+        async def get_raw_revision(self, requested_id):
+            assert requested_id == revision_id
+            return SimpleNamespace(id=revision_id, parse_manifest=manifest)
+
+        async def list_native_evidence(self, requested_id, kind, offset, limit):
+            assert requested_id == revision_id and kind == "topology_cells"
+            return [{"cell_id": "face-1"}, {"cell_id": "face-2"}][offset:offset + limit]
+
+    service = ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())
+    service._require_build = lambda _build_id: _async_value(SimpleNamespace(cad_revision_id=revision_id))
+    first = await service.get_native_evidence(build_id, "topology_cells", 0, 1)
+    assert first["records"] == [{"cell_id": "face-1"}]
+    assert first["has_more"] is True and first["next_offset"] == 1
+    second = await service.get_native_evidence(build_id, "topology_cells", 1, 1)
+    assert second["records"] == [{"cell_id": "face-2"}]
+    manifest["native_evidence_storage"]["complete"] = False
+    with pytest.raises(ValueError, match="not persisted in PostgreSQL"):
+        await service.get_native_evidence(build_id, "topology_cells", 0, 1)
+
+
 def test_native_brep_completeness_contract_preserves_database_values_and_old_bundles():
     """逐体完整性只透传数据库清单，旧包缺字段时不伪造零值。"""
     new_manifest = {"native_capture": {"available": True, "status": "complete",

@@ -329,6 +329,21 @@ export function fetchComponentBuildNativeTopology(buildId: string, options?: Com
   });
 }
 
+/** 用途：分页读取已完整导入 PostgreSQL 的原生语义记录。 */
+export function fetchComponentBuildNativeEvidence<T extends Record<string, unknown>>(
+  buildId: string,
+  kind: string,
+  offset: number,
+  pageSize = 1000,
+  options?: ComponentBuildQueryOptions
+) {
+  return request<{ kind: string; records: T[]; total: number; has_more: boolean; next_offset: number | null }>({
+    url: `/api/component-builds/${buildId}/viewer/native/evidence/${encodeURIComponent(kind)}`,
+    params: { offset, page_size: pageSize },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export function fetchComponentBuildNativeNodeSelection(
   buildId: string,
   nodeId: string,

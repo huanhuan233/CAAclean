@@ -65,6 +65,14 @@ FastAPI 启动时会执行 `Base.metadata.create_all`，幂等创建所需表，
 python backend/scripts/init_database.py
 ```
 
+既有 CAA/Feature Center 包升级后，可从 `backend` 目录运行以下命令补齐原生树、属性和语义数据库记录，不会重新解析 CATIA 文件：
+
+```bash
+python -m scripts.backfill_native_evidence
+```
+
+命令只扫描当前 `CAD_WORK_DIR` 中有完整清单的 Revision。任一包校验或入库失败会返回非零状态；前端不会从 JSONL 兜底显示未入库数据。
+
 ## 启动后端
 
 ```bash

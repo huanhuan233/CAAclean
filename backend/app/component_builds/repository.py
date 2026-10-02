@@ -3,10 +3,10 @@ from __future__ import annotations
 import uuid
 import re
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadDrawingRegion, CadDrawingFact, CadEntity, CadModel, CadModelRevision, CadNativePropertyFact, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
+from app.db.models import CadDrawingRegion, CadDrawingFact, CadEntity, CadModel, CadModelRevision, CadNativeEvidence, CadNativePropertyFact, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
 from app.component_builds.native_tree_store import NATIVE_SOURCE_PREFIX
 
 
@@ -30,6 +30,14 @@ class MemoryComponentBuildRepository:
 
     async def get_build(self, build_id: uuid.UUID) -> ComponentBuild | None:
         return self.builds.get(build_id)
+
+    async def list_native_evidence(self, revision_id: uuid.UUID, kind: str, offset: int, limit: int) -> list[dict]:
+        """内存测试仓储不伪造数据库语义；生产实现只从 PostgreSQL 读取。"""
+        return []
+
+    async def list_native_dependency_candidates(self, revision_id: uuid.UUID, object_id: str) -> list[dict]:
+        """内存测试仓储没有持久化依赖事实。"""
+        return []
 
     async def update_build(self, build_id: uuid.UUID, **fields) -> ComponentBuild:
         build = await self._require_build(build_id)
@@ -208,6 +216,26 @@ class SqlAlchemyComponentBuildRepository:
         if entity is None or entity.revision_id != revision_id or not str(entity.source_ref or "").startswith(NATIVE_SOURCE_PREFIX):
             return None
         return entity
+
+    async def list_native_evidence(self, revision_id: uuid.UUID, kind: str, offset: int, limit: int) -> list[dict]:
+        """按 Revision、类别和原始顺序从 PostgreSQL 分页读取语义。"""
+        rows = await self.session.scalars(
+            select(CadNativeEvidence).where(
+                CadNativeEvidence.revision_id == revision_id,
+                CadNativeEvidence.kind == kind,
+            ).order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit)
+        )
+        return [row.payload for row in rows]
+
+    async def list_native_dependency_candidates(self, revision_id: uuid.UUID, object_id: str) -> list[dict]:
+        """在数据库端筛选选中对象的依赖关系，不把整包依赖传回每次点击。"""
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == "feature_dependencies",
+            or_(CadNativeEvidence.payload["from_object_id"].astext == object_id,
+                CadNativeEvidence.payload["object_id"].astext == object_id),
+        ).order_by(CadNativeEvidence.ordinal))
+        return [row.payload for row in rows]
 
     async def list_native_property_facts(
         self, revision_id: uuid.UUID, subject_ids: set[str], *, parameter_values_only: bool = False

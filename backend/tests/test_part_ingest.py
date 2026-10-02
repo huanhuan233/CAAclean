@@ -162,11 +162,17 @@ async def test_feature_center_success_marks_revision_ready(tmp_path, monkeypatch
     status_updates = []
 
     class Repository:
+        async def replace_native_evidence(self, requested_id, records_by_kind, *, replace_all=True):
+            assert requested_id == revision_id
+            assert replace_all is False
+            return {kind: len(list(records)) for kind, records in records_by_kind.items()}
+
         async def update_revision_manifest(self, requested_id, payload):
             assert requested_id == revision_id
             assert payload["viewer_asset"]["glb"] == "feature-center/lightweight/model.glb"
             assert payload["feature_center"]["mapping_available"] is False
             assert payload["feature_center"]["feature_face_mapping_count"] == 0
+            assert payload["feature_evidence_storage"]["complete"] is True
 
         async def set_revision_status(self, requested_id, **fields):
             assert requested_id == revision_id
@@ -200,6 +206,14 @@ async def test_feature_center_success_marks_revision_ready(tmp_path, monkeypatch
     }
 
 
+def test_feature_evidence_hash_mismatch_blocks_database_publication(tmp_path):
+    (tmp_path / "canonical_features.jsonl").write_text('{"feature_center_id":"f1"}\n', encoding="utf-8")
+    with pytest.raises(IngestStageError, match="canonical_features.jsonl"):
+        ingest_module._verify_feature_evidence_assets(tmp_path, {
+            "output_files": {"canonical_features.jsonl": {"sha256": "0" * 64}}
+        })
+
+
 @pytest.mark.asyncio
 async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sidecar(tmp_path, monkeypatch):
     revision_id = uuid4()
@@ -223,6 +237,10 @@ async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sideca
         async def replace_native_property_facts(self, requested_id, rows):
             assert requested_id == revision_id
             return len(list(rows))
+
+        async def replace_native_evidence(self, requested_id, records_by_kind):
+            assert requested_id == revision_id
+            return {kind: len(list(records)) for kind, records in records_by_kind.items()}
 
     class Client:
         def __init__(self, **_kwargs):
@@ -317,6 +335,10 @@ async def test_native_progress_is_published_before_feature_center_finishes(tmp_p
             persisted_properties.extend(rows)
             return len(persisted_properties)
 
+        async def replace_native_evidence(self, requested_id, records_by_kind):
+            assert requested_id == revision_id
+            return {kind: len(list(records)) for kind, records in records_by_kind.items()}
+
         async def update_revision_manifest(self, requested_id, payload):
             assert requested_id == revision_id
             updates.append(payload)
@@ -331,6 +353,8 @@ async def test_native_progress_is_published_before_feature_center_finishes(tmp_p
     assert updates[-1]["native_property_storage"] == {
         "backend": "postgresql", "fact_count": 0, "complete": True
     }
+    assert updates[-1]["native_evidence_storage"]["backend"] == "postgresql"
+    assert updates[-1]["native_evidence_storage"]["complete"] is True
     assert len(persisted_rows) == expected_count
 
 

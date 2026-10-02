@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadNativePropertyFact, CadRelation, ComponentBuild
+from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadNativeEvidence, CadNativePropertyFact, CadRelation, ComponentBuild
 from app.component_builds.native_tree_store import NATIVE_SOURCE_PREFIX, order_native_tree_rows
 
 
@@ -172,6 +172,49 @@ class CadRepository:
         except Exception:
             await self.session.rollback()
             raise
+
+    async def replace_native_evidence(self, revision_id: uuid.UUID, records_by_kind: dict,
+                                      *, replace_all: bool = True) -> dict[str, int]:
+        """在一次事务内替换全部原生语义；任一文件解析或写入失败则回滚。"""
+        counts: dict[str, int] = {}
+        try:
+            if replace_all:
+                await self.session.execute(delete(CadNativeEvidence).where(CadNativeEvidence.revision_id == revision_id))
+            for kind, records in records_by_kind.items():
+                if not replace_all:
+                    await self.session.execute(delete(CadNativeEvidence).where(
+                        CadNativeEvidence.revision_id == revision_id, CadNativeEvidence.kind == kind
+                    ))
+                chunk: list[dict[str, Any]] = []
+                count = 0
+                for payload in records:
+                    if not isinstance(payload, dict):
+                        raise ValueError(f"native evidence {kind} contains a non-object record")
+                    chunk.append({"revision_id": revision_id, "kind": kind, "ordinal": count, "payload": payload})
+                    count += 1
+                    if len(chunk) >= 500:
+                        await self.session.execute(insert(CadNativeEvidence), chunk)
+                        chunk = []
+                if chunk:
+                    await self.session.execute(insert(CadNativeEvidence), chunk)
+                stored = int(await self.session.scalar(select(func.count()).select_from(CadNativeEvidence).where(
+                    CadNativeEvidence.revision_id == revision_id, CadNativeEvidence.kind == kind
+                )) or 0)
+                if stored != count:
+                    raise ValueError(f"native evidence database count mismatch: {kind} expected={count}, stored={stored}")
+                counts[kind] = stored
+            await self.session.commit()
+            return counts
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def list_native_evidence(self, revision_id: uuid.UUID, kind: str, offset: int, limit: int) -> list[dict]:
+        """稳定按原始顺序返回 PostgreSQL 中的语义页。"""
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id, CadNativeEvidence.kind == kind
+        ).order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit))
+        return [row.payload for row in rows]
 
     async def persist_parser_result(self, revision_id: uuid.UUID, result: Any) -> None:
         try:

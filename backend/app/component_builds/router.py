@@ -276,6 +276,20 @@ async def component_build_native_topology(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TOPOLOGY_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/viewer/native/evidence/{kind}")
+async def component_build_native_evidence(
+    build_id: UUID,
+    kind: str,
+    offset: int = Query(0, ge=0),
+    page_size: int = Query(1000, ge=1, le=5000),
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_native_evidence(build_id, kind, offset, page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NATIVE_EVIDENCE_NOT_FOUND", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/viewer/native/nodes/{node_id}/selection")
 async def component_build_native_node_selection(
     build_id: UUID,

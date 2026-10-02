@@ -18,9 +18,9 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
+import { fetchComponentBuildNativeEvidence, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
 import { sha256Buffer } from './modules/asset-integrity';
-import { facesForFeature, parseJsonLines } from './modules/feature-center-bundle';
+import { facesForFeature } from './modules/feature-center-bundle';
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
 import { buildDetailPanelLayout } from './modules/detail-panel';
 import type { DetailGroup } from './modules/detail-panel';
@@ -31,12 +31,11 @@ import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
 import { loadCaaNewNativeChildPage, loadCaaNewNativeRecords, loadCaaNewNodeProperties } from './modules/caa-new-loader';
 import { nativeChildPages } from './modules/native-tree-loading';
-import { nativeAssetLoadPolicy } from './modules/native-asset-policy';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
 import type { CadSelectionTarget } from './modules/cad-selection';
 import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
-import type { FeatureTreeNode, NativeFeatureRecord, NativeParameterRecord } from './modules/native-feature-tree';
+import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
 import {
   clearViewerSelection,
   emptySelectionContext,
@@ -109,69 +108,6 @@ interface TopologyFaceRecord {
   boundary_edge_ids?: string[];
   topology_fingerprint?: string;
   kernel_surface_type?: string;
-  [key: string]: unknown;
-}
-
-interface ProductInstanceRecord {
-  instance_id: string;
-  parent_instance_id?: string;
-  reference_id?: string;
-  instance_name?: string;
-  instance_path?: string;
-  tree_path?: string;
-  depth?: number;
-  child_index?: number;
-  child_count?: number;
-  load_status?: string;
-  read_status?: string;
-  value_source?: string;
-  transform_status?: string;
-  transform_value_source?: string;
-  transform_4x4?: number[];
-  suppressed?: boolean;
-  [key: string]: unknown;
-}
-
-interface NativeObjectEntityRecord {
-  object_id: string;
-  document_id?: string;
-  object_kind?: string;
-  display_name?: string;
-  internal_name?: string;
-  startup_type?: string;
-  update_status?: string;
-  capture_status?: string;
-  [key: string]: unknown;
-}
-
-interface NativeTreeOccurrenceRecord {
-  occurrence_id: string;
-  object_id?: string;
-  parent_occurrence_id?: string;
-  document_id?: string;
-  tree_path?: string;
-  occurrence_path?: string;
-  source_index?: number;
-  container_index?: number;
-  occurrence_kind?: string;
-  product_occurrence_id?: string;
-  reference_id?: string;
-  referenced_document_id?: string;
-  presentation_status?: string;
-  capture_status?: string;
-  [key: string]: unknown;
-}
-
-interface NativePropertyFactRecord {
-  subject_id?: string;
-  key?: string;
-  raw_value?: unknown;
-  raw_display_text?: unknown;
-  display_value?: unknown;
-  normalized_numeric_value?: unknown;
-  display_order?: number;
-  read_status?: string;
-  hidden_status?: string;
   [key: string]: unknown;
 }
 
@@ -261,91 +197,6 @@ const prototypeProcessSteps: ProcessStep[] = [
     remark: '按 HPG/MJ-2781-250018 清除多余物。'
   }
 ];
-
-function lastPathSegment(value?: string) {
-  if (!value) return '';
-  return value.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) || '';
-}
-
-function productOccurrencesToNativeRecords(records: ProductInstanceRecord[]): NativeFeatureRecord[] {
-  return records.map(record => {
-    const hasChildren = Number(record.child_count || 0) > 0;
-    return {
-      feature_id: record.instance_id,
-      parent_id: record.parent_instance_id || '',
-      traversal_index: Number(record.child_index ?? 0) + Number(record.depth ?? 0) * 100000,
-      display_name: record.instance_name || record.instance_path || record.instance_id,
-      internal_name: record.instance_path || record.tree_path || record.instance_name || record.instance_id,
-      native_type: hasChildren ? 'CATProduct' : 'CATPart',
-      startup_type: hasChildren ? 'CATProduct' : 'CATPart',
-      container_kind: hasChildren ? 'product' : 'part',
-      tree_path: record.tree_path || record.instance_path,
-      decode_status: record.read_status,
-      decoder_status: record.load_status,
-      payload_extraction_status: record.value_source,
-      update_status: record.suppressed ? 'suppressed' : 'active',
-      attributes: {
-        instance_id: record.instance_id,
-        parent_instance_id: record.parent_instance_id || '',
-        reference_id: record.reference_id || '',
-        instance_path: record.instance_path || '',
-        tree_path: record.tree_path || '',
-        depth: record.depth ?? '',
-        child_count: record.child_count ?? 0,
-        load_status: record.load_status || '',
-        read_status: record.read_status || '',
-        value_source: record.value_source || '',
-        transform_status: record.transform_status || '',
-        transform_value_source: record.transform_value_source || '',
-        transform_4x4: record.transform_4x4 || [],
-        suppressed: Boolean(record.suppressed)
-      },
-      raw: record
-    };
-  });
-}
-
-function caaNewOccurrencesToNativeRecords(
-  productRecords: ProductInstanceRecord[],
-  occurrenceRecords: NativeTreeOccurrenceRecord[],
-  objectRecords: NativeObjectEntityRecord[]
-): NativeFeatureRecord[] {
-  const objects = new Map(objectRecords.map(record => [record.object_id, record]));
-  const productNodes = productOccurrencesToNativeRecords(productRecords);
-  const occurrenceNodes = occurrenceRecords
-    .filter(record => record.occurrence_id)
-    .map(record => {
-      const object = record.object_id ? objects.get(record.object_id) : undefined;
-      return {
-        feature_id: record.occurrence_id,
-        parent_id: record.parent_occurrence_id || record.product_occurrence_id || '',
-        traversal_index: Number(record.source_index ?? record.container_index ?? Number.MAX_SAFE_INTEGER),
-        native_enumeration_index: Number(record.source_index ?? Number.MAX_SAFE_INTEGER),
-        container_enumeration_index: Number(record.container_index ?? Number.MAX_SAFE_INTEGER),
-        display_name: object?.display_name || lastPathSegment(record.tree_path) || record.occurrence_id,
-        internal_name: object?.internal_name || record.occurrence_id,
-        native_type: object?.object_kind || record.occurrence_kind,
-        startup_type: object?.startup_type || record.occurrence_kind,
-        tree_path: record.tree_path || record.occurrence_path,
-        update_status: object?.update_status,
-        attributes: {
-          ...record,
-          object_display_name: object?.display_name,
-          object_internal_name: object?.internal_name,
-          object_kind: object?.object_kind,
-          object_startup_type: object?.startup_type,
-          object_update_status: object?.update_status,
-          source_object_id: record.object_id
-        },
-        source_object_id: record.object_id,
-        product_occurrence_id: record.product_occurrence_id,
-        reference_id: record.reference_id,
-        document_id: record.document_id,
-        occurrence_path: record.occurrence_path
-      } satisfies NativeFeatureRecord;
-    });
-  return [...productNodes, ...occurrenceNodes];
-}
 
 type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
 
@@ -1166,20 +1017,12 @@ async function loadBuildBundle(buildId: string) {
       return;
     }
     const skipStepViewer = false;
-    const canonicalUrl = result.data.feature_center.canonical_features_url;
-    const measurementUrl = result.data.feature_center.measurements_url;
-    if (!canonicalUrl || !measurementUrl) throw new Error('Feature Center 索引资产缺失');
     // 当前按完整 CATProduct 结果加载 STEP/GLB，确保装配模型和原生特征同时可见。
     const manifestBuffer = await fetchAsset(viewerAsset.scene_manifest_url);
-    const canonicalBuffer = await fetchAsset(canonicalUrl);
-    const measurementBuffer = await fetchAsset(measurementUrl);
     const decode = (buffer: ArrayBuffer) => new TextDecoder('utf-8').decode(buffer);
     const manifest = JSON.parse(decode(manifestBuffer)) as BundleManifest;
     if (manifest.schema_version !== 'cad_feature_center_v1') throw new Error('Feature Center Schema 不兼容');
-    const requiredBuffers: Array<readonly [string, ArrayBuffer]> = [
-      ['canonical_features.jsonl', canonicalBuffer],
-      ['measurements.jsonl', measurementBuffer]
-    ];
+    const requiredBuffers: Array<readonly [string, ArrayBuffer]> = [];
     let nextFeatureMap: FeatureMeshMap | null = null;
     let nextFaceMap: FaceMeshMap | null = null;
     let modelBuffer: ArrayBuffer | null = null;
@@ -1210,8 +1053,12 @@ async function loadBuildBundle(buildId: string) {
       throw new Error('Mesh 映射与 B-Rep Shape Hash 不一致');
     }
 
-    canonicalFeatures.value = parseJsonLines<CanonicalFeatureRecord>(decode(canonicalBuffer));
-    measurements.value = parseJsonLines<MeasurementRecord>(decode(measurementBuffer));
+    const [databaseFeatures, databaseMeasurements] = await Promise.all([
+      loadNativeEvidencePages(buildId, 'canonical_features'),
+      loadNativeEvidencePages(buildId, 'measurements')
+    ]);
+    canonicalFeatures.value = databaseFeatures as unknown as CanonicalFeatureRecord[];
+    measurements.value = databaseMeasurements as unknown as MeasurementRecord[];
     featureMeshMap.value = nextFeatureMap;
     faceMeshMap.value = nextFaceMap;
     if (modelBuffer) await loadGlb(modelBuffer);
@@ -1260,21 +1107,6 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyVertices.value = [];
   nativePropertyFactsBySubjectId.value = {};
   selectionIndex.value = null;
-  const treeOccurrencesUrl = viewerContract.native_capture?.tree_url || viewerContract.native_semantics?.tree_occurrences_url;
-  const objectEntitiesUrl = viewerContract.native_semantics?.object_entities_url;
-  const productOccurrencesUrl =
-    viewerContract.native_semantics?.product_occurrences_url || viewerContract.native_semantics?.product_instances_url;
-  const nativeUrl = viewerContract.native_semantics?.features_url;
-  const nativeParametersUrl = viewerContract.native_semantics?.parameters_url;
-  const nativePropertyFactsUrl = viewerContract.native_semantics?.property_facts_url;
-  const shouldLoadProductTree = viewerContract.source_format === 'CATPRODUCT';
-  const facesUrl = viewerContract.feature_center.topology_faces_url;
-  const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
-  const loadJsonLines = async <T,>(url: string, assign: (records: T[]) => void) => {
-    const buffer = await fetchAsset(url);
-    const text = new TextDecoder().decode(buffer);
-    assign(parseJsonLines<T>(text));
-  };
   let loadedNativeTreeFromApi = false;
   if (viewerContract.native_capture?.has_tree && viewerContract.part_id) {
     nativeFeatures.value = await loadCaaNewNativeRecords(viewerContract.part_id, {
@@ -1283,95 +1115,59 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     });
     loadedNativeTreeFromApi = true;
   }
-  const nativeAssetPolicy = nativeAssetLoadPolicy({
-    loadedNativeTreeFromApi,
-    sourceFormat: viewerContract.source_format,
-    status: viewerContract.status
-  });
-  if (selectionIndexUrl && nativeAssetPolicy.loadHeavySemanticsJsonl) {
-    const buffer = await fetchAsset(selectionIndexUrl);
-    const loaded = JSON.parse(new TextDecoder().decode(buffer)) as ViewerSelectionIndex;
-    selectionIndex.value = {
-      ...loaded,
-      native_feature_to_native_faces: loaded.native_feature_to_native_faces || {}
-    };
-    hydrateTopologyFromSelectionIndex(selectionIndex.value);
+  // 原生树和拓扑只读取已经完整入库的记录；旧包需重新导入，绝不从 JSONL 兜底。
+  if (viewerContract.status === 'ready' && !loadedNativeTreeFromApi)
+    throw new Error('原生树尚未完整入 PostgreSQL，请重新导入该模型');
+  if (viewerContract.status === 'ready' && viewerContract.feature_center.available) {
+    const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
+    if (!buildId) throw new Error('缺少构建任务编号');
+    const indexRows = await loadNativeEvidencePages(buildId, 'selection_index');
+    if (indexRows.length > 0) {
+      selectionIndex.value = indexRows[0] as unknown as ViewerSelectionIndex;
+      hydrateTopologyFromSelectionIndex(selectionIndex.value);
+    }
   }
-  if (!viewerContract.native_capture?.has_tree && !loadedNativeTreeFromApi && treeOccurrencesUrl) {
-    const [occurrenceBuffer, objectBuffer, productBuffer] = await Promise.all([
-      fetchAsset(treeOccurrencesUrl),
-      objectEntitiesUrl ? fetchAsset(objectEntitiesUrl) : Promise.resolve(new ArrayBuffer(0)),
-      productOccurrencesUrl ? fetchAsset(productOccurrencesUrl) : Promise.resolve(new ArrayBuffer(0))
-    ]);
-    const occurrenceRecords = parseJsonLines<NativeTreeOccurrenceRecord>(new TextDecoder().decode(occurrenceBuffer));
-    const objectRecords = objectEntitiesUrl
-      ? parseJsonLines<NativeObjectEntityRecord>(new TextDecoder().decode(objectBuffer))
-      : [];
-    const productRecords = productOccurrencesUrl
-      ? parseJsonLines<ProductInstanceRecord>(new TextDecoder().decode(productBuffer))
-      : [];
-    nativeFeatures.value = caaNewOccurrencesToNativeRecords(productRecords, occurrenceRecords, objectRecords);
-  } else if (nativeAssetPolicy.loadProductOccurrencesJsonl && productOccurrencesUrl) {
-    await loadJsonLines<ProductInstanceRecord>(productOccurrencesUrl, records => {
-      nativeFeatures.value = productOccurrencesToNativeRecords(records);
-    });
-  } else if (nativeAssetPolicy.loadFeaturesJsonl && nativeUrl) {
-    await loadJsonLines<NativeFeatureRecord>(nativeUrl, records => {
-      nativeFeatures.value = records;
-    });
+  if (viewerContract.status === 'ready' && viewerContract.source_format === 'CATPART') {
+    const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
+    if (!buildId) throw new Error('缺少构建任务编号');
+    if (viewerContract.feature_center.available) {
+      const faces = await loadNativeEvidencePages(buildId, 'topology_faces');
+      topologyFaces.value = faces as unknown as TopologyFaceRecord[];
+    }
+    const cells = await loadNativeEvidencePages(buildId, 'topology_cells');
+    hydrateNativeCells(cells.map(toTopologySelectionRecord));
+    topologyBodies.value = (await loadNativeEvidencePages(buildId, 'topology_bodies')).map(toTopologySelectionRecord);
+    topologyLoops.value = (await loadNativeEvidencePages(buildId, 'topology_wires')).map(toTopologySelectionRecord);
+    topologyCoedges.value = (await loadNativeEvidencePages(buildId, 'topology_coedges')).map(toTopologySelectionRecord);
+    mergeNativeFeatureTopologyLinks(await loadNativeEvidencePages(buildId, 'feature_topology_links'));
   }
-  if (nativeAssetPolicy.loadParametersJsonl && nativeParametersUrl) {
-    await loadJsonLines<NativeParameterRecord>(nativeParametersUrl, records => {
-      const values: Record<string, string> = {};
-      records.forEach(record => {
-        if (record.name !== 'catia_parameter_value_text') return;
-        const objectId = String(record.feature_id || '');
-        if (!objectId) return;
-        const value = record.raw_display_text ?? record.display_value ?? record.raw_value;
-        if (value === null || value === undefined) return;
-        values[objectId] = Array.isArray(value) ? value.join(',') : typeof value === 'object' ? JSON.stringify(value) : String(value);
-      });
-      nativeParameterValues.value = values;
-    });
-  }
-  if (nativeAssetPolicy.loadPropertyFactsJsonl && nativePropertyFactsUrl) {
-    await loadJsonLines<NativePropertyFactRecord>(nativePropertyFactsUrl, records => {
-      const factsBySubject: Record<string, Record<string, unknown>> = {};
-      records
-        .filter(record => record.hidden_status !== 'hidden')
-        .sort((left, right) => Number(left.display_order ?? 0) - Number(right.display_order ?? 0))
-        .forEach(record => {
-          const subjectId = String(record.subject_id || '');
-          const key = String(record.key || '');
-          if (!subjectId || !key) return;
-          const value = record.normalized_numeric_value ?? record.raw_display_text ?? record.display_value ?? record.raw_value;
-          if (value === null || value === undefined || value === '') return;
-          if (!factsBySubject[subjectId]) factsBySubject[subjectId] = {};
-          factsBySubject[subjectId][key] = value;
-        });
-      nativePropertyFactsBySubjectId.value = factsBySubject;
-    });
-  }
-  if (facesUrl && nativeAssetPolicy.loadHeavySemanticsJsonl) {
-    await loadJsonLines<TopologyFaceRecord>(facesUrl, records => {
-      topologyFaces.value = records;
-    });
-  }
-  if (nativeAssetPolicy.loadHeavySemanticsJsonl) for (const [url, assign] of [
-    [viewerContract.native_semantics?.topology_bodies_url, (records: TopologySelectionRecord[]) => (topologyBodies.value = records)],
-    [viewerContract.native_semantics?.topology_cells_url, hydrateNativeCells],
-    [viewerContract.native_semantics?.topology_wires_url, (records: TopologySelectionRecord[]) => (topologyLoops.value = records)],
-    [viewerContract.native_semantics?.topology_coedges_url, (records: TopologySelectionRecord[]) => (topologyCoedges.value = records)]
-  ] as const) {
-    if (!url) continue;
-    await loadJsonLines<TopologySelectionRecord>(url, assign);
-  }
-  if (viewerContract.native_semantics?.feature_topology_links_url && nativeAssetPolicy.loadHeavySemanticsJsonl) {
-    await loadJsonLines<Record<string, unknown>>(
-      viewerContract.native_semantics.feature_topology_links_url,
-      mergeNativeFeatureTopologyLinks
+}
+
+// 用途：逐页取得 PostgreSQL 语义事实；任一页失败时不展示局部 JSONL 数据。
+async function loadNativeEvidencePages(buildId: string, kind: string): Promise<Array<Record<string, unknown>>> {
+  const records: Array<Record<string, unknown>> = [];
+  let offset = 0;
+  while (true) {
+    const result = await fetchComponentBuildNativeEvidence<Record<string, unknown>>(
+      buildId, kind, offset, 1000, { signal: assetRequestController.signal, silent: true }
     );
+    if (result.error || !result.data) throw result.error || new Error(`数据库语义 ${kind} 不可用`);
+    records.push(...result.data.records);
+    if (!result.data.has_more) return records;
+    if (result.data.next_offset == null || result.data.next_offset <= offset)
+      throw new Error(`数据库语义 ${kind} 分页异常`);
+    offset = result.data.next_offset;
   }
+}
+
+// 用途：把数据库保存的原始 CAA 标识统一映射成选择树记录，保留完整原始属性。
+function toTopologySelectionRecord(raw: Record<string, unknown>): TopologySelectionRecord {
+  return {
+    id: String(raw.id || raw.cell_id || raw.body_id || raw.wire_id || raw.coedge_id || raw.topology_id || ''),
+    parent_id: String(raw.parent_id || raw.parent_topology_id || ''),
+    owning_body_id: String(raw.owning_body_id || raw.body_id || ''),
+    raw
+  };
 }
 
 function hydrateTopologyFromSelectionIndex(index: ViewerSelectionIndex | null) {

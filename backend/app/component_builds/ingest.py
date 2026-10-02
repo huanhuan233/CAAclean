@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import locale
 import logging
@@ -485,6 +486,7 @@ async def _build_feature_center(
     if missing or (bundle / "lightweight" / "model.glb").stat().st_size == 0:
         raise IngestStageError("VIEWER_ASSET_MISSING", "lightweighting", ",".join(missing) or "model.glb 为空")
     feature_center_manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    _verify_feature_evidence_assets(bundle, feature_center_manifest)
     native_feature_count = 0
     if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
         native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
@@ -492,6 +494,18 @@ async def _build_feature_center(
     recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
     feature_face_mapping_count = _count_jsonl_records(bundle / "feature_geometry_links.jsonl")
     solid_count = _read_feature_center_solid_count(bundle / "parts.jsonl")
+    feature_evidence = {
+        "canonical_features": _iter_native_jsonl(bundle / "canonical_features.jsonl"),
+        "measurements": _iter_native_jsonl(bundle / "measurements.jsonl"),
+        "topology_faces": _iter_native_jsonl(bundle / "topology_faces.jsonl"),
+        "feature_geometry_links": _iter_native_jsonl(bundle / "feature_geometry_links.jsonl"),
+    }
+    selection_index_path = bundle / "lightweight" / "selection_index.json"
+    if selection_index_path.is_file():
+        feature_evidence["selection_index"] = iter([json.loads(selection_index_path.read_text(encoding="utf-8"))])
+    feature_evidence_counts = await repository.replace_native_evidence(
+        revision_id, feature_evidence, replace_all=False
+    )
     await repository.update_revision_manifest(
         revision_id,
         {
@@ -532,6 +546,11 @@ async def _build_feature_center(
             "feature_center_manifest": {
                 "lightweight": feature_center_manifest.get("lightweight") or {},
                 "performance": feature_center_manifest.get("performance") or {},
+            },
+            "feature_evidence_storage": {
+                "backend": "postgresql",
+                "counts": feature_evidence_counts,
+                "complete": True,
             },
         },
     )
@@ -641,6 +660,11 @@ async def _publish_native_progress(
         revision_id,
         iter_native_property_rows(revision_id, reader.iter_property_facts()),
     )
+    evidence_counts = await repository.replace_native_evidence(
+        revision_id,
+        {kind: _iter_native_jsonl(native_bundle / filename) for kind, filename in NATIVE_EVIDENCE_FILES.items()
+         if kind not in FEATURE_EVIDENCE_KINDS},
+    )
     await repository.update_revision_manifest(
         revision_id,
         {
@@ -677,8 +701,61 @@ async def _publish_native_progress(
                 "fact_count": property_count,
                 "complete": True,
             },
+            "native_evidence_storage": {
+                "backend": "postgresql",
+                "counts": evidence_counts,
+                "complete": True,
+            },
         },
     )
+
+
+# 用途：统一列出前端会读取的原生语义 JSONL，数据库导入必须与发布清单使用同一组类型。
+NATIVE_EVIDENCE_FILES = {
+    "features": "features.jsonl",
+    "topology_entities": "topology_entities.jsonl",
+    "topology_relations": "topology_relations.jsonl",
+    "topology_bodies": "native_topology_bodies.jsonl",
+    "topology_cells": "native_topology_cells.jsonl",
+    "topology_wires": "native_topology_wires.jsonl",
+    "topology_coedges": "native_topology_coedges.jsonl",
+    "feature_topology_links": "native_feature_topology_links.jsonl",
+    "feature_dependencies": "feature_dependencies.jsonl",
+    "geometry_entities": "geometry_entities.jsonl",
+    "canonical_features": "canonical_features.jsonl",
+    "measurements": "measurements.jsonl",
+    "topology_faces": "topology_faces.jsonl",
+    "feature_geometry_links": "feature_geometry_links.jsonl",
+    "selection_index": "selection_index.json",
+}
+FEATURE_EVIDENCE_KINDS = frozenset({
+    "canonical_features", "measurements", "topology_faces", "feature_geometry_links", "selection_index"
+})
+
+
+# 用途：逐行解析可选的旧新原生文件；坏记录会中止整个数据库替换事务。
+def _iter_native_jsonl(path: Path):
+    if not path.is_file():
+        return
+    with path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            if line.strip():
+                yield json.loads(line)
+
+
+# 用途：语义改为数据库供给后，把先前由浏览器执行的清单哈希检查前移到入库边界。
+def _verify_feature_evidence_assets(bundle: Path, manifest: dict) -> None:
+    output_files = manifest.get("output_files") or {}
+    for relative in (
+        "canonical_features.jsonl", "measurements.jsonl", "topology_faces.jsonl",
+        "feature_geometry_links.jsonl", "lightweight/selection_index.json",
+    ):
+        path = bundle / relative
+        if not path.is_file():
+            continue
+        expected = (output_files.get(relative) or {}).get("sha256")
+        if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise IngestStageError("VIEWER_ASSET_HASH_MISMATCH", "publishing_assets", relative)
 
 
 # 用途：确定性统计 JSONL 非空记录，不因文件末尾换行多算一条。
