@@ -39,7 +39,9 @@ bool TempRoot(std::wstring& root)
   const DWORD count = GetTempPathW(static_cast<DWORD>(buffer.size()), &buffer[0]);
   if (count == 0 || count >= buffer.size()) return false;
   root.assign(&buffer[0], count);
-  return IsAscii(root) && (GetFileAttributesW(root.c_str()) & FILE_ATTRIBUTE_DIRECTORY) != 0;
+  const DWORD attributes = GetFileAttributesW(root.c_str());
+  return IsAscii(root) && attributes != INVALID_FILE_ATTRIBUTES &&
+         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
 // 中文：直接建立目录接合点，避免调用 shell 或依赖需要管理员权限的符号链接。
@@ -101,7 +103,9 @@ bool WindowsDirectoryAlias::OpenForFile(const std::string& original_utf8,
     error = "CATIA path alias requires an ASCII temporary directory";
     return false;
   }
-  const std::wstring target = original.substr(0, separator);
+  // 中文：卷根文件的父目录必须是 C:\，不能退化为按当前目录解释的 C:。
+  const std::wstring target = separator == 2 && original[1] == L':' ?
+      original.substr(0, 3) : original.substr(0, separator);
   for (unsigned int attempt = 0; attempt < 32; ++attempt)
   {
     std::wostringstream name;
