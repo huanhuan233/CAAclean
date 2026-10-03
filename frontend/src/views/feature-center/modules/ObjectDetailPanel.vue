@@ -285,8 +285,8 @@ const DetailSection = defineComponent({
         <section v-if="primarySelection?.kind === 'native_feature' && selectionContext.mappingStatus === 'candidate'" class="detail-section-v2">
           <ElTag type="warning">候选高亮，有误选风险；不是确认的建模历史归属</ElTag>
         </section>
-        <section v-else-if="selectionContext.mappingAuthority === 'canvas_hit_preview'" class="detail-section-v2">
-          <ElTag type="warning">仅预览高亮点击的网格，未确认完整零件范围</ElTag>
+        <section v-else-if="selectionContext.mappingAuthority === 'canvas_hit_preview' || selectionContext.mappingAuthority === 'whole_part_preview'" class="detail-section-v2">
+          <ElTag type="warning">{{ selectionContext.mappingAuthority === 'whole_part_preview' ? '整件预览高亮，未确认特征范围' : '仅预览高亮点击的网格，未确认完整零件范围' }}</ElTag>
         </section>
 
         <section v-if="primarySelection?.kind === 'native_feature' && nativeDetailLoading" class="compact-empty">正在读取数据库详情…</section>

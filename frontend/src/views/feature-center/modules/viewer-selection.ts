@@ -261,9 +261,12 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     context.mappingAuthority = context.mappingAuthority || 'selection_index';
   }
   if (target.source === 'canvas' && context.mappingStatus === 'unavailable' && context.renderObjectUuids.length) {
+    const singlePart = (target.kind === 'part' || target.kind === 'part_instance') &&
+      resources.bomNodes?.length === 1 && resources.bomNodes[0].node_id === target.id &&
+      resources.bomNodes[0].node_type === 'part' && !(resources.bomNodes[0].children || []).length;
     context.mappingStatus = 'candidate';
-    context.mappingAuthority = 'canvas_hit_preview';
-    diagnostics.push('CANVAS_HIT_PREVIEW_ONLY');
+    context.mappingAuthority = singlePart ? 'whole_part_preview' : 'canvas_hit_preview';
+    diagnostics.push(singlePart ? 'WHOLE_PART_PREVIEW_ONLY' : 'CANVAS_HIT_PREVIEW_ONLY');
   }
   context.diagnostics = uniqueStrings([...context.diagnostics, ...diagnostics]);
   normalizeContext(context);

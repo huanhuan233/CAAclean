@@ -61,6 +61,24 @@ test('canvas hit without Face or BOM mesh map keeps the clicked render mesh as a
   assert.equal(selection.context.mappingAuthority, 'canvas_hit_preview');
 });
 
+test('canvas hit on an unmapped single part previews the whole part rather than one mesh', () => {
+  const selection = resolveViewerSelection(
+    { kind: 'part_instance', id: 'PART-1', source: 'canvas', renderObjectUuid: 'MESH-UUID' },
+    {
+      bomNodes: [{
+        node_id: 'PART-1', parent_id: '', name: 'Part', part_number: 'Part', instance_name: 'Part.1',
+        version: '', material: '', node_type: 'part', quantity: 1, source_format: 'CATPART', level: 0,
+        transform: null, mesh_primitive_ids: [], descendant_mesh_primitive_ids: [], entity_ids: [],
+        solid_count: 0, volume: null, bounding_box: null, assembly_path: '/Part.1',
+        constraint_status: '', constraint_count: null, children: []
+      }]
+    }
+  );
+
+  assert.equal(selection.context.mappingStatus, 'candidate');
+  assert.equal(selection.context.mappingAuthority, 'whole_part_preview');
+});
+
 test('recognized feature selection highlights mapped faces without guessing native history', () => {
   const selection = resolveViewerSelection(
     { kind: 'recognized_feature', id: 'FC-A' },

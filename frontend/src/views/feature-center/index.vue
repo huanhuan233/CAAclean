@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { fetchComponentBuildNativeEvidence, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
+import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
 import { facesForFeature } from './modules/feature-center-bundle';
 import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-center-bundle';
@@ -66,6 +67,7 @@ import {
 import type { ViewerTab } from './modules/viewer-workspace';
 
 defineOptions({ name: 'FeatureCenterViewer' });
+const themeStore = useThemeStore();
 
 // 大型 CATIA 模型的 Feature Center 契约和资产可能需要较长时间生成或传输。
 const FEATURE_CENTER_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1661,8 +1663,10 @@ function applyVisualState() {
   ]);
   const bomPrimitives = new Set(trusted || candidatePreview ? context.primitiveIds : []);
   const canvasObjects = new Set(context.renderObjectUuids);
-  const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0 || canvasObjects.size > 0;
-  const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim();
+  const wholePartPreview = primarySelection.value?.source === 'canvas' &&
+    context.mappingAuthority === 'whole_part_preview';
+  const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0 || canvasObjects.size > 0 || wholePartPreview;
+  const primaryColor = themeStore.themeColor;
   for (const object of pickableObjects) {
     if (!(object instanceof THREE.Mesh)) continue;
     const primitiveId = String(object.userData.mesh_primitive_id ?? object.userData.primitive_id ?? '');
@@ -1673,6 +1677,7 @@ function applyVisualState() {
         ''
     );
     const active =
+      wholePartPreview ||
       featureFaces.has(faceId) ||
       bomPrimitives.has(primitiveId) ||
       canvasObjects.has(object.uuid);
@@ -2051,6 +2056,7 @@ function topologyKindLabel(kind: SelectionTarget['kind']) {
 
 watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
+watch(() => themeStore.themeColor, applyVisualState);
 onMounted(async () => {
   themeObserver = new MutationObserver(applyVisualState);
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
