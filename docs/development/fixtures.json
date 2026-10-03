@@ -1,0 +1,248 @@
+{
+  "schema_version": "p0.v1",
+  "fixtures": [
+    {
+      "fixture_id": "FX-REAL-01",
+      "path": "3DjiexiCAA/tests/fixtures/catia_r21/partdesign_holes_updated.CATPart",
+      "origin": "仓库已有样件",
+      "restriction": "只读；不提交模型副本",
+      "input_type": "CATPart",
+      "provenance": "native",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [
+        "按文件/既有测试命名为孔样件；本轮未核验具体值"
+      ],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F05",
+        "V5-07"
+      ],
+      "availability": "available_unverified",
+      "sha256": "99d71f79e7c1cd11f8f44e5be468812c2ea93292a4347bf28a1628c26acc0152"
+    },
+    {
+      "fixture_id": "FX-REAL-02",
+      "path": "3DjiexiCAA/tests/fixtures/feature_center/catia_r21_exported/partdesign_holes_updated.stp",
+      "origin": "仓库已有导出 STEP",
+      "restriction": "只读；不提交模型副本",
+      "input_type": "STEP",
+      "provenance": "imported",
+      "units": "待 STEP 解析确认",
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02",
+        "F05"
+      ],
+      "availability": "available_unverified",
+      "sha256": "84d28010516b0830e1c61fdc16943c00879dc25d8fbbe030111822d8a504bf6a"
+    },
+    {
+      "fixture_id": "FX-REAL-03",
+      "path": "3DjiexiCAA/tests/caa_completion/fixtures_manual/product_same_reference_instances.CATProduct",
+      "origin": "仓库已有手工样件",
+      "restriction": "只读；不提交模型副本",
+      "input_type": "CATProduct",
+      "provenance": "native",
+      "units": null,
+      "coordinates": null,
+      "instances": "同定义多实例；姿态需实际核验",
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F01"
+      ],
+      "availability": "available_unverified",
+      "sha256": "9eb7b7c39438ea85149da3ef416eec7c3feba14a2b01b9db8e1148f943c77f47"
+    },
+    {
+      "fixture_id": "FX-REAL-04",
+      "path": "3DjiexiCAA/tests/caa_completion/fixtures_manual/pd_shell_thickness.CATPart",
+      "origin": "仓库已有手工样件",
+      "restriction": "只读；不提交模型副本",
+      "input_type": "CATPart",
+      "provenance": "native",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [
+        "按既有测试命名为壳厚样件；真实壁厚未核验"
+      ],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02",
+        "V5-05"
+      ],
+      "availability": "available_unverified",
+      "sha256": "ff60483c070b8f5d798e4d53ff151e7a67deab9da7b451de4769dabe2779c6dc"
+    },
+    {
+      "fixture_id": "FX-NEED-01",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "单零件基础实体"
+    },
+    {
+      "fixture_id": "FX-NEED-02",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "平面、有限边、圆弧"
+    },
+    {
+      "fixture_id": "FX-NEED-03",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "带孔平面区域"
+    },
+    {
+      "fixture_id": "FX-NEED-04",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "厚度已知的板"
+    },
+    {
+      "fixture_id": "FX-NEED-05",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "空腔或多段材料反例"
+    },
+    {
+      "fixture_id": "FX-NEED-06",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "同零件两个不同姿态实例"
+    },
+    {
+      "fixture_id": "FX-NEED-07",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "不同长度单位等价输入"
+    },
+    {
+      "fixture_id": "FX-NEED-08",
+      "path": null,
+      "origin": "P1 验收需求",
+      "restriction": "synthetic 参数化件可作自动测试，不替代真实业务验收",
+      "input_type": "synthetic_or_real",
+      "provenance": "synthetic",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": [
+        "F02"
+      ],
+      "availability": "missing_input",
+      "sha256": null,
+      "description": "几何缺失、过期映射、未知类型反例"
+    }
+  ]
+}

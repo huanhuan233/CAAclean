@@ -1,0 +1,679 @@
+{
+  "schema_version": "p0.v1",
+  "sources": [
+    {
+      "source_id": "technical_proposal",
+      "name": "三维数模解析与模型比对系统 V1.0 技术方案(2).docx",
+      "status": "source_unavailable",
+      "fingerprint": null
+    },
+    {
+      "source_id": "v5_sheet",
+      "name": "三维数模解析-功能性人天评估表V5.xlsx",
+      "status": "source_unavailable",
+      "fingerprint": null
+    },
+    {
+      "source_id": "user_prompt",
+      "name": "2026-10-03 当前任务粘贴需求及补充截图",
+      "status": "provided_summary",
+      "fingerprint": "sha256:0da172726deedfccdf29f16d2cc86d96f624adb172bd2060ea27658e5db37245"
+    },
+    {
+      "source_id": "engineering",
+      "name": "本轮工程实施建议",
+      "status": "implementation_advice",
+      "fingerprint": null
+    }
+  ],
+  "requirements": [
+    {
+      "requirement_id": "F01",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F01",
+      "source_status": "provided_summary",
+      "original_summary": "BOM、定义/实例、数量与位置变换",
+      "module": "F01",
+      "classification": "native_read",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "BOM、定义/实例、数量与位置变换"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "caa_new; app/component_builds/native_tree_store.py",
+      "verification_status": "not_run",
+      "phase": "P1",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F02",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F02",
+      "source_status": "provided_summary",
+      "original_summary": "物理属性、几何测量、惯量和包围盒",
+      "module": "F02",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "物理属性、几何测量、惯量和包围盒"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "app/measurement; app/feature_center/topology.py",
+      "verification_status": "not_run",
+      "phase": "P1",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F03",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F03",
+      "source_status": "provided_summary",
+      "original_summary": "产品原生/自定义属性与知识参数",
+      "module": "F03",
+      "classification": "native_read",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "产品原生/自定义属性与知识参数"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "caa_new; app/component_builds/native_property_store.py",
+      "verification_status": "not_run",
+      "phase": "P2",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F04",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F04",
+      "source_status": "provided_summary",
+      "original_summary": "尺寸、形位公差、粗糙度、基准、文本、旗标、NOA、视图/捕获",
+      "module": "F04",
+      "classification": "native_read",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "尺寸、形位公差、粗糙度、基准、文本、旗标、NOA、视图/捕获"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "caa_new; app/component_builds/native_persistence.py",
+      "verification_status": "not_run",
+      "phase": "P2",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F05",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F05",
+      "source_status": "provided_summary",
+      "original_summary": "孔、R角、倒角、凸台、凹坑、筋条、腹板、型腔等消参制造特征",
+      "module": "F05",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "孔、R角、倒角、凸台、凹坑、筋条、腹板、型腔等消参制造特征"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "app/feature_center; app/measurement",
+      "verification_status": "not_run",
+      "phase": "P2-P5",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F06",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F06",
+      "source_status": "provided_summary",
+      "original_summary": "对称件及相关信息映射",
+      "module": "F06",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "对称件及相关信息映射"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "未定位到专用完整实现",
+      "verification_status": "not_run",
+      "phase": "P6",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F07",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F07",
+      "source_status": "provided_summary",
+      "original_summary": "装配方式、壳体、接触/间隙与布尔分析",
+      "module": "F07",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "装配方式、壳体、接触/间隙与布尔分析"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "caa_new; app/feature_center",
+      "verification_status": "not_run",
+      "phase": "P6",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F08",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F08",
+      "source_status": "provided_summary",
+      "original_summary": "BOM、属性、标注、特征、几何和关系的版本比对",
+      "module": "F08",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "BOM、属性、标注、特征、几何和关系的版本比对"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "现有比较链路待逐项核验",
+      "verification_status": "not_run",
+      "phase": "P7",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F09",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F09",
+      "source_status": "provided_summary",
+      "original_summary": "紧固件、密封、胶接连接关系",
+      "module": "F09",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "紧固件、密封、胶接连接关系"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "caa_new 工程采集模块",
+      "verification_status": "not_run",
+      "phase": "P8",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "F10",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 F10",
+      "source_status": "provided_summary",
+      "original_summary": "API、任务执行、性能与部署",
+      "module": "F10",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "CATPart/CATProduct 或保存采集包",
+        "对象/实例身份"
+      ],
+      "expected_outputs": [
+        "API、任务执行、性能与部署"
+      ],
+      "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
+      "current_implementation": "app/component_builds; app/cad",
+      "verification_status": "not_run",
+      "phase": "P1-P11",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+    },
+    {
+      "requirement_id": "V5-01",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "型腔内转角 R 值与 R 曲线长度",
+      "module": "F05",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "型腔内转角 R 值与 R 曲线长度",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P4",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-02",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "型腔内底角 R",
+      "module": "F05",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "型腔内底角 R",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P4",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-03",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "型腔长宽高",
+      "module": "F05",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "型腔长宽高",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P4",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-04",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "筋条厚度与最大高度",
+      "module": "F05",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "筋条厚度与最大高度",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P3",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-05",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "腹板厚度",
+      "module": "F05",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "腹板厚度",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P3",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-06",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "外形缘条厚度",
+      "module": "F05",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "外形缘条厚度",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P3",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-07",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "圆孔直径、深度、表面中心点",
+      "module": "F05",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "圆孔直径、深度、表面中心点",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P2",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-08",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "腹板凸台到筋条的距离及测量点",
+      "module": "F05",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "腹板凸台到筋条的距离及测量点",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P3",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-09",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "相交筋/缘条夹角处 R",
+      "module": "F05",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "相交筋/缘条夹角处 R",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P3",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-10",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "筋条与临近腹板的内形闭角",
+      "module": "F05",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "筋条与临近腹板的内形闭角",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P3",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-11",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "零件几何体重量",
+      "module": "F02",
+      "classification": "measurement_derived",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "零件几何体重量",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P2",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "V5-12",
+      "source_id": "v5_sheet",
+      "source_locator": null,
+      "source_status": "source_unavailable; summary from user_prompt §4.2",
+      "original_summary": "标注内容、位置截图、关联点及文本三维方向",
+      "module": "F04",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "可信 B-Rep",
+        "对象/实例身份",
+        "必要的几何位置与材料语义"
+      ],
+      "expected_outputs": [
+        "标注内容、位置截图、关联点及文本三维方向",
+        "测量点/定位信息"
+      ],
+      "identity_and_coordinates": "同一快照、局部/全局坐标和单位须可追溯",
+      "current_implementation": "公共底座待 P1；专用识别待后续阶段",
+      "verification_status": "missing_input",
+      "phase": "P5",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "尚未获取 V5 原表及专门真实验收样件，不得推定数值"
+    },
+    {
+      "requirement_id": "U-01",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 用户补充",
+      "source_status": "provided_summary",
+      "original_summary": "导管",
+      "module": "F05",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "场景业务定义",
+        "对应 CATIA 模型及原生/几何证据"
+      ],
+      "expected_outputs": [
+        "可追溯的场景结果"
+      ],
+      "identity_and_coordinates": "保留定义、实例、源坐标和单位",
+      "current_implementation": "仅登记依赖；不在 P1 实现",
+      "verification_status": "missing_input",
+      "phase": "P9",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "场景验收口径与样件未提供"
+    },
+    {
+      "requirement_id": "U-02",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 用户补充",
+      "source_status": "provided_summary",
+      "original_summary": "复材铺层",
+      "module": "F03",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "场景业务定义",
+        "对应 CATIA 模型及原生/几何证据"
+      ],
+      "expected_outputs": [
+        "可追溯的场景结果"
+      ],
+      "identity_and_coordinates": "保留定义、实例、源坐标和单位",
+      "current_implementation": "仅登记依赖；不在 P1 实现",
+      "verification_status": "missing_input",
+      "phase": "P9",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "场景验收口径与样件未提供"
+    },
+    {
+      "requirement_id": "U-03",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 用户补充",
+      "source_status": "provided_summary",
+      "original_summary": "自动铺丝",
+      "module": "F10",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "场景业务定义",
+        "对应 CATIA 模型及原生/几何证据"
+      ],
+      "expected_outputs": [
+        "可追溯的场景结果"
+      ],
+      "identity_and_coordinates": "保留定义、实例、源坐标和单位",
+      "current_implementation": "仅登记依赖；不在 P1 实现",
+      "verification_status": "missing_input",
+      "phase": "P10",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "场景验收口径与样件未提供"
+    },
+    {
+      "requirement_id": "U-04",
+      "source_id": "user_prompt",
+      "source_locator": "§4.2 用户补充",
+      "source_status": "provided_summary",
+      "original_summary": "超塑成形",
+      "module": "F05",
+      "classification": "business_semantics",
+      "required_inputs": [
+        "场景业务定义",
+        "对应 CATIA 模型及原生/几何证据"
+      ],
+      "expected_outputs": [
+        "可追溯的场景结果"
+      ],
+      "identity_and_coordinates": "保留定义、实例、源坐标和单位",
+      "current_implementation": "仅登记依赖；不在 P1 实现",
+      "verification_status": "missing_input",
+      "phase": "P11",
+      "fixtures": [
+        "FX-REAL-01"
+      ],
+      "gap": "场景验收口径与样件未提供"
+    }
+  ]
+}
