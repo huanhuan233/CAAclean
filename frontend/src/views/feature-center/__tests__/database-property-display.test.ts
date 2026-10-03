@@ -86,3 +86,25 @@ test('数据库属性请求失败不能打开由本地数据拼出的属性弹�
   assert.equal(dialog.value, false, '数据库失败时不得显示本地兜底属性');
   assert.ok(messages.length > 0, '应明确显示数据库属性读取失败');
 });
+
+test('详情快速切换拒绝旧响应，缓存包含 Revision 与节点', async () => {
+  const { createNativeDetailLoader } = pageFunctions(['createNativeDetailLoader'], { AbortController }, '../modules/caa-new-loader.ts');
+  const pending: Array<(value: unknown) => void> = [];
+  let calls = 0;
+  const loader = createNativeDetailLoader(async () => {
+    calls += 1;
+    return new Promise(resolve => pending.push(resolve));
+  });
+  const oldRequest = loader.load('build', 'revision-1', 'occurrence-1');
+  const currentRequest = loader.load('build', 'revision-1', 'occurrence-2');
+  pending[0]({ node_id: 'occurrence-1' });
+  pending[1]({ node_id: 'occurrence-2' });
+  assert.equal(await oldRequest, null);
+  assert.equal((await currentRequest).node_id, 'occurrence-2');
+  assert.equal((await loader.load('build', 'revision-1', 'occurrence-2')).node_id, 'occurrence-2');
+  assert.equal(calls, 2);
+  const otherRevision = loader.load('build', 'revision-2', 'occurrence-2');
+  pending[2]({ node_id: 'occurrence-2', revision_id: 'revision-2' });
+  assert.equal((await otherRevision).revision_id, 'revision-2');
+  assert.equal(calls, 3);
+});

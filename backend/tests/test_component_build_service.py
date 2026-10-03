@@ -45,6 +45,23 @@ async def test_native_evidence_requires_complete_postgresql_storage_and_pages_in
         await service.get_native_evidence(build_id, "topology_cells", 0, 1)
 
 
+@pytest.mark.asyncio
+async def test_missing_optional_evidence_channel_is_not_reported_as_empty():
+    revision_id = uuid4()
+
+    class Repository:
+        async def get_raw_revision(self, _revision_id):
+            return SimpleNamespace(id=revision_id, parse_manifest={
+                "native_evidence_storage": {"backend": "postgresql", "complete": True,
+                                            "counts": {"features": 0}}
+            })
+
+    service = ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())
+    service._require_build = lambda _build_id: _async_value(SimpleNamespace(cad_revision_id=revision_id))
+    with pytest.raises(ValueError, match="not captured"):
+        await service.get_native_evidence(uuid4(), "topology_cells", 0, 10)
+
+
 def test_native_brep_completeness_contract_preserves_database_values_and_old_bundles():
     """逐体完整性只透传数据库清单，旧包缺字段时不伪造零值。"""
     new_manifest = {"native_capture": {"available": True, "status": "complete",
@@ -914,6 +931,45 @@ async def test_native_tree_api_reads_caa_new_bundle_without_local_paths(tmp_path
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+async def test_selected_native_node_properties_include_definition_semantics_and_instance_context():
+    revision_id = uuid4()
+    build_id = uuid4()
+    node_id = "occurrence_2"
+    metadata = {"object_id": "object_7", "occurrence_id": node_id, "document_id": "doc_1",
+                "product_occurrence_id": "product_occurrence_2"}
+
+    class Repository:
+        async def get_raw_revision(self, _revision_id):
+            return SimpleNamespace(id=revision_id, parse_manifest={
+                "native_property_storage": {"backend": "postgresql", "complete": True},
+                "native_evidence_storage": {"backend": "postgresql", "complete": True,
+                                            "counts": {"native_features": 1}},
+            })
+
+        async def get_native_tree_entity(self, _revision_id, _node_id):
+            return SimpleNamespace(metadata_json=metadata)
+
+        async def list_native_property_facts(self, _revision_id, _subjects):
+            return []
+
+        async def get_native_feature(self, _revision_id, object_id):
+            assert object_id == "object_7"
+            return {"feature_id": "object_7", "decoder_id": "NativePadDecoder", "decode_level": "typed",
+                    "native_prism": {"is_thin": False, "second_limit": {"dimension_mm": 0}}}
+
+    service = ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())
+    service._require_build = lambda _build_id: _async_value(SimpleNamespace(cad_revision_id=revision_id))
+
+    detail = await service.get_native_node_properties(build_id, node_id, None)
+
+    assert detail["revision_id"] == str(revision_id)
+    assert detail["object_id"] == "object_7"
+    assert detail["product_occurrence_id"] == "product_occurrence_2"
+    assert detail["native_feature"]["native_prism"]["is_thin"] is False
+    assert detail["native_feature"]["native_prism"]["second_limit"]["dimension_mm"] == 0
 
 
 def _write_json(path: Path, payload: dict) -> None:

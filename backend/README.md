@@ -65,13 +65,15 @@ FastAPI 启动时会执行 `Base.metadata.create_all`，幂等创建所需表，
 python backend/scripts/init_database.py
 ```
 
-既有 CAA/Feature Center 包升级后，可从 `backend` 目录运行以下命令补齐原生树、属性和语义数据库记录，不会重新解析 CATIA 文件：
+既有 CAA/Feature Center 包升级后，从 `backend` 目录先只读检查指定 Revision，再显式决定仅入库还是补算旧的空 Hole 识别结果：
 
-```bash
-python -m scripts.backfill_native_evidence
+```powershell
+python -m scripts.backfill_native_evidence --revision <Revision-UUID>
+python -m scripts.backfill_native_evidence --revision <Revision-UUID> --apply
+python -m scripts.backfill_native_evidence --revision <Revision-UUID> --apply --recompute
 ```
 
-命令只扫描当前 `CAD_WORK_DIR` 中有完整清单的 Revision。任一包校验或入库失败会返回非零状态；前端不会从 JSONL 兜底显示未入库数据。
+默认不写库；`--all` 可只读扫描，`--all --apply` 才是明确授权的全量回填。补算复用保存的 `exported.stp` 和现有 Feature Center 管线，不运行 CATIA；缺源证据会失败，旧目录会保留。完整边界、能力矩阵及本轮验证见 [三维语义端到端状态](../docs/END_TO_END_STATUS.md)。前端不会在数据库不可用时从 JSONL 语义兜底。
 
 ## 启动后端
 

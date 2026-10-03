@@ -6,6 +6,8 @@
 
 ---
 
+本仓库的 Feature Center 仍在现有 Soybean Admin + Element Plus 页面中：原生语义从 PostgreSQL API 按选中节点加载，GLB/面映射继续走受控资产接口。选择关系区分确定映射与候选，不把原生 Face ID 当渲染 Face ID。能力、恢复命令和验收边界见 [三维语义端到端状态](../docs/END_TO_END_STATUS.md)。
+
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![github stars](https://img.shields.io/github/stars/soybeanjs/soybean-admin-element-plus)](https://github.com/soybeanjs/soybean-admin-element-plus)
 [![github forks](https://img.shields.io/github/forks/soybeanjs/soybean-admin-element-plus)](https://github.com/soybeanjs/soybean-admin-element-plus)

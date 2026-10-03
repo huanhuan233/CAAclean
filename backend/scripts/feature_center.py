@@ -17,9 +17,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.cad.parser_runner import run_freecad_parser
+from app.component_builds.caa_new_bundle import CaaNewBundleReader
 from app.core.config import Settings
 from app.feature_center.bundle import FeatureCenterBundleWriter, validate_bundle
-from app.feature_center.fusion import read_jsonl
 from app.feature_center.service import build_bundle_from_parser_result
 from app.feature_center.step_input import StepInputError, inspect_step_input
 
@@ -216,10 +216,7 @@ async def _build(args: argparse.Namespace) -> int:
             )
         native_features = None
         if args.native_bundle:
-            native_path = Path(args.native_bundle).resolve() / "features.jsonl"
-            if not native_path.is_file():
-                raise ValueError("NATIVE_BUNDLE_FEATURES_MISSING")
-            native_features = read_jsonl(native_path)
+            native_features = list(CaaNewBundleReader(Path(args.native_bundle).resolve()).iter_canonical_native_features())
         bundle = build_bundle_from_parser_result(step_info, parser_result, native_features)
         FeatureCenterBundleWriter().write(bundle, output)
         _write_step_curves_asset(Path(args.step).resolve(), output)

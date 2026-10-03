@@ -58,6 +58,42 @@ export async function loadCaaNewNodeProperties(
   return response.data;
 }
 
+export function createNativeDetailLoader(fetcher = loadCaaNewNodeProperties) {
+  const cache = new Map<string, Api.ComponentBuild.NativeNodeProperties>();
+  let generation = 0;
+  let activeController: AbortController | null = null;
+  return {
+    async load(buildId: string, revisionId: string, nodeId: string) {
+      const requestGeneration = ++generation;
+      activeController?.abort();
+      activeController = new AbortController();
+      const key = JSON.stringify([buildId, revisionId, nodeId]);
+      const cached = cache.get(key);
+      if (cached) return cached;
+      try {
+        const detail = await fetcher(buildId, nodeId, { signal: activeController.signal, silent: true });
+        if (requestGeneration !== generation) return null;
+        cache.set(key, detail);
+        return detail;
+      } catch (error) {
+        if (requestGeneration !== generation) return null;
+        throw error;
+      }
+    },
+    cancel() {
+      generation += 1;
+      activeController?.abort();
+      activeController = null;
+    },
+    clear() {
+      generation += 1;
+      activeController?.abort();
+      activeController = null;
+      cache.clear();
+    }
+  };
+}
+
 function flattenNativeTreeNode(
   node: Api.ComponentBuild.NativeTreeNode,
   parentId: string,

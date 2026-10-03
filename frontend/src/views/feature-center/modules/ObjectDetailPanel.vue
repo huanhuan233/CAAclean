@@ -15,6 +15,8 @@ import {
   formatDetailValue,
   geometryLinksFor,
   nativeFeatureRows,
+  nativePropertyValue,
+  nativeSemanticParameterRows,
   normalizeParameterRows,
   parameterSourceFor,
   recognizedFeatureRows,
@@ -33,6 +35,9 @@ const props = defineProps<{
   detailNode: Api.ComponentBuild.ViewerBomNode | null;
   detailParentNode: Api.ComponentBuild.ViewerBomNode | null;
   selectedNativeFeature: NativeFeatureRecord | null;
+  nativeDetail: Api.ComponentBuild.NativeNodeProperties | null;
+  nativeDetailLoading: boolean;
+  nativeDetailError: string;
   selectedNativeTreeNode: FeatureTreeNode | null;
   selectedNativeTreeParent: FeatureTreeNode | null;
   selectedNativeParameterFamily: string;
@@ -54,6 +59,7 @@ const emit = defineEmits<{
   openFeatureLinks: [];
   openNativeFace: [faceId: string];
   copy: [value: string];
+  retryNativeDetail: [];
 }>();
 
 const sourceTypeLabel = computed(() => {
@@ -76,6 +82,7 @@ const statusValue = computed(() => formatDetailValue(props.contract?.status || '
 const evidenceRows = computed(() => selectionEvidenceRows(props.primarySelection, props.selectionContext));
 
 const featureRows = computed<DetailField[]>(() => {
+  if (props.primarySelection?.kind === 'face' && props.selectedFace) return faceRows(props.selectedFace);
   if (props.selectedNativeFeature) {
     return nativeFeatureRows(
       props.selectedNativeFeature,
@@ -90,6 +97,9 @@ const featureRows = computed<DetailField[]>(() => {
 });
 
 const parameterRows = computed<ParameterField[]>(() => {
+  if (props.primarySelection?.kind === 'native_feature') {
+    return props.nativeDetail ? nativeSemanticParameterRows(props.selectedNativeFeature) : [];
+  }
   const rows = normalizeParameterRows(parameterSourceFor(props.selectedNativeFeature, props.selectedFeature));
   if (rows.length || !props.selectedMeasurements.length) return rows;
   return props.selectedMeasurements.flatMap((measurement, index) =>
@@ -99,6 +109,15 @@ const parameterRows = computed<ParameterField[]>(() => {
       label: `${measurement.name || `测量 ${index + 1}`} · ${row.label}`
     }))
   );
+});
+
+const nativePropertyRows = computed<DetailField[]>(() => {
+  if (props.primarySelection?.kind !== 'native_feature') return [];
+  return (props.nativeDetail?.tabs || []).flatMap(tab => tab.groups.flatMap(group => group.fields.map(field => ({
+    key: `${tab.tab_id}/${group.group_id}/${field.property_id}`,
+    label: `${group.group_label} · ${field.display_name || field.key}${field.display_unit || field.raw_unit ? ` (${field.display_unit || field.raw_unit})` : ''}`,
+    value: nativePropertyValue(field)
+  }))));
 });
 
 const geometryRows = computed<GeometryLink[]>(() =>
@@ -263,6 +282,17 @@ const DetailSection = defineComponent({
 
         <DetailSection title="特征详情" icon="lucide:square-plus" :rows="featureRows" empty-text="暂无特征详情" />
 
+        <section v-if="primarySelection?.kind === 'native_feature' && selectionContext.mappingStatus === 'candidate'" class="detail-section-v2">
+          <ElTag type="warning">候选高亮，有误选风险；不是确认的建模历史归属</ElTag>
+        </section>
+
+        <section v-if="primarySelection?.kind === 'native_feature' && nativeDetailLoading" class="compact-empty">正在读取数据库详情…</section>
+        <section v-if="primarySelection?.kind === 'native_feature' && nativeDetailError" class="detail-section-v2">
+          <span>数据库详情读取失败：{{ nativeDetailError }}</span>
+          <ElButton size="small" @click="emit('retryNativeDetail')">重试</ElButton>
+        </section>
+        <DetailSection v-if="primarySelection?.kind === 'native_feature' && nativeDetail" title="CATIA 属性" icon="lucide:square-plus" :rows="nativePropertyRows" empty-text="未采集到通用属性" />
+
         <section class="detail-section-v2">
           <details open>
             <summary class="section-heading">
@@ -293,7 +323,7 @@ const DetailSection = defineComponent({
                   </ElTooltip>
                 </div>
               </div>
-              <div v-else class="compact-empty">暂无特征参数</div>
+              <div v-else class="compact-empty">{{ nativeDetail?.native_feature_status === 'not_imported' ? '专用语义尚未入库' : selectedNativeFeature?.decode_level === 'type_only' ? '仅识别类型，专用参数尚未解码' : '未采集到专用参数' }}</div>
             </div>
           </details>
         </section>

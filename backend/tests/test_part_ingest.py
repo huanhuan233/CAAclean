@@ -1,9 +1,15 @@
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+
+
+@asynccontextmanager
+async def _test_native_transaction():
+    yield
 
 from app.component_builds.ingest import (
     IngestStageError,
@@ -229,6 +235,8 @@ async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sideca
         async def update_revision_manifest(self, requested_id, payload):
             assert requested_id == revision_id
 
+        native_publish_transaction = staticmethod(_test_native_transaction)
+
         async def replace_native_tree_entities(self, requested_id, rows, expected_count):
             assert requested_id == revision_id
             assert len(rows) == expected_count
@@ -238,8 +246,9 @@ async def test_remote_worker_completion_does_not_mark_viewer_ready_before_sideca
             assert requested_id == revision_id
             return len(list(rows))
 
-        async def replace_native_evidence(self, requested_id, records_by_kind):
+        async def replace_native_evidence(self, requested_id, records_by_kind, *, replace_all=True):
             assert requested_id == revision_id
+            assert replace_all is False
             return {kind: len(list(records)) for kind, records in records_by_kind.items()}
 
     class Client:
@@ -330,13 +339,16 @@ async def test_native_progress_is_published_before_feature_center_finishes(tmp_p
             persisted_rows.extend(rows)
             return len(rows)
 
+        native_publish_transaction = staticmethod(_test_native_transaction)
+
         async def replace_native_property_facts(self, requested_id, rows):
             assert requested_id == revision_id
             persisted_properties.extend(rows)
             return len(persisted_properties)
 
-        async def replace_native_evidence(self, requested_id, records_by_kind):
+        async def replace_native_evidence(self, requested_id, records_by_kind, *, replace_all=True):
             assert requested_id == revision_id
+            assert replace_all is False
             return {kind: len(list(records)) for kind, records in records_by_kind.items()}
 
         async def update_revision_manifest(self, requested_id, payload):
@@ -349,12 +361,11 @@ async def test_native_progress_is_published_before_feature_center_finishes(tmp_p
     assert updates[-1]["native_capture"]["has_tree"] is True
     assert updates[-1]["native_semantics"]["available"] is True
     assert updates[-1]["native_semantics"]["tree_occurrences"] == "native-caa/tree_occurrences.jsonl"
-    assert updates[-1]["viewer_summary"]["native_feature_count"] == 0
+    assert "native_feature_count" not in updates[-1]["viewer_summary"]
     assert updates[-1]["native_property_storage"] == {
         "backend": "postgresql", "fact_count": 0, "complete": True
     }
-    assert updates[-1]["native_evidence_storage"]["backend"] == "postgresql"
-    assert updates[-1]["native_evidence_storage"]["complete"] is True
+    assert "native_evidence_storage" not in updates[-1]
     assert len(persisted_rows) == expected_count
 
 
@@ -376,6 +387,8 @@ async def test_native_progress_is_not_published_when_database_count_mismatches(t
     class Repository:
         async def replace_native_tree_entities(self, _revision_id, _rows, _expected_count):
             return 0
+
+        native_publish_transaction = staticmethod(_test_native_transaction)
 
         async def update_revision_manifest(self, _revision_id, payload):
             updates.append(payload)

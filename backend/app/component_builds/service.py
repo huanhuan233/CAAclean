@@ -23,7 +23,8 @@ from app.component_builds.component_spec_document import (
     unpack_component_spec_document,
     validate_component_spec_yaml,
 )
-from app.component_builds.ingest import FEATURE_EVIDENCE_KINDS, NATIVE_EVIDENCE_FILES
+from app.component_builds.ingest import FEATURE_EVIDENCE_KINDS
+from app.component_builds.caa_new_bundle import NATIVE_EVIDENCE_FILES
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
 from app.component_builds.native_property_store import (
     build_database_properties,
@@ -385,6 +386,14 @@ class ComponentBuildService:
             "material": str(viewer_summary.get("material") or ""),
             "solid_count": int(viewer_summary.get("solid_count") or 0),
             "native_feature_count": int(viewer_summary.get("native_feature_count") or 0),
+            "native_semantic_status": viewer_summary.get("native_semantic_status") or "not_captured",
+            "native_definition_count": viewer_summary.get("native_definition_count"),
+            "native_typed_count": viewer_summary.get("native_typed_count"),
+            "native_type_only_count": viewer_summary.get("native_type_only_count"),
+            "native_generic_count": viewer_summary.get("native_generic_count"),
+            "native_failed_count": viewer_summary.get("native_failed_count"),
+            "native_unavailable_count": viewer_summary.get("native_unavailable_count"),
+            "native_typed_by_decoder": viewer_summary.get("native_typed_by_decoder") or {},
             "recognized_feature_count": int(viewer_summary.get("recognized_feature_count") or 0),
             # 用途：只有 Bundle 中实际存在 Feature–Face 链接时才向前端声明映射可用，不能用 Bundle 是否完成替代。
             "feature_face_mapping_available": bool((manifest.get("feature_center") or {}).get("mapping_available")),
@@ -540,7 +549,21 @@ class ComponentBuildService:
         metadata = dict(entity.metadata_json or {})
         subject_ids = native_property_subject_ids(node_id, metadata)
         facts = await self.repository.list_native_property_facts(revision.id, subject_ids)
-        return build_database_properties(node_id, metadata, facts)
+        detail = build_database_properties(node_id, metadata, facts)
+        detail.update({
+            "revision_id": str(revision.id),
+            "object_id": str(metadata.get("object_id") or ""),
+            "product_occurrence_id": str(metadata.get("product_occurrence_id") or ""),
+        })
+        evidence_storage = dict((revision.parse_manifest or {}).get("native_evidence_storage") or {})
+        if evidence_storage.get("complete") and "native_features" in (evidence_storage.get("counts") or {}):
+            object_id = detail["object_id"]
+            detail["native_feature"] = await self.repository.get_native_feature(revision.id, object_id) if object_id else None
+            detail["native_feature_status"] = "available" if detail["native_feature"] else "not_captured"
+        else:
+            detail["native_feature"] = None
+            detail["native_feature_status"] = "not_imported"
+        return detail
 
     async def get_native_topology(self, build_id: UUID, settings: Settings) -> dict:
         del settings
@@ -568,7 +591,10 @@ class ComponentBuildService:
             raise ValueError("native evidence is not persisted in PostgreSQL")
         if offset < 0 or not 1 <= limit <= 50000:
             raise ValueError("invalid native evidence page")
-        total = int((storage.get("counts") or {}).get(kind) or 0)
+        counts = storage.get("counts") or {}
+        if kind not in counts:
+            raise ValueError(f"native evidence channel not captured: {kind}")
+        total = int(counts[kind] or 0)
         records = await self.repository.list_native_evidence(revision.id, kind, offset, limit + 1)
         if min(limit, max(0, total - offset)) != min(limit, len(records)):
             raise ValueError(f"native evidence database count mismatch: {kind}")
@@ -588,9 +614,10 @@ class ComponentBuildService:
             build = await self._require_build(build_id)
             for record in await self.repository.list_native_dependency_candidates(build.cad_revision_id, object_id):
                 status = str(record.get("mapping_status") or record.get("link_status") or "")
-                candidates.append({**record, "selectable": status in {
-                    "confirmed", "runtime_matched", "runtime_current_revision", "survives_to_final",
-                    "exact", "authoritative"}})
+                # ResultOUT 到最终面的存续候选不是 STEP/GLB 面；该接口不把状态字符串升格为可选渲染目标。
+                candidates.append({**record, "selectable": False,
+                                   "selection_status": "candidate" if status else "unmapped",
+                                   "selection_reason": "native_to_render_face_crosswalk_unverified"})
         return {"node_id": node_id, "candidates": candidates}
 
     @staticmethod
@@ -659,6 +686,8 @@ class ComponentBuildService:
             "has_topology": bool(native.get("has_topology") or native_semantics.get("topology_entities")),
             "has_geometry": bool(native.get("has_geometry") or native_semantics.get("geometry_entities")),
             "has_mesh": bool(native.get("has_mesh") or native_semantics.get("mesh_triangles")),
+            "evidence_counts": (manifest.get("native_evidence_storage") or {}).get("counts") or {},
+            "feature_evidence_counts": (manifest.get("feature_evidence_storage") or {}).get("counts") or {},
         }
         if asset_base:
             payload.update(

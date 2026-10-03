@@ -438,6 +438,14 @@ declare namespace Api {
         material: string;
         solid_count: number;
         native_feature_count: number;
+        native_semantic_status?: string;
+        native_definition_count?: number | null;
+        native_typed_count?: number | null;
+        native_type_only_count?: number | null;
+        native_generic_count?: number | null;
+        native_failed_count?: number | null;
+        native_unavailable_count?: number | null;
+        native_typed_by_decoder?: Record<string, number>;
         recognized_feature_count: number;
         feature_face_mapping_available: boolean;
       };
@@ -477,6 +485,8 @@ declare namespace Api {
         has_topology: boolean;
         has_geometry: boolean;
         has_mesh: boolean;
+        evidence_counts?: Record<string, number>;
+        feature_evidence_counts?: Record<string, number>;
         tree_url?: string | null;
         capabilities_url?: string | null;
         diagnostics_url?: string | null;
@@ -608,6 +618,11 @@ declare namespace Api {
 
     interface NativeNodeProperties {
       node_id: string;
+      revision_id?: string;
+      object_id?: string;
+      product_occurrence_id?: string;
+      native_feature?: Record<string, unknown> | null;
+      native_feature_status?: 'available' | 'not_captured' | 'not_imported';
       property_count: number;
       tabs: NativePropertyTab[];
     }

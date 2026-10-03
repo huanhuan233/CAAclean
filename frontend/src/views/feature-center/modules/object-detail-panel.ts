@@ -217,7 +217,7 @@ const BOM_ORDER = [
   'volume'
 ];
 
-const PARAMETER_CONTAINER_KEYS = new Set(['native_feature_parameters', 'attributes', 'parameter', 'typed_payload']);
+const PARAMETER_CONTAINER_KEYS = new Set(['native_feature_parameters', 'native_hole', 'native_prism', 'attributes', 'parameter', 'typed_payload']);
 const INTERNAL_KEYS = new Set(['children', 'raw']);
 
 export function labelFor(key: string) {
@@ -392,6 +392,66 @@ export function parameterSourceFor(
   }
   if (recognizedFeature) return recognizedFeature.typed_payload || {};
   return {};
+}
+
+export function mergeNativeDetail(
+  tree: NativeFeatureRecord,
+  detail: { node_id?: string; native_feature?: Record<string, unknown> | null; native_feature_status?: string; revision_id?: string; object_id?: string }
+): NativeFeatureRecord {
+  const semantic = detail.native_feature || {};
+  const payload = semantic.native_hole || semantic.native_prism;
+  return {
+    ...tree,
+    ...semantic,
+    feature_id: tree.feature_id,
+    display_name: tree.display_name,
+    native_feature_parameters: payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined,
+    native_feature_status: detail.native_feature_status || 'not_imported',
+    revision_id: detail.revision_id,
+    object_id: detail.object_id || tree.attributes?.object_id
+  };
+}
+
+export function nativeSemanticParameterRows(feature: NativeFeatureRecord | null): ParameterField[] {
+  if (!feature?.native_feature_parameters) return [];
+  const rows: ParameterField[] = [];
+  const visit = (value: Record<string, unknown>, prefix = '') => {
+    for (const [name, item] of Object.entries(value)) {
+      const key = prefix ? `${prefix}.${name}` : name;
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        visit(item as Record<string, unknown>, key);
+      } else {
+        const label = labelFor(name);
+        const unit = name.endsWith('_mm') ? 'mm' : name.endsWith('_deg') ? '°' : '';
+        const formatted = item === null
+          ? { text: '未采集 (null)', fullText: 'null', empty: true, raw: item }
+          : item === ''
+            ? { text: '空字符串', fullText: '""', empty: false, raw: item }
+            : formatDetailValue(item, name);
+        rows.push({ key, label: `${prefix ? `${labelFor(prefix.split('.').at(-1) || prefix)} · ` : ''}${label}${unit ? ` (${unit})` : ''}`, value: formatted });
+      }
+    }
+  };
+  visit(feature.native_feature_parameters);
+  return rows;
+}
+
+export function nativePropertyValue(field: Api.ComponentBuild.NativePropertyField): DetailValue {
+  const status = field.read_status.toLowerCase();
+  if (['failed', 'error'].includes(status)) {
+    return { text: '读取失败', fullText: `读取失败 (${field.source_api || '来源未知'})`, empty: true, raw: field.raw_value, statusTone: 'danger' };
+  }
+  if (['unsupported', 'not_supported'].includes(status)) {
+    return { text: '不支持', fullText: '不支持', empty: true, raw: field.raw_value, statusTone: 'warning' };
+  }
+  const value = field.display_value ?? field.raw_value;
+  if (value === null || value === undefined) {
+    return { text: '未采集 (null)', fullText: 'null', empty: true, raw: value };
+  }
+  if (value === '') {
+    return { text: '空字符串', fullText: '""', empty: false, raw: value };
+  }
+  return formatDetailValue(value, field.key);
 }
 
 export function geometryLinksFor(options: {

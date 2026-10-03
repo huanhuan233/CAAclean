@@ -29,7 +29,8 @@ import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
 import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
-import { loadCaaNewNativeChildPage, loadCaaNewNativeRecords, loadCaaNewNodeProperties } from './modules/caa-new-loader';
+import { createNativeDetailLoader, loadCaaNewNativeChildPage, loadCaaNewNativeRecords, loadCaaNewNodeProperties } from './modules/caa-new-loader';
+import { mergeNativeDetail } from './modules/object-detail-panel';
 import { nativeChildPages } from './modules/native-tree-loading';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
@@ -40,6 +41,7 @@ import {
   clearViewerSelection,
   emptySelectionContext,
   resolveViewerSelection,
+  projectSelectionIds,
   selectionPrimaryId
 } from './modules/viewer-selection';
 import type {
@@ -234,6 +236,10 @@ const selectionIndex = ref<ViewerSelectionIndex | null>(null);
 const viewerSelection = ref<ViewerSelection>(clearViewerSelection());
 const selectedFeatureId = ref('');
 const selectedNativeFeatureId = ref('');
+const nativeDetailLoader = createNativeDetailLoader();
+const selectedNativeDetail = ref<Api.ComponentBuild.NativeNodeProperties | null>(null);
+const nativeDetailLoading = ref(false);
+const nativeDetailError = ref('');
 // 用途：记录左侧规格树当前行，分组节点也能保留视觉选中状态而不被当成真实 Feature。
 const selectedNativeTreeNodeId = ref('');
 const selectedFaceId = ref('');
@@ -281,6 +287,7 @@ let modelRoot: THREE.Object3D | null = null;
 let stepCurveRoot: THREE.Object3D | null = null;
 let animationId = 0;
 let resizeObserver: ResizeObserver | null = null;
+let themeObserver: MutationObserver | null = null;
 let statusPollTimer: number | null = null;
 let processTimer: number | null = null;
 const raycaster = new THREE.Raycaster();
@@ -294,10 +301,10 @@ const workspaceStyle = computed(() => ({ '--navigation-width': `${navigationWidt
 // 大型装配只展开最外层节点，避免 ElTree 首次为整棵 BOM 创建大量 DOM。
 const bomDefaultExpandedKeys = computed(() => (contract.value?.bom.nodes || []).map(node => node.node_id));
 const canIsolate = computed(() => {
-  if (selectedFaceId.value) return true;
-  if (selectedNativeFeatureId.value) return selectedNativeFaces.value.length > 0;
+  if (selectedFaceId.value || selectedNativeFeatureId.value)
+    return selectionContext.value.mappingStatus === 'exact' && selectionContext.value.primitiveIds.length > 0;
   if (selectedBomNode.value)
-    return selectedBomPrimitiveIds.value.length > 0 || contract.value?.bom.assembly_mode === 'single_part';
+    return selectedBomPrimitiveIds.value.length > 0;
   return Boolean(featureMeshMap.value && facesForFeature(featureMeshMap.value, selectedFeatureId.value).length);
 });
 const canExplode = computed(() => contract.value?.bom.assembly_mode === 'assembly' && explodableGroupCount.value > 1);
@@ -328,7 +335,12 @@ const selectedFeature = computed(
   () => canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value) ?? null
 );
 const selectedNativeFeature = computed(
-  () => nativeFeatures.value.find(item => item.feature_id === selectedNativeFeatureId.value) ?? null
+  () => {
+    const tree = nativeFeatures.value.find(item => item.feature_id === selectedNativeFeatureId.value) ?? null;
+    if (!tree || selectedNativeDetail.value?.node_id !== tree.feature_id ||
+        selectedNativeDetail.value.revision_id !== contract.value?.task_id) return tree;
+    return mergeNativeDetail(tree, selectedNativeDetail.value);
+  }
 );
 const selectedFace = computed(() => topologyFaces.value.find(item => item.face_id === selectedFaceId.value) ?? null);
 const selectedMeasurements = computed(() =>
@@ -1106,6 +1118,10 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyEdges.value = [];
   topologyVertices.value = [];
   nativePropertyFactsBySubjectId.value = {};
+  nativeDetailLoader.clear();
+  selectedNativeDetail.value = null;
+  nativeDetailError.value = '';
+  nativeDetailLoading.value = false;
   selectionIndex.value = null;
   let loadedNativeTreeFromApi = false;
   if (viewerContract.native_capture?.has_tree && viewerContract.part_id) {
@@ -1121,7 +1137,8 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   if (viewerContract.status === 'ready' && viewerContract.feature_center.available) {
     const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
     if (!buildId) throw new Error('缺少构建任务编号');
-    const indexRows = await loadNativeEvidencePages(buildId, 'selection_index');
+    const indexRows = hasStoredEvidence(viewerContract, 'selection_index', true)
+      ? await loadNativeEvidencePages(buildId, 'selection_index') : [];
     if (indexRows.length > 0) {
       selectionIndex.value = indexRows[0] as unknown as ViewerSelectionIndex;
       hydrateTopologyFromSelectionIndex(selectionIndex.value);
@@ -1131,16 +1148,27 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
     if (!buildId) throw new Error('缺少构建任务编号');
     if (viewerContract.feature_center.available) {
-      const faces = await loadNativeEvidencePages(buildId, 'topology_faces');
+      const faces = hasStoredEvidence(viewerContract, 'topology_faces', true)
+        ? await loadNativeEvidencePages(buildId, 'topology_faces') : [];
       topologyFaces.value = faces as unknown as TopologyFaceRecord[];
     }
-    const cells = await loadNativeEvidencePages(buildId, 'topology_cells');
+    const cells = hasStoredEvidence(viewerContract, 'topology_cells')
+      ? await loadNativeEvidencePages(buildId, 'topology_cells') : [];
     hydrateNativeCells(cells.map(toTopologySelectionRecord));
-    topologyBodies.value = (await loadNativeEvidencePages(buildId, 'topology_bodies')).map(toTopologySelectionRecord);
-    topologyLoops.value = (await loadNativeEvidencePages(buildId, 'topology_wires')).map(toTopologySelectionRecord);
-    topologyCoedges.value = (await loadNativeEvidencePages(buildId, 'topology_coedges')).map(toTopologySelectionRecord);
-    mergeNativeFeatureTopologyLinks(await loadNativeEvidencePages(buildId, 'feature_topology_links'));
+    topologyBodies.value = (hasStoredEvidence(viewerContract, 'topology_bodies')
+      ? await loadNativeEvidencePages(buildId, 'topology_bodies') : []).map(toTopologySelectionRecord);
+    topologyLoops.value = (hasStoredEvidence(viewerContract, 'topology_wires')
+      ? await loadNativeEvidencePages(buildId, 'topology_wires') : []).map(toTopologySelectionRecord);
+    topologyCoedges.value = (hasStoredEvidence(viewerContract, 'topology_coedges')
+      ? await loadNativeEvidencePages(buildId, 'topology_coedges') : []).map(toTopologySelectionRecord);
+    if (hasStoredEvidence(viewerContract, 'feature_topology_links'))
+      mergeNativeFeatureTopologyLinks(await loadNativeEvidencePages(buildId, 'feature_topology_links'));
   }
+}
+
+function hasStoredEvidence(contract: Api.ComponentBuild.ViewerContract, kind: string, feature = false) {
+  const counts = feature ? contract.native_capture?.feature_evidence_counts : contract.native_capture?.evidence_counts;
+  return Object.hasOwn(counts || {}, kind);
 }
 
 // 用途：逐页取得 PostgreSQL 语义事实；任一页失败时不展示局部 JSONL 数据。
@@ -1211,7 +1239,7 @@ function normalizeTopologyRecord(record: TopologySelectionRecord): TopologySelec
 
 function topologyKind(record: TopologySelectionRecord) {
   const raw = (record.raw || {}) as Record<string, unknown>;
-  return String(raw.topology_type || raw.entity_type || raw.cell_type || raw.type || '').toLowerCase();
+  return String(raw.kind || 'unknown').toLowerCase();
 }
 
 function mergeNativeFeatureTopologyLinks(records: Array<Record<string, unknown>>) {
@@ -1328,21 +1356,45 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     }
   );
   projectSelectionForExistingTemplate();
+  if (target.kind === 'native_feature') void loadSelectedNativeDetail(target.id);
+  else {
+    nativeDetailLoader.cancel();
+    selectedNativeDetail.value = null;
+    nativeDetailError.value = '';
+    nativeDetailLoading.value = false;
+  }
   applyVisualState();
+}
+
+async function loadSelectedNativeDetail(nodeId: string) {
+  const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
+  if (!buildId || !revisionId) return;
+  selectedNativeDetail.value = null;
+  nativeDetailError.value = '';
+  nativeDetailLoading.value = true;
+  try {
+    const detail = await nativeDetailLoader.load(buildId, revisionId, nodeId);
+    if (detail && viewerSelection.value.primary?.kind === 'native_feature' &&
+        viewerSelection.value.primary.id === nodeId && contract.value?.task_id === revisionId) {
+      selectedNativeDetail.value = detail;
+      nativeDetailLoading.value = false;
+    }
+  } catch (error) {
+    if (viewerSelection.value.primary?.kind === 'native_feature' && viewerSelection.value.primary.id === nodeId) {
+      nativeDetailError.value = error instanceof Error ? error.message : '数据库详情读取失败';
+      nativeDetailLoading.value = false;
+    }
+  }
 }
 
 function projectSelectionForExistingTemplate() {
   const primary = viewerSelection.value.primary;
   const context = viewerSelection.value.context;
-  selectedFeatureId.value = primary?.kind === 'recognized_feature'
-    ? primary.id
-    : context.recognizedFeatureIds[0] || '';
-  selectedNativeFeatureId.value = primary?.kind === 'native_feature'
-    ? primary.id
-    : context.nativeFeatureIds[0] || '';
-  selectedFaceId.value = primary?.kind === 'face'
-    ? primary.id
-    : context.renderFaceIds[0] || '';
+  const ids = projectSelectionIds(viewerSelection.value);
+  selectedFeatureId.value = ids.recognizedFeatureId;
+  selectedNativeFeatureId.value = ids.nativeFeatureId;
+  selectedFaceId.value = ids.faceId;
   selectedBomNode.value =
     primary && ['assembly', 'part_instance', 'part'].includes(primary.kind)
       ? findBomNode(contract.value?.bom.nodes || [], primary.id)
@@ -1364,6 +1416,10 @@ function findBomNode(nodes: Api.ComponentBuild.ViewerBomNode[], nodeId: string):
 
 // 用途：清除语义选择但保持相机、透明、隔离和剖切状态。
 function clearSelection() {
+  nativeDetailLoader.cancel();
+  selectedNativeDetail.value = null;
+  nativeDetailError.value = '';
+  nativeDetailLoading.value = false;
   viewerSelection.value = clearViewerSelection();
   selectedFeatureId.value = '';
   selectedNativeFeatureId.value = '';
@@ -1590,16 +1646,15 @@ function restoreMaterial(material: THREE.Material) {
 // 用途：统一计算选中、高亮、隔离、透明和剖切，不因侧栏响应式变化重置模型状态。
 function applyVisualState() {
   const context = selectionContext.value;
+  const trusted = context.mappingStatus === 'exact' || context.mappingStatus === 'runtime_current_revision';
+  const candidatePreview = primarySelection.value?.kind === 'native_feature' && context.mappingStatus === 'candidate';
   const featureFaces = new Set([
     ...(featureMeshMap.value ? facesForFeature(featureMeshMap.value, selectedFeatureId.value) : []),
-    ...selectedNativeFaces.value,
-    ...context.renderFaceIds,
-    ...context.nativeFaceIds
+    ...(trusted || candidatePreview ? context.renderFaceIds : [])
   ]);
-  const bomPrimitives = new Set([...selectedBomPrimitiveIds.value, ...context.primitiveIds]);
-  const wholeSinglePart = Boolean(selectedBomNode.value && contract.value?.bom.assembly_mode === 'single_part');
-  const hasSelection =
-    featureFaces.size > 0 || bomPrimitives.size > 0 || wholeSinglePart || Boolean(selectedFaceId.value);
+  const bomPrimitives = new Set(trusted || candidatePreview ? context.primitiveIds : []);
+  const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0;
+  const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim();
   for (const object of pickableObjects) {
     if (!(object instanceof THREE.Mesh)) continue;
     const primitiveId = String(object.userData.mesh_primitive_id ?? object.userData.primitive_id ?? '');
@@ -1610,9 +1665,7 @@ function applyVisualState() {
         ''
     );
     const active =
-      wholeSinglePart ||
       featureFaces.has(faceId) ||
-      faceId === selectedFaceId.value ||
       bomPrimitives.has(primitiveId);
     const originalVisible = object.userData.cad_original_visible !== false;
     object.visible = originalVisible && (!isolated.value || !hasSelection || active);
@@ -1620,9 +1673,9 @@ function applyVisualState() {
     for (const material of materials) {
       const standard = material as THREE.MeshStandardMaterial;
       restoreMaterial(material);
-      if (hasSelection && active) {
-        standard.color?.set('#6254d8');
-        standard.emissive?.set('#6254d8');
+      if (hasSelection && active && primaryColor) {
+        standard.color?.set(primaryColor);
+        standard.emissive?.set(primaryColor);
         standard.emissiveIntensity = 0.35;
       }
       if (transparent.value) {
@@ -1985,6 +2038,8 @@ function topologyKindLabel(kind: SelectionTarget['kind']) {
 watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
 onMounted(async () => {
+  themeObserver = new MutationObserver(applyVisualState);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
   const savedWidth = Number(window.localStorage.getItem('feature-center:navigation-width'));
   if (Number.isFinite(savedWidth)) navigationWidth.value = Math.min(420, Math.max(288, savedWidth));
   initViewer();
@@ -1998,6 +2053,8 @@ onMounted(async () => {
   await loadBuildBundle(buildId);
 });
 onBeforeUnmount(() => {
+  nativeDetailLoader.clear();
+  themeObserver?.disconnect();
   clearStatusPoll();
   if (processTimer) window.clearInterval(processTimer);
   assetRequestController.abort();
@@ -2023,7 +2080,8 @@ onBeforeUnmount(() => {
         <span v-if="sourceFormat" class="format-badge">{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : 'CATPart' }}</span>
         <span v-if="contract?.bom.part_count">{{ contract.bom.part_count }} 个零件</span>
         <span v-if="contract?.summary.solid_count">{{ contract.summary.solid_count }} 个 Solid</span>
-        <span v-if="isCatiaNativeSource(sourceFormat)">{{ contract?.summary.native_feature_count ?? 0 }} 个原生特征</span>
+        <span v-if="isCatiaNativeSource(sourceFormat)">{{ contract?.summary.native_feature_count ?? 0 }} 条树记录</span>
+        <span v-if="contract?.summary.native_definition_count != null">{{ contract.summary.native_definition_count }} 个原生定义，{{ contract.summary.native_typed_count ?? 0 }} 个专用解码</span>
         <span v-if="contract">{{ contract.summary.recognized_feature_count }} 个识别特征</span>
         <span v-if="contract" :class="mappingAvailable ? 'available' : 'muted'">
           Feature–Face {{ mappingAvailable ? '映射可用' : '映射不可用' }}
@@ -2386,6 +2444,9 @@ onBeforeUnmount(() => {
           :detail-node="detailNode"
           :detail-parent-node="detailParentNode"
           :selected-native-feature="selectedNativeFeature"
+          :native-detail="selectedNativeDetail"
+          :native-detail-loading="nativeDetailLoading"
+          :native-detail-error="nativeDetailError"
           :selected-native-tree-node="selectedNativeTreeNode"
           :selected-native-tree-parent="selectedNativeTreeParent"
           :selected-native-parameter-family="selectedNativeParameterFamily"
@@ -2402,6 +2463,7 @@ onBeforeUnmount(() => {
           @highlight="applyVisualState"
           @open-feature-links="openFeatureLinks"
           @open-native-face="openNativeFace"
+          @retry-native-detail="primarySelection?.kind === 'native_feature' && loadSelectedNativeDetail(primarySelection.id)"
           @toggle-isolated="isolated = !isolated"
           @toggle-transparent="transparent = !transparent"
         />

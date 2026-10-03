@@ -90,7 +90,16 @@ def fuse_native_holes(
             continue
         native_id = str(feature["feature_id"])
         native_hole = feature["native_hole"]
-        match = verifier.verify(feature, graph)
+        # 装配里的 CAA 设计坐标属于零件局部系；没有实例变换时禁止与 STEP 全局面比较。
+        if feature.get("coordinate_frame") == "part_local" and feature.get("product_occurrence_ids"):
+            match = HoleFaceMatch(
+                native_feature_id=native_id,
+                status="needs_review",
+                match_method="unlocated_native_part_frame",
+                diagnostics=["INSTANCE_TRANSFORM_NOT_APPLIED"],
+            )
+        else:
+            match = verifier.verify(feature, graph)
         native_observation_id = stable_id("OBS", shape_hash, native_id, "native_caa")
         brep_observation_id = stable_id("OBS", shape_hash, native_id, "brep_deterministic")
         native_observation = Observation(

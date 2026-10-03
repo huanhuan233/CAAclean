@@ -2,6 +2,8 @@
 
 本仓库包含 Vue 前端、FastAPI 后端、PostgreSQL，以及调用 CATIA V5R21 CAA 的独立 Worker。当前交付的本机 CAA 是 **32 位 `intel_a`**；后端/Worker 的 Python 进程可用 64 位，调用器通过子进程运行 32 位 CAA，并不要求把整套服务编译成 32 位。启动顺序是 PostgreSQL → CAA Worker → 后端 → 前端。
 
+原生采集、数据库详情、Feature Center 与前端联动的实际能力和验收边界见 [三维语义端到端状态](docs/END_TO_END_STATUS.md)。旧结果恢复默认只读，不能再无参数运行回填；命令见该文档。
+
 ## 一、首次准备（Windows）
 
 1. 安装并可运行 CATIA V5R21、RADE R21 及其许可证。当前机器的路径是 `D:\CATIA\Rade21`、`D:\CATIA`；其他机器改为自己的路径。

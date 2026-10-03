@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { clearViewerSelection, resolveViewerSelection } from '../modules/viewer-selection';
+import * as viewerSelection from '../modules/viewer-selection';
 
 const faceMeshMap = {
   faces: {
@@ -115,4 +116,86 @@ test('clear selection has no retained context', () => {
   assert.equal(selection.primary, null);
   assert.deepEqual(selection.context.primitiveIds, []);
   assert.equal(selection.context.mappingStatus, 'unavailable');
+});
+
+test('face primary is not replaced by its associated features in the detail projection', () => {
+  assert.equal(typeof viewerSelection.projectSelectionIds, 'function');
+  const selection = resolveViewerSelection({ kind: 'face', id: 'FACE-1' }, { selectionIndex, faceMeshMap, featureMeshMap });
+  assert.deepEqual(viewerSelection.projectSelectionIds(selection), {
+    faceId: 'FACE-1', nativeFeatureId: '', recognizedFeatureId: ''
+  });
+});
+
+test('candidate native face identity never becomes a render primitive selection', () => {
+  const selection = resolveViewerSelection({ kind: 'native_feature', id: 'object_7' }, {
+    selectionIndex: { ...selectionIndex, native_feature_to_native_faces: { object_7: ['NATIVE-FACE-1'] } },
+    faceMeshMap,
+    featureMeshMap
+  });
+  assert.deepEqual(selection.context.nativeFaceIds, ['NATIVE-FACE-1']);
+  assert.deepEqual(selection.context.primitiveIds, []);
+  assert.notEqual(selection.context.mappingStatus, 'exact');
+  assert.notEqual(selection.context.mappingStatus, 'runtime_current_revision');
+});
+
+test('verified canonical Hole can highlight only when selection and mesh share shape hash', () => {
+  const canonical = [{
+    feature_center_id: 'FC-A', family: 'hole', subtype: 'simple', review_state: 'auto_verified',
+    geometry_refs: { face_ids: ['FACE-1'] }, native_feature_ids: ['object_7'],
+    typed_payload: { geometry_verification: { status: 'verified' } }, provenance: {}
+  }];
+  const trusted = resolveViewerSelection({ kind: 'native_feature', id: 'object_7' }, {
+    selectionIndex: { ...selectionIndex, shape_hash: 'shape' }, faceMeshMap, featureMeshMap,
+    canonicalFeatures: canonical
+  });
+  assert.equal(trusted.context.mappingStatus, 'exact');
+  assert.deepEqual(trusted.context.primitiveIds, ['PRIM-1']);
+
+  const mismatched = resolveViewerSelection({ kind: 'native_feature', id: 'object_7' }, {
+    selectionIndex: { ...selectionIndex, shape_hash: 'different-shape' }, faceMeshMap, featureMeshMap,
+    canonicalFeatures: canonical
+  });
+  assert.equal(mismatched.context.mappingStatus, 'candidate');
+  assert.deepEqual(mismatched.context.primitiveIds, []);
+});
+
+test('tree occurrence remains primary while canonical link resolves definition object id', () => {
+  const selection = resolveViewerSelection({ kind: 'native_feature', id: 'occurrence_7' }, {
+    selectionIndex: { ...selectionIndex, shape_hash: 'shape' }, faceMeshMap, featureMeshMap,
+    nativeFeatures: [{ feature_id: 'occurrence_7', attributes: { object_id: 'object_7' } }],
+    canonicalFeatures: [{
+      feature_center_id: 'FC-A', family: 'hole', subtype: 'simple', review_state: 'auto_verified',
+      geometry_refs: { face_ids: ['FACE-1'] }, native_feature_ids: ['object_7'],
+      typed_payload: { geometry_verification: { status: 'verified' } }, provenance: {}
+    }]
+  });
+  assert.equal(selection.primary?.id, 'occurrence_7');
+  assert.deepEqual(selection.context.nativeFeatureIds, ['object_7']);
+  assert.equal(selection.context.mappingStatus, 'exact');
+  assert.deepEqual(selection.context.primitiveIds, ['PRIM-1']);
+});
+
+test('unverified native feature uses same-shape candidate highlight with explicit risk', () => {
+  const selection = resolveViewerSelection({ kind: 'native_feature', id: 'O1' }, {
+    selectionIndex: { ...selectionIndex, shape_hash: 'shape' }, faceMeshMap, featureMeshMap,
+    canonicalFeatures: [{
+      feature_center_id: 'FC-A', family: 'hole', subtype: 'simple', review_state: 'needs_review',
+      geometry_refs: { face_ids: ['FACE-1'] }, native_feature_ids: ['O1'],
+      typed_payload: { geometry_verification: { status: 'needs_review' } }, provenance: {}
+    }]
+  });
+  assert.equal(selection.context.mappingStatus, 'candidate');
+  assert.deepEqual(selection.context.primitiveIds, ['PRIM-1']);
+  assert.match(selection.context.diagnostics.join(';'), /CANDIDATE_HIGHLIGHT_RISK/);
+});
+
+test('single CATPart without a feature crosswalk previews whole part but never calls it exact', () => {
+  const selection = resolveViewerSelection({ kind: 'native_feature', id: 'O1' }, {
+    faceMeshMap,
+    bomNodes: [{ node_id: 'PART', node_type: 'part', children: [] } as never]
+  });
+  assert.equal(selection.context.mappingStatus, 'candidate');
+  assert.deepEqual(selection.context.primitiveIds, ['PRIM-1']);
+  assert.equal(selection.context.mappingAuthority, 'whole_part_preview');
+  assert.match(selection.context.diagnostics.join(';'), /WHOLE_PART_PREVIEW/);
 });

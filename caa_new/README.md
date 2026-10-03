@@ -2,30 +2,29 @@
 
 CadCapture is a new CATIA V5R21 CAA parser built under `caa_new`. It opens native CATPart/CATProduct documents through CAA in read-only mode, preserves CATPart trees, captures CATProduct product structure, and migrates the verified evidence-level topology, tessellation, ResultOUT, property, and FTA/TPS set paths from the legacy parser.
 
-Current legacy migration status is tracked in `docs\MIGRATION_STATUS.md`.
+Current CAA migration evidence is tracked in `docs\LEGACY_MIGRATION_MATRIX.md`; current end-to-end integration and validation limits are in `..\docs\END_TO_END_STATUS.md`. Older phase descriptions below are historical, not the current deployment recipe.
 
 ## Build
 
-Use the R21 x64 tools from this directory:
+On the current host use the verified R21 x86 build. A separate x64 caller/build path exists, but x64 was not rebuilt or runtime-validated in this integration round:
 
 ```bat
-cd /d H:\PXY2\3Djiexi\freecadCAA\caa_new
 call tools\test_core_vs2008.bat
-call tools\build_r21_x64.bat
+call tools\build_r21_x86.bat
 ```
 
-The RADE host tools run from `intel_a`, while the target is `win_b64` with `_MkmkOS_BitMode=64`. The executable is written to:
+The local executable is written to:
 
 ```text
-H:\PXY2\3Djiexi\freecadCAA\caa_new\win_b64\code\bin\CadCapture.exe
+caa_new\intel_a\code\bin\CadCapture.exe
 ```
 
 ## Run
 
 ```bat
-call tools\run_r21_x64.bat --self-test
-call tools\run_r21_x64.bat --probe-runtime
-call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output\sample" --pretty
+call tools\run_r21_x86.bat --self-test
+call tools\run_r21_x86.bat --probe-runtime
+call tools\run_r21_x86.bat --input "<model.CATPart>" --output "<output-directory>" --pretty
 ```
 
 ## Implemented Now
@@ -56,12 +55,12 @@ call tools\run_r21_x64.bat --input "H:\model\sample.CATPart" --output "H:\output
 - Full legacy parity gate with `tools\validate_full_legacy_parity.ps1`; this gate fails while old non-empty semantic artifacts still map to missing or empty `caa_new` artifacts.
 - API-independent VS2008 core tests.
 
-## Not Implemented Yet
+## Historical phase boundaries (superseded by the current matrix)
 
 - Broken or unloaded external link recovery beyond documents already exposed by CATIA Public APIs.
 - Recursive parsing of linked CATProduct definitions beyond the root product tree.
-- Full properties, native Feature parameter payloads, Pad, Pocket, Hole, Sketch, detailed FTA semantics, FTA-to-topology links, exact surface/curve parameter extraction, ResultOUT cell-to-final-face mapping, full B-Rep graph, and triangle payload extraction.
-- CATIInertia and Knowledgeware parameter values from legacy code are not yet migrated in this branch; unavailable tabs are not fabricated.
+- The old phase's missing-property/Pad/Pocket/Hole/topology claims no longer describe current source: dedicated payloads and additional property/topology channels were added later. See the migration matrix for fixture-level evidence and the end-to-end status for database/UI integration.
+- Authoritative ResultOUT historical face authorship, complete FTA business semantics, and full parametric reconstruction are still not claimed.
 
 Unavailable native capabilities remain explicit in diagnostics or capability coverage; the program does not claim to parse CATIA geometry in this stage. Ordinary CATPart input must come from the real CAA document tree and must not produce a bootstrap placeholder part root.
 

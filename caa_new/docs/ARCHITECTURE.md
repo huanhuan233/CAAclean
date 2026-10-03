@@ -1,5 +1,7 @@
 # Architecture
 
+本页描述 C++ 采集层内部依赖。采集包到 PostgreSQL、Feature Center 和 Vue 的本轮深模块边界见 [端到端状态](../../docs/END_TO_END_STATUS.md)。`LegacyArtifactProjection` 的 `features.jsonl` 是树兼容投影，不能当作专用 Hole/Pad/Pocket 语义入口；专用载荷在 `native_features.jsonl`，后端适配器负责统一新旧 Schema。
+
 CadCapture is organized as deep modules. The public surface of each module is intentionally small, while implementation details remain inside the owning directory.
 
 ## Dependency Direction

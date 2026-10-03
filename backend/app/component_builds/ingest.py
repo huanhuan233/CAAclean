@@ -24,10 +24,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.catia_worker.caa_new_runner import CaaNewRunner, CaaNewRunnerError
 from app.cad.repository import CadRepository
 from app.cad.service import CadService
-from app.component_builds.caa_new_bundle import CaaNewBundleReader
 from app.component_builds.catia_worker import CatiaWorkerClient, CatiaWorkerError
-from app.component_builds.native_property_store import iter_native_property_rows
-from app.component_builds.native_tree_store import native_tree_rows
+from app.component_builds.native_persistence import available_native_assets as _available_native_assets, feature_evidence_streams, publish_native_capture
 from app.core.config import BACKEND_ROOT, REPOSITORY_ROOT, Settings
 from app.db.session import SessionLocal
 
@@ -494,15 +492,7 @@ async def _build_feature_center(
     recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
     feature_face_mapping_count = _count_jsonl_records(bundle / "feature_geometry_links.jsonl")
     solid_count = _read_feature_center_solid_count(bundle / "parts.jsonl")
-    feature_evidence = {
-        "canonical_features": _iter_native_jsonl(bundle / "canonical_features.jsonl"),
-        "measurements": _iter_native_jsonl(bundle / "measurements.jsonl"),
-        "topology_faces": _iter_native_jsonl(bundle / "topology_faces.jsonl"),
-        "feature_geometry_links": _iter_native_jsonl(bundle / "feature_geometry_links.jsonl"),
-    }
-    selection_index_path = bundle / "lightweight" / "selection_index.json"
-    if selection_index_path.is_file():
-        feature_evidence["selection_index"] = iter([json.loads(selection_index_path.read_text(encoding="utf-8"))])
+    feature_evidence = feature_evidence_streams(bundle)
     feature_evidence_counts = await repository.replace_native_evidence(
         revision_id, feature_evidence, replace_all=False
     )
@@ -639,108 +629,13 @@ async def _publish_native_progress(
     revision_id: UUID,
     native_bundle: Path,
 ) -> None:
-    """发布已完成的 CAA 原生树，但不提前结束仍在运行的 Feature Center 任务。"""
-    manifest_path = native_bundle / "manifest.json"
-    native_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
-    native_assets = _available_native_assets(native_bundle)
-    if not native_assets:
-        return
-    reader = CaaNewBundleReader(native_bundle)
-    # Persist the full graph: visible children can belong to supplemental parents.
-    # Presentation filtering must never remove ancestors from database storage.
-    tree_payload = reader.build_tree(include_supplemental=True)
-    rows = native_tree_rows(revision_id, tree_payload)
-    expected_count = int(tree_payload.get("node_count") or len(rows))
-    stored_count = await repository.replace_native_tree_entities(revision_id, rows, expected_count)
-    if stored_count != expected_count:
-        raise ValueError(
-            f"native tree database count mismatch: expected={expected_count}, stored={stored_count}"
-        )
-    property_count = await repository.replace_native_property_facts(
-        revision_id,
-        iter_native_property_rows(revision_id, reader.iter_property_facts()),
-    )
-    evidence_counts = await repository.replace_native_evidence(
-        revision_id,
-        {kind: _iter_native_jsonl(native_bundle / filename) for kind, filename in NATIVE_EVIDENCE_FILES.items()
-         if kind not in FEATURE_EVIDENCE_KINDS},
-    )
-    await repository.update_revision_manifest(
-        revision_id,
-        {
-            "native_semantics": {"available": True, **native_assets},
-            "native_capture": {
-                "available": True,
-                "status": native_manifest.get("capture_status") or "ready",
-                "schema_version": native_manifest.get("schema_version"),
-                "parser_version": native_manifest.get("parser_version"),
-                "document_kind": native_manifest.get("document_kind"),
-                "selected_reconstruction_route": native_manifest.get("selected_reconstruction_route"),
-                "exact_brep_body_count": native_manifest.get("exact_brep_body_count"),
-                "incomplete_brep_body_count": native_manifest.get("incomplete_brep_body_count"),
-                "has_tree": (native_bundle / "tree_occurrences.jsonl").is_file()
-                or (native_bundle / "features.jsonl").is_file(),
-                "has_properties": (native_bundle / "property_facts.jsonl").is_file(),
-                "has_topology": (native_bundle / "topology_entities.jsonl").is_file(),
-                "has_geometry": (native_bundle / "geometry_entities.jsonl").is_file(),
-                "has_mesh": (native_bundle / "native_mesh_triangles.jsonl").is_file(),
-                "capture_engine": "caa_new",
-                "capture_platform": "intel_a",
-                "capture_bitness": 32,
-            },
-            "viewer_summary": {
-                "native_feature_count": _count_jsonl_records(native_bundle / "features.jsonl"),
-            },
-            "native_tree_storage": {
-                "backend": "postgresql",
-                "node_count": stored_count,
-                "complete": True,
-            },
-            "native_property_storage": {
-                "backend": "postgresql",
-                "fact_count": property_count,
-                "complete": True,
-            },
-            "native_evidence_storage": {
-                "backend": "postgresql",
-                "counts": evidence_counts,
-                "complete": True,
-            },
-        },
-    )
+    """保留旧编排入口；数据库快照逻辑统一由持久化模块承担。"""
+    await publish_native_capture(repository, revision_id, native_bundle)
 
 
-# 用途：统一列出前端会读取的原生语义 JSONL，数据库导入必须与发布清单使用同一组类型。
-NATIVE_EVIDENCE_FILES = {
-    "features": "features.jsonl",
-    "topology_entities": "topology_entities.jsonl",
-    "topology_relations": "topology_relations.jsonl",
-    "topology_bodies": "native_topology_bodies.jsonl",
-    "topology_cells": "native_topology_cells.jsonl",
-    "topology_wires": "native_topology_wires.jsonl",
-    "topology_coedges": "native_topology_coedges.jsonl",
-    "feature_topology_links": "native_feature_topology_links.jsonl",
-    "feature_dependencies": "feature_dependencies.jsonl",
-    "geometry_entities": "geometry_entities.jsonl",
-    "canonical_features": "canonical_features.jsonl",
-    "measurements": "measurements.jsonl",
-    "topology_faces": "topology_faces.jsonl",
-    "feature_geometry_links": "feature_geometry_links.jsonl",
-    "selection_index": "selection_index.json",
-}
 FEATURE_EVIDENCE_KINDS = frozenset({
     "canonical_features", "measurements", "topology_faces", "feature_geometry_links", "selection_index"
 })
-
-
-# 用途：逐行解析可选的旧新原生文件；坏记录会中止整个数据库替换事务。
-def _iter_native_jsonl(path: Path):
-    if not path.is_file():
-        return
-    with path.open("r", encoding="utf-8") as stream:
-        for line in stream:
-            if line.strip():
-                yield json.loads(line)
 
 
 # 用途：语义改为数据库供给后，把先前由浏览器执行的清单哈希检查前移到入库边界。
@@ -778,51 +673,6 @@ def _read_feature_center_solid_count(path: Path) -> int:
             record = json.loads(line)
             total += int(record.get("solid_count") or record.get("geometry_summary", {}).get("solid_count") or 0)
     return total
-
-
-def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
-    if native_bundle is None:
-        return {}
-    candidates = {
-        "manifest": "manifest.json",
-        "capture_report": "capture_report.json",
-        "reconstruction_plan": "reconstruction_plan.json",
-        "object_entities": "object_entities.jsonl",
-        "tree_occurrences": "tree_occurrences.jsonl",
-        "features": "features.jsonl",
-        "native_features": "native_features.jsonl",
-        "parameters": "parameters.jsonl",
-        "property_facts": "property_facts.jsonl",
-        "semantic_facets": "semantic_facets.jsonl",
-        "feature_dependencies": "feature_dependencies.jsonl",
-        "topology_entities": "topology_entities.jsonl",
-        "topology_relations": "topology_relations.jsonl",
-        "geometry_entities": "geometry_entities.jsonl",
-        "pmi_entities": "pmi_entities.jsonl",
-        "pmi_associations": "pmi_associations.jsonl",
-        "diagnostics": "diagnostics.jsonl",
-        "coverage": "coverage.json",
-        "capability_matrix": "capability_matrix.json",
-        "topology_bodies": "native_topology_bodies.jsonl",
-        "topology_cells": "native_topology_cells.jsonl",
-        "topology_wires": "native_topology_wires.jsonl",
-        "topology_coedges": "native_topology_coedges.jsonl",
-        "mesh_face_map": "native_mesh_face_map.jsonl",
-        "mesh_triangles": "native_mesh_triangles.jsonl",
-        "feature_results": "native_feature_results.jsonl",
-        "feature_result_cells": "native_feature_result_cells.jsonl",
-        "feature_topology_links": "native_feature_topology_links.jsonl",
-        "product_references": "product_references.jsonl",
-        "product_occurrences": "product_occurrences.jsonl",
-        "document_links": "document_links.jsonl",
-        "product_instances": "product_instances.jsonl",
-        "capabilities": "capabilities.json",
-    }
-    return {
-        key: f"native-caa/{file_name}"
-        for key, file_name in candidates.items()
-        if (native_bundle / file_name).is_file()
-    }
 
 
 # 用途：重试时只清理本任务生成物，保留上传源文件和持久化任务记录。

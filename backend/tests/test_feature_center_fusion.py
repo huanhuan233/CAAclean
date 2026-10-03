@@ -69,3 +69,19 @@ def test_stale_native_semantic_forces_review_without_discarding_geometry() -> No
     assert canonical.review_state == "needs_review"
     assert canonical.provenance["native_update_status"] == "not_up_to_date"
     assert canonical.provenance["design_geometry_agreement"] == "stale_requires_review"
+
+
+# 用途：装配实例的局部坐标未转换时，不得把局部孔轴误配到全局 STEP 面。
+def test_assembly_part_local_hole_keeps_semantics_without_false_face_mapping() -> None:
+    features = _native_features()
+    features[0]["coordinate_frame"] = "part_local"
+    features[0]["product_occurrence_ids"] = ["OCC-1"]
+    result = fuse_native_holes("PART1", _graph(), features, 0.01, "shape-hash")
+
+    canonical = result.canonical_features[0]
+    assert canonical.typed_payload["native_hole"]["diameter_mm"] == 10.0
+    assert canonical.geometry_refs.face_ids == []
+    assert canonical.review_state == "needs_review"
+    assert "INSTANCE_TRANSFORM_NOT_APPLIED" in canonical.diagnostics
+    assert result.feature_geometry_links == []
+    assert result.measurements == []

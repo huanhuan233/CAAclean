@@ -9,6 +9,28 @@ from typing import Any
 
 _WINDOWS_PATH_RE = re.compile(r"(?i)\b[a-z]:\\[^<>:\"|?*\r\n]+")
 
+NATIVE_EVIDENCE_FILES = {
+    "features": "features.jsonl",
+    "native_features": "native_features.jsonl",
+    "topology_entities": "topology_entities.jsonl",
+    "topology_relations": "topology_relations.jsonl",
+    "topology_bodies": "native_topology_bodies.jsonl",
+    "topology_cells": "native_topology_cells.jsonl",
+    "topology_wires": "native_topology_wires.jsonl",
+    "topology_coedges": "native_topology_coedges.jsonl",
+    "feature_topology_links": "native_feature_topology_links.jsonl",
+    "feature_dependencies": "feature_dependencies.jsonl",
+    "geometry_entities": "geometry_entities.jsonl",
+    "canonical_features": "canonical_features.jsonl",
+    "measurements": "measurements.jsonl",
+    "topology_faces": "topology_faces.jsonl",
+    "feature_geometry_links": "feature_geometry_links.jsonl",
+    "selection_index": "selection_index.json",
+}
+
+_TOPOLOGY_KINDS = frozenset({"body", "solid", "volume", "face", "edge", "vertex", "wire", "loop", "coedge"})
+_TOPOLOGY_ALIASES = {"lump": "solid", "oriented_edge": "coedge"}
+
 
 class CaaNewBundleError(ValueError):
     pass
@@ -23,8 +45,143 @@ class CaaNewBundleReader:
             raise CaaNewBundleError("CAA_NEW bundle manifest is missing")
         self.manifest = self._read_json("manifest.json")
         schema = str(self.manifest.get("schema_version") or "")
-        if not schema.startswith("caa_capture_"):
+        if schema not in {"caa_capture_v1", "cad_parse_mvp_v11"}:
             raise CaaNewBundleError(f"unsupported CAA_NEW schema: {schema}")
+        self.schema = schema
+        self.diagnostics: list[dict[str, str]] = []
+
+    def iter_canonical_native_features(self):
+        """Return definition-level native semantics, hiding capture projections and legacy field names."""
+        objects = {}
+        occurrences: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        facets = {}
+        if self.schema == "caa_capture_v1":
+            objects = {str(row.get("object_id")): row for row in self._read_jsonl("object_entities.jsonl")}
+            for row in self._read_jsonl("tree_occurrences.jsonl"):
+                occurrences[str(row.get("object_id") or "")].append(row)
+            facets = {str(row.get("facet_id")): row for row in self._read_jsonl("semantic_facets.jsonl")}
+        seen: set[str] = set()
+        for row in self._iter_jsonl_required("native_features.jsonl"):
+            if self.schema == "caa_capture_v1":
+                object_id = str(row.get("feature_id") or "")
+                if not object_id:
+                    raise CaaNewBundleError("native_features.jsonl: missing feature_id")
+                facet_id = str(row.get("native_feature_id") or "")
+                facet = facets.get(facet_id)
+                if facet and (str(facet.get("subject_id") or "") != object_id or
+                              str(facet.get("decoder_id") or "") != str(row.get("decoder_id") or "")):
+                    self.diagnostics.append({"code": "semantic_projection_conflict", "facet_id": facet_id,
+                                             "object_id": object_id})
+                obj = objects.get(object_id) or {}
+                placements = occurrences.get(object_id) or []
+                record = dict(row)
+                record.update({
+                    "feature_id": object_id,
+                    "object_id": object_id,
+                    "document_id": str(obj.get("document_id") or (placements[0].get("document_id") if placements else "") or ""),
+                    "occurrence_ids": sorted({str(item["occurrence_id"]) for item in placements if item.get("occurrence_id")}),
+                    "product_occurrence_ids": sorted({str(item["product_occurrence_id"]) for item in placements if item.get("product_occurrence_id")}),
+                    "update_status": str(obj.get("update_status") or row.get("update_status") or "unknown"),
+                    "source_schema": self.schema,
+                    "source_facet_id": facet_id,
+                })
+                record["coordinate_frame"] = "part_local" if record["product_occurrence_ids"] else "document"
+            else:
+                object_id = str(row.get("source_object_id") or row.get("native_feature_id") or "")
+                if not object_id:
+                    raise CaaNewBundleError("native_features.jsonl: missing source_object_id")
+                record = dict(row)
+                record.update({
+                    "feature_id": object_id,
+                    "object_id": object_id,
+                    "decoder_id": str(row.get("decoder") or ""),
+                    "decode_status": str(row.get("decoder_status") or "unknown"),
+                    "document_id": "",
+                    "occurrence_ids": [],
+                    "product_occurrence_ids": [str(row["instance_id"])] if row.get("instance_id") else [],
+                    "source_schema": self.schema,
+                    "coordinate_frame": "part_local" if row.get("instance_id") else "document",
+                })
+            if object_id in seen:
+                raise CaaNewBundleError(f"native_features.jsonl: duplicate object: {object_id}")
+            seen.add(object_id)
+            yield record
+
+    def semantic_summary(self) -> dict[str, Any]:
+        """按定义级对象计数，不把树实例或兼容投影算作新增专用特征。"""
+        summary: dict[str, Any] = {
+            "definition_count": 0, "typed_count": 0, "type_only_count": 0,
+            "generic_count": 0, "failed_count": 0, "unavailable_count": 0,
+            "typed_by_decoder": {},
+        }
+        for record in self.iter_canonical_native_features():
+            summary["definition_count"] += 1
+            level = str(record.get("decode_level") or "")
+            status = str(record.get("decode_status") or "")
+            if status in {"failed", "error", "rejected"}:
+                summary["failed_count"] += 1
+            elif level == "typed":
+                summary["typed_count"] += 1
+                decoder = str(record.get("decoder_id") or "unknown")
+                summary["typed_by_decoder"][decoder] = summary["typed_by_decoder"].get(decoder, 0) + 1
+            elif level == "type_only":
+                summary["type_only_count"] += 1
+            elif level == "generic":
+                summary["generic_count"] += 1
+            else:
+                summary["unavailable_count"] += 1
+        return summary
+
+    def native_evidence_streams(self):
+        """Expose only present capture channels; typed semantics have one canonical projection."""
+        streams = {}
+        for kind, filename in NATIVE_EVIDENCE_FILES.items():
+            if kind in {"canonical_features", "measurements", "topology_faces", "feature_geometry_links", "selection_index"}:
+                continue
+            if not (self.bundle_dir / filename).is_file():
+                continue
+            if kind == "native_features":
+                streams[kind] = self.iter_canonical_native_features()
+            elif kind == "topology_entities":
+                streams[kind] = self.iter_topology_entities()
+            elif kind == "topology_cells":
+                streams[kind] = self.iter_topology_cells()
+            else:
+                streams[kind] = self._iter_jsonl_required(filename)
+        return streams
+
+    def iter_topology_entities(self):
+        """Normalize native topology kinds without erasing the capture-side type."""
+        for row in self._iter_jsonl_required("topology_entities.jsonl"):
+            yield self._normalize_topology_kind(row)
+
+    def iter_topology_cells(self):
+        """Return cell records with the same stable kind contract as topology entities."""
+        for row in self._iter_jsonl_required("native_topology_cells.jsonl"):
+            yield self._normalize_topology_kind(row)
+
+    @staticmethod
+    def _normalize_topology_kind(row: dict[str, Any]) -> dict[str, Any]:
+        """Keep unknown source terms visible while refusing to classify them as a known CAD type."""
+        raw_kind = str(row.get("topology_kind") or row.get("kind") or row.get("topology_type") or "")
+        canonical = _TOPOLOGY_ALIASES.get(raw_kind.lower(), raw_kind.lower())
+        return {**row, "kind": canonical if canonical in _TOPOLOGY_KINDS else "unknown", "raw_topology_kind": raw_kind}
+
+    def _iter_jsonl_required(self, relative_path: str):
+        path = self.bundle_dir / relative_path
+        if not path.is_file():
+            raise CaaNewBundleError(f"required capture artifact missing: {relative_path}")
+        with path.open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise CaaNewBundleError(f"{relative_path}:{line_number}: invalid JSON") from exc
+                if not isinstance(record, dict):
+                    raise CaaNewBundleError(f"{relative_path}:{line_number}: expected object")
+                yield record
 
     def build_tree(self, *, include_supplemental: bool = False) -> dict[str, Any]:
         objects = {str(item.get("object_id")): item for item in self._read_jsonl("object_entities.jsonl")}

@@ -1,5 +1,7 @@
 # Native semantic capture and target architecture
 
+本页的 CAA 采集验证是此前执行的历史证据，不等于本轮重编或重新运行。2026-10-03 的数据库/Feature Center/前端接通、真实样件读取与未验收范围见 [端到端状态](../../docs/END_TO_END_STATUS.md)。原生专用载荷与通用 `PropertyFact` 分开入库；前端选中节点只读 PostgreSQL 详情，不以文件 JSONL 兜底。
+
 ## Module boundary
 
 `CaaSemanticPropertyExtractor::Extract` publishes existing `PropertyFact` records. It hides interface discovery, typed values, units, references, ownership and per-channel failures. The engine does not need to know composite SDK classes. Private parameter, geometry and native-attribute readers keep SDK details behind this boundary. Chinese comments explain compatibility, lifetime and unit rules.

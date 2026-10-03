@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as detail from '../modules/object-detail-panel';
 import {
   detailRowsFromRecord,
   formatDetailValue,
@@ -123,4 +124,48 @@ test('关联几何沿用真实 face、feature 和边界数据', () => {
     rows.map(row => `${row.kind}:${row.id}`),
     ['面:NF1', '面:RF1', '特征:FC1', '相邻面:AF1', '边:E1']
   );
+});
+
+test('数据库孔详情展开真实参数，保留零、false 与未知字段', () => {
+  assert.equal(typeof detail.mergeNativeDetail, 'function');
+  const feature = detail.mergeNativeDetail(
+    { feature_id: 'occurrence_1', display_name: 'Hole.1', attributes: { object_id: 'object_7' } },
+    { node_id: 'occurrence_1', revision_id: 'revision_A', object_id: 'object_7', native_feature_status: 'available',
+      native_feature: { decoder_id: 'NativeHoleDecoder', decode_level: 'typed', decode_status: 'success',
+        native_hole: { diameter_mm: 0, thread: { enabled: false, description: null }, custom_value: 'kept' } } }
+  );
+  const rows = detail.nativeSemanticParameterRows(feature);
+
+  assert.equal(feature.decoder_id, 'NativeHoleDecoder');
+  assert.equal(rows.find(row => row.key === 'diameter_mm')?.value.text, '0');
+  assert.equal(rows.find(row => row.key === 'thread.enabled')?.value.text, 'false');
+  assert.equal(rows.find(row => row.key === 'thread.description')?.value.text, '未采集 (null)');
+  assert.equal(rows.find(row => row.key === 'custom_value')?.value.text, 'kept');
+});
+
+test('type_only 详情保留类型而不制造专用参数', () => {
+  assert.equal(typeof detail.mergeNativeDetail, 'function');
+  const feature = detail.mergeNativeDetail(
+    { feature_id: 'occurrence_2', display_name: 'Fillet.1' },
+    { node_id: 'occurrence_2', native_feature_status: 'available',
+      native_feature: { decoder_id: 'NativeFilletDecoder', decode_level: 'type_only', payload_extraction_status: 'not_available' } }
+  );
+  assert.equal(feature.decode_level, 'type_only');
+  assert.deepEqual(detail.nativeSemanticParameterRows(feature), []);
+});
+
+test('专用参数保留 null 与空字符串的不同含义', () => {
+  const rows = detail.nativeSemanticParameterRows({
+    feature_id: 'O1', native_feature_parameters: { head: { diameter_mm: null, description: '' } }
+  });
+  assert.equal(rows.find(row => row.key === 'head.diameter_mm')?.value.text, '未采集 (null)');
+  assert.equal(rows.find(row => row.key === 'head.description')?.value.text, '空字符串');
+});
+
+test('属性事实读取失败不会显示成普通空值', () => {
+  const field = { property_id: 'P1', key: 'diameter', display_name: '直径', raw_value: null,
+    raw_unit: 'mm', display_value: null, display_unit: 'mm', value_type: 'number',
+    source_api: 'CAA', read_status: 'failed', authority: 'native', display_order: 0, read_only: true };
+  assert.equal(detail.nativePropertyValue(field).text, '读取失败');
+  assert.equal(detail.nativePropertyValue({ ...field, read_status: 'success', display_value: '' }).text, '空字符串');
 });

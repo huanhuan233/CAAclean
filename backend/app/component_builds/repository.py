@@ -227,6 +227,15 @@ class SqlAlchemyComponentBuildRepository:
         )
         return [row.payload for row in rows]
 
+    async def get_native_feature(self, revision_id: uuid.UUID, object_id: str) -> dict | None:
+        """Read one definition-level semantic fact for a selected tree occurrence."""
+        row = await self.session.scalar(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == "native_features",
+            CadNativeEvidence.payload["object_id"].astext == object_id,
+        ).order_by(CadNativeEvidence.ordinal).limit(1))
+        return row.payload if row else None
+
     async def list_native_dependency_candidates(self, revision_id: uuid.UUID, object_id: str) -> list[dict]:
         """在数据库端筛选选中对象的依赖关系，不把整包依赖传回每次点击。"""
         rows = await self.session.scalars(select(CadNativeEvidence).where(

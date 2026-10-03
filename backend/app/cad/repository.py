@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -18,6 +19,29 @@ def now_utc() -> datetime:
 class CadRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self._native_publish_active = False
+
+    @asynccontextmanager
+    async def native_publish_transaction(self):
+        """把树、属性、证据及完成标记作为同一 Revision 快照提交。"""
+        if self._native_publish_active:
+            raise RuntimeError("nested native publish is not supported")
+        self._native_publish_active = True
+        try:
+            yield
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        finally:
+            self._native_publish_active = False
+
+    async def _commit_native_stage(self) -> None:
+        """普通调用立即提交；快照发布期间只 flush，最终一次性提交。"""
+        if self._native_publish_active:
+            await self.session.flush()
+        else:
+            await self.session.commit()
 
     async def create_upload_revision(
         self,
@@ -90,11 +114,16 @@ class CadRepository:
         merged = dict(revision.parse_manifest or {})
         for key, value in values.items():
             if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = {**merged[key], **value}
+                combined = {**merged[key], **value}
+                if key in {"native_evidence_storage", "feature_evidence_storage"}:
+                    combined["counts"] = {
+                        **(merged[key].get("counts") or {}), **(value.get("counts") or {}),
+                    }
+                merged[key] = combined
             else:
                 merged[key] = value
         revision.parse_manifest = merged
-        await self.session.commit()
+        await self._commit_native_stage()
 
     async def replace_native_tree_entities(
         self,
@@ -132,7 +161,7 @@ class CadRepository:
                 raise ValueError(
                     f"native tree database count mismatch: expected={expected_count}, stored={stored_count}"
                 )
-            await self.session.commit()
+            await self._commit_native_stage()
             return stored_count
         except Exception:
             await self.session.rollback()
@@ -167,7 +196,7 @@ class CadRepository:
                 raise ValueError(
                     f"native property database count mismatch: expected={count}, stored={stored_count}"
                 )
-            await self.session.commit()
+            await self._commit_native_stage()
             return stored_count
         except Exception:
             await self.session.rollback()
@@ -203,7 +232,7 @@ class CadRepository:
                 if stored != count:
                     raise ValueError(f"native evidence database count mismatch: {kind} expected={count}, stored={stored}")
                 counts[kind] = stored
-            await self.session.commit()
+            await self._commit_native_stage()
             return counts
         except Exception:
             await self.session.rollback()

@@ -157,30 +157,51 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
   }
 
   if (target.kind === 'native_feature') {
-    push(context.nativeFeatureIds, target.id);
-    pushMany(context.nativeFaceIds, index?.native_feature_to_native_faces?.[target.id]);
+    const treeRecord = (resources.nativeFeatures || []).find(feature => feature.feature_id === target.id);
+    const objectId = typeof treeRecord?.attributes?.object_id === 'string' && treeRecord.attributes.object_id
+      ? treeRecord.attributes.object_id : target.id;
+    push(context.nativeFeatureIds, objectId);
+    pushMany(context.nativeFaceIds, index?.native_feature_to_native_faces?.[objectId]);
     const linked = (resources.canonicalFeatures || []).filter(feature =>
-      feature.native_feature_ids.includes(target.id)
+      feature.native_feature_ids.includes(objectId)
     );
     pushMany(
       context.recognizedFeatureIds,
       linked.map(feature => feature.feature_center_id)
     );
+    const sameShape = Boolean(index?.shape_hash && index.shape_hash === resources.featureMeshMap?.shape_hash);
+    let verifiedRange = false;
     for (const feature of linked) {
-      pushMany(context.renderFaceIds, feature.geometry_refs.face_ids);
-      pushMany(context.primitiveIds, resources.featureMeshMap?.features[feature.feature_center_id]?.mesh_primitive_ids);
+      const verification = feature.typed_payload?.geometry_verification as Record<string, unknown> | undefined;
+      const entry = resources.featureMeshMap?.features[feature.feature_center_id];
+      const verified = sameShape && feature.review_state === 'auto_verified' && verification?.status === 'verified';
+      const sameFaces = Boolean(entry && feature.geometry_refs.face_ids.length > 0 &&
+        feature.geometry_refs.face_ids.every(faceId => entry.face_ids.includes(faceId)));
+      const mapped = Boolean(entry && entry.mesh_primitive_ids.length > 0 &&
+        entry.mesh_primitive_ids.every(primitiveId => index?.primitive_to_render_face?.[primitiveId]));
+      if (sameShape && sameFaces && mapped) {
+        pushMany(context.renderFaceIds, feature.geometry_refs.face_ids);
+        pushMany(context.primitiveIds, entry?.mesh_primitive_ids);
+        verifiedRange ||= verified;
+      }
     }
-    context.mappingStatus = context.nativeFaceIds.length
-      ? 'runtime_current_revision'
-      : context.renderFaceIds.length
-        ? 'candidate'
-        : 'unavailable';
-    context.mappingAuthority = context.nativeFaceIds.length
-      ? 'native_feature_topology_links'
-      : context.renderFaceIds.length
-        ? 'canonical_feature_association'
-        : undefined;
-    if (!context.nativeFaceIds.length) diagnostics.push('NATIVE_FEATURE_FINAL_FACE_LINK_UNAVAILABLE');
+    const productOccurrenceId = treeRecord?.attributes?.product_occurrence_id;
+    const singlePart = resources.bomNodes?.length === 1 &&
+      resources.bomNodes[0].node_type === 'part' && !(resources.bomNodes[0].children || []).length;
+    if (!context.primitiveIds.length && singlePart && !productOccurrenceId) {
+      pushMany(context.primitiveIds, Object.keys(resources.faceMeshMap?.primitive_to_face || {}));
+      if (context.primitiveIds.length) diagnostics.push('FEATURE_RANGE_UNLOCATED_WHOLE_PART_PREVIEW');
+    }
+    context.mappingStatus = context.primitiveIds.length && verifiedRange ? 'exact' :
+      context.primitiveIds.length || context.nativeFaceIds.length || linked.length ? 'candidate' : 'unavailable';
+    context.mappingAuthority = context.mappingStatus === 'exact' ? 'verified_canonical_same_shape_mesh_map' :
+      context.primitiveIds.length && !context.renderFaceIds.length ? 'whole_part_preview' :
+      context.primitiveIds.length ? 'same_shape_canonical_candidate_preview' :
+      context.nativeFaceIds.length ? 'native_feature_final_face_candidate' :
+        linked.length ? 'canonical_feature_association' : undefined;
+    if (context.mappingStatus === 'candidate' && context.primitiveIds.length)
+      diagnostics.push('CANDIDATE_HIGHLIGHT_RISK');
+    if (context.mappingStatus !== 'exact') diagnostics.push('NATIVE_FEATURE_RENDER_MAPPING_NOT_VERIFIED');
   }
 
   if (target.kind === 'face') {
@@ -231,7 +252,7 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     diagnostics.push('VERTEX_OVERLAY_GEOMETRY_UNAVAILABLE');
   }
 
-  if (context.mappingStatus === 'unavailable' && context.primitiveIds.length) {
+  if (target.kind !== 'native_feature' && context.mappingStatus === 'unavailable' && context.primitiveIds.length) {
     context.mappingStatus = 'exact';
     context.mappingAuthority = context.mappingAuthority || 'selection_index';
   }
@@ -242,6 +263,15 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
 
 export function selectionPrimaryId(selection: ViewerSelection, kind: SelectionTargetKind) {
   return selection.primary?.kind === kind ? selection.primary.id : '';
+}
+
+export function projectSelectionIds(selection: ViewerSelection) {
+  const primary = selection.primary;
+  return {
+    faceId: primary?.kind === 'face' ? primary.id : '',
+    nativeFeatureId: primary?.kind === 'native_feature' ? primary.id : '',
+    recognizedFeatureId: primary?.kind === 'recognized_feature' ? primary.id : ''
+  };
 }
 
 function collectPrimitivesForFaces(context: SelectionContext, resources: SelectionResources) {
