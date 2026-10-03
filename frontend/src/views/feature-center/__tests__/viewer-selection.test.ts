@@ -49,6 +49,18 @@ test('face selection keeps the face as primary and records all feature candidate
   assert.match(selection.context.diagnostics.join(';'), /FACE_HAS_MULTIPLE_RECOGNIZED_FEATURES/);
 });
 
+test('canvas hit without Face or BOM mesh map keeps the clicked render mesh as a highlight preview', () => {
+  const selection = resolveViewerSelection(
+    { kind: 'part', id: 'PART-1', source: 'canvas', renderObjectUuid: 'MESH-UUID' },
+    { bomNodes: [] }
+  );
+
+  assert.equal(selection.primary?.kind, 'part');
+  assert.deepEqual(selection.context.renderObjectUuids, ['MESH-UUID']);
+  assert.equal(selection.context.mappingStatus, 'candidate');
+  assert.equal(selection.context.mappingAuthority, 'canvas_hit_preview');
+});
+
 test('recognized feature selection highlights mapped faces without guessing native history', () => {
   const selection = resolveViewerSelection(
     { kind: 'recognized_feature', id: 'FC-A' },

@@ -22,12 +22,14 @@ export interface SelectionTarget {
   id: string;
   label?: string;
   instancePath?: string;
+  renderObjectUuid?: string;
   source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail';
   raw?: unknown;
 }
 
 export interface SelectionContext {
   primitiveIds: string[];
+  renderObjectUuids: string[];
   renderFaceIds: string[];
   nativeFaceIds: string[];
   bomNodeIds: string[];
@@ -101,6 +103,7 @@ export interface SelectionResources {
 export function emptySelectionContext(): SelectionContext {
   return {
     primitiveIds: [],
+    renderObjectUuids: [],
     renderFaceIds: [],
     nativeFaceIds: [],
     bomNodeIds: [],
@@ -128,6 +131,7 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
   const diagnostics: string[] = [];
   const index = resources.selectionIndex;
   const topology = index?.topology;
+  if (target.source === 'canvas') push(context.renderObjectUuids, target.renderObjectUuid);
 
   if (target.kind === 'assembly' || target.kind === 'part_instance' || target.kind === 'part') {
     const node = findBomNode(resources.bomNodes || [], target.id);
@@ -256,6 +260,11 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     context.mappingStatus = 'exact';
     context.mappingAuthority = context.mappingAuthority || 'selection_index';
   }
+  if (target.source === 'canvas' && context.mappingStatus === 'unavailable' && context.renderObjectUuids.length) {
+    context.mappingStatus = 'candidate';
+    context.mappingAuthority = 'canvas_hit_preview';
+    diagnostics.push('CANVAS_HIT_PREVIEW_ONLY');
+  }
   context.diagnostics = uniqueStrings([...context.diagnostics, ...diagnostics]);
   normalizeContext(context);
   return { primary: target, context };
@@ -335,6 +344,7 @@ function pushMany(values: string[], additions: unknown) {
 
 function normalizeContext(context: SelectionContext) {
   context.primitiveIds = uniqueStrings(context.primitiveIds);
+  context.renderObjectUuids = uniqueStrings(context.renderObjectUuids);
   context.renderFaceIds = uniqueStrings(context.renderFaceIds);
   context.nativeFaceIds = uniqueStrings(context.nativeFaceIds);
   context.bomNodeIds = uniqueStrings(context.bomNodeIds);

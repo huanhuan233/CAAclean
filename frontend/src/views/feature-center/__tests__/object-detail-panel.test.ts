@@ -56,6 +56,7 @@ test('选择映射证据从 selection context 动态展开并保持新增字段�
     mappingStatus: 'exact',
     mappingAuthority: 'native',
     primitiveIds: ['p0'],
+    renderObjectUuids: [],
     renderFaceIds: ['r1', 'r2'],
     nativeFaceIds: ['n1'],
     recognizedFeatureIds: [],

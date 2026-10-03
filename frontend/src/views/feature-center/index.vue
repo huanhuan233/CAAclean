@@ -1541,6 +1541,10 @@ async function showNativeTreeNodeProperties(node: FeatureTreeNode) {
 }
 
 function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
+  selectBomSelection(node);
+}
+
+function selectBomSelection(node: Api.ComponentBuild.ViewerBomNode, canvasHit?: CadSelectionTarget) {
   selectedNativeTreeNodeId.value = '';
   selectionTarget.value = {
     source: 'catia',
@@ -1551,6 +1555,8 @@ function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
     partId: node.node_type === 'part' ? node.node_id : contract.value?.part_id,
     displayName: node.name,
     sourceRef: node.assembly_path,
+    objectUuid: canvasHit?.objectUuid,
+    primitiveId: canvasHit?.primitiveId,
     raw: node
   };
   const kind = node.node_type === 'assembly' || node.node_type === 'subassembly'
@@ -1562,7 +1568,8 @@ function selectBom(node: Api.ComponentBuild.ViewerBomNode) {
         : node.node_type === 'solid'
           ? 'solid'
           : 'part';
-  selectTarget({ kind, id: node.node_id, label: node.name, instancePath: node.assembly_path, raw: node }, 'bom');
+  selectTarget({ kind, id: node.node_id, label: node.name, instancePath: node.assembly_path,
+    renderObjectUuid: canvasHit?.objectUuid, raw: node }, canvasHit ? 'canvas' : 'bom');
 }
 
 // 用途：选择拓扑 Face 后同步反查关联 Feature，并滚动语义页签。
@@ -1653,7 +1660,8 @@ function applyVisualState() {
     ...(trusted || candidatePreview ? context.renderFaceIds : [])
   ]);
   const bomPrimitives = new Set(trusted || candidatePreview ? context.primitiveIds : []);
-  const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0;
+  const canvasObjects = new Set(context.renderObjectUuids);
+  const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0 || canvasObjects.size > 0;
   const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim();
   for (const object of pickableObjects) {
     if (!(object instanceof THREE.Mesh)) continue;
@@ -1666,7 +1674,8 @@ function applyVisualState() {
     );
     const active =
       featureFaces.has(faceId) ||
-      bomPrimitives.has(primitiveId);
+      bomPrimitives.has(primitiveId) ||
+      canvasObjects.has(object.uuid);
     const originalVisible = object.userData.cad_original_visible !== false;
     object.visible = originalVisible && (!isolated.value || !hasSelection || active);
     const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -1717,13 +1726,18 @@ function handlePointerUp(event: PointerEvent) {
     sourceRef: contract.value?.summary.source_file_name || undefined
   });
   if (target.kind === 'face' && target.faceId) {
-    selectTarget({ kind: 'face', id: target.faceId, label: target.faceId, raw: target.raw }, 'canvas');
+    selectTarget({ kind: 'face', id: target.faceId, label: target.faceId,
+      renderObjectUuid: target.objectUuid, raw: target.raw }, 'canvas');
     selectionTarget.value = target;
     return;
   }
   const root = contract.value?.bom.nodes[0];
-  if (root) selectBom(root);
-  else selectionTarget.value = target;
+  if (root) selectBomSelection(root, target);
+  else {
+    selectTarget({ kind: 'part', id: target.partId || 'CATPART', label: target.displayName,
+      renderObjectUuid: target.objectUuid, raw: target.raw }, 'canvas');
+    selectionTarget.value = target;
+  }
 }
 
 // 用途：建立共享渲染环境；STEP 和 CATPart 只更换数据适配器，不创建第二套 Viewer。
