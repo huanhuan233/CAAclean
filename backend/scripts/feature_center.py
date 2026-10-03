@@ -21,6 +21,8 @@ from app.component_builds.caa_new_bundle import CaaNewBundleReader
 from app.core.config import Settings
 from app.feature_center.bundle import FeatureCenterBundleWriter, validate_bundle
 from app.feature_center.service import build_bundle_from_parser_result
+from app.feature_center.geometry_assets import attach_geometry_assets
+from app.feature_center.topology import build_stable_topology
 from app.feature_center.step_input import StepInputError, inspect_step_input
 
 
@@ -180,21 +182,15 @@ def _write_step_curves_asset(step_path: Path, bundle_dir: Path) -> None:
     if not curves["curve_count"]:
         return
     curves_path = bundle_dir / "lightweight" / "curves.json"
-    curves_path.write_text(
-        json.dumps(curves, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    with curves_path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(json.dumps(curves, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n")
     manifest_path = bundle_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest.setdefault("output_files", {})["lightweight/curves.json"] = _fingerprint(curves_path)
     manifest.setdefault("lightweight", {})["curve_count"] = curves["curve_count"]
     manifest["lightweight"]["curve_point_count"] = curves["point_count"]
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    with manifest_path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n")
 
 
 def _revision_id(step_sha256: str) -> uuid.UUID:
@@ -211,14 +207,18 @@ async def _build(args: argparse.Namespace) -> int:
         settings = Settings()
         output = Path(args.output).resolve()
         with tempfile.TemporaryDirectory(prefix="feature-center-work-", dir=output.parent) as work:
+            brep_dir = Path(work) / "brep"
             parser_result = await run_freecad_parser(
-                Path(args.step).resolve(), _revision_id(step_info.sha256), Path(work), settings
+                Path(args.step).resolve(), _revision_id(step_info.sha256), Path(work), settings,
+                brep_dir,
             )
-        native_features = None
-        if args.native_bundle:
-            native_features = list(CaaNewBundleReader(Path(args.native_bundle).resolve()).iter_canonical_native_features())
-        bundle = build_bundle_from_parser_result(step_info, parser_result, native_features)
-        FeatureCenterBundleWriter().write(bundle, output)
+            native_features = None
+            if args.native_bundle:
+                native_features = list(CaaNewBundleReader(Path(args.native_bundle).resolve()).iter_canonical_native_features())
+            bundle = build_bundle_from_parser_result(step_info, parser_result, native_features)
+            if brep_dir.is_dir():
+                attach_geometry_assets(bundle, build_stable_topology(parser_result), parser_result["entities"], brep_dir)
+            FeatureCenterBundleWriter().write(bundle, output)
         _write_step_curves_asset(Path(args.step).resolve(), output)
         errors = validate_bundle(output)
         if errors:

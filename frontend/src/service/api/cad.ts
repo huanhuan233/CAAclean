@@ -292,6 +292,49 @@ export function fetchComponentBuildViewer(buildId: string, options?: ComponentBu
   });
 }
 
+export interface GeometrySnapshotResponse {
+  revision_id: string;
+  geometry_snapshot_id: string;
+  source: 'auxiliary_brep';
+  asset_count: number;
+  available_operations: string[];
+}
+
+export interface GeometryQueryResponse {
+  status: string;
+  values: Record<string, unknown> | null;
+  diagnostic?: string;
+  result_id?: string;
+  operation?: string;
+  source?: string;
+  geometry_snapshot_id?: string;
+  [key: string]: unknown;
+}
+
+export interface GeometryReferencePayload {
+  revision_id: string;
+  geometry_snapshot_id: string;
+  entity_id: string;
+}
+
+export function fetchGeometrySnapshot(buildId: string, options?: ComponentBuildQueryOptions) {
+  return request<GeometrySnapshotResponse>({
+    url: `/api/component-builds/${buildId}/geometry/snapshot`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function submitGeometryQuery(
+  buildId: string,
+  payload: { operation: string; references: GeometryReferencePayload[]; parameters: Record<string, unknown>; source_policy: 'auxiliary_brep' },
+  options?: ComponentBuildQueryOptions
+) {
+  return request<GeometryQueryResponse>({
+    url: `/api/component-builds/${buildId}/geometry/query`, method: 'post', data: payload,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export function fetchComponentBuildNativeTree(
   buildId: string,
   params: { include_supplemental?: boolean; parent_id?: string; offset?: number; page_size?: number } = {},

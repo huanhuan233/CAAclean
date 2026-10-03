@@ -6,6 +6,8 @@ import json
 import os
 import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -32,6 +34,7 @@ async def run_freecad_parser(
     revision_id: UUID,
     work_dir: Path,
     settings: Settings,
+    brep_dir: Path | None = None,
 ) -> dict:
     script_path = Path(settings.cad_script_dir) / "parse_step.py"
     if not script_path.exists():
@@ -39,15 +42,30 @@ async def run_freecad_parser(
     if not source_file.exists():
         raise FreeCadParserError(f"source STEP file not found: {source_file}")
 
-    work_dir.mkdir(parents=True, exist_ok=True)
-    job_path = work_dir / "job.json"
-    result_path = work_dir / "result.json"
     job = {
         "revision_id": str(revision_id),
         "source_file_path": str(source_file),
-        "result_json_path": str(result_path),
         "mesh_deflection": settings.cad_mesh_deflection,
     }
+    if brep_dir is not None:
+        job["brep_dir"] = str(brep_dir)
+    return await run_freecad_job(script_path, job, work_dir, settings, validate_parser_result)
+
+
+async def run_freecad_job(
+    script_path: Path,
+    job: dict,
+    work_dir: Path,
+    settings: Settings,
+    validator=None,
+) -> dict:
+    """Run a trusted repository script in the existing isolated FreeCAD process."""
+    if not script_path.is_file():
+        raise FreeCadParserError(f"parser script not found: {script_path}")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    job_path = work_dir / "job.json"
+    result_path = work_dir / "result.json"
+    job = {**job, "result_json_path": str(result_path)}
     job_path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
 
     env = os.environ.copy()
@@ -95,7 +113,8 @@ async def run_freecad_parser(
         process_kwargs["start_new_session"] = True
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
+    cancel_event = threading.Event() if validator is None else None
+    task = loop.run_in_executor(
         None,
         partial(
             _run_parser_process,
@@ -104,8 +123,16 @@ async def run_freecad_parser(
             stdin_payload,
             settings.freecad_timeout,
             result_path,
+            validator,
+            cancel_event,
         ),
     )
+    try:
+        return await task
+    except asyncio.CancelledError:
+        if cancel_event is not None:
+            cancel_event.set()
+        raise
 
 
 def _run_parser_process(
@@ -114,10 +141,28 @@ def _run_parser_process(
     stdin_payload: bytes | None,
     timeout: int,
     result_path: Path,
+    validator=None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     process = subprocess.Popen(command, **process_kwargs)
     try:
-        stdout, stderr = process.communicate(input=stdin_payload, timeout=timeout)
+        if cancel_event is None:
+            stdout, stderr = process.communicate(input=stdin_payload, timeout=timeout)
+        else:
+            deadline = time.monotonic() + timeout
+            while True:
+                if cancel_event.is_set():
+                    _terminate_process(process)
+                    process.communicate()
+                    raise FreeCadParserError("FreeCAD query cancelled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(input=stdin_payload, timeout=min(0.25, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    stdin_payload = None
     except subprocess.TimeoutExpired as exc:
         _terminate_process(process)
         stdout, stderr = process.communicate()
@@ -138,7 +183,8 @@ def _run_parser_process(
 
     try:
         data = json.loads(result_path.read_text(encoding="utf-8"))
-        validate_parser_result(data)
+        if validator is not None:
+            validator(data)
         return data
     except json.JSONDecodeError as exc:
         raise FreeCadParserError(f"invalid parser result JSON: {exc}") from exc

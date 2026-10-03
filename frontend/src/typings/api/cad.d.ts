@@ -501,6 +501,7 @@ declare namespace Api {
       } | null;
       feature_center: {
         available: boolean;
+        bundle_available?: boolean;
         canonical_features_url?: string | null;
         feature_geometry_links_url?: string | null;
         measurements_url?: string | null;

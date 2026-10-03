@@ -18,7 +18,8 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildNativeEvidence, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, retryComponentBuild } from '@/service/api';
+import { fetchComponentBuildNativeEvidence, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
 import { facesForFeature } from './modules/feature-center-bundle';
@@ -32,6 +33,9 @@ import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
 import { createNativeDetailLoader, loadCaaNewNativeChildPage, loadCaaNewNativeRecords, loadCaaNewNodeProperties } from './modules/caa-new-loader';
 import { mergeNativeDetail } from './modules/object-detail-panel';
+import { createMeasurementSession } from './modules/measurement-session';
+import type { MeasurementOperation } from './modules/measurement-session';
+import { createMeasurementOverlay } from './modules/measurement-overlay';
 import { nativeChildPages } from './modules/native-tree-loading';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
@@ -236,6 +240,17 @@ const featureMeshMap = ref<FeatureMeshMap | null>(null);
 const faceMeshMap = ref<FaceMeshMap | null>(null);
 const selectionIndex = ref<ViewerSelectionIndex | null>(null);
 const viewerSelection = ref<ViewerSelection>(clearViewerSelection());
+const geometrySnapshot = ref<GeometrySnapshotResponse | null>(null);
+const geometryDetail = ref<GeometryQueryResponse | null>(null);
+const geometryDetailLoading = ref(false);
+const geometryDetailError = ref('');
+let geometryDetailGeneration = 0;
+let geometryDetailController: AbortController | null = null;
+const measurementSession = createMeasurementSession(async (buildId, payload, signal) => {
+  const response = await submitGeometryQuery(buildId, payload, { signal, silent: true });
+  if (response.error || !response.data) throw response.error || new Error('数据库测量请求失败');
+  return response.data;
+});
 const selectedFeatureId = ref('');
 const selectedNativeFeatureId = ref('');
 const nativeDetailLoader = createNativeDetailLoader();
@@ -282,6 +297,7 @@ const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
 });
 
 let scene: THREE.Scene | null = null;
+let measurementOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let renderer: THREE.WebGLRenderer | null = null;
 let controls: OrbitControls | null = null;
@@ -312,6 +328,14 @@ const canIsolate = computed(() => {
 const canExplode = computed(() => contract.value?.bom.assembly_mode === 'assembly' && explodableGroupCount.value > 1);
 const selectionContext = computed(() => viewerSelection.value.context || emptySelectionContext());
 const primarySelection = computed(() => viewerSelection.value.primary);
+const measurementSeedPoint = computed(() => {
+  if (primarySelection.value?.kind !== 'face' || primarySelection.value.source !== 'canvas' ||
+      selectionContext.value.mappingStatus !== 'exact' ||
+      selectionTarget.value?.faceId !== primarySelection.value.id) return null;
+  const hit = selectionTarget.value.raw as { point?: THREE.Vector3 } | undefined;
+  const point = hit?.point;
+  return point ? [point.x, point.y, point.z] : null;
+});
 const viewerProgress = computed(() => Math.min(100, Math.max(0, Number(contract.value?.progress ?? 0))));
 const hasBackendFailure = computed(() =>
   Boolean(contract.value && (contract.value.status === 'failed' || contract.value.error_code || contract.value.error_message))
@@ -977,6 +1001,9 @@ let progressiveNativeTreeBuildId = '';
 
 async function loadBuildBundle(buildId: string) {
   clearStatusPoll();
+  geometrySnapshot.value = null;
+  measurementSession.clear();
+  measurementOverlay?.clear();
   loading.value = shouldBlockWorkspaceDuringLoad(Boolean(contract.value));
   errorText.value = '';
   explicitError.value = false;
@@ -1079,6 +1106,7 @@ async function loadBuildBundle(buildId: string) {
     await loadStepCurves(viewerAsset.curves_url, manifest);
     await loadOptionalSemanticAssets(result.data);
     clearSelection();
+    void loadGeometrySnapshot(buildId);
     saveRecentFeatureCenterBuildId(window.localStorage, buildId);
   } catch (error) {
     explicitError.value = true;
@@ -1086,6 +1114,71 @@ async function loadBuildBundle(buildId: string) {
   } finally {
     loading.value = false;
   }
+}
+
+async function loadGeometrySnapshot(buildId: string) {
+  const response = await fetchGeometrySnapshot(buildId, { signal: assetRequestController.signal, silent: true });
+  if (contract.value?.part_id !== buildId) return;
+  geometrySnapshot.value = response.error ? null : response.data || null;
+  if (geometrySnapshot.value) void loadGeometryDetail();
+}
+
+function currentGeometryReference(): GeometryReferencePayload | null {
+  const selected = primarySelection.value;
+  const snapshot = geometrySnapshot.value;
+  if (!selected || !snapshot) return null;
+  if (!['face', 'edge', 'vertex', 'solid'].includes(selected.kind)) return null;
+  if (selected.source === 'canvas' && selectionContext.value.mappingStatus !== 'exact') return null;
+  if (sceneMode.value === 'explode') return null;
+  return { revision_id: snapshot.revision_id, geometry_snapshot_id: snapshot.geometry_snapshot_id,
+    entity_id: selected.id };
+}
+
+async function loadGeometryDetail() {
+  const generation = ++geometryDetailGeneration;
+  geometryDetailController?.abort();
+  geometryDetailController = new AbortController();
+  geometryDetail.value = null;
+  geometryDetailError.value = '';
+  const reference = currentGeometryReference();
+  const buildId = contract.value?.part_id;
+  if (!reference || !buildId) return;
+  geometryDetailLoading.value = true;
+  try {
+    const response = await submitGeometryQuery(buildId, {
+      operation: 'detail', references: [reference], parameters: {}, source_policy: 'auxiliary_brep'
+    }, { signal: geometryDetailController.signal, silent: true });
+    if (generation !== geometryDetailGeneration) return;
+    if (response.error || !response.data) throw response.error || new Error('几何详情读取失败');
+    geometryDetail.value = response.data;
+    if (response.data.status !== 'success') geometryDetailError.value = response.data.diagnostic || response.data.status;
+  } catch (reason) {
+    if (generation === geometryDetailGeneration)
+      geometryDetailError.value = reason instanceof Error ? reason.message : '几何详情读取失败';
+  } finally {
+    if (generation === geometryDetailGeneration) geometryDetailLoading.value = false;
+  }
+}
+
+function startMeasurement(operation: Exclude<MeasurementOperation, 'idle'>) {
+  measurementSession.start(operation);
+  const reference = currentGeometryReference();
+  if (reference) measurementSession.capture(reference);
+  detailsOpen.value = true;
+}
+
+async function calculateMeasurement(parameters: Record<string, unknown>) {
+  const buildId = contract.value?.part_id;
+  if (!buildId) return;
+  measurementSession.parameters.value = parameters;
+  await measurementSession.calculate(buildId);
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+  measurementOverlay?.show(measurementSession.result.value, color);
+}
+
+function clearMeasurement() {
+  measurementSession.clear();
+  measurementOverlay?.clear();
 }
 
 // 用途：复用已保存源文件重新排队，不要求用户再次上传 CATPart/STEP。
@@ -1136,7 +1229,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   // 原生树和拓扑只读取已经完整入库的记录；旧包需重新导入，绝不从 JSONL 兜底。
   if (viewerContract.status === 'ready' && !loadedNativeTreeFromApi)
     throw new Error('原生树尚未完整入 PostgreSQL，请重新导入该模型');
-  if (viewerContract.status === 'ready' && viewerContract.feature_center.available) {
+  if (viewerContract.status === 'ready' && viewerContract.feature_center.bundle_available) {
     const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
     if (!buildId) throw new Error('缺少构建任务编号');
     const indexRows = hasStoredEvidence(viewerContract, 'selection_index', true)
@@ -1149,7 +1242,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   if (viewerContract.status === 'ready' && viewerContract.source_format === 'CATPART') {
     const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
     if (!buildId) throw new Error('缺少构建任务编号');
-    if (viewerContract.feature_center.available) {
+    if (viewerContract.feature_center.bundle_available) {
       const faces = hasStoredEvidence(viewerContract, 'topology_faces', true)
         ? await loadNativeEvidencePages(buildId, 'topology_faces') : [];
       topologyFaces.value = faces as unknown as TopologyFaceRecord[];
@@ -1358,6 +1451,12 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     }
   );
   projectSelectionForExistingTemplate();
+  const reference = currentGeometryReference();
+  if (reference && measurementSession.operation.value !== 'idle') {
+    measurementSession.capture(reference);
+    measurementOverlay?.clear();
+  }
+  void loadGeometryDetail();
   if (target.kind === 'native_feature') void loadSelectedNativeDetail(target.id);
   else {
     nativeDetailLoader.cancel();
@@ -1418,6 +1517,11 @@ function findBomNode(nodes: Api.ComponentBuild.ViewerBomNode[], nodeId: string):
 
 // 用途：清除语义选择但保持相机、透明、隔离和剖切状态。
 function clearSelection() {
+  geometryDetailGeneration += 1;
+  geometryDetailController?.abort();
+  geometryDetail.value = null;
+  geometryDetailLoading.value = false;
+  geometryDetailError.value = '';
   nativeDetailLoader.cancel();
   selectedNativeDetail.value = null;
   nativeDetailError.value = '';
@@ -1750,6 +1854,7 @@ function initViewer() {
   const container = containerRef.value;
   if (!container || scene) return;
   scene = new THREE.Scene();
+  measurementOverlay = createMeasurementOverlay(scene);
   scene.background = new THREE.Color('#f7f8fb');
   camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1_000_000);
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -2056,9 +2161,21 @@ function topologyKindLabel(kind: SelectionTarget['kind']) {
 
 watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
-watch(() => themeStore.themeColor, applyVisualState);
+watch(() => themeStore.themeColor, () => {
+  applyVisualState();
+  if (measurementSession.result.value) {
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+    measurementOverlay?.show(measurementSession.result.value, color);
+  }
+});
 onMounted(async () => {
-  themeObserver = new MutationObserver(applyVisualState);
+  themeObserver = new MutationObserver(() => {
+    applyVisualState();
+    if (measurementSession.result.value) {
+      const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+      measurementOverlay?.show(measurementSession.result.value, color);
+    }
+  });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
   const savedWidth = Number(window.localStorage.getItem('feature-center:navigation-width'));
   if (Number.isFinite(savedWidth)) navigationWidth.value = Math.min(420, Math.max(288, savedWidth));
@@ -2073,6 +2190,9 @@ onMounted(async () => {
   await loadBuildBundle(buildId);
 });
 onBeforeUnmount(() => {
+  measurementSession.clear();
+  measurementOverlay?.clear();
+  geometryDetailController?.abort();
   nativeDetailLoader.clear();
   themeObserver?.disconnect();
   clearStatusPoll();
@@ -2131,7 +2251,7 @@ onBeforeUnmount(() => {
         >
           剖切
         </button>
-        <button type="button" disabled title="测量工作流尚未接入当前 Viewer">测量</button>
+        <button type="button" :disabled="!geometrySnapshot || sceneMode === 'explode'" :title="sceneMode === 'explode' ? '请先恢复原始装配位置' : !geometrySnapshot ? '当前版本没有可信 B-Rep 快照' : '打开测量'" @click="startMeasurement('distance')">测量</button>
         <button type="button" class="details-trigger" @click="toggleDetails">详情</button>
       </div>
     </header>
@@ -2478,6 +2598,16 @@ onBeforeUnmount(() => {
           :mapping-available="mappingAvailable"
           :isolated="isolated"
           :transparent="transparent"
+          :geometry-detail="geometryDetail"
+          :geometry-detail-loading="geometryDetailLoading"
+          :geometry-detail-error="geometryDetailError"
+          :measurement-operation="measurementSession.operation.value"
+          :measurement-references="measurementSession.references.value"
+          :measurement-result="measurementSession.result.value"
+          :measurement-loading="measurementSession.loading.value"
+          :measurement-error="measurementSession.error.value"
+          :geometry-snapshot-available="Boolean(geometrySnapshot) && sceneMode !== 'explode'"
+          :measurement-seed-point="measurementSeedPoint"
           @close="toggleDetails"
           @copy="copyDetailValue"
           @highlight="applyVisualState"
@@ -2486,6 +2616,9 @@ onBeforeUnmount(() => {
           @retry-native-detail="primarySelection?.kind === 'native_feature' && loadSelectedNativeDetail(primarySelection.id)"
           @toggle-isolated="isolated = !isolated"
           @toggle-transparent="transparent = !transparent"
+          @start-measurement="startMeasurement"
+          @calculate-measurement="calculateMeasurement"
+          @clear-measurement="clearMeasurement"
         />
       </aside>
     </main>

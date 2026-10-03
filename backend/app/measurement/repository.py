@@ -3,15 +3,56 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CadEntity, CadFeatureCandidate, CadMeasurement
+from app.db.models import CadEntity, CadFeatureCandidate, CadMeasurement, ComponentBuild, CadModelRevision
 from app.measurement.schemas import EntityFact, FeatureCandidateFact, MeasurementFact, stable_uuid
 
 
 class MeasurementRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def get_build_context(self, build_id: uuid.UUID):
+        build = await self.session.get(ComponentBuild, build_id)
+        if build is None or build.cad_revision_id is None:
+            return None
+        revision = await self.session.get(CadModelRevision, build.cad_revision_id)
+        if revision is None:
+            return None
+        root = await self.session.scalar(
+            select(CadEntity).where(CadEntity.revision_id == revision.id,
+                                    CadEntity.parent_entity_id.is_(None)).limit(1)
+        )
+        return build, revision, root
+
+    async def save_interactive_result(self, fact: MeasurementFact) -> CadMeasurement:
+        row = self._measurement_row(fact)
+        existing = await self.session.get(CadMeasurement, row.id)
+        if existing is not None:
+            return existing
+        try:
+            self.session.add(row)
+            await self.session.commit()
+            return row
+        except IntegrityError:
+            await self.session.rollback()
+            existing = await self.session.get(CadMeasurement, row.id)
+            if existing is not None:
+                return existing
+            raise
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def list_interactive_results(self, revision_id: uuid.UUID, limit: int = 50) -> list[CadMeasurement]:
+        result = await self.session.execute(
+            select(CadMeasurement).where(CadMeasurement.revision_id == revision_id,
+                                         CadMeasurement.algorithm_version == "interactive.p1.v1")
+            .order_by(CadMeasurement.created_at.desc()).limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def list_entity_facts(self, revision_id: uuid.UUID) -> list[EntityFact]:
         result = await self.session.execute(select(CadEntity).where(CadEntity.revision_id == revision_id).order_by(CadEntity.tree_path))

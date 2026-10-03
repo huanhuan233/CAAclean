@@ -716,6 +716,7 @@ def parse(job: dict) -> dict:
         )
 
         face_entities: list[tuple[str, object]] = []
+        solid_entities: list[tuple[str, object]] = []
         edge_entities: list[tuple[str, object]] = []
         vertex_entities: list[tuple[str, object]] = []
         wire_entities: list[tuple[str, object]] = []
@@ -769,6 +770,7 @@ def parse(job: dict) -> dict:
                     bounding_box=bbox(solid),
                 )
                 relation(relations, revision_id, object_id, solid_id, "has_solid")
+                solid_entities.append((solid_id, solid))
 
                 solid_edge_index = TopologyIndex(solid.Edges)
                 solid_vertex_index = TopologyIndex(solid.Vertexes)
@@ -979,6 +981,14 @@ def parse(job: dict) -> dict:
                 if left_hashes.intersection(edge.hashCode() for edge in right_face.Edges):
                     relation(relations, revision_id, left_id, right_id, "adjacent_to")
                     relation(relations, revision_id, right_id, left_id, "adjacent_to")
+
+        # Feature Center 请求时，在同一次导入中保存精确子形状。按源 UUID 命名，
+        # 后续 Bundle 写出阶段才绑定稳定 ID；不依赖重导入后的 FaceN 顺序。
+        if job.get("brep_dir"):
+            export_dir = Path(job["brep_dir"])
+            export_dir.mkdir(parents=True, exist_ok=True)
+            for entity_id, shape in solid_entities + face_entities + edge_entities + vertex_entities:
+                shape.exportBrep(str(export_dir / (entity_id + ".brep")))
 
         return {
             "revision_id": revision_id,

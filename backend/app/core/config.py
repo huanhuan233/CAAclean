@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     cad_max_upload_mb: int = 200
     cad_max_concurrency: int = 1
     cad_mesh_deflection: float = 0.1
+    geometry_tolerance_min_mm: float = 0.0001
+    geometry_tolerance_max_mm: float = 0.1
+    geometry_angle_tolerance_deg: float = 0.01
     cad_stale_job_minutes: int = 30
     # CATIA Worker 默认禁用；本机 Windows 开发环境需在 backend/.env 显式选择 local_process 或 http。
     catia_worker_mode: str = "disabled"

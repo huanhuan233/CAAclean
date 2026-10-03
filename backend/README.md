@@ -108,3 +108,15 @@ python backend/scripts/test_real_freecad.py "D:\3D解析\XMS06-DN80.stp"
 - `POST /api/cad/revisions/{revision_id}/exports/v2`
 
 `/exports/v2` 当前仅预留接口，返回 501，不实现业务联动。
+# P1 几何查询
+
+Feature Center 在解析 STEP 的同一次 FreeCAD 导入中保存稳定 ID 对应的 B-Rep 子形状。重新处理后，先调用 `GET /api/component-builds/{build_id}/geometry/snapshot` 取得 Revision/快照；再以 `POST /api/component-builds/{build_id}/geometry/query` 提交 `detail`、`distance`、`angle`、`section` 或 `local_thickness`。请求只包含稳定实体 ID 和数值参数，不包含文件路径。交互结果通过同前缀的 `/results` 查询，保存在既有 `cad_measurements` 表，自动事实重算不会清除 `interactive.p1.v1` 记录。旧 Bundle 缺 B-Rep 快照时需从已有 STEP 明确生成新派生结果；本操作不会自动重采 CATIA。
+
+在本机 `3dcad` 环境运行合成件集成测试：
+
+```powershell
+$env:FREECAD_CMD='D:\anaconda\envs\3dcad\Library\bin\freecadcmd.exe'
+& 'D:\anaconda\envs\3dcad\python.exe' -m pytest tests/test_freecad_geometry_query.py -q
+```
+
+接口状态、支持组合和真实限制详见 `docs/development/P1_ACCEPTANCE.md`。

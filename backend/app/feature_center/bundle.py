@@ -80,12 +80,18 @@ class FeatureCenterBundleWriter:
                     ("selection_index.json", "selection_index"),
                 ):
                     if key in bundle.lightweight:
-                        lightweight_dir.joinpath(file_name).write_text(
-                            json.dumps(bundle.lightweight[key], ensure_ascii=False, sort_keys=True,
-                                       indent=2, allow_nan=False) + "\n",
-                            encoding="utf-8",
-                            newline="\n",
-                        )
+                        with lightweight_dir.joinpath(file_name).open("w", encoding="utf-8", newline="\n") as output:
+                            output.write(json.dumps(bundle.lightweight[key], ensure_ascii=False, sort_keys=True,
+                                                    indent=2, allow_nan=False) + "\n")
+
+            if bundle.geometry_index:
+                geometry_dir = staging / "geometry"
+                geometry_dir.mkdir()
+                for stable_id, source_path in bundle.geometry_assets.items():
+                    shutil.copyfile(source_path, geometry_dir / f"{stable_id}.brep")
+                with geometry_dir.joinpath("index.json").open("w", encoding="utf-8", newline="\n") as output:
+                    output.write(json.dumps(bundle.geometry_index, ensure_ascii=False, sort_keys=True,
+                                            indent=2, allow_nan=False) + "\n")
 
             output_files = {
                 path.relative_to(staging).as_posix(): _file_fingerprint(path)
@@ -118,12 +124,9 @@ class FeatureCenterBundleWriter:
                 },
                 "output_files": output_files,
             }
-            (staging / "manifest.json").write_text(
-                json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2,
-                           allow_nan=False) + "\n",
-                encoding="utf-8",
-                newline="\n",
-            )
+            with (staging / "manifest.json").open("w", encoding="utf-8", newline="\n") as output:
+                output.write(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2,
+                                        allow_nan=False) + "\n")
             validation_errors = validate_bundle(staging)
             if validation_errors:
                 raise ValueError(

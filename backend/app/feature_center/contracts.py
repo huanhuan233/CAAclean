@@ -113,6 +113,8 @@ class FeatureCenterBundle:
     readiness_probes: list[dict[str, Any]] = field(default_factory=list)
     performance: dict[str, Any] = field(default_factory=dict)
     lightweight: dict[str, Any] = field(default_factory=dict)
+    geometry_index: dict[str, Any] = field(default_factory=dict)
+    geometry_assets: dict[str, Any] = field(default_factory=dict)
     vision_enabled: bool = False
     degraded: bool = False
     feature_recognition_scope: str = "native_hole_guided_only"

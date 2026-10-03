@@ -5,6 +5,9 @@ import type { CanonicalFeatureRecord } from './feature-center-bundle';
 import type { FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
 import type { DetailPanelLayout } from './detail-panel';
 import type { SelectionContext, SelectionTarget } from './viewer-selection';
+import type { GeometryQueryResponse, GeometryReferencePayload } from '@/service/api/cad';
+import type { MeasurementOperation } from './measurement-session';
+import MeasurementPanel from './MeasurementPanel.vue';
 import {
   type DetailField,
   type GeometryLink,
@@ -49,6 +52,16 @@ const props = defineProps<{
   mappingAvailable: boolean;
   isolated: boolean;
   transparent: boolean;
+  geometryDetail: GeometryQueryResponse | null;
+  geometryDetailLoading: boolean;
+  geometryDetailError: string;
+  measurementOperation: MeasurementOperation;
+  measurementReferences: GeometryReferencePayload[];
+  measurementResult: GeometryQueryResponse | null;
+  measurementLoading: boolean;
+  measurementError: string;
+  geometrySnapshotAvailable: boolean;
+  measurementSeedPoint: number[] | null;
 }>();
 
 const emit = defineEmits<{
@@ -60,6 +73,9 @@ const emit = defineEmits<{
   openNativeFace: [faceId: string];
   copy: [value: string];
   retryNativeDetail: [];
+  startMeasurement: [operation: Exclude<MeasurementOperation, 'idle'>];
+  calculateMeasurement: [parameters: Record<string, unknown>];
+  clearMeasurement: [];
 }>();
 
 const sourceTypeLabel = computed(() => {
@@ -82,7 +98,8 @@ const statusValue = computed(() => formatDetailValue(props.contract?.status || '
 const evidenceRows = computed(() => selectionEvidenceRows(props.primarySelection, props.selectionContext));
 
 const featureRows = computed<DetailField[]>(() => {
-  if (props.primarySelection?.kind === 'face' && props.selectedFace) return faceRows(props.selectedFace);
+  if (props.primarySelection?.kind === 'face') return props.selectedFace ? faceRows(props.selectedFace) : [];
+  if (['edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
   if (props.selectedNativeFeature) {
     return nativeFeatureRows(
       props.selectedNativeFeature,
@@ -97,6 +114,7 @@ const featureRows = computed<DetailField[]>(() => {
 });
 
 const parameterRows = computed<ParameterField[]>(() => {
+  if (['face', 'edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
   if (props.primarySelection?.kind === 'native_feature') {
     return props.nativeDetail ? nativeSemanticParameterRows(props.selectedNativeFeature) : [];
   }
@@ -110,6 +128,13 @@ const parameterRows = computed<ParameterField[]>(() => {
     }))
   );
 });
+
+const geometryDetailRows = computed<DetailField[]>(() =>
+  props.geometryDetail?.status === 'success'
+    ? detailRowsFromRecord(props.geometryDetail.values as Record<string, unknown> | null,
+        ['kind', 'bounding_box'])
+    : []
+);
 
 const nativePropertyRows = computed<DetailField[]>(() => {
   if (props.primarySelection?.kind !== 'native_feature') return [];
@@ -197,19 +222,19 @@ const DetailSection = defineComponent({
     embedded: {
       type: Boolean,
       default: false
-    }
+    },
+    collapsed: { type: Boolean, default: false }
   },
   setup(props) {
     const SvgIconComponent = resolveComponent('SvgIcon');
     return () =>
       h('section', { class: ['detail-section-v2', { embedded: props.embedded }] }, [
-        h('details', { open: !props.embedded }, [
+        h('details', { open: !props.embedded && !props.collapsed }, [
           props.title
             ? h('summary', { class: 'section-heading' }, [
                 h('span', { class: 'section-title' }, [
                   h(SvgIconComponent, { icon: props.icon }),
                   h('span', props.title),
-                  h('span', { class: 'section-count' }, String(props.rows.length))
                 ]),
                 h(SvgIconComponent, { class: 'section-chevron', icon: 'lucide:chevron-down' })
               ])
@@ -272,15 +297,10 @@ const DetailSection = defineComponent({
         </section>
         <div v-else class="compact-empty">当前对象不存在</div>
 
-        <DetailSection
-          v-if="primarySelection"
-          title="选择映射证据"
-          icon="lucide:square-plus"
-          :rows="evidenceRows"
-          empty-text="暂无映射证据"
-        />
-
-        <DetailSection title="特征详情" icon="lucide:square-plus" :rows="featureRows" empty-text="暂无特征详情" />
+        <DetailSection v-if="geometryDetailRows.length" title="几何参数" icon="lucide:hexagon" :rows="geometryDetailRows" empty-text="暂无几何参数" />
+        <section v-if="geometryDetailLoading" class="compact-empty">正在读取 B-Rep 几何…</section>
+        <section v-if="geometryDetailError" class="compact-empty">{{ geometryDetailError }}</section>
+        <DetailSection v-if="featureRows.length" :title="primarySelection?.kind === 'face' ? '面拓扑' : '对象属性'" icon="lucide:square-plus" :rows="featureRows" empty-text="暂无对象属性" />
 
         <section v-if="primarySelection?.kind === 'native_feature' && selectionContext.mappingStatus === 'candidate'" class="detail-section-v2">
           <ElTag type="warning">候选高亮，有误选风险；不是确认的建模历史归属</ElTag>
@@ -296,13 +316,12 @@ const DetailSection = defineComponent({
         </section>
         <DetailSection v-if="primarySelection?.kind === 'native_feature' && nativeDetail" title="CATIA 属性" icon="lucide:square-plus" :rows="nativePropertyRows" empty-text="未采集到通用属性" />
 
-        <section class="detail-section-v2">
+        <section v-if="primarySelection?.kind === 'native_feature' || primarySelection?.kind === 'recognized_feature'" class="detail-section-v2">
           <details open>
             <summary class="section-heading">
               <span class="section-title">
                 <SvgIcon icon="lucide:hexagon" />
                 <span>特征参数</span>
-                <span class="section-count">{{ parameterRows.length }}</span>
               </span>
               <SvgIcon class="section-chevron" icon="lucide:chevron-down" />
             </summary>
@@ -330,6 +349,19 @@ const DetailSection = defineComponent({
             </div>
           </details>
         </section>
+
+        <MeasurementPanel
+          :operation="measurementOperation"
+          :references="measurementReferences"
+          :result="measurementResult"
+          :loading="measurementLoading"
+          :error="measurementError"
+          :snapshot-available="geometrySnapshotAvailable"
+          :seed-point="measurementSeedPoint"
+          @start="emit('startMeasurement', $event)"
+          @calculate="emit('calculateMeasurement', $event)"
+          @clear="emit('clearMeasurement')"
+        />
 
         <section class="detail-section-v2">
           <details>
@@ -402,6 +434,7 @@ const DetailSection = defineComponent({
             <DetailSection title="" :rows="advancedRows" empty-text="暂无高级拓扑信息" embedded />
           </ElCollapseItem>
         </ElCollapse>
+        <DetailSection v-if="primarySelection" title="来源与诊断" icon="lucide:info" :rows="evidenceRows" empty-text="暂无映射证据" collapsed />
       </div>
     </ElScrollbar>
   </div>
@@ -654,12 +687,11 @@ const DetailSection = defineComponent({
 
 .field-label {
   min-width: 0;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--el-text-color-secondary);
   font-size: 14px;
   line-height: 22px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .field-value {
@@ -673,12 +705,11 @@ const DetailSection = defineComponent({
   display: inline-block;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--el-text-color-primary);
   font-size: 14px;
   line-height: 22px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .field-value-text.empty {

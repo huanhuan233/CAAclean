@@ -441,6 +441,7 @@ class ComponentBuildService:
             } if viewer_asset_ready else None,
             "feature_center": {
                 "available": bool(feature_center.get("available")),
+                "bundle_available": bool(feature_center.get("bundle_available") or feature_center.get("topology_faces")),
                 "mapping_available": bool(feature_center.get("mapping_available")),
                 "feature_face_mapping_count": int(feature_center.get("feature_face_mapping_count") or 0),
                 "canonical_features_url": asset_base + feature_center["canonical_features"]

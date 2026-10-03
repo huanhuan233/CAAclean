@@ -67,13 +67,13 @@
         "物理属性、几何测量、惯量和包围盒"
       ],
       "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
-      "current_implementation": "app/measurement; app/feature_center/topology.py",
-      "verification_status": "not_run",
+      "current_implementation": "app/measurement; app/feature_center/topology.py; app/feature_center/geometry_assets.py; freecad_scripts/measure_geometry.py; Feature Center 测量面板",
+      "verification_status": "partial_automated_tested",
       "phase": "P1",
       "fixtures": [
         "FX-REAL-01"
       ],
-      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+      "gap": "P1 距离、夹角、截面、局部厚度通过合成 B-Rep 自动测试；真实 CATIA、装配实例、物理属性和惯量仍未逐项验收"
     },
     {
       "requirement_id": "F03",

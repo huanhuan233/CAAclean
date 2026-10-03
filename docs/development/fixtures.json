@@ -100,7 +100,7 @@
       "requirements": [
         "F02"
       ],
-      "availability": "missing_input",
+      "availability": "synthetic_tested",
       "sha256": null,
       "description": "单零件基础实体"
     },
@@ -135,12 +135,12 @@
       "coordinates": null,
       "instances": null,
       "known_features": [],
-      "expected_value": null,
-      "expected_value_source": null,
+      "expected_value": "z=2 mm 截面净面积 200-4π mm²，1 个区域、2 条边界",
+      "expected_value_source": "backend/freecad_scripts/create_geometry_query_fixtures.py + backend/tests/test_freecad_geometry_query.py",
       "requirements": [
         "F02"
       ],
-      "availability": "missing_input",
+      "availability": "synthetic_tested",
       "sha256": null,
       "description": "带孔平面区域"
     },
@@ -155,12 +155,12 @@
       "coordinates": null,
       "instances": null,
       "known_features": [],
-      "expected_value": null,
-      "expected_value_source": null,
+      "expected_value": "局部法向厚度 4 mm",
+      "expected_value_source": "backend/freecad_scripts/create_geometry_query_fixtures.py + backend/tests/test_freecad_geometry_query.py",
       "requirements": [
         "F02"
       ],
-      "availability": "missing_input",
+      "availability": "synthetic_tested",
       "sha256": null,
       "description": "厚度已知的板"
     },
@@ -175,12 +175,12 @@
       "coordinates": null,
       "instances": null,
       "known_features": [],
-      "expected_value": null,
-      "expected_value_source": null,
+      "expected_value": "空腔上壁局部法向厚度 2 mm，不跨空腔累加",
+      "expected_value_source": "backend/freecad_scripts/create_geometry_query_fixtures.py + backend/tests/test_freecad_geometry_query.py",
       "requirements": [
         "F02"
       ],
-      "availability": "missing_input",
+      "availability": "synthetic_tested",
       "sha256": null,
       "description": "空腔或多段材料反例"
     },
