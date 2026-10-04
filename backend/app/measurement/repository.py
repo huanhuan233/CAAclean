@@ -49,7 +49,7 @@ class MeasurementRepository:
     async def list_interactive_results(self, revision_id: uuid.UUID, limit: int = 50) -> list[CadMeasurement]:
         result = await self.session.execute(
             select(CadMeasurement).where(CadMeasurement.revision_id == revision_id,
-                                         CadMeasurement.algorithm_version == "interactive.p1.v1")
+                                         CadMeasurement.algorithm_version.in_(["interactive.p1.v1", "interactive.p1.v2"]))
             .order_by(CadMeasurement.created_at.desc()).limit(limit)
         )
         return list(result.scalars().all())

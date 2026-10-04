@@ -87,6 +87,7 @@ def build_bundle_from_parser_result(
             "brep_parser_version": parser_result.get("parser_version", "unknown"),
             "brep_kernel": parser_result.get("kernel_name", "OpenCascade"),
             "brep_kernel_version": parser_result.get("kernel_version", "unknown"),
+            "mesh_deflection_mm": parser_result.get("mesh_deflection", 0.1),
             "step_schema": step_info.step_schema,
         },
         algorithms={

@@ -60,7 +60,8 @@ async def test_interactive_result_uses_snapshot_and_does_not_replace_automatic_f
     result = await service.query_geometry(build_id, request, Settings(cad_work_dir=tmp_path))
     assert result["status"] == "success"
     assert result["result_id"] == str(repo.facts[0].id)
-    assert repo.facts[0].algorithm_version == "interactive.p1.v1"
+    assert repo.facts[0].algorithm_version == "interactive.p1.v2"
+    assert result["response_schema_version"] == "geometry_query_v2"
     assert repo.facts[0].source_entity_ids == []
     assert len(calls) == 1
     stale = {**request, "references": [{**request["references"][0], "geometry_snapshot_id": "old"}, request["references"][1]]}

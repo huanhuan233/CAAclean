@@ -71,7 +71,8 @@ class MeasurementService:
                     "diagnostic": "revision has no persisted scope entity for measurement"}
         tolerance = self._effective_tolerance(bundle_root, settings)
         job = {"operation": operation, "asset_paths": [str(path) for path in paths],
-               "asset_kinds": kinds, "parameters": parameters, "tolerance_mm": tolerance}
+               "asset_kinds": kinds, "parameters": parameters, "tolerance_mm": tolerance,
+               "display_deflection_mm": snapshot.mesh_deflection_mm}
         try:
             with tempfile.TemporaryDirectory(prefix="geometry-query-", dir=bundle_root.parent) as work:
                 result = await run_freecad_job(Path(settings.cad_script_dir) / "measure_geometry.py",
@@ -82,9 +83,10 @@ class MeasurementService:
         result.update({"revision_id": str(revision.id), "geometry_snapshot_id": snapshot.snapshot_id,
                        "operation": operation, "references": references, "parameters": parameters,
                        "source": "auxiliary_brep", "tolerance_mm": tolerance,
-                       "algorithm_version": "interactive.p1.v1", "coordinate_system": "part_local"})
+                       "algorithm_version": "interactive.p1.v2", "response_schema_version": "geometry_query_v2",
+                       "coordinate_system": "part_local"})
         if operation != "detail":
-            fact_id = stable_uuid(revision.id, "interactive.p1.v1", operation, {
+            fact_id = stable_uuid(revision.id, "interactive.p1.v2", operation, {
                 "snapshot": snapshot.snapshot_id, "references": references, "parameters": parameters,
                 "tolerance": tolerance})
             fact = MeasurementFact(
@@ -92,11 +94,12 @@ class MeasurementService:
                 feature_id=None, measurement_type=operation,
                 raw_value=result, normalized_value=result.get("values") or {},
                 unit=result.get("unit"), source_entity_ids=[], method="freecad_brep_query",
-                confidence=0.0, algorithm_version="interactive.p1.v1",
+                confidence=0.0, algorithm_version="interactive.p1.v2",
                 metadata={"source": "auxiliary_brep", "status": result["status"],
                           "geometry_snapshot_id": snapshot.snapshot_id, "references": references,
                           "parameters": parameters, "diagnostic": result.get("diagnostic"),
                           "kernel": result.get("kernel"), "kernel_version": result.get("kernel_version"),
+                          "freecad_version": result.get("freecad_version"),
                           "tolerance_mm": tolerance},
             )
             await self.repository.save_interactive_result(fact)

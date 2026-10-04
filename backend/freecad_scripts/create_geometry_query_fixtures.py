@@ -27,11 +27,15 @@ def main():
         "hollow_top": max(hollow.Faces, key=lambda face: face.CenterOfMass.z),
         "point_a": Part.Vertex(FreeCAD.Vector(0, 0, 0)),
         "point_b": Part.Vertex(FreeCAD.Vector(3, 4, 0)),
+        "point_near": Part.Vertex(FreeCAD.Vector(0.00005, 0, 0)),
         "point_outside": Part.Vertex(FreeCAD.Vector(30, 5, 4)),
         "finite_edge": Part.makeLine(FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(1, 0, 0)),
         "edge_point": Part.Vertex(FreeCAD.Vector(3, 1, 0)),
         "edge_x": Part.makeLine(FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(1, 0, 0)),
         "edge_y": Part.makeLine(FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 1, 0)),
+        "quarter_arc": Part.makeCircle(2, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), 0, 90),
+        "cylinder_side": next(face for face in Part.makeCylinder(2, 5).Faces
+                              if type(face.Surface).__name__ == "Cylinder"),
     }
     for name, shape in shapes.items():
         shape.exportBrep(str(output / (name + ".brep")))

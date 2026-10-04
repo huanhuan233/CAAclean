@@ -1163,7 +1163,7 @@ async function loadGeometryDetail() {
 function startMeasurement(operation: Exclude<MeasurementOperation, 'idle'>) {
   measurementSession.start(operation);
   const reference = currentGeometryReference();
-  if (reference) measurementSession.capture(reference);
+  if (reference) measurementSession.capture(reference, measurementSeedPoint.value);
   detailsOpen.value = true;
 }
 
@@ -1453,7 +1453,7 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
   projectSelectionForExistingTemplate();
   const reference = currentGeometryReference();
   if (reference && measurementSession.operation.value !== 'idle') {
-    measurementSession.capture(reference);
+    measurementSession.capture(reference, measurementSeedPoint.value);
     measurementOverlay?.clear();
   }
   void loadGeometryDetail();
@@ -2608,6 +2608,7 @@ onBeforeUnmount(() => {
           :measurement-error="measurementSession.error.value"
           :geometry-snapshot-available="Boolean(geometrySnapshot) && sceneMode !== 'explode'"
           :measurement-seed-point="measurementSeedPoint"
+          :measurement-seed-points="measurementSession.seedPoints.value"
           @close="toggleDetails"
           @copy="copyDetailValue"
           @highlight="applyVisualState"

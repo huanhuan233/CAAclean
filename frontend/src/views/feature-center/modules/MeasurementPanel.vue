@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import type { GeometryQueryResponse, GeometryReferencePayload } from '@/service/api/cad';
 import type { MeasurementOperation } from './measurement-session';
+import { anglePointParameters, parseGeometryPoint } from './measurement-parameters';
 
 const props = defineProps<{
   operation: MeasurementOperation;
@@ -11,6 +12,7 @@ const props = defineProps<{
   error: string;
   snapshotAvailable: boolean;
   seedPoint: number[] | null;
+  seedPoints: (number[] | null)[];
 }>();
 const emit = defineEmits<{
   start: [operation: Exclude<MeasurementOperation, 'idle'>];
@@ -19,6 +21,12 @@ const emit = defineEmits<{
 }>();
 
 const pointText = ref('');
+const anglePointAText = ref('');
+const anglePointBText = ref('');
+const pointEdited = ref(false);
+const angleEditedA = ref(false);
+const angleEditedB = ref(false);
+const planeOriginEdited = ref(false);
 const planeOriginText = ref('');
 const planeNormalText = ref('0, 0, 1');
 const orientation = ref<'directed' | 'unoriented'>('unoriented');
@@ -28,6 +36,10 @@ watch(() => props.operation, mode => {
   planeOriginText.value = mode === 'section' ? seed : '';
   planeNormalText.value = '0, 0, 1';
   orientation.value = 'unoriented';
+  pointEdited.value = false;
+  angleEditedA.value = false;
+  angleEditedB.value = false;
+  planeOriginEdited.value = false;
 });
 watch(() => props.seedPoint, point => {
   if (!point || point.length !== 3) return;
@@ -35,6 +47,11 @@ watch(() => props.seedPoint, point => {
   if (props.operation === 'local_thickness') pointText.value = formatted;
   if (props.operation === 'section') planeOriginText.value = formatted;
 });
+watch(() => props.seedPoints, points => {
+  const formatted = (point: number[] | null | undefined) => point?.map(value => Number(value.toFixed(4))).join(', ') || '';
+  if (!angleEditedA.value) anglePointAText.value = formatted(points[0]);
+  if (!angleEditedB.value) anglePointBText.value = formatted(points[1]);
+}, { deep: true });
 const requiredCount = computed(() => ['distance', 'angle'].includes(props.operation) ? 2 : 1);
 const ready = computed(() => props.operation !== 'idle' && props.references.length === requiredCount.value);
 const valueRows = computed(() => {
@@ -49,25 +66,33 @@ const valueRows = computed(() => {
     key, label, text: `${typeof values[key] === 'number' ? Number(values[key]).toFixed(4) : values[key]} ${unit}`.trim()
   }));
 });
-
-function parsePoint(text: string): number[] | null {
-  const values = text.split(/[，,\s]+/u).filter(Boolean).map(Number);
-  return values.length === 3 && values.every(Number.isFinite) ? values : null;
-}
+const intersectionText = computed(() => {
+  const values = props.result?.values;
+  if (!values || values.distance_mm === undefined) return '';
+  if (values.intersection_status === 'not_evaluated')
+    return values.within_tolerance ? '距离在容差内；相交未判定' : '相交未判定';
+  if ('intersects' in values) return '旧结果的 intersects 含义为距离阈值，不能证明相交';
+  return '';
+});
 
 function calculate() {
   if (!ready.value) return;
   if (props.operation === 'angle') {
-    emit('calculate', { orientation: orientation.value });
+    const parameters = anglePointParameters(orientation.value, [
+      { text: anglePointAText.value, seed: props.seedPoints[0], edited: angleEditedA.value },
+      { text: anglePointBText.value, seed: props.seedPoints[1], edited: angleEditedB.value }
+    ]);
+    if (!parameters) return;
+    emit('calculate', parameters);
   } else if (props.operation === 'section') {
-    const origin = parsePoint(planeOriginText.value);
-    const normal = parsePoint(planeNormalText.value);
+    const origin = !planeOriginEdited.value && props.seedPoint ? props.seedPoint : parseGeometryPoint(planeOriginText.value);
+    const normal = parseGeometryPoint(planeNormalText.value);
     if (!origin || !normal) return;
     emit('calculate', { origin, normal });
   } else if (props.operation === 'local_thickness') {
-    const point = parsePoint(pointText.value);
+    const point = !pointEdited.value && props.seedPoint ? props.seedPoint : parseGeometryPoint(pointText.value);
     if (!point) return;
-    emit('calculate', { point });
+    emit('calculate', pointEdited.value || !props.seedPoint ? { point } : { seed_point: point });
   } else emit('calculate', {});
 }
 </script>
@@ -90,11 +115,16 @@ function calculate() {
       <label v-if="operation === 'angle'">角度定义
         <select v-model="orientation"><option value="unoriented">无向最小角</option><option value="directed">有向角</option></select>
       </label>
+      <template v-if="operation === 'angle'">
+        <p class="measurement-hint">曲线或曲面需在对应对象上指定求值点；显示种子由后端投影核验。</p>
+        <label>A 求值点 X, Y, Z<ElInput v-model="anglePointAText" placeholder="曲线/曲面必填" @input="angleEditedA = true" /></label>
+        <label>B 求值点 X, Y, Z<ElInput v-model="anglePointBText" placeholder="曲线/曲面必填" @input="angleEditedB = true" /></label>
+      </template>
       <template v-if="operation === 'section'">
-        <label>截面原点 X, Y, Z<ElInput v-model="planeOriginText" placeholder="0, 0, 0" /></label>
+        <label>截面原点 X, Y, Z<ElInput v-model="planeOriginText" placeholder="0, 0, 0" @input="planeOriginEdited = true" /></label>
         <label>截面法向 X, Y, Z<ElInput v-model="planeNormalText" placeholder="0, 0, 1" /></label>
       </template>
-      <label v-if="operation === 'local_thickness'">面内测量点 X, Y, Z<ElInput v-model="pointText" placeholder="输入真实面上的点" /></label>
+      <label v-if="operation === 'local_thickness'">面内测量点 X, Y, Z<ElInput v-model="pointText" placeholder="输入真实面上的点" @input="pointEdited = true" /></label>
       <div class="measurement-actions">
         <ElButton size="small" type="primary" :loading="loading" :disabled="!ready" @click="calculate">{{ result ? '重新计算' : '计算' }}</ElButton>
         <ElButton size="small" @click="emit('clear')">取消</ElButton>
@@ -103,6 +133,7 @@ function calculate() {
       <div v-if="result" class="measurement-result">
         <span>状态：{{ result.status }}</span>
         <div v-for="row in valueRows" :key="row.key" class="measurement-row"><span>{{ row.label }}</span><strong>{{ row.text }}</strong></div>
+        <span v-if="intersectionText">{{ intersectionText }}</span>
         <span v-if="result.result_id">结果 ID：{{ result.result_id }}</span>
         <details><summary>来源与诊断</summary><span>{{ result.source || '辅助 B-Rep' }} · {{ result.diagnostic || '无诊断' }}</span></details>
       </div>

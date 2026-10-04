@@ -79,6 +79,6 @@ async def geometry_result(build_id: UUID, result_id: UUID,
     if context is None:
         raise HTTPException(status_code=404, detail={"code": "build_not_found"})
     row = await service.repository.get_measurement(result_id)
-    if row is None or row.revision_id != context[1].id or row.algorithm_version != "interactive.p1.v1":
+    if row is None or row.revision_id != context[1].id or row.algorithm_version not in {"interactive.p1.v1", "interactive.p1.v2"}:
         raise HTTPException(status_code=404, detail={"code": "result_not_found"})
     return {"result_id": str(row.id), **row.raw_value}

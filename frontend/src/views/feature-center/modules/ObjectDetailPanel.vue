@@ -62,6 +62,7 @@ const props = defineProps<{
   measurementError: string;
   geometrySnapshotAvailable: boolean;
   measurementSeedPoint: number[] | null;
+  measurementSeedPoints: (number[] | null)[];
 }>();
 
 const emit = defineEmits<{
@@ -358,6 +359,7 @@ const DetailSection = defineComponent({
           :error="measurementError"
           :snapshot-available="geometrySnapshotAvailable"
           :seed-point="measurementSeedPoint"
+          :seed-points="measurementSeedPoints"
           @start="emit('startMeasurement', $event)"
           @calculate="emit('calculateMeasurement', $event)"
           @clear="emit('clearMeasurement')"

@@ -47,3 +47,14 @@ def test_query_contract_rejects_fallback_and_wrong_arity():
     with pytest.raises(ValueError, match="invalid_input"):
         validate_query("section", [{"entity_id": "S"}], {"origin": [0, 0, 0], "normal": [0, 0, 0]}, "auxiliary_brep")
     assert validate_query("distance", [{"entity_id": "A"}, {"entity_id": "B"}], {}, "auxiliary_brep") == "distance"
+
+
+@pytest.mark.parametrize("parameters", [
+    {"origin": None, "normal": [0, 0, 1]},
+    {"origin": [0, 0, 0], "normal": None},
+    {"origin": [0, 0, 0], "normal": [float("nan"), 0, 1]},
+    {"origin": [0, 0, 0], "normal": [0, 0, 0]},
+])
+def test_section_rejects_invalid_plane_without_type_error(parameters):
+    with pytest.raises(ValueError, match="invalid_input"):
+        validate_query("section", [{"entity_id": "S"}], parameters, "auxiliary_brep")

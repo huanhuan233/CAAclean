@@ -58,6 +58,7 @@ def attach_geometry_assets(
         "shape_hash": bundle.shape_hash,
         "kernel": bundle.runtime.get("brep_kernel"),
         "kernel_version": bundle.runtime.get("brep_kernel_version"),
+        "mesh_deflection_mm": bundle.runtime.get("mesh_deflection_mm", 0.1),
         "assets": assets,
     }
     bundle.geometry_assets = source_paths

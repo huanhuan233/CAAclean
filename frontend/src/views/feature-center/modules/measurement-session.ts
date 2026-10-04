@@ -14,6 +14,7 @@ type QueryFunction = (buildId: string, payload: QueryPayload, signal: AbortSigna
 export function createMeasurementSession(query: QueryFunction) {
   const operation = ref<MeasurementOperation>('idle');
   const references = ref<GeometryReferencePayload[]>([]);
+  const seedPoints = ref<(number[] | null)[]>([]);
   const parameters = ref<Record<string, unknown>>({});
   const result = ref<GeometryQueryResponse | null>(null);
   const loading = ref(false);
@@ -32,6 +33,7 @@ export function createMeasurementSession(query: QueryFunction) {
     cancel();
     operation.value = 'idle';
     references.value = [];
+    seedPoints.value = [];
     parameters.value = {};
     result.value = null;
     error.value = '';
@@ -43,11 +45,12 @@ export function createMeasurementSession(query: QueryFunction) {
     if (next === 'angle') parameters.value = { orientation: 'unoriented' };
   }
 
-  function capture(reference: GeometryReferencePayload) {
+  function capture(reference: GeometryReferencePayload, seedPoint: number[] | null = null) {
     if (operation.value === 'idle') return;
     cancel();
     const max = operation.value === 'distance' || operation.value === 'angle' ? 2 : 1;
     references.value = [...references.value, reference].slice(-max);
+    seedPoints.value = [...seedPoints.value, seedPoint ? [...seedPoint] : null].slice(-max);
     result.value = null;
     error.value = '';
   }
@@ -82,5 +85,5 @@ export function createMeasurementSession(query: QueryFunction) {
     }
   }
 
-  return { operation, references, parameters, result, loading, error, start, capture, calculate, cancel, clear };
+  return { operation, references, seedPoints, parameters, result, loading, error, start, capture, calculate, cancel, clear };
 }
