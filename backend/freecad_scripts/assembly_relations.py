@@ -156,6 +156,45 @@ def orthogonal_plate_overlap(left, right, tolerance, minimum_fraction):
             "minimum_fraction": minimum_fraction, "rule_version": "customer.lap.orthogonal_plate.v1"}
 
 
+def orthogonal_plate_butt(left, right, tolerance):
+    """Confirmed coplanar end-face contact for a narrow rectangular plate subclass."""
+    boxes = [shape.BoundBox for shape in (left, right)]
+    bounds = [[(box.XMin, box.XMax), (box.YMin, box.YMax), (box.ZMin, box.ZMax)] for box in boxes]
+    dimensions = [[upper - lower for lower, upper in item] for item in bounds]
+    for shape, sizes in zip((left, right), dimensions):
+        if (len(shape.Faces) != 6 or not shape.isClosed() or not shape.isValid() or
+            any(type(face.Surface).__name__ != "Plane" for face in shape.Faces) or
+            any(size <= tolerance for size in sizes) or
+            abs(shape.Volume - math.prod(sizes)) > max(tolerance ** 3, shape.Volume * 1e-8)):
+            return None
+    thin_axes = [min(range(3), key=lambda axis: sizes[axis]) for sizes in dimensions]
+    if thin_axes[0] != thin_axes[1]:
+        return None
+    thin = thin_axes[0]
+    if any(sizes[thin] >= min(sizes[axis] for axis in range(3) if axis != thin) * 0.5
+           for sizes in dimensions):
+        return None
+    if (abs(bounds[0][thin][0] - bounds[1][thin][0]) > tolerance or
+        abs(bounds[0][thin][1] - bounds[1][thin][1]) > tolerance):
+        return None
+    end_axes = [axis for axis in range(3) if axis != thin and
+                (abs(bounds[0][axis][1] - bounds[1][axis][0]) <= tolerance or
+                 abs(bounds[1][axis][1] - bounds[0][axis][0]) <= tolerance)]
+    if len(end_axes) != 1:
+        return None
+    end = end_axes[0]
+    width = next(axis for axis in range(3) if axis not in (thin, end))
+    shared_width = max(0.0, min(bounds[0][width][1], bounds[1][width][1]) -
+                       max(bounds[0][width][0], bounds[1][width][0]))
+    if shared_width <= tolerance:
+        return None
+    return {"subclass": "coplanar_orthogonal_plate_end_contact", "joint_kind": "butt",
+            "status": "confirmed", "contact_area_mm2": shared_width * dimensions[0][thin],
+            "contact_normal_axis": "XYZ"[end], "plate_thickness_axis": "XYZ"[thin],
+            "opposed_normals": True, "rule_version": "customer.butt.orthogonal_plate.v1",
+            "functional_role_status": "needs_review"}
+
+
 def evaluate_pair(left, right, tolerance, minimum_lap_fraction=0.5):
     distance, witnesses, _ = left.distToShape(right)
     if not math.isfinite(distance) or not witnesses:
@@ -185,8 +224,9 @@ def evaluate_pair(left, right, tolerance, minimum_lap_fraction=0.5):
             if contact_area > 0:
                 result["actual_contact_area_mm2"] = contact_area
                 result["contact_region_count"] = region_count
-                result["joint_classification"] = orthogonal_plate_overlap(left, right, tolerance,
-                                                                             minimum_lap_fraction)
+                result["joint_classification"] = (orthogonal_plate_overlap(left, right, tolerance,
+                                                                              minimum_lap_fraction) or
+                                                  orthogonal_plate_butt(left, right, tolerance))
             return result
         volume = float(overlap.Volume)
         result["interference_volume_mm3"] = volume
@@ -203,8 +243,9 @@ def evaluate_pair(left, right, tolerance, minimum_lap_fraction=0.5):
                 result["contact_kind"] = "face_contact"
                 result["actual_contact_area_mm2"] = contact_area if contact_area > 0 else area
                 result["contact_region_count"] = region_count if contact_area > 0 else len(overlap.Faces)
-                result["joint_classification"] = orthogonal_plate_overlap(left, right, tolerance,
-                                                                             minimum_lap_fraction)
+                result["joint_classification"] = (orthogonal_plate_overlap(left, right, tolerance,
+                                                                              minimum_lap_fraction) or
+                                                  orthogonal_plate_butt(left, right, tolerance))
             elif any(edge.Length > tolerance for edge in overlap.Edges):
                 result["contact_kind"] = "line_contact"
             elif overlap.Vertexes:
@@ -249,7 +290,7 @@ def run(job):
                             "solid_a": left["solid_id"], "solid_b": right["solid_id"], **relation})
     return {"status": "success", "relations": records, "excluded_pair_count": excluded,
             "evaluated_pair_count": len(records), "coordinate_system": "step_world",
-            "source": "auxiliary_brep", "algorithm_version": "assembly.p6a.v1",
+            "source": "auxiliary_brep", "algorithm_version": "assembly.p6c.v2",
             "diagnostics": {"load_ms": round(context.load_ms, 3),
                             "compute_ms": round((time.perf_counter() - started) * 1000, 3),
                             "loaded_shapes": context.loaded_shapes, "pair_count": len(records)},

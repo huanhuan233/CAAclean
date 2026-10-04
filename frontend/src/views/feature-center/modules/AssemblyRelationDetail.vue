@@ -6,8 +6,9 @@ const props = defineProps<{ record: AssemblyEvidenceRecord; group: 'relations' |
 const title = computed(() => {
   if (props.group === 'connections') return ({ fastener: '紧固件', seal: '密封', bond: '胶接' }[props.record.kind || ''] || '连接定义');
   if (props.group === 'booleans') return '派生布尔';
-  return props.record.joint_classification && typeof props.record.joint_classification === 'object'
-    ? '装配关系 · 搭接' : '装配空间关系';
+  const joint = props.record.joint_classification as Record<string, unknown> | undefined;
+  return joint?.joint_kind === 'lap' ? '装配关系 · 搭接'
+    : joint?.joint_kind === 'butt' ? '装配关系 · 对接' : '装配空间关系';
 });
 const summary = computed(() => {
   const row = props.record;

@@ -22,7 +22,7 @@ from app.measurement.geometry_snapshot import GeometrySnapshot
 from app.measurement.repository import MeasurementRepository
 
 
-ALGORITHM_VERSION = "assembly.p6c.v1"
+ALGORITHM_VERSION = "assembly.p6c.v2"
 
 
 class AssemblyAnalysisService:

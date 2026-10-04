@@ -23,6 +23,9 @@ function rowId(record: AssemblyEvidenceRecord): string {
 function rowTitle(record: AssemblyEvidenceRecord): string {
   if (group.value === 'connections') return ({ fastener: '紧固件', seal: '密封', bond: '胶接' }[record.kind || ''] || '连接定义');
   if (group.value === 'booleans') return '派生布尔';
+  const joint = record.joint_classification as Record<string, unknown> | undefined;
+  if (joint?.joint_kind === 'lap') return joint.status === 'confirmed' ? '搭接' : '搭接候选';
+  if (joint?.joint_kind === 'butt') return '对接';
   return ({ face_contact: '面接触', interference: '实体干涉', positive_gap: '正间隙',
     line_contact: '线接触', point_contact: '点接触' }[record.contact_kind || ''] || '空间关系');
 }
