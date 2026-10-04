@@ -1,6 +1,7 @@
 ﻿#include "caa/CaaFtaExtractor.h"
 #include "caa/CaaGuards.h"
 #include "caa/CaaPropertyEvidence.h"
+#include "caa/CaaFtaTypedReader.h"
 
 #include <CATDocument.h>
 #include <CATITPSComponent.h>
@@ -17,6 +18,10 @@
 #include <CATIAlias.h>
 #include <CATIProduct.h>
 #include <CATILinkableObject.h>
+#include <CATMathPlane.h>
+#include <CATMathPoint.h>
+#include <CATMathVector.h>
+#include <CATI3DCamera.h>
 #include <CATITPSText.h>
 #include <CATITPSFlagNote.h>
 #include <CATITPSNoa.h>
@@ -24,6 +29,7 @@
 #include <CATUnicodeString.h>
 #include <CATTPSStatus.h>
 #include <sstream>
+#include <map>
 #include <vector>
 
 namespace cadcapture {
@@ -63,7 +69,7 @@ static std::string ReadAlias(IUnknown* object)
   return "";
 }
 
-static void AddHierarchyChild(ReconstructionPackage& package, CaptureIdRegistry& ids,
+static std::string AddHierarchyChild(ReconstructionPackage& package, CaptureIdRegistry& ids,
                               const PmiEntity& parent, const char* kind,
                               const char* api, IUnknown* object, long index)
 {
@@ -86,6 +92,91 @@ static void AddHierarchyChild(ReconstructionPackage& package, CaptureIdRegistry&
   link.association_kind = "contains";
   link.read_status = "available";
   package.pmi_associations.push_back(link);
+  return child.pmi_id;
+}
+
+static IUnknown* NativeIdentity(IUnknown* object)
+{
+  if (!object) return 0;
+  IUnknown* identity = 0;
+  try { object->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&identity)); }
+  catch (...) { identity = 0; }
+  if (identity) identity->Release();
+  return identity;
+}
+
+static std::string Triple(double x, double y, double z)
+{
+  std::ostringstream out;
+  out.precision(17);
+  out << x << "," << y << "," << z;
+  return out.str();
+}
+
+static void ReadViewPlane(CATITPSView* view, PmiEntity& entity)
+{
+  CATMathPlane* plane = 0;
+  try
+  {
+    if (FAILED(view->GetMathPlane(&plane)) || !plane) { entity.coordinate_frame_status = "unavailable"; return; }
+    CATMathPoint origin;
+    CATMathVector x_axis, y_axis, normal;
+    plane->GetOrigin(origin);
+    plane->GetFirstDirection(x_axis);
+    plane->GetSecondDirection(y_axis);
+    plane->GetNormal(normal);
+    entity.plane_origin = Triple(origin.GetX(), origin.GetY(), origin.GetZ());
+    entity.plane_x_axis = Triple(x_axis.GetX(), x_axis.GetY(), x_axis.GetZ());
+    entity.plane_y_axis = Triple(y_axis.GetX(), y_axis.GetY(), y_axis.GetZ());
+    entity.plane_normal = Triple(normal.GetX(), normal.GetY(), normal.GetZ());
+    entity.coordinate_frame_status = "document_local_plane";
+    delete plane;
+  }
+  catch (...) { delete plane; entity.coordinate_frame_status = "exception"; }
+}
+
+static void ReadCaptureCamera(CATITPSCapture* capture, PmiEntity& entity)
+{
+  CATI3DCamera* camera = 0;
+  try
+  {
+    if (SUCCEEDED(capture->GetCamera(&camera)) && camera)
+    {
+      entity.camera_status = "native_camera_reference_unresolved";
+      camera->Release();
+    }
+    else entity.camera_status = "unavailable";
+  }
+  catch (...) { if (camera) camera->Release(); entity.camera_status = "exception"; }
+}
+
+static void LinkAnnotationMembers(CATITPSList* members, const std::string& owner_id,
+                                  const char* role,
+                                  const std::map<IUnknown*, std::string>& annotations,
+                                  ReconstructionPackage& package)
+{
+  if (!members) return;
+  unsigned int count = 0;
+  if (FAILED(members->Count(&count))) return;
+  for (unsigned int i = 0; i < count && i < 100000; ++i)
+  {
+    CATITPSComponent* component = 0;
+    if (FAILED(members->Item(i, &component)) || !component) continue;
+    CaaInterfaceGuard<CATITPSComponent> guard(component);
+    const std::map<IUnknown*, std::string>::const_iterator match = annotations.find(NativeIdentity(component));
+    if (match == annotations.end())
+    {
+      package.diagnostics.push_back(MakeDiagnostic("warning", "tps_capture_member_unresolved", owner_id,
+        "A native view/capture member was not found in the set annotation list", "fta_extractor"));
+      continue;
+    }
+    PmiAssociation link;
+    link.pmi_id = owner_id;
+    link.target_id = match->second;
+    link.association_kind = role;
+    link.read_status = "available";
+    package.pmi_associations.push_back(link);
+  }
 }
 
 static void ReadSetOwner(CATITPSSet* set_interface, CATDocument* scan_document,
@@ -242,6 +333,7 @@ static void AppendFtaSemantic(CATITPSComponent* component,
   entity.component_index = component_index + 1;
   entity.read_status = component ? "partial" : "unavailable";
   entity.component_kind = "unknown_tps_component";
+  entity.native_alias = ReadAlias(component);
   entity.value_source = "typed_caa_public_tps_component";
   if (!component)
   {
@@ -260,7 +352,7 @@ static void AppendFtaSemantic(CATITPSComponent* component,
   {
     CaaInterfaceGuard<CATITPS> tps_guard(tps);
     entity.supported_interface_keys.push_back("CATITPS");
-    entity.component_kind = "tps";
+    if (entity.component_kind == "unknown_tps_component") entity.component_kind = "tps";
   }
 
   CATITPSSemanticValidity* semantic = 0;
@@ -320,12 +412,24 @@ static void AppendFtaSemantic(CATITPSComponent* component,
     package.diagnostics.push_back(MakeDiagnostic("warning", "tps_semantic_probe_exception",
       entity.fta_semantic_id, "Semantic probe failed; independently captured text is retained", "fta_extractor"));
   }
+  try { ReadFtaTypedFields(component, entity); }
+  catch (...)
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "tps_typed_read_exception",
+      entity.fta_semantic_id, "Typed field read failed; other annotation evidence is retained", "fta_extractor"));
+  }
   // 支持接口只证明可查询，不能据此宣称语义或拓扑已经完整。
   if (entity.annotation_text_status == "available" || entity.validation_text_status == "success")
     entity.read_status = "partial";
   else if (!entity.supported_interface_keys.empty())
     entity.read_status = "interface_only";
   package.fta_semantics.push_back(entity);
+  PmiAssociation member;
+  member.pmi_id = set_entity.pmi_id;
+  member.target_id = entity.fta_semantic_id;
+  member.association_kind = "contains_annotation";
+  member.read_status = "available";
+  package.pmi_associations.push_back(member);
 }
 
 bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
@@ -424,6 +528,9 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
       package.diagnostics.push_back(MakeDiagnostic("warning", "tps_set_owner_unresolved", pmi.pmi_id,
         "Set reference product could not be matched to a unique captured document", "fta_extractor"));
 
+    std::vector<std::string> view_ids;
+    std::vector<std::string> capture_ids;
+    std::map<IUnknown*, std::string> annotations_by_identity;
     CATITPSViewList* views = 0;
     try
     {
@@ -432,15 +539,19 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
         CaaInterfaceGuard<CATITPSViewList> guard(views);
         unsigned int count = 0;
         if (SUCCEEDED(views->Count(&count)))
+        {
+          view_ids.resize(count);
           for (unsigned int v = 0; v < count; ++v)
           {
             CATITPSView* view = 0;
             if (SUCCEEDED(views->Item(v, &view)) && view)
             {
               CaaInterfaceGuard<CATITPSView> view_guard(view);
-              AddHierarchyChild(package, ids, pmi, "fta_view", "CATITPSSet.GetViews", view, v);
+              view_ids[v] = AddHierarchyChild(package, ids, pmi, "fta_view", "CATITPSSet.GetViews", view, v);
+              ReadViewPlane(view, package.pmi.back());
             }
           }
+        }
         else pmi.read_status = "partial";
       }
     }
@@ -454,15 +565,19 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
         CaaInterfaceGuard<CATITPSCaptureList> guard(captures);
         unsigned int count = 0;
         if (SUCCEEDED(captures->Count(&count)))
+        {
+          capture_ids.resize(count);
           for (unsigned int c = 0; c < count; ++c)
           {
             CATITPSCapture* capture = 0;
             if (SUCCEEDED(captures->Item(c, &capture)) && capture)
             {
               CaaInterfaceGuard<CATITPSCapture> capture_guard(capture);
-              AddHierarchyChild(package, ids, pmi, "fta_capture", "CATITPSSet.GetCaptures", capture, c);
+              capture_ids[c] = AddHierarchyChild(package, ids, pmi, "fta_capture", "CATITPSSet.GetCaptures", capture, c);
+              ReadCaptureCamera(capture, package.pmi.back());
             }
           }
+        }
         else pmi.read_status = "partial";
       }
     }
@@ -484,7 +599,11 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
           if (SUCCEEDED(tps_list->Item(tps_index, &tps_component)) && tps_component)
           {
             CaaInterfaceGuard<CATITPSComponent> tps_component_guard(tps_component);
-            try { AppendFtaSemantic(tps_component, pmi, static_cast<long>(tps_index), ids, package); }
+            try
+            {
+              AppendFtaSemantic(tps_component, pmi, static_cast<long>(tps_index), ids, package);
+              annotations_by_identity[NativeIdentity(tps_component)] = SemanticId(pmi.pmi_id, static_cast<long>(tps_index) + 1);
+            }
             catch (...)
             {
               pmi.read_status = "partial";
@@ -510,6 +629,54 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
                                                    "CATITPSSet::GetTPSs raised an exception",
                                                    "fta_extractor"));
     }
+
+    // Membership is read from each native view/capture, never copied from set geometry.
+    CATITPSViewList* member_views = 0;
+    try
+    {
+      if (SUCCEEDED(set_interface->GetViews(&member_views)) && member_views)
+      {
+        CaaInterfaceGuard<CATITPSViewList> guard(member_views);
+        for (unsigned int v = 0; v < view_ids.size(); ++v)
+        {
+          if (view_ids[v].empty()) continue;
+          CATITPSView* view = 0;
+          if (FAILED(member_views->Item(v, &view)) || !view) continue;
+          CaaInterfaceGuard<CATITPSView> view_guard(view);
+          CATITPSList* members = 0;
+          if (SUCCEEDED(view->GetTPSs(&members)) && members)
+          {
+            CaaInterfaceGuard<CATITPSList> member_guard(members);
+            LinkAnnotationMembers(members, view_ids[v], "view_contains_annotation",
+                                  annotations_by_identity, package);
+          }
+        }
+      }
+    }
+    catch (...) { pmi.read_status = "partial"; }
+    CATITPSCaptureList* member_captures = 0;
+    try
+    {
+      if (SUCCEEDED(set_interface->GetCaptures(&member_captures)) && member_captures)
+      {
+        CaaInterfaceGuard<CATITPSCaptureList> guard(member_captures);
+        for (unsigned int c = 0; c < capture_ids.size(); ++c)
+        {
+          if (capture_ids[c].empty()) continue;
+          CATITPSCapture* capture = 0;
+          if (FAILED(member_captures->Item(c, &capture)) || !capture) continue;
+          CaaInterfaceGuard<CATITPSCapture> capture_guard(capture);
+          CATITPSList* members = 0;
+          if (SUCCEEDED(capture->GetTPSs(&members)) && members)
+          {
+            CaaInterfaceGuard<CATITPSList> member_guard(members);
+            LinkAnnotationMembers(members, capture_ids[c], "capture_contains_annotation",
+                                  annotations_by_identity, package);
+          }
+        }
+      }
+    }
+    catch (...) { pmi.read_status = "partial"; }
 
     CATITPSGeometryList* geometry_list = 0;
     try

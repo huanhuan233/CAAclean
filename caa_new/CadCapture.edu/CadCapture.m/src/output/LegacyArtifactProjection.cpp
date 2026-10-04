@@ -766,7 +766,23 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                   << JsonQuote("validation_text") << ":" << JsonQuote(entity.validation_text) << ","
                   << JsonQuote("validation_text_status") << ":" << JsonQuote(entity.validation_text_status) << ","
                   << JsonQuote("semantic_check_status_raw") << ":" << entity.semantic_check_status_raw << ","
-                  << JsonQuote("semantic_check_diagnostic") << ":" << JsonQuote(entity.semantic_check_diagnostic)
+                  << JsonQuote("semantic_check_diagnostic") << ":" << JsonQuote(entity.semantic_check_diagnostic) << ","
+                  << JsonQuote("native_alias") << ":" << JsonQuote(entity.native_alias) << ","
+                  << JsonQuote("annotation_ttrs_count") << ":" << entity.annotation_ttrs_count << ","
+                  << JsonQuote("annotation_ttrs_status") << ":" << JsonQuote(entity.annotation_ttrs_status) << ","
+                  << JsonQuote("native_geometry_link_status") << ":" << JsonQuote(entity.native_geometry_link_status) << ","
+                  << JsonQuote("raw_fields") << ":[";
+    for (size_t field_index = 0; field_index < entity.raw_fields.size(); ++field_index)
+    {
+      if (field_index) fta_semantics << ",";
+      const FtaRawField& field = entity.raw_fields[field_index];
+      fta_semantics << "{" << JsonQuote("key") << ":" << JsonQuote(field.key) << ","
+                    << JsonQuote("raw_value") << ":" << JsonQuote(field.raw_value) << ","
+                    << JsonQuote("unit") << ":" << JsonQuote(field.unit) << ","
+                    << JsonQuote("read_status") << ":" << JsonQuote(field.read_status) << ","
+                    << JsonQuote("source_api") << ":" << JsonQuote(field.source_api) << "}";
+    }
+    fta_semantics << "]"
                   << "},"
                   << JsonQuote("ttrs_id") << ":null,"
                   << JsonQuote("annotation_view_id") << ":null,"

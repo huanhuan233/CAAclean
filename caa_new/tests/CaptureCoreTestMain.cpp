@@ -687,13 +687,31 @@ int main()
   annotation_view.pmi_id = "pmi_2";
   annotation_view.pmi_kind = "fta_view";
   annotation_view.parent_pmi_id = "pmi_1";
+  annotation_view.coordinate_frame_status = "document_local_plane";
+  annotation_view.plane_origin = "1,2,3";
   package.pmi.push_back(annotation_view);
+  PmiAssociation view_membership;
+  view_membership.pmi_id = "pmi_2";
+  view_membership.target_id = "pmi_1_TPS000001";
+  view_membership.association_kind = "view_contains_annotation";
+  view_membership.read_status = "available";
+  package.pmi_associations.push_back(view_membership);
   FtaSemanticEntity text_annotation;
   text_annotation.fta_semantic_id = "pmi_1_TPS000001";
   text_annotation.fta_set_id = "pmi_1";
   text_annotation.annotation_text = "Material = S1454_G803\nThickness = 0.33mm";
   text_annotation.annotation_text_status = "available";
   text_annotation.annotation_text_source = "CATITPSText.GetText";
+  text_annotation.component_kind = "roughness";
+  text_annotation.annotation_ttrs_count = 2;
+  text_annotation.annotation_ttrs_status = "available";
+  text_annotation.native_geometry_link_status = "native_ttrs_unmapped";
+  FtaRawField roughness_field;
+  roughness_field.key = "field_1";
+  roughness_field.raw_value = "0.8";
+  roughness_field.read_status = "available";
+  roughness_field.source_api = "CATITPSRoughness.GetField";
+  text_annotation.raw_fields.push_back(roughness_field);
   package.fta_semantics.push_back(text_annotation);
   // 中文：输出事务失败时保留原始错误，便于区分既有基线问题与本次安全检查。
   const bool committed = repository.Commit(package, output_report, output_dir, true, error);
@@ -722,12 +740,28 @@ int main()
           "FTA output preserves actual multiline text separately from validation text");
     Check(line.find("CATITPSText.GetText") != std::string::npos,
           "FTA text retains its source interface");
+    Check(line.find("\"field_1\"") != std::string::npos &&
+          line.find("CATITPSRoughness.GetField") != std::string::npos,
+          "FTA roughness field retains raw index and source without invented semantic name");
+    Check(line.find("native_ttrs_unmapped") != std::string::npos,
+          "Native TTRS evidence does not masquerade as render mapping");
   }
   Check(CountLines(output_dir + "\\features.jsonl") ==
         static_cast<long>(package.occurrence_graph.object_occurrences.size()),
         "Legacy features are occurrence projection");
   Check(CountLines(output_dir + "\\pmi_entities.jsonl") == 2,
         "Normalized PMI retains set and view hierarchy nodes");
+  {
+    std::ifstream hierarchy((output_dir + "\\pmi_entities.jsonl").c_str());
+    std::string line;
+    std::getline(hierarchy, line);
+    std::getline(hierarchy, line);
+    Check(line.find("document_local_plane") != std::string::npos &&
+          line.find("1,2,3") != std::string::npos,
+          "FTA view preserves native local plane without claiming a global camera");
+  }
+  Check(CountLines(output_dir + "\\pmi_associations.jsonl") == 1,
+        "View membership has a single native annotation definition");
   Check(CountLines(output_dir + "\\fta_sets.jsonl") == 1,
         "Legacy FTA set projection excludes view nodes");
   Check(CountLines(output_dir + "\\object_entities.jsonl") ==

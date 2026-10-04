@@ -504,6 +504,28 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
     pmi_ids[entity.pmi_id] = true;
   }
+  std::map<std::string, bool> annotation_ids;
+  for (i = 0; i < package.fta_semantics.size(); ++i)
+    annotation_ids[package.fta_semantics[i].fta_semantic_id] = true;
+  for (i = 0; i < package.pmi.size(); ++i)
+  {
+    const PmiEntity& entity = package.pmi[i];
+    if (!entity.parent_pmi_id.empty() && !HasKey(pmi_ids, entity.parent_pmi_id))
+    {
+      error = "pmi hierarchy references missing parent: " + entity.parent_pmi_id;
+      return false;
+    }
+  }
+  for (i = 0; i < package.pmi_associations.size(); ++i)
+  {
+    const PmiAssociation& relation = package.pmi_associations[i];
+    if (!HasKey(pmi_ids, relation.pmi_id) ||
+        (!HasKey(pmi_ids, relation.target_id) && !HasKey(annotation_ids, relation.target_id)))
+    {
+      error = "pmi association has unresolved endpoint: " + relation.pmi_id + " -> " + relation.target_id;
+      return false;
+    }
+  }
 
   for (i = 0; i < package.feature_dependencies.size(); ++i)
   {
