@@ -179,5 +179,5 @@ def build_bundle_from_parser_result(
         },
         vision_enabled=False,
         degraded=False,
-        feature_recognition_scope="native_hole_guided;geometry_holes_straight_fillet_chamfer",
+        feature_recognition_scope="native_hole_guided;geometry_holes_straight_fillet_chamfer;geometry_rectangular_boss_pocket_open_slot_circular_boss",
     )

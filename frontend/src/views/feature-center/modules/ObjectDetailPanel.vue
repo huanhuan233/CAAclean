@@ -160,7 +160,13 @@ const parameterRows = computed<ParameterField[]>(() => {
       angle_deg: '倒角角度 (°)', angle_definition: '角度定义', mode: '尺寸模式',
       classification_status: '分类核验', render_range_status: '定位范围',
       depth_definition: '深度定义', end_states: '两端空域',
-      axis_direction: '轴向', start_point_mm: '起点 (mm)', end_point_mm: '终点 (mm)'
+      axis_direction: '轴向', start_point_mm: '起点 (mm)', end_point_mm: '终点 (mm)',
+      length_mm: '长度 (mm)', width_mm: '宽度 (mm)', height_mm: '高度 (mm)', depth_mm: '深度 (mm)',
+      bounded_cavity_volume_mm3: '按当前边界的型腔体积 (mm³)', volume_method: '体积方法',
+      volume_status: '体积状态', cap_face_id: '顶面或底面', wall_face_ids: '侧壁',
+      support_face_id: '支撑面', side_opening_face_ids: '侧向开口',
+      dimension_method: '尺寸定义', height_definition: '高度或深度定义',
+      profile_axis_ambiguous: '轮廓轴向是否不唯一'
     };
     return Object.entries(labels).filter(([key]) => Object.hasOwn(source, key)).map(([key, label]) => ({
       key, label, value: formatDetailValue(source[key], key)

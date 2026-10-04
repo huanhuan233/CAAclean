@@ -9,8 +9,9 @@ from typing import Any
 
 from .contracts import CanonicalFeature, GeometryRefs, Measurement, Observation, stable_id
 from .eaag import EaagGraph
+from .standard_structures import circular_bosses, planar_structures
 
-RULE_VERSION = "geometry_first_batch.v1"
+RULE_VERSION = "geometry_p4a_standard_structures.v2"
 
 
 @dataclass
@@ -558,4 +559,9 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                     + ([("total_depth", tip_depth, "mm", "entry_to_cone_apex_projection")] if tip_depth is not None else []), tolerance)
         _combine_step_segments(result, part_id, graph, solid_id, tolerance, shape_hash)
         _recognize_transitions(result, part_id, graph, solid_id, face_ids, tolerance, shape_hash)
+        for proposal in planar_structures(graph, solid_id, face_ids, tolerance) + circular_bosses(graph, solid_id, face_ids, tolerance):
+            feature = _record(result, part_id, shape_hash, solid_id,
+                              proposal["family"], proposal["subtype"], proposal["roles"],
+                              proposal["payload"], "confirmed", [], proposal["measures"], tolerance)
+            feature.coordinate_frame = proposal["frame"]
     return result

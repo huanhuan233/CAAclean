@@ -53,7 +53,8 @@ def _features(name: str, tmp_path: Path) -> list[dict]:
     ("two_solids", [("hole", "through_hole"), ("hole", "through_hole")]),
 ])
 def test_pure_step_recognition(name: str, expected: list[tuple[str, str]], tmp_path: Path) -> None:
-    features = _features(name, tmp_path)
+    features = [feature for feature in _features(name, tmp_path)
+                if feature["family"] in {"hole", "fillet", "chamfer"}]
     assert sorted((feature["family"], feature["subtype"]) for feature in features) == sorted(expected)
     assert all(not feature["native_feature_ids"] for feature in features)
     assert all(feature["geometry_refs"]["face_ids"] for feature in features)

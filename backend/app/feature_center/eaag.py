@@ -42,13 +42,11 @@ class EaagGraph:
 
     # 用途：通过两面共同的 bounded_by_edge 关系返回共享边，不依赖边序号。
     def shared_edge_ids(self, left_face_id: str, right_face_id: str) -> list[str]:
-        def bounded_edges(face_id: str) -> set[str]:
-            return {
-                relation["target_entity_id"]
-                for relation in self._outgoing.get(face_id, [])
-                if relation["relation_type"] == "bounded_by_edge"
-            }
-        return sorted(bounded_edges(left_face_id).intersection(bounded_edges(right_face_id)))
+        return sorted(set(self.face_edge_ids(left_face_id)).intersection(self.face_edge_ids(right_face_id)))
+
+    def face_edge_ids(self, face_id: str) -> list[str]:
+        return sorted(relation["target_entity_id"] for relation in self._outgoing.get(face_id, [])
+                      if relation["relation_type"] == "bounded_by_edge")
 
     # 用途：返回归属于指定面的 Wire/Loop 编号，供开口环和岛屿拓扑继续分析。
     def wire_ids(self, face_id: str) -> list[str]:
