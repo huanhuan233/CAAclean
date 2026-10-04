@@ -2540,15 +2540,15 @@ onBeforeUnmount(() => {
                 <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">
                   原生特征
                 </button>
+                <button type="button" :class="{ active: featureSubTab === 'mbd' }" @click="featureSubTab = 'mbd'">
+                  MBD 标注
+                </button>
                 <button
                   type="button"
                   :class="{ active: featureSubTab === 'recognized' }"
                   @click="featureSubTab = 'recognized'"
                 >
                   识别特征
-                </button>
-                <button type="button" :class="{ active: featureSubTab === 'mbd' }" @click="featureSubTab = 'mbd'">
-                  MBD 标注
                 </button>
               </div>
               <NativeFeatureTree
@@ -3282,7 +3282,7 @@ button:disabled {
 }
 .feature-source-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   margin: 9px 10px 0;
   padding: 3px;
@@ -3290,12 +3290,14 @@ button:disabled {
   background: var(--el-fill-color-light);
 }
 .feature-source-tabs button {
+  min-width: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--el-text-color-secondary);
   font-size: 12px;
-  padding: 7px 4px;
+  padding: 7px 2px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .feature-source-tabs button.active {
