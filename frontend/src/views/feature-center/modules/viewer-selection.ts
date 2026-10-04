@@ -20,6 +20,7 @@ export type SelectionMappingStatus = 'exact' | 'runtime_current_revision' | 'can
 export interface SelectionTarget {
   kind: SelectionTargetKind;
   id: string;
+  namespace?: 'caa_native' | 'step_render';
   label?: string;
   instancePath?: string;
   renderObjectUuid?: string;
@@ -208,7 +209,7 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     if (context.mappingStatus !== 'exact') diagnostics.push('NATIVE_FEATURE_RENDER_MAPPING_NOT_VERIFIED');
   }
 
-  if (target.kind === 'face') {
+  if (target.kind === 'face' && target.namespace !== 'caa_native') {
     push(context.renderFaceIds, target.id);
     pushMany(context.primitiveIds, index?.render_face_to_primitives?.[target.id]);
     push(context.primitiveIds, resources.faceMeshMap?.faces?.[target.id]?.mesh_primitive_id);
@@ -254,6 +255,15 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     pushMany(context.renderFaceIds, adjacentTopologyIds(topology?.vertices?.[target.id], 'face'));
     collectPrimitivesForFaces(context, resources);
     diagnostics.push('VERTEX_OVERLAY_GEOMETRY_UNAVAILABLE');
+  }
+
+  // Shared or adjacent faces describe relationships, not a precise render range for a
+  // native boundary object. Keep those IDs for detail links but never paint a whole face.
+  if (target.namespace === 'caa_native' || ['loop', 'coedge', 'edge', 'vertex'].includes(target.kind)) {
+    context.primitiveIds = [];
+    context.mappingStatus = 'unavailable';
+    context.mappingAuthority = undefined;
+    diagnostics.push('TOPOLOGY_LOCAL_RENDER_RANGE_UNAVAILABLE');
   }
 
   if (target.kind !== 'native_feature' && context.mappingStatus === 'unavailable' && context.primitiveIds.length) {

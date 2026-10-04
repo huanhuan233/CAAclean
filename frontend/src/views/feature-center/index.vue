@@ -29,6 +29,9 @@ import type { DetailGroup } from './modules/detail-panel';
 import CadViewerControls from './modules/CadViewerControls.vue';
 import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
+import TopologyExplorer from './modules/TopologyExplorer.vue';
+import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, topologyRecordKind } from './modules/topology-view-model';
+import type { TopologyExplorerItem, TopologyInput, SourcedTopologyRecord } from './modules/topology-view-model';
 import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
 import { createNativeDetailLoader, loadCaaNewNativeChildPage, loadCaaNewNativeRecords, loadCaaNewNodeProperties } from './modules/caa-new-loader';
@@ -53,7 +56,6 @@ import {
 } from './modules/viewer-selection';
 import type {
   SelectionTarget,
-  TopologySelectionRecord,
   ViewerSelection,
   ViewerSelectionIndex
 } from './modules/viewer-selection';
@@ -208,16 +210,6 @@ const prototypeProcessSteps: ProcessStep[] = [
   }
 ];
 
-type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
-
-interface GeometryTreeNode {
-  id: string;
-  label: string;
-  subtitle: string;
-  kind: SelectionTarget['kind'];
-  raw?: TopologyFaceRecord | TopologySelectionRecord;
-}
-
 const route = useRoute();
 const router = useRouter();
 const assetRequestController = new AbortController();
@@ -237,12 +229,13 @@ let nativeTreeGeneration = 0;
 const nativeParameterValues = ref<Record<string, string>>({});
 const nativePropertyFactsBySubjectId = ref<Record<string, Record<string, unknown>>>({});
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
-const topologyBodies = ref<TopologySelectionRecord[]>([]);
-const topologySolids = ref<TopologySelectionRecord[]>([]);
-const topologyLoops = ref<TopologySelectionRecord[]>([]);
-const topologyCoedges = ref<TopologySelectionRecord[]>([]);
-const topologyEdges = ref<TopologySelectionRecord[]>([]);
-const topologyVertices = ref<TopologySelectionRecord[]>([]);
+const topologyBodies = ref<SourcedTopologyRecord[]>([]);
+const topologySolids = ref<SourcedTopologyRecord[]>([]);
+const topologyLoops = ref<SourcedTopologyRecord[]>([]);
+const topologyCoedges = ref<SourcedTopologyRecord[]>([]);
+const topologyEdges = ref<SourcedTopologyRecord[]>([]);
+const topologyVertices = ref<SourcedTopologyRecord[]>([]);
+const topologyError = ref('');
 const measurements = ref<MeasurementRecord[]>([]);
 const featureMeshMap = ref<FeatureMeshMap | null>(null);
 const faceMeshMap = ref<FaceMeshMap | null>(null);
@@ -281,11 +274,8 @@ const transparent = ref(false);
 const isolated = ref(false);
 const sectionEnabled = ref(false);
 const sectionOffset = ref(0);
-const geometryKeyword = ref('');
-const geometryLimit = ref(160);
-const geometryCategory = ref<GeometryCategory>('face');
 const selectedBomPrimitiveIds = ref<string[]>([]);
-const navigationWidth = ref(310);
+const navigationWidth = ref(360);
 const toolMode = ref<ToolMode>('select');
 const sceneMode = ref<SceneMode>('whole');
 const selectionTarget = ref<CadSelectionTarget | null>(null);
@@ -378,7 +368,8 @@ const selectedNativeFeature = computed(
     return mergeNativeDetail(tree, selectedNativeDetail.value);
   }
 );
-const selectedFace = computed(() => topologyFaces.value.find(item => item.face_id === selectedFaceId.value) ?? null);
+const selectedFace = computed(() => primarySelection.value?.kind === 'face'
+  ? (primarySelection.value.raw as TopologyFaceRecord | null) : null);
 const selectedMeasurements = computed(() =>
   measurements.value.filter(item => item.feature_center_id === selectedFeatureId.value)
 );
@@ -410,53 +401,25 @@ const selectedNativeParameterFamily = computed(() => {
   return String(payload?.family || selectedNativeFeature.value?.payload_type || '');
 });
 const selectedNativeFaces = computed(() => nativeFaceRefs.value[selectedNativeFeatureId.value] || []);
-const filteredFaces = computed(() => {
-  const keyword = geometryKeyword.value.trim().toLowerCase();
-  const source = keyword
-    ? topologyFaces.value.filter(item => `${item.face_id} ${item.surface_type ?? ''}`.toLowerCase().includes(keyword))
-    : topologyFaces.value;
-  return source.slice(0, geometryLimit.value);
-});
-const filteredTopologyRecords = computed(() => {
-  const keyword = geometryKeyword.value.trim().toLowerCase();
-  const source = geometryCategory.value === 'body_solid'
-    ? [...topologyBodies.value, ...topologySolids.value]
-    : geometryCategory.value === 'loop'
-      ? topologyLoops.value
-      : geometryCategory.value === 'coedge'
-        ? topologyCoedges.value
-        : geometryCategory.value === 'edge'
-          ? topologyEdges.value
-          : geometryCategory.value === 'vertex'
-            ? topologyVertices.value
-            : [];
-  return (keyword
-    ? source.filter(item => `${item.id} ${topologyKind(item)}`.toLowerCase().includes(keyword))
-    : source).slice(0, geometryLimit.value);
-});
-const geometryTreeNodes = computed<GeometryTreeNode[]>(() => {
-  if (geometryCategory.value === 'face') {
-    return filteredFaces.value.map((face, index) => ({
-      id: face.face_id,
-      label: `面 ${String(index + 1).padStart(3, '0')} · ${faceTypeLabel(face.surface_type)}`,
-      subtitle: face.face_id,
-      kind: 'face',
-      raw: face
-    }));
+const topologyExplorerModel = computed(() => {
+  const inputs: TopologyInput[] = [];
+  const add = (category: TopologyInput['category'], records: SourcedTopologyRecord[]) => {
+    for (const source of ['step_render', 'caa_native'] as const) {
+      const subset = records.filter(record => record.topology_source === source);
+      if (subset.length) inputs.push({ category, source, records: subset });
+    }
+  };
+  add('body_solid', [...topologyBodies.value, ...topologySolids.value]);
+  for (const source of ['step_render', 'caa_native'] as const) {
+    const faces = topologyFaces.value.filter(face => (face.topology_source || 'step_render') === source);
+    if (faces.length) inputs.push({ category: 'face', source, records: faces });
   }
-  return filteredTopologyRecords.value.map((record, index) => ({
-    id: record.id,
-    label: `${topologyKindLabel(topologySelectionKind(record))} ${String(index + 1).padStart(3, '0')}`,
-    subtitle: record.id,
-    kind: topologySelectionKind(record),
-    raw: record
-  }));
+  add('loop', topologyLoops.value);
+  add('coedge', topologyCoedges.value);
+  add('edge', topologyEdges.value);
+  add('vertex', topologyVertices.value);
+  return buildTopologyItems(inputs, contract.value?.task_id || '', new Set(Object.keys(faceMeshMap.value?.faces || {})));
 });
-const geometryEmptyDescription = computed(() =>
-  geometryCategory.value === 'face'
-    ? '当前解析结果未提供 Face 拓扑'
-    : `当前解析结果未提供${geometryCategoryLabel(geometryCategory.value)}`
-);
 const selectedTitle = computed(
   () => {
     const primary = primarySelection.value;
@@ -970,7 +933,7 @@ function startNavigationResize(event: PointerEvent) {
   const startX = event.clientX;
   const startWidth = navigationWidth.value;
   const move = (moveEvent: PointerEvent) => {
-    navigationWidth.value = Math.min(420, Math.max(288, startWidth + moveEvent.clientX - startX));
+    navigationWidth.value = Math.min(460, Math.max(320, startWidth + moveEvent.clientX - startX));
   };
   const stop = () => {
     window.removeEventListener('pointermove', move);
@@ -1116,6 +1079,7 @@ async function loadBuildBundle(buildId: string) {
   } catch (error) {
     explicitError.value = true;
     errorText.value = error instanceof Error ? error.message : 'Web Viewer 加载失败';
+    topologyError.value = errorText.value;
   } finally {
     loading.value = false;
   }
@@ -1231,6 +1195,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyCoedges.value = [];
   topologyEdges.value = [];
   topologyVertices.value = [];
+  topologyError.value = '';
   nativePropertyFactsBySubjectId.value = {};
   nativeDetailLoader.clear();
   selectedNativeDetail.value = null;
@@ -1268,13 +1233,16 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     }
     const cells = hasStoredEvidence(viewerContract, 'topology_cells')
       ? await loadNativeEvidencePages(buildId, 'topology_cells') : [];
-    hydrateNativeCells(cells.map(toTopologySelectionRecord));
+    hydrateNativeCells(cells.map(raw => adaptNativeTopologyRecord(raw,
+      String(raw.cell_kind || '').toLowerCase() === 'face' ? 'face' :
+      String(raw.cell_kind || '').toLowerCase() === 'edge' ? 'edge' :
+      String(raw.cell_kind || '').toLowerCase() === 'vertex' ? 'vertex' : 'solid')));
     topologyBodies.value = (hasStoredEvidence(viewerContract, 'topology_bodies')
-      ? await loadNativeEvidencePages(buildId, 'topology_bodies') : []).map(toTopologySelectionRecord);
+      ? await loadNativeEvidencePages(buildId, 'topology_bodies') : []).map(raw => adaptNativeTopologyRecord(raw, 'body'));
     topologyLoops.value = (hasStoredEvidence(viewerContract, 'topology_wires')
-      ? await loadNativeEvidencePages(buildId, 'topology_wires') : []).map(toTopologySelectionRecord);
+      ? await loadNativeEvidencePages(buildId, 'topology_wires') : []).map(raw => adaptNativeTopologyRecord(raw, 'loop'));
     topologyCoedges.value = (hasStoredEvidence(viewerContract, 'topology_coedges')
-      ? await loadNativeEvidencePages(buildId, 'topology_coedges') : []).map(toTopologySelectionRecord);
+      ? await loadNativeEvidencePages(buildId, 'topology_coedges') : []).map(raw => adaptNativeTopologyRecord(raw, 'coedge'));
     if (hasStoredEvidence(viewerContract, 'feature_topology_links'))
       mergeNativeFeatureTopologyLinks(await loadNativeEvidencePages(buildId, 'feature_topology_links'));
   }
@@ -1302,58 +1270,36 @@ async function loadNativeEvidencePages(buildId: string, kind: string): Promise<A
   }
 }
 
-// 用途：把数据库保存的原始 CAA 标识统一映射成选择树记录，保留完整原始属性。
-function toTopologySelectionRecord(raw: Record<string, unknown>): TopologySelectionRecord {
-  return {
-    id: String(raw.id || raw.cell_id || raw.body_id || raw.wire_id || raw.coedge_id || raw.topology_id || ''),
-    parent_id: String(raw.parent_id || raw.parent_topology_id || ''),
-    owning_body_id: String(raw.owning_body_id || raw.body_id || ''),
-    raw
-  };
-}
-
 function hydrateTopologyFromSelectionIndex(index: ViewerSelectionIndex | null) {
-  topologyBodies.value = Object.values(index?.topology?.bodies || {});
-  topologySolids.value = Object.values(index?.topology?.solids || {});
+  topologyBodies.value = Object.values(index?.topology?.bodies || {}).map(adaptSelectionIndexRecord);
+  topologySolids.value = Object.values(index?.topology?.solids || {}).map(adaptSelectionIndexRecord);
+  if (!topologyFaces.value.length) topologyFaces.value = Object.values(index?.topology?.faces || {}).map(record => ({
+    ...(record.raw || {}), face_id: record.id, topology_source: 'step_render'
+  } as TopologyFaceRecord));
   topologyLoops.value = [
     ...Object.values(index?.topology?.loops || {}),
     ...Object.values(index?.topology?.wires || {})
-  ];
-  topologyCoedges.value = Object.values(index?.topology?.coedges || {});
-  topologyEdges.value = Object.values(index?.topology?.edges || {});
-  topologyVertices.value = Object.values(index?.topology?.vertices || {});
+  ].map(adaptSelectionIndexRecord);
+  topologyCoedges.value = Object.values(index?.topology?.coedges || {}).map(adaptSelectionIndexRecord);
+  topologyEdges.value = Object.values(index?.topology?.edges || {}).map(adaptSelectionIndexRecord);
+  topologyVertices.value = Object.values(index?.topology?.vertices || {}).map(adaptSelectionIndexRecord);
 }
 
-function hydrateNativeCells(records: TopologySelectionRecord[]) {
-  const cells = records.map(record => normalizeTopologyRecord(record));
+function hydrateNativeCells(records: SourcedTopologyRecord[]) {
+  const cells = records;
   topologyFaces.value = topologyFaces.value.length
     ? topologyFaces.value
     : cells
-      .filter(record => topologyKind(record) === 'face')
+      .filter(record => topologyRecordKind(record) === 'face')
       .map(record => ({
         ...(record.raw || {}),
         face_id: record.id,
+        topology_source: 'caa_native',
         surface_type: String((record.raw || {}).surface_type || (record.raw || {}).kernel_surface_type || '')
       }));
-  topologySolids.value = [...topologySolids.value, ...cells.filter(record => topologyKind(record) === 'solid')];
-  topologyEdges.value = [...topologyEdges.value, ...cells.filter(record => topologyKind(record) === 'edge')];
-  topologyVertices.value = [...topologyVertices.value, ...cells.filter(record => topologyKind(record) === 'vertex')];
-}
-
-function normalizeTopologyRecord(record: TopologySelectionRecord): TopologySelectionRecord {
-  const raw = (record.raw || record) as Record<string, unknown>;
-  return {
-    ...record,
-    id: String(record.id || raw.entity_id || raw.cell_id || raw.id || ''),
-    parent_id: String(record.parent_id || raw.parent_id || raw.parent_entity_id || ''),
-    owning_body_id: String(record.owning_body_id || raw.owning_body_id || raw.body_id || ''),
-    raw
-  };
-}
-
-function topologyKind(record: TopologySelectionRecord) {
-  const raw = (record.raw || {}) as Record<string, unknown>;
-  return String(raw.kind || 'unknown').toLowerCase();
+  topologySolids.value = [...topologySolids.value, ...cells.filter(record => topologyRecordKind(record) === 'solid')];
+  topologyEdges.value = [...topologyEdges.value, ...cells.filter(record => topologyRecordKind(record) === 'edge')];
+  topologyVertices.value = [...topologyVertices.value, ...cells.filter(record => topologyRecordKind(record) === 'vertex')];
 }
 
 function mergeNativeFeatureTopologyLinks(records: Array<Record<string, unknown>>) {
@@ -1762,35 +1708,17 @@ function selectFace(faceId: string) {
     partId: contract.value?.part_id,
     raw: rawFace
   };
-  selectTarget({ kind: 'face', id: faceId, label: faceId, raw: rawFace }, 'topology');
+  selectTarget({ kind: 'face', id: faceId, label: faceId, namespace: 'step_render', raw: rawFace }, 'topology');
 }
 
-function selectTopology(kind: SelectionTarget['kind'], record: TopologySelectionRecord) {
-  selectTarget({ kind, id: record.id, label: record.id, raw: record.raw || record }, 'topology');
-}
-
-function selectGeometryTreeNode(node: GeometryTreeNode) {
-  if (node.kind === 'face') {
-    selectFace(node.id);
-    return;
-  }
-  selectTopology(node.kind, node.raw as TopologySelectionRecord);
-}
-
-function topologySelectionKind(record: TopologySelectionRecord): SelectionTarget['kind'] {
-  if (geometryCategory.value === 'body_solid') return topologyKind(record) === 'body' ? 'body' : 'solid';
-  if (geometryCategory.value === 'loop') return 'loop';
-  if (geometryCategory.value === 'coedge') return 'coedge';
-  if (geometryCategory.value === 'edge') return 'edge';
-  if (geometryCategory.value === 'vertex') return 'vertex';
-  return 'face';
-}
-
-function setGeometryCategory(command: string | number | object) {
-  const value = String(command) as GeometryCategory;
-  if (['body_solid', 'face', 'loop', 'coedge', 'edge', 'vertex'].includes(value)) {
-    geometryCategory.value = value;
-  }
+function selectGeometryTreeNode(item: TopologyExplorerItem) {
+  selectionTarget.value = item.kind === 'face' ? {
+    source: item.source === 'step_render' ? 'step' : 'catia',
+    kind: 'face', stableId: item.entityId, faceId: item.entityId,
+    partId: contract.value?.part_id, raw: item.raw
+  } : null;
+  selectTarget({ kind: item.kind, id: item.entityId, label: item.title,
+    namespace: item.source, raw: item.raw }, 'topology');
 }
 
 interface MaterialSnapshot {
@@ -2187,52 +2115,6 @@ function tabLabel(tab: ViewerTab) {
   return { bom: 'BOM 树', native: '原生特征', recognized: '特征', geometry: '几何拓扑' }[tab];
 }
 
-function faceTypeLabel(type: string | undefined) {
-  return (
-    (
-      {
-        plane: '平面',
-        cylinder: '圆柱面',
-        cone: '圆锥面',
-        sphere: '球面',
-        torus: '圆环面',
-        bspline: 'B 样条面',
-        bezier: 'Bezier 面'
-      } as Record<string, string>
-    )[type ?? ''] ??
-    type ??
-    '其他曲面'
-  );
-}
-
-function geometryCategoryLabel(category: GeometryCategory) {
-  return {
-    body_solid: '几何体/实体',
-    face: '面',
-    loop: '边界环/线框',
-    coedge: '有向边',
-    edge: '边',
-    vertex: '顶点'
-  }[category];
-}
-
-function topologyKindLabel(kind: SelectionTarget['kind']) {
-  return {
-    assembly: '装配',
-    part_instance: '零件实例',
-    part: '零件',
-    body: '几何体',
-    solid: '实体',
-    native_feature: '原生特征',
-    recognized_feature: '识别特征',
-    face: '面',
-    loop: '边界环',
-    coedge: '有向边',
-    edge: '边',
-    vertex: '顶点'
-  }[kind];
-}
-
 watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
 watch(() => themeStore.themeColor, () => {
@@ -2256,7 +2138,7 @@ onMounted(async () => {
   });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
   const savedWidth = Number(window.localStorage.getItem('feature-center:navigation-width'));
-  if (Number.isFinite(savedWidth)) navigationWidth.value = Math.min(420, Math.max(288, savedWidth));
+  if (Number.isFinite(savedWidth)) navigationWidth.value = Math.min(460, Math.max(320, savedWidth));
   initViewer();
   const requestedBuildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
   const recentBuildId = readRecentFeatureCenterBuildId(window.localStorage);
@@ -2443,7 +2325,7 @@ onBeforeUnmount(() => {
               {{ tabLabel(tab) }}
             </button>
           </div>
-          <div class="panel-scroll" :class="{ 'feature-tree-panel': activeTab === 'recognized' }">
+          <div class="panel-scroll" :class="{ 'feature-tree-panel': activeTab === 'recognized', 'geometry-panel': activeTab === 'geometry' }">
             <ElTree
               v-if="activeTab === 'bom' && contract?.bom.nodes.length"
               :data="contract.bom.nodes"
@@ -2507,59 +2389,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <template v-if="activeTab === 'geometry'">
-              <div class="geometry-toolbar">
-                <ElInput v-model="geometryKeyword" clearable placeholder="搜索编号或拓扑类型" class="geometry-search" />
-                <ElDropdown trigger="click" @command="setGeometryCategory">
-                  <button type="button" class="geometry-filter-button" title="过滤拓扑类型" aria-label="过滤拓扑类型">
-                    <SvgIcon icon="lucide:list-filter" />
-                  </button>
-                  <template #dropdown>
-                    <ElDropdownMenu>
-                      <ElDropdownItem command="body_solid">几何体/实体</ElDropdownItem>
-                      <ElDropdownItem command="face">面</ElDropdownItem>
-                      <ElDropdownItem command="loop">边界环/线框</ElDropdownItem>
-                      <ElDropdownItem command="coedge">有向边</ElDropdownItem>
-                      <ElDropdownItem command="edge">边</ElDropdownItem>
-                      <ElDropdownItem command="vertex">顶点</ElDropdownItem>
-                    </ElDropdownMenu>
-                  </template>
-                </ElDropdown>
-              </div>
-              <div class="geometry-filter-label">当前过滤：{{ geometryCategoryLabel(geometryCategory) }}</div>
-              <ElTree
-                v-if="geometryTreeNodes.length"
-                :data="geometryTreeNodes"
-                node-key="id"
-                :props="{ label: 'label', children: 'children' }"
-                highlight-current
-                @node-click="selectGeometryTreeNode"
-              >
-                <template #default="{ data }">
-                  <span
-                    class="geometry-tree-node"
-                    :class="{ active: primarySelection?.id === data.id || selectedFaceId === data.id }"
-                  >
-                    <strong>{{ data.label }}</strong>
-                    <small>{{ data.subtitle }}</small>
-                  </span>
-                </template>
-              </ElTree>
-              <button
-                v-if="geometryCategory === 'face' && filteredFaces.length < topologyFaces.length"
-                type="button"
-                class="load-more"
-                @click="geometryLimit += 160"
-              >
-                继续加载
-              </button>
-              <ElEmpty
-                v-if="!geometryTreeNodes.length"
-                :description="geometryEmptyDescription"
-              />
-            </template>
+            <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
+              :diagnostics="topologyExplorerModel.diagnostics" :selected="primarySelection"
+              :loading="loading" :error="topologyError" @select="selectGeometryTreeNode" @locate="selectGeometryTreeNode" />
           </div>
-          <div v-if="contract?.bom.assembly_mode === 'single_part'" class="panel-hint">单零件模式自动隐藏 BOM</div>
           <div class="navigation-resizer" title="拖动调整侧栏宽度" @pointerdown="startNavigationResize" />
         </template>
         <template v-else>
@@ -3191,7 +3024,6 @@ button:disabled {
 .navigation.collapsed .panel-heading,
 .navigation.collapsed .semantic-tabs,
 .navigation.collapsed .panel-scroll,
-.navigation.collapsed .panel-hint,
 .navigation.collapsed .navigation-resizer {
   display: none;
 }
@@ -3239,6 +3071,11 @@ button:disabled {
   overflow: hidden;
   padding: 0;
 }
+.panel-scroll.geometry-panel {
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}
 .feature-tab-content {
   display: flex;
   min-height: 0;
@@ -3268,12 +3105,6 @@ button:disabled {
   flex: 1;
   overflow: auto;
   padding: 10px;
-}
-.panel-hint {
-  border-top: 1px solid var(--el-border-color-lighter);
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  padding: 11px;
 }
 .navigation-resizer {
   position: absolute;
@@ -3343,58 +3174,6 @@ button:disabled {
   color: var(--el-text-color-secondary);
   font-size: 12px;
   font-weight: 600;
-}
-.geometry-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.geometry-search {
-  min-width: 0;
-}
-.geometry-filter-button {
-  display: grid;
-  width: 36px;
-  height: 32px;
-  border: 0;
-  place-items: center;
-  padding: 0;
-}
-.geometry-filter-button :deep(.svg-icon) {
-  font-size: 17px;
-}
-.geometry-filter-label {
-  margin: 0 2px 8px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-.geometry-tree-node {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-  line-height: 1.25;
-}
-.geometry-tree-node strong {
-  color: var(--el-text-color-primary);
-  font-size: 13px;
-  font-weight: 600;
-}
-.geometry-tree-node small {
-  max-width: 220px;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.geometry-tree-node.active strong {
-  color: var(--el-color-primary);
-}
-.load-more {
-  width: 100%;
 }
 .viewer-shell {
   position: relative;

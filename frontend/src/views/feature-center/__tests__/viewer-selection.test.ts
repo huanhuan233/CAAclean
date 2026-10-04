@@ -49,6 +49,27 @@ test('face selection keeps the face as primary and records all feature candidate
   assert.match(selection.context.diagnostics.join(';'), /FACE_HAS_MULTIPLE_RECOGNIZED_FEATURES/);
 });
 
+test('native face with same text ID as render face does not inherit STEP highlight', () => {
+  const selection = resolveViewerSelection(
+    { kind: 'face', id: 'FACE-1', namespace: 'caa_native', source: 'topology' },
+    { selectionIndex, faceMeshMap, featureMeshMap }
+  );
+  assert.equal(selection.context.mappingStatus, 'unavailable');
+  assert.deepEqual(selection.context.primitiveIds, []);
+});
+
+test('coedge adjacent face is association only, never exact coedge localization', () => {
+  const selection = resolveViewerSelection(
+    { kind: 'coedge', id: 'C1', namespace: 'caa_native', source: 'topology' },
+    { selectionIndex: { ...selectionIndex, topology: { coedges: {
+      C1: { id: 'C1', relations: [{ relation_type: 'adjacent_face', source_id: 'C1', target_id: 'FACE-1' }] }
+    } } }, faceMeshMap }
+  );
+  assert.equal(selection.context.mappingStatus, 'unavailable');
+  assert.deepEqual(selection.context.primitiveIds, []);
+  assert.match(selection.context.diagnostics.join(';'), /TOPOLOGY_LOCAL_RENDER_RANGE_UNAVAILABLE/);
+});
+
 test('canvas hit without Face or BOM mesh map keeps the clicked render mesh as a highlight preview', () => {
   const selection = resolveViewerSelection(
     { kind: 'part', id: 'PART-1', source: 'canvas', renderObjectUuid: 'MESH-UUID' },

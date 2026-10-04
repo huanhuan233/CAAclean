@@ -128,7 +128,8 @@ const evidenceRows = computed(() => [
 
 const featureRows = computed<DetailField[]>(() => {
   if (props.primarySelection?.kind === 'face') return props.selectedFace ? faceRows(props.selectedFace) : [];
-  if (['edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
+  if (['edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || ''))
+    return detailRowsFromRecord(props.primarySelection?.raw as Record<string, unknown> | null, []);
   if (props.selectedNativeFeature) {
     return nativeFeatureRows(
       props.selectedNativeFeature,
@@ -348,6 +349,9 @@ const DetailSection = defineComponent({
         <section v-if="geometryDetailLoading" class="compact-empty">正在读取 B-Rep 几何…</section>
         <section v-if="geometryDetailError" class="compact-empty">{{ geometryDetailError }}</section>
         <DetailSection v-if="featureRows.length" :title="primarySelection?.kind === 'face' ? '面拓扑' : '对象属性'" icon="lucide:square-plus" :rows="featureRows" empty-text="暂无对象属性" />
+        <p v-if="primarySelection?.source === 'topology' && selectionContext.mappingStatus === 'unavailable'" class="compact-empty">
+          当前对象没有可信局部显示映射，可查看属性，暂不能在模型中精确定位。
+        </p>
 
         <section v-if="primarySelection?.kind === 'native_feature' && selectionContext.mappingStatus === 'candidate'" class="detail-section-v2">
           <ElTag type="warning">候选高亮，有误选风险；不是确认的建模历史归属</ElTag>
