@@ -46,6 +46,8 @@ const props = defineProps<{
   selectedNativeParameterFamily: string;
   selectedNativeFaces: string[];
   selectedFeature: CanonicalFeatureRecord | null;
+  recognizedDetailLoading: boolean;
+  recognizedDetailError: string;
   selectedFace: Record<string, unknown> | null;
   faceFeatureIds: string[];
   selectedMeasurements: Array<Record<string, unknown>>;
@@ -74,6 +76,7 @@ const emit = defineEmits<{
   openNativeFace: [faceId: string];
   copy: [value: string];
   retryNativeDetail: [];
+  retryRecognizedDetail: [];
   startMeasurement: [operation: Exclude<MeasurementOperation, 'idle'>];
   calculateMeasurement: [parameters: Record<string, unknown>];
   clearMeasurement: [];
@@ -96,6 +99,10 @@ const sketchAxisRows = computed(() => {
     ['局部 Y', axis.y_axis], ['法向', axis.normal]
   ].map(([label, value]) => ({ label, value: Array.isArray(value) ? value.join(', ') : '未采集' }));
 });
+const recognizedSegments = computed(() => {
+  const payload = props.selectedFeature?.typed_payload?.geometry_recognition as Record<string, unknown> | undefined;
+  return Array.isArray(payload?.segments) ? payload.segments as Array<Record<string, unknown>> : [];
+});
 
 const sourceTypeLabel = computed(() => {
   if (props.sourceFormat === 'CATPRODUCT') return 'CATProduct';
@@ -114,7 +121,10 @@ const sourceTagLabel = computed(() => {
 
 const statusValue = computed(() => formatDetailValue(props.contract?.status || 'ready', 'status'));
 
-const evidenceRows = computed(() => selectionEvidenceRows(props.primarySelection, props.selectionContext));
+const evidenceRows = computed(() => [
+  ...selectionEvidenceRows(props.primarySelection, props.selectionContext),
+  ...(props.primarySelection?.kind === 'recognized_feature' ? recognizedFeatureRows(props.selectedFeature) : [])
+]);
 
 const featureRows = computed<DetailField[]>(() => {
   if (props.primarySelection?.kind === 'face') return props.selectedFace ? faceRows(props.selectedFace) : [];
@@ -127,7 +137,11 @@ const featureRows = computed<DetailField[]>(() => {
       props.selectedNativeParameterFamily
     );
   }
-  if (props.selectedFeature) return recognizedFeatureRows(props.selectedFeature);
+  if (props.selectedFeature) return detailRowsFromRecord({
+    family: props.selectedFeature.family,
+    subtype: props.selectedFeature.subtype,
+    review_state: props.selectedFeature.review_state
+  }, ['family', 'subtype', 'review_state']);
   if (props.selectedFace) return faceRows(props.selectedFace);
   return bomRows(props.detailNode as unknown as Record<string, unknown> | null);
 });
@@ -136,6 +150,20 @@ const parameterRows = computed<ParameterField[]>(() => {
   if (['face', 'edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
   if (props.primarySelection?.kind === 'native_feature') {
     return props.nativeDetail ? nativeSemanticParameterRows(props.selectedNativeFeature) : [];
+  }
+  if (props.primarySelection?.kind === 'recognized_feature') {
+    const source = parameterSourceFor(null, props.selectedFeature) as Record<string, unknown>;
+    const labels: Record<string, string> = {
+      diameter_mm: '直径 (mm)', cylindrical_wall_length_mm: '圆柱壁轴向长度 (mm)',
+      radius_mm: '半径 (mm)', d1_mm: '第一侧退让距离 (mm)', d2_mm: '第二侧退让距离 (mm)',
+      angle_deg: '倒角角度 (°)', angle_definition: '角度定义', mode: '尺寸模式',
+      classification_status: '分类核验', render_range_status: '定位范围',
+      depth_definition: '深度定义', end_states: '两端空域',
+      axis_direction: '轴向', start_point_mm: '起点 (mm)', end_point_mm: '终点 (mm)'
+    };
+    return Object.entries(labels).filter(([key]) => Object.hasOwn(source, key)).map(([key, label]) => ({
+      key, label, value: formatDetailValue(source[key], key)
+    }));
   }
   const rows = normalizeParameterRows(parameterSourceFor(props.selectedNativeFeature, props.selectedFeature));
   if (rows.length || !props.selectedMeasurements.length) return rows;
@@ -333,6 +361,11 @@ const DetailSection = defineComponent({
           <span>数据库详情读取失败：{{ nativeDetailError }}</span>
           <ElButton size="small" @click="emit('retryNativeDetail')">重试</ElButton>
         </section>
+        <section v-if="primarySelection?.kind === 'recognized_feature' && recognizedDetailLoading" class="compact-empty">正在读取识别详情…</section>
+        <section v-if="primarySelection?.kind === 'recognized_feature' && recognizedDetailError" class="detail-section-v2">
+          <span>识别详情读取失败：{{ recognizedDetailError }}</span>
+          <ElButton size="small" @click="emit('retryRecognizedDetail')">重试</ElButton>
+        </section>
         <DetailSection v-if="primarySelection?.kind === 'native_feature' && nativeDetail" title="CATIA 属性" icon="lucide:square-plus" :rows="nativePropertyRows" empty-text="未采集到通用属性" />
         <section v-if="primarySelection?.kind === 'native_feature' && nativeSketch" class="detail-section-v2">
           <details open>
@@ -354,6 +387,32 @@ const DetailSection = defineComponent({
                 </div>
               </details>
               <p class="compact-empty">仅显示已采集几何；未执行完整约束求解。</p>
+            </div>
+          </details>
+        </section>
+
+        <section v-if="primarySelection?.kind === 'recognized_feature' && recognizedSegments.length" class="detail-section-v2">
+          <details open>
+            <summary class="section-heading"><span class="section-title">孔段与深度</span></summary>
+            <div class="section-content">
+              <div v-for="(segment, index) in recognizedSegments" :key="index" class="parameter-list-v2">
+                <strong>第 {{ index + 1 }} 段</strong>
+                <div class="parameter-row"><span>直径</span><span>{{ segment.diameter_mm }} mm</span></div>
+                <div class="parameter-row"><span>圆柱壁轴向长度</span><span>{{ segment.cylindrical_wall_length_mm }} mm</span></div>
+                <div class="parameter-row"><span>起点</span><span>{{ Array.isArray(segment.start_point_mm) ? segment.start_point_mm.join(', ') : '未核验' }}</span></div>
+                <div class="parameter-row"><span>终点</span><span>{{ Array.isArray(segment.end_point_mm) ? segment.end_point_mm.join(', ') : '未核验' }}</span></div>
+              </div>
+            </div>
+          </details>
+        </section>
+        <section v-if="primarySelection?.kind === 'recognized_feature' && selectedMeasurements.length" class="detail-section-v2">
+          <details open>
+            <summary class="section-heading"><span class="section-title">几何测量</span></summary>
+            <div class="section-content">
+              <div v-for="(measurement, index) in selectedMeasurements" :key="String(measurement.measurement_id || index)" class="parameter-row">
+                <span>{{ measurement.name === 'diameter' ? '实测直径' : measurement.name === 'cylindrical_wall_length' ? '实测圆柱壁长度' : measurement.name }}</span>
+                <span>{{ measurement.value }} {{ measurement.unit }} · {{ measurement.validity }}</span>
+              </div>
             </div>
           </details>
         </section>

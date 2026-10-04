@@ -24,6 +24,12 @@
       "name": "本轮工程实施建议",
       "status": "implementation_advice",
       "fingerprint": null
+    },
+    {
+      "source_id": "development_package_2",
+      "name": "2026-10-04 P2/P3 用户实施任务",
+      "status": "user_provided",
+      "fingerprint": null
     }
   ],
   "requirements": [
@@ -674,6 +680,54 @@
         "FX-REAL-01"
       ],
       "gap": "场景验收口径与样件未提供"
+    },
+    {
+      "requirement_id": "P2-NATIVE",
+      "source_id": "development_package_2",
+      "source_locator": "本轮实施任务",
+      "source_status": "user_provided",
+      "original_summary": "R21 圆角、倒角、草图专用参数和真实草图几何",
+      "module": "Feature Center",
+      "classification": "native_read",
+      "required_inputs": [
+        "CATPart/STEP 实际几何和有效映射"
+      ],
+      "expected_outputs": [
+        "R21 圆角、倒角、草图专用参数和真实草图几何"
+      ],
+      "identity_and_coordinates": "Solid 隔离；原生历史与几何结论分离",
+      "current_implementation": "caa_new; backend/app/feature_center; frontend Feature Center",
+      "verification_status": "fixture_verified",
+      "phase": "P2",
+      "fixtures": [
+        "FX-P2-FILLET",
+        "FX-P2-CHAMFER"
+      ],
+      "gap": "缺少全部真实样件的数据库及浏览器逐项验收"
+    },
+    {
+      "requirement_id": "P3-GEOMETRY",
+      "source_id": "development_package_2",
+      "source_locator": "本轮实施任务",
+      "source_status": "user_provided",
+      "original_summary": "纯 STEP 孔、普通直边圆角和倒角几何识别",
+      "module": "Feature Center",
+      "classification": "geometry_recognition",
+      "required_inputs": [
+        "CATPart/STEP 实际几何和有效映射"
+      ],
+      "expected_outputs": [
+        "纯 STEP 孔、普通直边圆角和倒角几何识别"
+      ],
+      "identity_and_coordinates": "Solid 隔离；原生历史与几何结论分离",
+      "current_implementation": "caa_new; backend/app/feature_center; frontend Feature Center",
+      "verification_status": "automated_tested",
+      "phase": "P3",
+      "fixtures": [
+        "FX-P3-SYNTH",
+        "FX-REAL-02"
+      ],
+      "gap": "缺少全部真实样件的数据库及浏览器逐项验收"
     }
   ]
 }

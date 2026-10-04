@@ -153,7 +153,7 @@ def test_step_only_service_builds_topology_without_fake_features(tmp_path: Path)
     assert bundle.canonical_features == []
     assert bundle.observations == []
     assert bundle.vision_enabled is False
-    assert bundle.feature_recognition_scope == "native_hole_guided_only"
+    assert bundle.feature_recognition_scope == "native_hole_guided;geometry_holes_straight_fillet_chamfer"
 
 
 # 用途：验证 Bundle 校验器能发现哈希篡改和 Canonical Feature 的悬空 Face 引用。

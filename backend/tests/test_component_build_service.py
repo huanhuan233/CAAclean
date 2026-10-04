@@ -62,6 +62,34 @@ async def test_missing_optional_evidence_channel_is_not_reported_as_empty():
         await service.get_native_evidence(uuid4(), "topology_cells", 0, 10)
 
 
+@pytest.mark.asyncio
+async def test_recognized_detail_reads_persisted_feature_and_measurements_on_demand():
+    revision_id = uuid4()
+    manifest = {"feature_evidence_storage": {"backend": "postgresql", "complete": True,
+                "counts": {"canonical_features": 1, "measurements": 1}}}
+
+    class Repository:
+        async def get_raw_revision(self, _revision_id):
+            return SimpleNamespace(id=revision_id, parse_manifest=manifest)
+
+        async def list_native_evidence(self, _revision_id, kind, offset, limit):
+            return [{"feature_center_id": "FC-1"}] if kind == "canonical_features" else [{"feature_center_id": "FC-1"}]
+
+        async def get_feature_evidence_by_id(self, _revision_id, kind, feature_id):
+            assert feature_id == "FC-1"
+            return ([{"feature_center_id": "FC-1", "family": "hole"}] if kind == "canonical_features"
+                    else [{"feature_center_id": "FC-1", "name": "diameter", "value": 10}])
+
+    service = ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())
+    service._require_build = lambda _build_id: _async_value(SimpleNamespace(cad_revision_id=revision_id))
+    detail = await service.get_recognized_feature_detail(uuid4(), "FC-1")
+    assert detail["feature"]["family"] == "hole"
+    assert detail["measurements"][0]["value"] == 10
+    manifest["feature_evidence_storage"]["complete"] = False
+    with pytest.raises(ValueError, match="not persisted"):
+        await service.get_recognized_feature_detail(uuid4(), "FC-1")
+
+
 def test_native_brep_completeness_contract_preserves_database_values_and_old_bundles():
     """逐体完整性只透传数据库清单，旧包缺字段时不伪造零值。"""
     new_manifest = {"native_capture": {"available": True, "status": "complete",

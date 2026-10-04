@@ -605,6 +605,22 @@ class ComponentBuildService:
         return {"kind": kind, "records": records[:limit], "total": total,
                 "has_more": has_more, "next_offset": offset + limit if has_more else None}
 
+    async def get_recognized_feature_detail(self, build_id: UUID, feature_center_id: str) -> dict:
+        if not feature_center_id or len(feature_center_id) > 128:
+            raise ValueError("invalid feature center id")
+        await self.get_native_evidence(build_id, "canonical_features", 0, 1)
+        await self.get_native_evidence(build_id, "measurements", 0, 1)
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("feature revision is missing")
+        features = await self.repository.get_feature_evidence_by_id(
+            build.cad_revision_id, "canonical_features", feature_center_id)
+        if len(features) != 1:
+            raise ValueError("recognized feature missing or duplicated")
+        measurements = await self.repository.get_feature_evidence_by_id(
+            build.cad_revision_id, "measurements", feature_center_id)
+        return {"feature": features[0], "measurements": measurements}
+
     async def get_native_node_selection(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
         del settings
         node = await self.get_native_node(build_id, node_id, None)

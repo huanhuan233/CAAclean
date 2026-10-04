@@ -290,6 +290,18 @@ async def component_build_native_evidence(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_EVIDENCE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/viewer/recognized-features/{feature_center_id}")
+async def component_build_recognized_feature_detail(
+    build_id: UUID,
+    feature_center_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_recognized_feature_detail(build_id, feature_center_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "RECOGNIZED_FEATURE_NOT_FOUND", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/viewer/native/nodes/{node_id}/selection")
 async def component_build_native_node_selection(
     build_id: UUID,

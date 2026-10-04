@@ -18,7 +18,7 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildNativeEvidence, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import { fetchComponentBuildNativeEvidence, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
 import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
@@ -224,6 +224,12 @@ const assetRequestController = new AbortController();
 const containerRef = ref<HTMLDivElement | null>(null);
 const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
+const recognizedHasMore = ref(false);
+const recognizedNextOffset = ref<number | null>(null);
+const recognizedPageLoading = ref(false);
+const recognizedDetailLoading = ref(false);
+const recognizedDetailError = ref('');
+let recognizedDetailGeneration = 0;
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
 const loadingNativeChildren = ref(new Set<string>());
 const failedNativeChildren = ref(new Set<string>());
@@ -1018,13 +1024,6 @@ async function loadBuildBundle(buildId: string) {
       timeout: FEATURE_CENTER_REQUEST_TIMEOUT_MS
     });
     if (result.error || !result.data) throw result.error || new Error('Viewer 契约不可用');
-    if (!isCatiaNativeSource(result.data.source_format)) {
-      await router.replace({
-        path: '/component-build',
-        query: { build_id: buildId, revision_id: result.data.task_id }
-      });
-      return;
-    }
     contract.value = result.data;
     await nextTick();
     if (!renderer) initViewer();
@@ -1098,12 +1097,14 @@ async function loadBuildBundle(buildId: string) {
       throw new Error('Mesh 映射与 B-Rep Shape Hash 不一致');
     }
 
-    const [databaseFeatures, databaseMeasurements] = await Promise.all([
-      loadNativeEvidencePages(buildId, 'canonical_features'),
-      loadNativeEvidencePages(buildId, 'measurements')
-    ]);
-    canonicalFeatures.value = databaseFeatures as unknown as CanonicalFeatureRecord[];
-    measurements.value = databaseMeasurements as unknown as MeasurementRecord[];
+    const featurePage = await fetchComponentBuildNativeEvidence<Record<string, unknown>>(
+      buildId, 'canonical_features', 0, 100, { signal: assetRequestController.signal, silent: true }
+    );
+    if (featurePage.error || !featurePage.data) throw featurePage.error || new Error('识别特征列表读取失败');
+    canonicalFeatures.value = featurePage.data.records as unknown as CanonicalFeatureRecord[];
+    recognizedHasMore.value = featurePage.data.has_more;
+    recognizedNextOffset.value = featurePage.data.next_offset;
+    measurements.value = [];
     featureMeshMap.value = nextFeatureMap;
     faceMeshMap.value = nextFaceMap;
     if (modelBuffer) await loadGlb(modelBuffer);
@@ -1245,7 +1246,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     loadedNativeTreeFromApi = true;
   }
   // 原生树和拓扑只读取已经完整入库的记录；旧包需重新导入，绝不从 JSONL 兜底。
-  if (viewerContract.status === 'ready' && !loadedNativeTreeFromApi)
+  if (viewerContract.status === 'ready' && isCatiaNativeSource(viewerContract.source_format) && !loadedNativeTreeFromApi)
     throw new Error('原生树尚未完整入 PostgreSQL，请重新导入该模型');
   if (viewerContract.status === 'ready' && viewerContract.feature_center.bundle_available) {
     const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
@@ -1482,7 +1483,58 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     nativeDetailError.value = '';
     nativeDetailLoading.value = false;
   }
+  if (target.kind === 'recognized_feature') void loadSelectedRecognizedDetail(target.id);
+  else {
+    recognizedDetailGeneration += 1;
+    recognizedDetailLoading.value = false;
+    recognizedDetailError.value = '';
+  }
   applyVisualState();
+}
+
+async function loadSelectedRecognizedDetail(featureId: string) {
+  const buildId = contract.value?.part_id;
+  if (!buildId) return;
+  const generation = ++recognizedDetailGeneration;
+  recognizedDetailLoading.value = true;
+  recognizedDetailError.value = '';
+  try {
+    const response = await fetchComponentBuildRecognizedFeatureDetail(buildId, featureId, { silent: true });
+    if (response.error || !response.data) throw response.error || new Error('识别详情不可用');
+    if (generation !== recognizedDetailGeneration || selectedFeatureId.value !== featureId || contract.value?.part_id !== buildId) return;
+    const feature = response.data.feature as unknown as CanonicalFeatureRecord;
+    const index = canonicalFeatures.value.findIndex(item => item.feature_center_id === featureId);
+    if (index < 0) canonicalFeatures.value = [...canonicalFeatures.value, feature];
+    else canonicalFeatures.value[index] = feature;
+    measurements.value = response.data.measurements as unknown as MeasurementRecord[];
+  } catch (error) {
+    if (generation === recognizedDetailGeneration && selectedFeatureId.value === featureId)
+      recognizedDetailError.value = error instanceof Error ? error.message : '识别详情读取失败';
+  } finally {
+    if (generation === recognizedDetailGeneration) recognizedDetailLoading.value = false;
+  }
+}
+
+async function loadMoreRecognizedFeatures() {
+  const buildId = contract.value?.part_id;
+  const offset = recognizedNextOffset.value;
+  if (!buildId || offset == null || recognizedPageLoading.value) return;
+  recognizedPageLoading.value = true;
+  try {
+    const result = await fetchComponentBuildNativeEvidence<Record<string, unknown>>(
+      buildId, 'canonical_features', offset, 100, { silent: true }
+    );
+    if (result.error || !result.data) throw result.error || new Error('识别特征列表读取失败');
+    const seen = new Set(canonicalFeatures.value.map(item => item.feature_center_id));
+    canonicalFeatures.value = [...canonicalFeatures.value,
+      ...(result.data.records as unknown as CanonicalFeatureRecord[]).filter(item => !seen.has(item.feature_center_id))];
+    recognizedHasMore.value = result.data.has_more;
+    recognizedNextOffset.value = result.data.next_offset;
+  } catch (error) {
+    recognizedDetailError.value = error instanceof Error ? error.message : '识别列表读取失败';
+  } finally {
+    recognizedPageLoading.value = false;
+  }
 }
 
 async function loadSelectedNativeDetail(nodeId: string) {
@@ -1535,6 +1587,9 @@ function findBomNode(nodes: Api.ComponentBuild.ViewerBomNode[], nodeId: string):
 
 // 用途：清除语义选择但保持相机、透明、隔离和剖切状态。
 function clearSelection() {
+  recognizedDetailGeneration += 1;
+  recognizedDetailLoading.value = false;
+  recognizedDetailError.value = '';
   geometryDetailGeneration += 1;
   geometryDetailController?.abort();
   geometryDetail.value = null;
@@ -2241,7 +2296,7 @@ onBeforeUnmount(() => {
     <header class="model-summary">
       <div class="summary-main">
         <strong>{{ contract?.summary.model_name || 'Feature Center' }}</strong>
-        <span v-if="sourceFormat" class="format-badge">{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : 'CATPart' }}</span>
+        <span v-if="sourceFormat" class="format-badge">{{ sourceFormat === 'CATPRODUCT' ? 'CATProduct' : sourceFormat === 'CATPART' ? 'CATPart' : sourceFormat }}</span>
         <span v-if="contract?.bom.part_count">{{ contract.bom.part_count }} 个零件</span>
         <span v-if="contract?.summary.solid_count">{{ contract.summary.solid_count }} 个 Solid</span>
         <span v-if="isCatiaNativeSource(sourceFormat)">{{ contract?.summary.native_feature_count ?? 0 }} 条树记录</span>
@@ -2446,6 +2501,9 @@ onBeforeUnmount(() => {
                   <span>{{ feature.feature_center_id }} · {{ feature.review_state }}</span>
                 </button>
                 <ElEmpty v-if="!canonicalFeatures.length" :description="recognizedEmptyDescription" />
+                <ElButton v-if="recognizedHasMore" :loading="recognizedPageLoading" size="small" @click="loadMoreRecognizedFeatures">
+                  加载更多
+                </ElButton>
               </div>
             </div>
 
@@ -2616,6 +2674,8 @@ onBeforeUnmount(() => {
           :selected-native-parameter-family="selectedNativeParameterFamily"
           :selected-native-faces="selectedNativeFaces"
           :selected-feature="selectedFeature"
+          :recognized-detail-loading="recognizedDetailLoading"
+          :recognized-detail-error="recognizedDetailError"
           :selected-face="selectedFace"
           :face-feature-ids="faceFeatureIds"
           :selected-measurements="selectedMeasurements"
@@ -2639,6 +2699,7 @@ onBeforeUnmount(() => {
           @open-feature-links="openFeatureLinks"
           @open-native-face="openNativeFace"
           @retry-native-detail="primarySelection?.kind === 'native_feature' && loadSelectedNativeDetail(primarySelection.id)"
+          @retry-recognized-detail="primarySelection?.kind === 'recognized_feature' && loadSelectedRecognizedDetail(primarySelection.id)"
           @toggle-isolated="isolated = !isolated"
           @toggle-transparent="transparent = !transparent"
           @start-measurement="startMeasurement"

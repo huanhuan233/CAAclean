@@ -390,7 +390,11 @@ export function parameterSourceFor(
   if (nativeFeature) {
     return nativeFeature.native_feature_parameters || nativeFeature.parameter || nativeFeature.attributes || {};
   }
-  if (recognizedFeature) return recognizedFeature.typed_payload || {};
+  if (recognizedFeature) {
+    const payload = recognizedFeature.typed_payload || {};
+    const geometry = payload.geometry_recognition;
+    return geometry && typeof geometry === 'object' ? geometry : payload;
+  }
   return {};
 }
 

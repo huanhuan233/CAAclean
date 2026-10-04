@@ -550,6 +550,98 @@ def face_analysis_geometry(face) -> dict:
     return result
 
 
+def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
+    """Evaluate a bounded cylinder and both sides of its material in the loaded Solid."""
+    try:
+        axis = FreeCAD.Vector(*geometry["axis"])
+        axis.normalize()
+        origin = FreeCAD.Vector(*geometry["center"])
+        radius = float(geometry["radius"])
+        u0, u1, v0, v1 = [float(value) for value in face.ParameterRange]
+        if radius <= 0 or u1 <= u0 or v1 <= v0:
+            return {"status": "invalid_parameter_range"}
+        boundary = []
+        for edge in face.Edges:
+            for point in edge.discretize(Number=17):
+                boundary.append((point - origin).dot(axis))
+        if not boundary:
+            return {"status": "no_bounded_edge_samples"}
+        low, high = min(boundary), max(boundary)
+        if high - low <= 1e-7:
+            return {"status": "zero_axial_extent"}
+        probe = min(max(radius * 0.02, 0.02), 0.25)
+        radial_votes = []
+        sampled = 0
+        for u_fraction in (0.2, 0.5, 0.8):
+            for v_fraction in (0.25, 0.5, 0.75):
+                point = face.valueAt(u0 + (u1-u0)*u_fraction, v0 + (v1-v0)*v_fraction)
+                if face.distToShape(Part.Vertex(point))[0] > 1e-5:
+                    continue
+                radial = point - origin - axis * ((point-origin).dot(axis))
+                if radial.Length < 1e-8:
+                    continue
+                radial.normalize()
+                inward = bool(solid.isInside(point - radial * probe, 1e-7, False))
+                outward = bool(solid.isInside(point + radial * probe, 1e-7, False))
+                if inward == outward:
+                    continue
+                radial_votes.append("inner_wall" if outward else "outer_wall")
+                sampled += 1
+        side = radial_votes[0] if radial_votes and len(set(radial_votes)) == 1 else "unknown"
+        reference = axis.cross(FreeCAD.Vector(1, 0, 0) if abs(axis.x) < 0.9 else FreeCAD.Vector(0, 1, 0))
+        reference.normalize()
+        perpendicular = axis.cross(reference)
+        angular_bins = set()
+        for index in range(145):
+            point = face.valueAt(u0 + (u1-u0)*index/144.0, (v0+v1)*0.5)
+            if face.distToShape(Part.Vertex(point))[0] > 1e-5:
+                continue
+            radial = point-origin-axis*((point-origin).dot(axis))
+            angle = math.atan2(radial.dot(perpendicular), radial.dot(reference)) % (2*math.pi)
+            angular_bins.add(min(35, int(angle*36/(2*math.pi))))
+        # Follow the centerline beyond each bounded end. A conical drill point
+        # can remain void immediately past the cylindrical wall.
+        box = solid.BoundBox
+        corners = [FreeCAD.Vector(x, y, z) for x in (box.XMin, box.XMax)
+                   for y in (box.YMin, box.YMax) for z in (box.ZMin, box.ZMax)]
+        bounds = [((corner-origin).dot(axis)) for corner in corners]
+        end_states = []
+        end_scan = []
+        for axial, direction, limit in ((low, -1, min(bounds)), (high, 1, max(bounds))):
+            distance = 0.0
+            state = "void"
+            complete = True
+            for _ in range(512):
+                distance += probe
+                if (direction < 0 and axial-distance < limit-probe) or (direction > 0 and axial+distance > limit+probe):
+                    break
+                point = origin + axis * (axial + direction*distance)
+                if solid.isInside(point, 1e-7, False):
+                    state = "material"
+                    break
+            else:
+                complete = False
+            end_states.append(state)
+            end_scan.append({"state": state, "first_material_offset_mm": distance if state == "material" else None,
+                             "complete": complete})
+        return {
+            "status": ("evaluated" if all(item["complete"] for item in end_scan) else "incomplete_end_scan")
+                      if side != "unknown" else "ambiguous_material_side",
+            "radial_material_side": side,
+            "axis_unit": vec(axis),
+            "axial_range_mm": [low, high],
+            "angular_coverage_rad": min(u1-u0, 2*math.pi),
+            "angular_bins_36": sorted(angular_bins),
+            "end_states": end_states,
+            "end_scan": end_scan,
+            "sample_count": sampled,
+            "probe_mm": probe,
+            "method": "bounded_face_kernel_material_probes_v1",
+        }
+    except Exception as exc:
+        return {"status": "evaluation_failed", "reason": str(exc)[:160]}
+
+
 def edge_geometry(edge) -> tuple[str, dict]:
     try:
         curve = edge.Curve
@@ -725,6 +817,10 @@ def parse(job: dict) -> dict:
         object_boxes = []
 
         for object_index, obj in enumerate(doc.Objects):
+            # STEP import may expose both leaf Part::Feature objects and an App::Part
+            # aggregate of those same solids. The aggregate is not another Solid.
+            if getattr(obj, "TypeId", "") == "App::Part" and getattr(obj, "OutList", None):
+                continue
             shape = getattr(obj, "Shape", None)
             if shape is None or shape.isNull():
                 continue
@@ -752,6 +848,8 @@ def parse(job: dict) -> dict:
 
             solids = list(shape.Solids) or ([shape] if getattr(shape, "ShapeType", "") == "Solid" else [])
             for solid_index, solid in enumerate(solids):
+                if len(solid.Faces) > 5000:
+                    raise ValueError("GEOMETRY_FACE_LIMIT_EXCEEDED: 5000 per Solid")
                 solid_count += 1
                 solid_id = stable_uuid(revision_id, "solid", object_path, solid_index)
                 solid_path = f"{object_path}/solid-{solid_index}"
@@ -847,6 +945,8 @@ def parse(job: dict) -> dict:
                     face_ref = f"Face{face_index + 1}"
                     geometry_type, geometry = face_geometry(face)
                     geometry.update(face_analysis_geometry(face))
+                    if geometry_type == "cylinder":
+                        geometry["recognition_evidence"] = cylinder_recognition_evidence(face, solid, geometry)
                     face_id = stable_uuid(revision_id, "face", solid_path, face_ref, face_index)
                     face_path = f"{solid_path}/face-{face_index}"
                     add_entity(
@@ -975,9 +1075,13 @@ def parse(job: dict) -> dict:
                                      face_ids_by_index[shell_face_index], "contains_face")
 
         # 用途：只有共享真实几何边的面才建立邻接，避免仅凭空间接近产生伪邻接。
+        face_solid_ids = {entity["id"]: entity.get("parent_entity_id") for entity in entities
+                          if entity.get("entity_type") == "face"}
         for left_index, (left_id, left_face) in enumerate(face_entities):
             left_hashes = {edge.hashCode() for edge in left_face.Edges}
             for right_id, right_face in face_entities[left_index + 1 :]:
+                if face_solid_ids.get(left_id) != face_solid_ids.get(right_id):
+                    continue
                 if left_hashes.intersection(edge.hashCode() for edge in right_face.Edges):
                     relation(relations, revision_id, left_id, right_id, "adjacent_to")
                     relation(relations, revision_id, right_id, left_id, "adjacent_to")
@@ -1015,6 +1119,10 @@ def parse(job: dict) -> dict:
                 "source_file_name": source_path.name,
                 "mesh_deflection": deflection,
                 "assembly_hierarchy_preserved": False,
+                "step_import_count": 1,
+                "cylinder_evaluation_count": sum(1 for entity in entities
+                                                  if entity.get("entity_type") == "face"
+                                                  and entity.get("geometry_type") == "cylinder"),
             },
         }
     finally:

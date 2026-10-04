@@ -35,6 +35,10 @@ class MemoryComponentBuildRepository:
         """内存测试仓储不伪造数据库语义；生产实现只从 PostgreSQL 读取。"""
         return []
 
+    async def get_feature_evidence_by_id(self, revision_id: uuid.UUID, kind: str,
+                                         feature_center_id: str) -> list[dict]:
+        return []
+
     async def list_native_dependency_candidates(self, revision_id: uuid.UUID, object_id: str) -> list[dict]:
         """内存测试仓储没有持久化依赖事实。"""
         return []
@@ -225,6 +229,17 @@ class SqlAlchemyComponentBuildRepository:
                 CadNativeEvidence.kind == kind,
             ).order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit)
         )
+        return [row.payload for row in rows]
+
+    async def get_feature_evidence_by_id(self, revision_id: uuid.UUID, kind: str,
+                                         feature_center_id: str) -> list[dict]:
+        if kind not in {"canonical_features", "measurements"}:
+            raise ValueError("unsupported recognized feature detail kind")
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == kind,
+            CadNativeEvidence.payload["feature_center_id"].astext == feature_center_id,
+        ).order_by(CadNativeEvidence.ordinal))
         return [row.payload for row in rows]
 
     async def get_native_feature(self, revision_id: uuid.UUID, object_id: str) -> dict | None:

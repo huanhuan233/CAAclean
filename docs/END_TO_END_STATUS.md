@@ -1,5 +1,7 @@
 # 三维语义端到端状态与验收（2026-10-03）
 
+> 2026-10-04 第二开发包更新：P1 几何查询修正见 [P1 修正](development/P1_HARDENING.md)；R21 原生圆角/倒角/草图的新采集证据见 [P2 验收](development/P2_NATIVE_ACCEPTANCE.md)；纯 STEP 孔、直边圆角/倒角的范围与限制见 [P3 验收](development/P3_GEOMETRY_ACCEPTANCE.md)。下方早期矩阵保留历史记录，不能覆盖上述较新验收状态。
+
 > P1 公共几何查询的本轮执行与限制见 [P1 验收记录](development/P1_ACCEPTANCE.md)。本页下方保留此前基线记录；其中的历史执行数不代表 P1 本轮重新运行。
 
 本页记录本轮代码的能力边界。CAA 源码/历史样件证明“采到了”不等于当前工作树已重新编译、已入库、已在浏览器验收。`caa_new/docs/legacy_migration_matrix.json` 是 CAA 迁移审计的机器可读来源；本页补充后端、数据库、Feature Center 与前端的接通状态，不改写旧审计结论。

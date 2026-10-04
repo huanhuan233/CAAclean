@@ -243,6 +243,73 @@
       "availability": "missing_input",
       "sha256": null,
       "description": "几何缺失、过期映射、未知类型反例"
+    },
+    {
+      "fixture_id": "FX-P2-FILLET",
+      "path": "3DjiexiCAA/tests/caa_completion/fixtures_manual/pd_fillet_constant.CATPart",
+      "origin": "仓库已有 R21 样件",
+      "restriction": "只读；新采集输出保存在 .runtime",
+      "input_type": "CATPart",
+      "provenance": "native",
+      "units": "mm",
+      "coordinates": "part_local",
+      "instances": null,
+      "known_features": [
+        "R5 圆角"
+      ],
+      "expected_value": "R5 圆角",
+      "expected_value_source": "样件命名和新 R21 采集；CATIA 界面对照未单独截图",
+      "requirements": [
+        "P2-NATIVE"
+      ],
+      "availability": "fixture_verified",
+      "sha256": "b84047eea80a47450ce877af2d4cd194fdbbe319df0e5bf2d01dc11080302b2c"
+    },
+    {
+      "fixture_id": "FX-P2-CHAMFER",
+      "path": "3DjiexiCAA/tests/caa_completion/fixtures_manual/pd_chamfer_variants.CATPart",
+      "origin": "仓库已有 R21 样件",
+      "restriction": "只读；新采集输出保存在 .runtime",
+      "input_type": "CATPart",
+      "provenance": "native",
+      "units": "mm",
+      "coordinates": "part_local",
+      "instances": null,
+      "known_features": [
+        "D1=5 mm、45 deg 倒角与草图"
+      ],
+      "expected_value": "D1=5 mm、45 deg 倒角与草图",
+      "expected_value_source": "样件命名和新 R21 采集；CATIA 界面对照未单独截图",
+      "requirements": [
+        "P2-NATIVE"
+      ],
+      "availability": "fixture_verified",
+      "sha256": "0cbcc8eddfb822e35882bbccd36699aa8f35d3e19be25e4276c619eb366dc53f"
+    },
+    {
+      "fixture_id": "FX-P3-SYNTH",
+      "path": "backend/tests/fixtures/p3/",
+      "origin": "FreeCAD 盒体布尔和边处理构造，参数记录见 test_p3_step_recognition.py",
+      "restriction": "测试输入，非真实业务样件",
+      "input_type": "STEP",
+      "provenance": "synthetic",
+      "units": "mm",
+      "coordinates": "part_local",
+      "instances": null,
+      "known_features": [
+        "孔",
+        "阶梯孔",
+        "圆角",
+        "倒角",
+        "反例"
+      ],
+      "expected_value": "构造参数见测试源码",
+      "expected_value_source": "独立构造脚本，而非识别器输出",
+      "requirements": [
+        "P3-GEOMETRY"
+      ],
+      "availability": "automated_tested",
+      "sha256": null
     }
   ]
 }

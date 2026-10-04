@@ -387,6 +387,17 @@ export function fetchComponentBuildNativeEvidence<T extends Record<string, unkno
   });
 }
 
+export function fetchComponentBuildRecognizedFeatureDetail(
+  buildId: string,
+  featureId: string,
+  options?: ComponentBuildQueryOptions
+) {
+  return request<{ feature: Record<string, unknown>; measurements: Array<Record<string, unknown>> }>({
+    url: `/api/component-builds/${buildId}/viewer/recognized-features/${encodeURIComponent(featureId)}`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export function fetchComponentBuildNativeNodeSelection(
   buildId: string,
   nodeId: string,
