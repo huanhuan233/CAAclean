@@ -347,6 +347,8 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
              << JsonQuote("payload_extraction_status") << ":" << JsonQuote(facet.payload_extraction_status) << ","
              << JsonQuote("source_api") << ":" << JsonQuote(facet.source_api) << ","
              << JsonQuote("read_status") << ":" << JsonQuote(facet.read_status)
+             << (facet.payload_json_property.empty() ? "" : ",")
+             << facet.payload_json_property
              << "}\n";
     if (!semantic)
     {

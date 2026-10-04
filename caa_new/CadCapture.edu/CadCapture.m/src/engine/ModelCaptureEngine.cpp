@@ -122,6 +122,7 @@ static ProductReferenceEntity* FindProductReference(ReconstructionPackage& packa
 static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
                                              CaaPropertyExtractors& property_extractors,
                                              CaaNativeFeatureExtractors& native_feature_extractors,
+                                             CaaSketchExtractor& sketch_extractor,
                                              CaaTopologyExtractor& topology_extractor,
                                              CaaCapabilityBroker& broker,
                                              CaptureIdRegistry& ids,
@@ -170,6 +171,7 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
     CaaEngineeringCapture().Extract(ids, package, binding_count_before);
     // 中文：关联件的类型化参数与结果体必须在文档关闭及原生绑定裁剪之前读取。
     native_feature_extractors.ExtractForDocument(ids, broker, package, reference.referenced_document_id);
+    sketch_extractor.ExtractForDocument(ids, broker, package, reference.referenced_document_id);
     topology_extractor.ExtractForDocument(linked_handle, ids, package, reference.referenced_document_id);
     package.native_object_bindings.resize(binding_count_before);
     reference.definition_status = "definition_captured";
@@ -317,7 +319,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     return false;
   }
   if (!ProjectLinkedCatPartDefinitions(part_enumerator, property_extractors,
-                                       native_feature_extractors, topology_extractor,
+                                       native_feature_extractors, sketch_extractor, topology_extractor,
                                        broker, ids, package, error))
   {
     report.message = error;
@@ -330,7 +332,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   property_extractors.Extract(ids, broker, package);
   native_feature_extractors.Extract(ids, broker, package);
   CaaEngineeringCapture().Extract(ids, package);
-  sketch_extractor.Extract(package);
+  sketch_extractor.Extract(ids, broker, package);
   topology_extractor.Extract(document_handle, ids, package);
   geometry_extractor.Extract(package);
   tessellation_extractor.Extract(package);

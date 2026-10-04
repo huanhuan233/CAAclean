@@ -2,14 +2,17 @@
 #define CADCAPTURE_CAA_CAASKETCHEXTRACTOR_H
 
 #include "model/ReconstructionPackage.h"
+#include "caa/CaaCapabilityBroker.h"
+#include "model/CaptureIdRegistry.h"
 
 namespace cadcapture {
 
 class CaaSketchExtractor
 {
 public:
-  // 中文：明确报告当前版本未单独采集草图，不伪造采集成功。
-  void Extract(ReconstructionPackage& package);
+  void Extract(CaptureIdRegistry& ids, CaaCapabilityBroker& broker, ReconstructionPackage& package);
+  void ExtractForDocument(CaptureIdRegistry& ids, CaaCapabilityBroker& broker,
+                          ReconstructionPackage& package, const std::string& document_id);
 };
 
 }

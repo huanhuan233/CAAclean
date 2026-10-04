@@ -155,6 +155,18 @@ test('type_only 详情保留类型而不制造专用参数', () => {
   assert.deepEqual(detail.nativeSemanticParameterRows(feature), []);
 });
 
+test('fillet chamfer and sketch detail use their typed payloads', () => {
+  for (const [key, field] of [
+    ['native_fillet', 'radius_mm'], ['native_chamfer', 'd1_mm'], ['native_sketch', 'element_count']
+  ] as const) {
+    const feature = detail.mergeNativeDetail(
+      { feature_id: 'O1', display_name: key },
+      { native_feature_status: 'available', native_feature: { decode_level: 'typed', [key]: { [field]: 3 } } }
+    );
+    assert.equal(detail.nativeSemanticParameterRows(feature).find(row => row.key === field)?.value.text, '3');
+  }
+});
+
 test('专用参数保留 null 与空字符串的不同含义', () => {
   const rows = detail.nativeSemanticParameterRows({
     feature_id: 'O1', native_feature_parameters: { head: { diameter_mm: null, description: '' } }

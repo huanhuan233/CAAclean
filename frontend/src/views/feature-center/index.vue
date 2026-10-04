@@ -36,6 +36,8 @@ import { mergeNativeDetail } from './modules/object-detail-panel';
 import { createMeasurementSession } from './modules/measurement-session';
 import type { MeasurementOperation } from './modules/measurement-session';
 import { createMeasurementOverlay } from './modules/measurement-overlay';
+import { createSketchOverlay } from './modules/sketch-overlay';
+import type { NativeSketchPayload } from './modules/sketch-overlay';
 import { nativeChildPages } from './modules/native-tree-loading';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
@@ -298,6 +300,8 @@ const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
 
 let scene: THREE.Scene | null = null;
 let measurementOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
+let sketchOverlay: ReturnType<typeof createSketchOverlay> | null = null;
+let activeSketchPayload: NativeSketchPayload | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let renderer: THREE.WebGLRenderer | null = null;
 let controls: OrbitControls | null = null;
@@ -1181,6 +1185,20 @@ function clearMeasurement() {
   measurementOverlay?.clear();
 }
 
+function showNativeSketch() {
+  const feature = selectedNativeDetail.value?.native_feature as Record<string, unknown> | undefined;
+  const payload = feature?.native_sketch as NativeSketchPayload | undefined;
+  if (!payload?.elements?.length) return;
+  activeSketchPayload = payload;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+  sketchOverlay?.show(payload, color);
+}
+
+function hideNativeSketch() {
+  activeSketchPayload = null;
+  sketchOverlay?.clear();
+}
+
 // 用途：复用已保存源文件重新排队，不要求用户再次上传 CATPart/STEP。
 async function retryBuild() {
   const buildId = typeof route.query.build_id === 'string' ? route.query.build_id : '';
@@ -1855,6 +1873,7 @@ function initViewer() {
   if (!container || scene) return;
   scene = new THREE.Scene();
   measurementOverlay = createMeasurementOverlay(scene);
+  sketchOverlay = createSketchOverlay(scene);
   scene.background = new THREE.Color('#f7f8fb');
   camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1_000_000);
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -2175,6 +2194,10 @@ onMounted(async () => {
       const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
       measurementOverlay?.show(measurementSession.result.value, color);
     }
+    if (activeSketchPayload) {
+      const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+      sketchOverlay?.show(activeSketchPayload, color);
+    }
   });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
   const savedWidth = Number(window.localStorage.getItem('feature-center:navigation-width'));
@@ -2192,6 +2215,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   measurementSession.clear();
   measurementOverlay?.clear();
+  sketchOverlay?.clear();
   geometryDetailController?.abort();
   nativeDetailLoader.clear();
   themeObserver?.disconnect();
@@ -2620,6 +2644,8 @@ onBeforeUnmount(() => {
           @start-measurement="startMeasurement"
           @calculate-measurement="calculateMeasurement"
           @clear-measurement="clearMeasurement"
+          @show-native-sketch="showNativeSketch"
+          @hide-native-sketch="hideNativeSketch"
         />
       </aside>
     </main>

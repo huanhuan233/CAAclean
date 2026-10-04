@@ -87,3 +87,33 @@ def test_summary_counts_definitions_once_and_separates_decode_levels(tmp_path):
         "generic_count": 0, "failed_count": 0, "unavailable_count": 0,
         "typed_by_decoder": {"NativeHoleDecoder": 1},
     }
+
+
+def test_r21_fillet_chamfer_and_sketch_payloads_keep_definition_identity(tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema_version": "caa_capture_v1"}), encoding="utf-8")
+    objects = ["fillet_1", "chamfer_1", "sketch_1"]
+    write_jsonl(tmp_path / "object_entities.jsonl", [
+        {"object_id": name, "document_id": "part_1", "update_status": "up_to_date"} for name in objects
+    ])
+    write_jsonl(tmp_path / "tree_occurrences.jsonl", [
+        {"occurrence_id": "occ_" + name, "object_id": name, "document_id": "part_1"} for name in objects
+    ])
+    write_jsonl(tmp_path / "semantic_facets.jsonl", [
+        {"facet_id": "facet_" + name, "subject_id": name, "decoder_id": "Native" + name.split('_')[0].title() + "Decoder"}
+        for name in objects
+    ])
+    write_jsonl(tmp_path / "native_features.jsonl", [
+        {"native_feature_id": "facet_fillet_1", "feature_id": "fillet_1", "decoder_id": "NativeFilletDecoder",
+         "decode_level": "typed", "decode_status": "success", "native_fillet": {"radius_mm": 3.0, "field_status": {"radius_mm": "success"}}},
+        {"native_feature_id": "facet_chamfer_1", "feature_id": "chamfer_1", "decoder_id": "NativeChamferDecoder",
+         "decode_level": "typed", "decode_status": "success", "native_chamfer": {"mode": "two_lengths", "d1_mm": 2.0, "d2_mm": 4.0}},
+        {"native_feature_id": "facet_sketch_1", "feature_id": "sketch_1", "decoder_id": "NativeSketchDecoder",
+         "decode_level": "typed", "decode_status": "success", "native_sketch": {"axis": {"origin_mm": [0, 0, 0]}, "elements": [{"element_id": "e1", "kind": "circle"}]}},
+    ])
+    features = list(CaaNewBundleReader(tmp_path).iter_canonical_native_features())
+    assert len(features) == 3
+    assert [feature["feature_id"] for feature in features] == objects
+    assert features[0]["native_fillet"]["radius_mm"] == 3.0
+    assert features[1]["native_chamfer"]["d2_mm"] == 4.0
+    assert features[2]["native_sketch"]["elements"][0]["kind"] == "circle"
+    assert CaaNewBundleReader(tmp_path).semantic_summary()["typed_count"] == 3

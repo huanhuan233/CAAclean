@@ -77,7 +77,25 @@ const emit = defineEmits<{
   startMeasurement: [operation: Exclude<MeasurementOperation, 'idle'>];
   calculateMeasurement: [parameters: Record<string, unknown>];
   clearMeasurement: [];
+  showNativeSketch: [];
+  hideNativeSketch: [];
 }>();
+
+const nativeSketch = computed(() => {
+  const feature = props.nativeDetail?.native_feature as Record<string, unknown> | undefined;
+  const payload = feature?.native_sketch;
+  return payload && typeof payload === 'object' ? payload as Record<string, unknown> : null;
+});
+const sketchElements = computed(() => Array.isArray(nativeSketch.value?.elements)
+  ? nativeSketch.value.elements as Array<Record<string, unknown>> : []);
+const sketchAxisRows = computed(() => {
+  const axis = nativeSketch.value?.axis as Record<string, unknown> | undefined;
+  if (!axis) return [];
+  return [
+    ['原点', axis.origin_mm], ['局部 X', axis.x_axis],
+    ['局部 Y', axis.y_axis], ['法向', axis.normal]
+  ].map(([label, value]) => ({ label, value: Array.isArray(value) ? value.join(', ') : '未采集' }));
+});
 
 const sourceTypeLabel = computed(() => {
   if (props.sourceFormat === 'CATPRODUCT') return 'CATProduct';
@@ -316,6 +334,29 @@ const DetailSection = defineComponent({
           <ElButton size="small" @click="emit('retryNativeDetail')">重试</ElButton>
         </section>
         <DetailSection v-if="primarySelection?.kind === 'native_feature' && nativeDetail" title="CATIA 属性" icon="lucide:square-plus" :rows="nativePropertyRows" empty-text="未采集到通用属性" />
+        <section v-if="primarySelection?.kind === 'native_feature' && nativeSketch" class="detail-section-v2">
+          <details open>
+            <summary class="section-heading"><span class="section-title">草图几何</span></summary>
+            <div class="section-content">
+              <p>支撑：{{ nativeSketch.support_reference_status || '未核验' }}</p>
+              <div v-for="row in sketchAxisRows" :key="String(row.label)" class="parameter-row">
+                <span>{{ row.label }}</span><span>{{ row.value }}</span>
+              </div>
+              <p>元素：{{ sketchElements.length }}；连接关系：{{ nativeSketch.connection_status || '未核验' }}</p>
+              <div class="measurement-actions">
+                <ElButton size="small" type="primary" @click="emit('showNativeSketch')">显示草图</ElButton>
+                <ElButton size="small" @click="emit('hideNativeSketch')">隐藏</ElButton>
+              </div>
+              <details><summary>实际元素</summary>
+                <div v-for="element in sketchElements" :key="String(element.element_id)" class="parameter-row">
+                  <span>{{ element.kind }} · {{ element.element_id }}</span>
+                  <span>{{ element.construction ? '构造' : '轮廓' }}</span>
+                </div>
+              </details>
+              <p class="compact-empty">仅显示已采集几何；未执行完整约束求解。</p>
+            </div>
+          </details>
+        </section>
 
         <section v-if="primarySelection?.kind === 'native_feature' || primarySelection?.kind === 'recognized_feature'" class="detail-section-v2">
           <details open>

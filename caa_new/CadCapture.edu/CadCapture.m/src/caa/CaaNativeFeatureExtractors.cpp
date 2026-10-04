@@ -2,9 +2,14 @@
 #include "caa/CaaNativeBindingIndex.h"
 
 #include <CATIAAngle.h>
+#include <CATIAChamfer.h>
+#include <CATIAConstRadEdgeFillet.h>
 #include <CATIAHole.h>
 #include <CATIALength.h>
 #include <CATIALimit.h>
+#include <CATIAReference.h>
+#include <CATIAReferences.h>
+#include <CATIAUnit.h>
 #include <CATIAPad.h>
 #include <CATIAPocket.h>
 #include <CATIAPrism.h>
@@ -334,6 +339,177 @@ static std::string LimitJson(const std::string& mode,
         << "\",\"limiting_element_status\":\"" << JsonEscape(limiting_element_status) << "\"}";
   }
   return out.str();
+}
+
+// R21 CATIAReference exposes a display reference, not a stable object identity.
+// Keep that distinction in the payload until topology evidence resolves it.
+static std::string ReferenceDisplaysJson(CATIAReferences* references, std::string& status)
+{
+  status = "unavailable";
+  if (!references) return "[]";
+  CATLONG count = 0;
+  if (FAILED(references->get_Count(count)) || count < 0 || count > 256)
+    return "[]";
+  std::ostringstream out;
+  out << "[";
+  CATLONG i;
+  for (i = 1; i <= count; ++i)
+  {
+    CATVariant index;
+    VariantInit(&index);
+    index.vt = VT_I4;
+    index.lVal = i;
+    CaaInterfaceGuard<CATIAReference> reference;
+    if (FAILED(references->Item(index, reference.Out())) || !reference.Get())
+    {
+      status = "partial_unresolved";
+      break;
+    }
+    CaaBstrGuard display;
+    if (FAILED(reference.Get()->get_DisplayName(display.Out())))
+    {
+      status = "partial_unresolved";
+      break;
+    }
+    if (i > 1) out << ",";
+    out << "{\"display_name\":\"" << JsonEscape(BstrToUtf8(display.Get()))
+        << "\",\"object_id\":null,\"resolution_status\":\"unresolved\"}";
+  }
+  out << "]";
+  if (i > count) status = count ? "display_only" : "empty";
+  return out.str();
+}
+
+static bool TryBuildFilletPayload(CATISpecObject* spec,
+                                  CaaCapabilityBroker& broker,
+                                  ReconstructionPackage& package,
+                                  const ObjectEntity& object,
+                                  std::string& payload_json)
+{
+  payload_json.clear();
+  CaaCapabilityLease lease;
+  broker.Acquire<CATIAConstRadEdgeFillet>(spec, IID_CATIAConstRadEdgeFillet,
+                                          "native_feature.CATIAConstRadEdgeFillet",
+                                          object.object_id, package, lease);
+  CATIAConstRadEdgeFillet* fillet = lease.As<CATIAConstRadEdgeFillet>();
+  if (!fillet) return false;
+  CaaInterfaceGuard<CATIALength> radius_guard;
+  double radius = 0.0;
+  if (FAILED(fillet->get_Radius(radius_guard.Out())) || !radius_guard.Get() ||
+      !ReadLengthValue(radius_guard.Get(), radius))
+    return false;
+  CatFilletEdgePropagation propagation = catMinimalFilletEdgePropagation;
+  CatFilletBoundaryRelimitation boundary = catAutomaticFilletBoundaryRelimitation;
+  CatFilletTrimSupport trim = catTrimFilletSupport;
+  const bool propagation_ok = SUCCEEDED(fillet->get_EdgePropagation(propagation));
+  const bool boundary_ok = SUCCEEDED(fillet->get_FilletBoundaryRelimitation(boundary));
+  const bool trim_ok = SUCCEEDED(fillet->get_FilletTrimSupport(trim));
+  CaaInterfaceGuard<CATIAReferences> objects;
+  std::string reference_status;
+  if (SUCCEEDED(fillet->get_ObjectsToFillet(objects.Out())) && objects.Get())
+    reference_status = "available";
+  const std::string references_json = ReferenceDisplaysJson(objects.Get(), reference_status);
+  std::ostringstream out;
+  out << "\"native_fillet\":{\"semantic_kind\":\"constant_radius_edge_fillet\","
+      << "\"interface_key\":\"CATIAConstRadEdgeFillet\",\"value_source\":\"typed_caa_value\","
+      << "\"radius_mm\":" << std::setprecision(15) << radius << ","
+      << "\"input_references\":" << references_json << ","
+      << "\"propagation\":" << (propagation_ok ?
+           (propagation == catTangencyFilletEdgePropagation ? "\"tangency\"" : "\"minimal\"") : "null") << ","
+      << "\"boundary_relimitation_raw\":" << (boundary_ok ? static_cast<int>(boundary) : -1) << ","
+      << "\"trim_support\":" << (trim_ok ?
+           (trim == catTrimFilletSupport ? "\"trim\"" : "\"no_trim\"") : "null") << ","
+      << "\"field_status\":{\"radius_mm\":\"success\","
+      << "\"input_references\":\"" << JsonEscape(reference_status) << "\","
+      << "\"propagation\":\"" << (propagation_ok ? "success" : "unavailable") << "\","
+      << "\"boundary_relimitation\":\"" << (boundary_ok ? "success" : "unavailable") << "\","
+      << "\"trim_support\":\"" << (trim_ok ? "success" : "unavailable") << "\"}}";
+  payload_json = out.str();
+  return true;
+}
+
+static bool TryBuildChamferPayload(CATISpecObject* spec,
+                                   CaaCapabilityBroker& broker,
+                                   ReconstructionPackage& package,
+                                   const ObjectEntity& object,
+                                   std::string& payload_json)
+{
+  payload_json.clear();
+  CaaCapabilityLease lease;
+  broker.Acquire<CATIAChamfer>(spec, IID_CATIAChamfer, "native_feature.CATIAChamfer",
+                               object.object_id, package, lease);
+  CATIAChamfer* chamfer = lease.As<CATIAChamfer>();
+  if (!chamfer) return false;
+  CatChamferMode mode = catTwoLengthChamfer;
+  if (FAILED(chamfer->get_Mode(mode)) ||
+      (mode != catTwoLengthChamfer && mode != catLengthAngleChamfer))
+    return false;
+  CaaInterfaceGuard<CATIALength> first;
+  double d1 = 0.0;
+  if (FAILED(chamfer->get_Length1(first.Out())) || !first.Get() ||
+      !ReadLengthValue(first.Get(), d1))
+    return false;
+  double d2 = 0.0;
+  double raw_angle = 0.0;
+  double mks_angle = 0.0;
+  bool angle_normalized = false;
+  std::string angle_unit;
+  if (mode == catTwoLengthChamfer)
+  {
+    CaaInterfaceGuard<CATIALength> second;
+    if (FAILED(chamfer->get_Length2(second.Out())) || !second.Get() ||
+        !ReadLengthValue(second.Get(), d2)) return false;
+  }
+  else
+  {
+    CaaInterfaceGuard<CATIAAngle> angle;
+    if (FAILED(chamfer->get_Angle(angle.Out())) || !angle.Get() ||
+        !ReadAngleValue(angle.Get(), raw_angle)) return false;
+    CaaInterfaceGuard<CATIAUnit> unit;
+    if (SUCCEEDED(angle.Get()->get_Unit(unit.Out())) && unit.Get())
+    {
+      CaaBstrGuard symbol;
+      if (SUCCEEDED(unit.Get()->get_Symbol(symbol.Out())))
+        angle_unit = BstrToUtf8(symbol.Get());
+      angle_normalized = SUCCEEDED(unit.Get()->ConvertToMKS(raw_angle, mks_angle));
+    }
+  }
+  CatChamferPropagation propagation = catMinimalChamfer;
+  CatChamferOrientation orientation = catNoReverseChamfer;
+  const bool propagation_ok = SUCCEEDED(chamfer->get_Propagation(propagation));
+  const bool orientation_ok = SUCCEEDED(chamfer->get_Orientation(orientation));
+  CaaInterfaceGuard<CATIAReferences> objects;
+  std::string reference_status;
+  if (SUCCEEDED(chamfer->get_ElementsToChamfer(objects.Out())) && objects.Get())
+    reference_status = "available";
+  const std::string references_json = ReferenceDisplaysJson(objects.Get(), reference_status);
+  std::ostringstream out;
+  out << "\"native_chamfer\":{\"semantic_kind\":\"ordinary_chamfer\","
+      << "\"interface_key\":\"CATIAChamfer\",\"value_source\":\"typed_caa_value\","
+      << "\"mode\":\"" << (mode == catTwoLengthChamfer ? "two_lengths" : "length_angle") << "\","
+      << "\"d1_mm\":" << std::setprecision(15) << d1;
+  if (mode == catTwoLengthChamfer)
+    out << ",\"d2_mm\":" << d2;
+  else
+    out << ",\"angle_raw\":" << raw_angle
+        << ",\"angle_raw_unit\":\"" << JsonEscape(angle_unit.empty() ? "unknown" : angle_unit) << "\","
+        << "\"angle_deg\":" << OptionalNumberJson(angle_normalized, mks_angle * 180.0 / 3.14159265358979323846);
+  out << ",\"input_references\":" << references_json << ","
+      << "\"propagation\":" << (propagation_ok ?
+           (propagation == catTangencyChamfer ? "\"tangency\"" : "\"minimal\"") : "null") << ","
+      << "\"orientation\":" << (orientation_ok ?
+           (orientation == catReverseChamfer ? "\"reverse\"" : "\"regular\"") : "null") << ","
+      << "\"field_status\":{\"mode\":\"success\",\"d1_mm\":\"success\","
+      << "\"input_references\":\"" << JsonEscape(reference_status) << "\","
+      << "\"propagation\":\"" << (propagation_ok ? "success" : "unavailable") << "\","
+      << "\"orientation\":\"" << (orientation_ok ? "success" : "unavailable") << "\"";
+  if (mode == catTwoLengthChamfer)
+    out << ",\"d2_mm\":\"success\"";
+  else
+    out << ",\"angle_deg\":\"" << (angle_normalized ? "success" : "unit_unverified") << "\"";
+  out << "}}";
+  payload_json = out.str();
+  return true;
 }
 
 static bool TryBuildHolePayload(CATISpecObject* spec,
@@ -697,6 +873,24 @@ static bool ExtractScoped(CaptureIdRegistry& ids,
         facet.payload_extraction_status = "available";
         facet.payload_json_property = payload_json;
       }
+      else if (facet.canonical_family == "fillet" &&
+               TryBuildFilletPayload(spec, broker, package, object, payload_json))
+      {
+        facet.decoder_id = "NativeFilletDecoder";
+        facet.decode_level = "typed";
+        facet.decode_status = "success";
+        facet.payload_extraction_status = "available";
+        facet.payload_json_property = payload_json;
+      }
+      else if (facet.canonical_family == "chamfer" &&
+               TryBuildChamferPayload(spec, broker, package, object, payload_json))
+      {
+        facet.decoder_id = "NativeChamferDecoder";
+        facet.decode_level = "typed";
+        facet.decode_status = "success";
+        facet.payload_extraction_status = "available";
+        facet.payload_json_property = payload_json;
+      }
       ++type_only_count;
     }
     else
@@ -714,7 +908,7 @@ static bool ExtractScoped(CaptureIdRegistry& ids,
 
   package.diagnostics.push_back(MakeDiagnostic("info", "native_feature_type_only",
                                                "native_features",
-                                               "Startup type canonical semantic facets emitted; Hole/Pad/Pocket typed payloads are attached when CATIA Public interfaces are available",
+                                               "Startup type canonical facets emitted; ordinary Hole/Pad/Pocket/constant-radius EdgeFillet/Chamfer typed payloads are attached when R21 Public interfaces are available",
                                                "native_feature_extractors"));
   (void)type_only_count;
   (void)generic_count;

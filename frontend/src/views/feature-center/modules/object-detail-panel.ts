@@ -217,7 +217,7 @@ const BOM_ORDER = [
   'volume'
 ];
 
-const PARAMETER_CONTAINER_KEYS = new Set(['native_feature_parameters', 'native_hole', 'native_prism', 'attributes', 'parameter', 'typed_payload']);
+const PARAMETER_CONTAINER_KEYS = new Set(['native_feature_parameters', 'native_hole', 'native_prism', 'native_fillet', 'native_chamfer', 'native_sketch', 'attributes', 'parameter', 'typed_payload']);
 const INTERNAL_KEYS = new Set(['children', 'raw']);
 
 export function labelFor(key: string) {
@@ -399,7 +399,7 @@ export function mergeNativeDetail(
   detail: { node_id?: string; native_feature?: Record<string, unknown> | null; native_feature_status?: string; revision_id?: string; object_id?: string }
 ): NativeFeatureRecord {
   const semantic = detail.native_feature || {};
-  const payload = semantic.native_hole || semantic.native_prism;
+  const payload = semantic.native_hole || semantic.native_prism || semantic.native_fillet || semantic.native_chamfer || semantic.native_sketch;
   return {
     ...tree,
     ...semantic,
@@ -417,6 +417,7 @@ export function nativeSemanticParameterRows(feature: NativeFeatureRecord | null)
   const rows: ParameterField[] = [];
   const visit = (value: Record<string, unknown>, prefix = '') => {
     for (const [name, item] of Object.entries(value)) {
+      if (name === 'elements' && feature.native_feature_parameters?.semantic_kind === 'sketch_geometry') continue;
       const key = prefix ? `${prefix}.${name}` : name;
       if (item && typeof item === 'object' && !Array.isArray(item)) {
         visit(item as Record<string, unknown>, key);
