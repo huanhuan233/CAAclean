@@ -82,6 +82,15 @@ def test_display_name_alone_is_not_a_connection_entry():
     assert records == []
 
 
+def test_exact_customer_alias_with_catia_numeric_suffix_retains_raw_value():
+    records = build_connection_semantics([{"object_id": "set"}],
+        [{"occurrence_id": "O", "object_id": "set", "document_id": "D"}],
+        [_fact("set", "native_alias", "K_密封定义.2"),
+         _fact("set", "native_object_class", "geometrical_set")], [])
+    assert records[0]["kind"] == "seal"
+    assert records[0]["raw_alias"] == "K_密封定义.2"
+
+
 def test_path_a_counts_only_points_under_fastener_set_and_keeps_local_precision():
     names = {"root": "连接定义", "fast": "紧固件", "group": "A1", "other": "A2",
              "point": "001+002", "outside": "003"}

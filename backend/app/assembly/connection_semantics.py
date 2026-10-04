@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict, deque
 import math
+import re
 from typing import Any
 
 from app.assembly.context import AssemblyContextError, resolve_occurrence_matrix
@@ -64,6 +65,16 @@ def _split_numbers(raw: str) -> tuple[list[str], list[str]]:
     return pieces, diagnostics
 
 
+def _base_alias(alias: str) -> str:
+    """Remove only CATIA's numeric `.N` suffix, retaining the raw Alias separately."""
+    match = re.fullmatch(r"(.+)\.([1-9][0-9]*)", alias)
+    return match.group(1) if match else alias
+
+
+def _root_kind(alias: str) -> str | None:
+    return ROOT_ALIASES.get(_base_alias(alias))
+
+
 def build_connection_semantics(objects: list[dict], occurrences: list[dict],
                                facts: list[dict], products: list[dict]) -> list[dict]:
     """Emit one record per native set occurrence, retaining exact hierarchy and source IDs."""
@@ -101,7 +112,8 @@ def build_connection_semantics(objects: list[dict], occurrences: list[dict],
     result = []
     for root_id, root in by_id.items():
         alias = alias_for(root)
-        if (alias not in ROOT_ALIASES or "geometrical_set" not in classes_for(root) or
+        connection_kind = _root_kind(alias)
+        if (connection_kind is None or "geometrical_set" not in classes_for(root) or
             str(root.get("object_id") or "") not in object_ids):
             continue
         product_id = str(root.get("product_occurrence_id") or "")
@@ -128,7 +140,7 @@ def build_connection_semantics(objects: list[dict], occurrences: list[dict],
                                      "ancestor_occurrence_ids": [item["occurrence_id"] for item in chain],
                                      "ancestor_aliases": [alias_for(item) for item in chain]})
         fastener_sets = {row["occurrence_id"] for row in descendants
-                          if alias_for(row) == "紧固件" and "geometrical_set" in classes_for(row)}
+                          if _base_alias(alias_for(row)) == "紧固件" and "geometrical_set" in classes_for(row)}
         points = []
         for row in descendants:
             if "point_feature" not in classes_for(row):
@@ -174,13 +186,13 @@ def build_connection_semantics(objects: list[dict], occurrences: list[dict],
         diagnostics = ["member_limit_exceeded"] if truncated else []
         if not product_id or role == "unknown":
             diagnostics.append("product_occurrence_or_part_number_unresolved")
-        if ROOT_ALIASES[alias] == "fastener":
+        if connection_kind == "fastener":
             has_parent = bool(fastener_sets)
             route = "A" if has_parent else "B"
             if not points:
                 diagnostics.append("native_point_members_unavailable")
             statistics = [parameter for parameter in parameter_groups
-                          if "统计信息" in parameter["ancestor_aliases"]]
+                          if any(_base_alias(alias) == "统计信息" for alias in parameter["ancestor_aliases"])]
             for point in points:
                 first = point["parent_set_alias"][:1]
                 point["customer_bucket"] = "fastener" if first and first in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" else "connector"
@@ -215,7 +227,7 @@ def build_connection_semantics(objects: list[dict], occurrences: list[dict],
                 diagnostics.append("customer_parameters_unavailable")
         identity = "|".join((str(root.get("document_id") or ""), product_id, root_id))
         result.append({"connection_id": "CN" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24].upper(),
-                       "kind": ROOT_ALIASES[alias], "raw_alias": alias,
+                       "kind": connection_kind, "raw_alias": alias,
                        "root_occurrence_id": root_id, "root_object_id": root.get("object_id"),
                        "document_id": root.get("document_id"), "product_occurrence_id": product_id,
                        "part_number": part_number, "model_role": role,
