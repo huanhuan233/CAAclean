@@ -2534,6 +2534,7 @@ onBeforeUnmount(() => {
           :selected-native-parameter-family="selectedNativeParameterFamily"
           :selected-native-faces="selectedNativeFaces"
           :selected-feature="selectedFeature"
+          :recognized-features="canonicalFeatures"
           :recognized-detail-loading="recognizedDetailLoading"
           :recognized-detail-error="recognizedDetailError"
           :selected-face="selectedFace"

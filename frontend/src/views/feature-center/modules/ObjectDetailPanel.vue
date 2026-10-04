@@ -46,6 +46,7 @@ const props = defineProps<{
   selectedNativeParameterFamily: string;
   selectedNativeFaces: string[];
   selectedFeature: CanonicalFeatureRecord | null;
+  recognizedFeatures: CanonicalFeatureRecord[];
   recognizedDetailLoading: boolean;
   recognizedDetailError: string;
   selectedFace: Record<string, unknown> | null;
@@ -187,6 +188,12 @@ const parameterRows = computed<ParameterField[]>(() => {
     }));
     const combined = Array.isArray(source.combined_measurements) ? source.combined_measurements as Array<Record<string, unknown>> : [];
     combined.forEach((item, index) => {
+      const boss = props.recognizedFeatures.find(feature => feature.feature_center_id === item.boss_feature_id);
+      const rib = props.recognizedFeatures.find(feature => feature.feature_center_id === item.rib_feature_id);
+      rows.push({ key: `combined_${index}_boss`, label: '凸台对象',
+        value: formatDetailValue(boss ? `圆形凸台 · ${boss.feature_center_id}` : String(item.boss_feature_id || '未加载')) });
+      rows.push({ key: `combined_${index}_rib`, label: '筋对象',
+        value: formatDetailValue(rib ? `直筋候选 · ${rib.feature_center_id}` : String(item.rib_feature_id || '未加载')) });
       rows.push({ key: `combined_${index}_distance`, label: '凸台到筋主体最短距离 (mm)',
         value: formatDetailValue(item.distance_mm, 'distance_mm') });
       rows.push({ key: `combined_${index}_scope`, label: '测量范围', value: formatDetailValue(item.scope, 'scope') });
