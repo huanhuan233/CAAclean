@@ -160,7 +160,9 @@ const parameterRows = computed<ParameterField[]>(() => {
       radius_mm: '半径 (mm)', d1_mm: '第一侧退让距离 (mm)', d2_mm: '第二侧退让距离 (mm)',
       angle_deg: '倒角角度 (°)', angle_definition: '角度定义', mode: '尺寸模式',
       classification_status: '分类核验', render_range_status: '定位范围',
-      depth_definition: '深度定义', end_states: '两端空域',
+      depth_definition: '深度定义', end_states: '孔端局部状态',
+      end_state_definition: '孔端判定依据', centerline_end_states: '中心线材料状态',
+      end_boundary: '孔端关联边界', end_scan: '中心线材料区间',
       axis_direction: '轴向', start_point_mm: '起点 (mm)', end_point_mm: '终点 (mm)',
       length_mm: '长度 (mm)', width_mm: '宽度 (mm)', height_mm: '高度 (mm)', depth_mm: '深度 (mm)',
       bounded_cavity_volume_mm3: '按当前边界的型腔体积 (mm³)', volume_method: '体积方法',
@@ -181,12 +183,19 @@ const parameterRows = computed<ParameterField[]>(() => {
       cavity_role_status: '角色核验', cavity_floor_face_id: '型腔底面',
       cavity_wall_face_id: '型腔侧壁', cavity_opening_support_face_id: '开口支撑面',
       role_method: '角色判断方法', combined_measurements: '组合测量',
+      combined_measurement_status: '组合测量状态',
+      thin_wall_pair_id: '薄壁配对 ID', thickness_scope: '厚度适用范围',
       boss_to_rib_shortest_distance_mm: '凸台到筋主体最短距离 (mm)'
     };
     const rows = Object.entries(labels).filter(([key]) => Object.hasOwn(source, key) && key !== 'combined_measurements').map(([key, label]) => ({
       key, label, value: formatDetailValue(source[key], key)
     }));
     const combined = Array.isArray(source.combined_measurements) ? source.combined_measurements as Array<Record<string, unknown>> : [];
+    const budget = source.combined_measurement_diagnostics as Record<string, unknown> | undefined;
+    if (budget && Number(budget.unevaluated_count) > 0) {
+      rows.push({ key: 'combined_budget', label: '候选/已算/未算',
+        value: formatDetailValue(`${budget.candidate_total} / ${budget.evaluated_count} / ${budget.unevaluated_count}`) });
+    }
     combined.forEach((item, index) => {
       const boss = props.recognizedFeatures.find(feature => feature.feature_center_id === item.boss_feature_id);
       const rib = props.recognizedFeatures.find(feature => feature.feature_center_id === item.rib_feature_id);
@@ -196,6 +205,15 @@ const parameterRows = computed<ParameterField[]>(() => {
         value: formatDetailValue(rib ? `直筋候选 · ${rib.feature_center_id}` : String(item.rib_feature_id || '未加载')) });
       rows.push({ key: `combined_${index}_distance`, label: '凸台到筋主体最短距离 (mm)',
         value: formatDetailValue(item.distance_mm, 'distance_mm') });
+      rows.push({ key: `combined_${index}_status`, label: '测量核验', value: formatDetailValue(item.status, 'status') });
+      if (Object.hasOwn(item, 'within_tolerance'))
+        rows.push({ key: `combined_${index}_near`, label: '在容差内', value: formatDetailValue(item.within_tolerance) });
+      if (item.intersection_status)
+        rows.push({ key: `combined_${index}_intersection`, label: '相交/接触判定',
+          value: formatDetailValue(item.intersection_status, 'intersection_status') });
+      if (Object.hasOwn(item, 'signed_proxy_clearance_mm'))
+        rows.push({ key: `combined_${index}_proxy`, label: '代理有符号间隔 (mm)',
+          value: formatDetailValue(item.signed_proxy_clearance_mm) });
       rows.push({ key: `combined_${index}_scope`, label: '测量范围', value: formatDetailValue(item.scope, 'scope') });
       rows.push({ key: `combined_${index}_start`, label: '凸台测量点 (mm)', value: formatDetailValue(item.start_point_mm, 'start_point_mm') });
       rows.push({ key: `combined_${index}_end`, label: '筋测量点 (mm)', value: formatDetailValue(item.end_point_mm, 'end_point_mm') });

@@ -71,6 +71,21 @@ def build_bundle_from_parser_result(
     }
     fusion_started = time.perf_counter()
     graph = EaagGraph(topology.entities, topology.relations)
+    for row in parser_result.get("cylinder_end_boundaries", []):
+        wall_id = topology.source_entity_map.get(str(row.get("wall_face_id")))
+        if not wall_id or wall_id not in graph.entities:
+            raise ValueError("CYLINDER_END_BOUNDARY_DANGLING: wall face")
+        ends = []
+        for source_end in row.get("ends", []):
+            mapped_end = []
+            for item in source_end:
+                neighbor_id = topology.source_entity_map.get(str(item.get("face_id")))
+                edge_id = topology.source_entity_map.get(str(item.get("shared_edge_id")))
+                if not neighbor_id or not edge_id:
+                    raise ValueError("CYLINDER_END_BOUNDARY_DANGLING: neighbor or edge")
+                mapped_end.append({**item, "face_id": neighbor_id, "shared_edge_id": edge_id})
+            ends.append(mapped_end)
+        graph.entities[wall_id]["geometry"]["recognition_evidence"]["end_boundary"] = ends
     fusion = fuse_native_holes(
         part_id,
         graph,
@@ -84,6 +99,8 @@ def build_bundle_from_parser_result(
         for key in ("solid_id", "face_a_id", "face_b_id"):
             mapped[key] = topology.source_entity_map.get(str(pair.get(key)))
         if all(mapped.get(key) for key in ("solid_id", "face_a_id", "face_b_id")):
+            mapped["pair_id"] = stable_id("THINPAIR", topology.shape_hash, mapped["solid_id"],
+                                          *sorted((mapped["face_a_id"], mapped["face_b_id"])))
             thin_wall_pairs.append(mapped)
     recognition = recognize_geometry(part_id, graph, topology.tolerance_mm,
                                      topology.shape_hash, thin_wall_pairs)

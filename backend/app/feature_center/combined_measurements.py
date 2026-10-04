@@ -135,17 +135,24 @@ def _boss_rib_distance(boss, rib, graph: EaagGraph, tolerance: float):
     dx, dy = qx-x, qy-y
     radial = math.hypot(dx, dy)
     radius = float(boss_payload["diameter_mm"])/2
-    if radial <= radius+tolerance:
-        return {"status": "overlap_or_contact", "distance_mm": 0.0,
-                "method": "analytic_cylinder_to_rectangular_prism_body_scope"}
+    signed_clearance = radial-radius
+    scope = "circular_boss_wall_to_rectangular_rib_body_excluding_root_and_fillets"
+    if signed_clearance < 0:
+        return {"status": "proxy_overlap_unverified", "distance_mm": 0.0,
+                "within_tolerance": True, "intersection_status": "not_evaluated",
+                "signed_proxy_clearance_mm": signed_clearance,
+                "scope": scope, "witness_status": "unavailable_proxy_overlap",
+                "method": "analytic_circle_to_finite_rectangle_with_overlapping_height"}
     level = (overlap_low+overlap_high)/2
     circle_point = _add(_add(center, _scale(normal, level-boss_top)),
                         _add(_scale(x_axis, dx/radial*radius), _scale(y_axis, dy/radial*radius)))
     rib_point = _add(_add(rib_center, _scale(normal, level-rib_top)),
                      _add(_scale(x_axis, qx), _scale(y_axis, qy)))
-    return {"status": "measured", "distance_mm": radial-radius,
+    return {"status": "measured", "distance_mm": signed_clearance,
+            "within_tolerance": signed_clearance <= tolerance,
+            "intersection_status": "not_evaluated", "witness_status": "bounded_body_scope",
             "start_point_mm": circle_point, "end_point_mm": rib_point,
-            "scope": "circular_boss_wall_to_rectangular_rib_body_excluding_root_and_fillets",
+            "scope": scope,
             "method": "analytic_circle_to_finite_rectangle_with_overlapping_height"}
 
 
@@ -163,19 +170,58 @@ def apply_combined_measurements(result, graph: EaagGraph, tolerance: float) -> N
               and feature.subtype == "circular_straight_wall"]
     ribs = [feature for feature in result.canonical_features if feature.family == "rib"]
     for rib in ribs:
-        for boss in bosses[:128]:
-            relation = _boss_rib_distance(boss, rib, graph, tolerance)
+        rib_payload = rib.typed_payload["geometry_recognition"]
+        support_id = rib_payload.get("root_support_face_id")
+        rib_center = rib.coordinate_frame.get("origin_mm")
+        eligible = [boss for boss in bosses if
+                    boss.geometry_refs.solid_ids == rib.geometry_refs.solid_ids and
+                    boss.typed_payload.get("geometry_recognition", {}).get("support_face_id") == support_id and
+                    boss.typed_payload.get("geometry_recognition", {}).get("cap_face_id") in graph.entities]
+        eligible.sort(key=lambda boss: (
+            _norm(_sub(graph.entities[boss.typed_payload["geometry_recognition"]["cap_face_id"]]["center"], rib_center)),
+            boss.feature_center_id))
+        limit = 128
+        evaluated = 0
+        failures = 0
+        measured = 0
+        for boss in eligible[:limit]:
+            evaluated += 1
+            try:
+                relation = _boss_rib_distance(boss, rib, graph, tolerance)
+            except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+                failures += 1
+                result.diagnostics.append({"code": "COMBINED_MEASUREMENT_FAILED",
+                                           "rib_feature_id": rib.feature_center_id,
+                                           "boss_feature_id": boss.feature_center_id,
+                                           "reason": str(exc)[:160]})
+                continue
             if relation is None:
                 continue
+            measured += 1
             relation["boss_feature_id"] = boss.feature_center_id
             relation["rib_feature_id"] = rib.feature_center_id
-            rib.typed_payload["geometry_recognition"].setdefault("combined_measurements", []).append(relation)
+            rib_payload.setdefault("combined_measurements", []).append(relation)
             rib.relations.append({"kind": "MEASURED_TO", "target_id": boss.feature_center_id})
             result.measurements.append(Measurement(
                 measurement_id=stable_id("MEAS", rib.feature_center_id, boss.feature_center_id, "boss_to_rib_shortest"),
                 feature_center_id=rib.feature_center_id, name="boss_to_rib_shortest_distance",
                 value=relation["distance_mm"], unit="mm", tolerance=tolerance,
                 source="geometry_recognition", method=relation["method"],
-                algorithm_version="p4c_combined.v1",
+                algorithm_version="p4c_combined.v2",
                 input_face_ids=sorted(set(boss.geometry_refs.face_ids + rib.geometry_refs.face_ids)),
                 validity="valid" if relation["status"] == "measured" else "needs_review"))
+        omitted = max(0, len(eligible)-evaluated)
+        rib_payload["combined_measurement_status"] = (
+            "budget_exceeded" if omitted else "calculation_failed" if failures else
+            "complete" if measured else "complete_no_relation" if eligible else "no_eligible_candidates")
+        rib_payload["combined_measurement_diagnostics"] = {
+            "candidate_total": len(eligible), "evaluated_count": evaluated,
+            "unevaluated_count": omitted, "failed_count": failures,
+            "budget_type": "related_circular_bosses_per_rib", "budget_limit": limit,
+            "ordering": "cap_to_rib_center_distance_then_feature_id"}
+        if omitted:
+            result.diagnostics.append({"code": "COMBINED_MEASUREMENT_BUDGET_EXCEEDED",
+                                       "rib_feature_id": rib.feature_center_id,
+                                       "candidate_total": len(eligible), "evaluated_count": evaluated,
+                                       "unevaluated_count": omitted, "budget_type": "related_circular_bosses_per_rib",
+                                       "budget_limit": limit})

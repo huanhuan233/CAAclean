@@ -13,7 +13,7 @@ from .standard_structures import circular_bosses, planar_structures
 from .thin_structures import structural_proposals
 from .combined_measurements import apply_combined_measurements
 
-RULE_VERSION = "geometry_p4c_combined_measurements.v4"
+RULE_VERSION = "geometry_p3_p4_boundary_and_pair_correctness.v5"
 
 
 @dataclass
@@ -90,19 +90,59 @@ def _normalized_wall(face: dict[str, Any]) -> dict[str, Any] | None:
         reversed_axis = next((value for value in axis if abs(value) > 1e-8), 1) < 0
         end_states = list(evidence.get("end_states") or [])
         end_scan = list(evidence.get("end_scan") or [])
+        end_boundary = list(evidence.get("end_boundary") or [])
         if reversed_axis:
             axis = [-value for value in axis]
             low, high = -high, -low
             end_states.reverse()
             end_scan.reverse()
+            end_boundary.reverse()
         endpoints = [[origin[i]+axis[i]*t for i in range(3)] for t in (low, high)]
         return {"face": face, "axis": axis, "origin": origin, "radius": radius,
                 "start": endpoints[0], "end": endpoints[1], "coverage": coverage,
                 "end_states": end_states, "end_scan": end_scan,
+                "end_boundary": end_boundary,
                 "side": evidence.get("radial_material_side"), "evidence": evidence,
                 "reversed_axis": reversed_axis}
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _hole_end_boundary(items: list[dict[str, Any]], wall: dict[str, Any],
+                       scalar: float, start: bool, tolerance: float,
+                       mouth_chamfer_faces: set[str]) -> dict[str, Any]:
+    """Classify only faces sharing this cylinder's finite end ring."""
+    closures = []
+    openings = []
+    for item in items:
+        if item.get("geometry_type") == "plane":
+            location = (item.get("axis_point_location") or {}).get("status")
+            if location == "inside":
+                closures.append({"kind": "flat", "face_id": item["face_id"],
+                                 "shared_edge_id": item["shared_edge_id"]})
+            elif location == "outside":
+                openings.append({"kind": "open_ring", "face_id": item["face_id"],
+                                 "shared_edge_id": item["shared_edge_id"]})
+        elif item.get("geometry_type") == "cone":
+            apex = item.get("apex_mm")
+            if not isinstance(apex, list) or len(apex) != 3:
+                continue
+            apex_scalar = _dot(apex, wall["axis"])
+            if (_line_distance(wall, {"origin": apex}) <= tolerance and
+                ((start and apex_scalar < scalar-tolerance) or
+                 (not start and apex_scalar > scalar+tolerance))):
+                closures.append({"kind": "conical_tip", "face_id": item["face_id"],
+                                 "shared_edge_id": item["shared_edge_id"],
+                                 "apex_scalar_mm": apex_scalar})
+            elif item["face_id"] in mouth_chamfer_faces:
+                openings.append({"kind": "verified_mouth_chamfer", "face_id": item["face_id"],
+                                 "shared_edge_id": item["shared_edge_id"]})
+    if len(closures) == 1 and not openings:
+        return {"status": "closed", **closures[0]}
+    if openings and not closures:
+        return {"status": "open", "references": openings}
+    return {"status": "ambiguous" if closures and openings else "unverified",
+            "references": closures+openings}
 
 
 def _solid_faces(graph: EaagGraph) -> dict[str, list[str]]:
@@ -444,6 +484,11 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                                            "solid_id": solid_id, "face_id": face_id,
                                            "status": evidence.get("status", "missing")})
         _recognize_transitions(result, part_id, graph, solid_id, face_ids, tolerance, shape_hash)
+        mouth_chamfer_ids = {feature.feature_center_id for feature in result.canonical_features
+                             if feature.family == "chamfer" and feature.subtype == "circular_hole_mouth_cone"
+                             and feature.geometry_refs.solid_ids == [solid_id]}
+        mouth_chamfer_faces = {link["face_id"] for link in result.feature_geometry_links
+                               if link["feature_center_id"] in mouth_chamfer_ids and link["role"] == "transition"}
         transition_faces = {link["face_id"] for link in result.feature_geometry_links
                             if link["role"] == "transition"}
         walls = [_normalized_wall(graph.entities[face_id]) for face_id in face_ids]
@@ -481,6 +526,20 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
             bins = _common_angular_bins(group, axis)
             states = [wall["end_states"] for wall in group]
             consistent_states = bool(states) and all(state == states[0] for state in states)
+            end_boundaries = []
+            for end_index, scalar in enumerate((low, high)):
+                items = []
+                for wall in group:
+                    wall_scalar = _dot(wall["start" if end_index == 0 else "end"], axis)
+                    if abs(wall_scalar-scalar) <= tolerance and len(wall["end_boundary"]) == 2:
+                        items.extend(wall["end_boundary"][end_index])
+                distinct = {(item["face_id"], item["shared_edge_id"]): item for item in items}
+                end_boundaries.append(_hole_end_boundary(list(distinct.values()), basis, scalar,
+                                                         end_index == 0, tolerance,
+                                                         mouth_chamfer_faces))
+            verified_states = ["material" if item["status"] == "closed" else
+                               "void" if item["status"] == "open" else "unverified"
+                               for item in end_boundaries]
             full = (coverage >= 2*math.pi-0.05 and coverage <= 2*math.pi+0.05
                     and bins is not None and len(bins) == 36)
             diagnostics = []
@@ -488,63 +547,48 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                 diagnostics.append("ANGULAR_COVERAGE_INCOMPLETE_OR_UNALIGNED")
             if not consistent_states:
                 diagnostics.append("END_MATERIAL_STATES_CONFLICT")
-            if not states or len(states[0]) != 2 or states[0] == ["material", "material"]:
+            if "unverified" in verified_states or verified_states == ["material", "material"]:
                 diagnostics.append("OPENING_AND_BOTTOM_UNVERIFIED")
+            if states and len(states[0]) == 2 and any(
+                    raw != verified and end_boundaries[index].get("kind") != "conical_tip"
+                    for index, (raw, verified) in enumerate(zip(states[0], verified_states))):
+                diagnostics.append("END_BOUNDARY_MATERIAL_CONFLICT")
             if any(len(scan.get("material_intervals_mm") or []) > 1
                    for wall in group for scan in wall["end_scan"]):
                 diagnostics.append("MULTIPLE_MATERIAL_INTERVALS_NEED_REVIEW")
-            if any(scan.get("method") != "exact_centerline_solid_intersection"
+            if any(scan.get("method") != "exact_centerline_solid_intersection_local_end_v3"
                    for wall in group for scan in wall["end_scan"]):
                 diagnostics.append("END_INTERVALS_NOT_EXACTLY_VERIFIED")
             status = "confirmed" if not diagnostics else "candidate"
             if status != "confirmed":
                 subtype = "cylindrical_void_candidate"
-            elif states and states[0] == ["void", "void"]:
+            elif verified_states == ["void", "void"]:
                 subtype = "through_hole"
-            elif states and states[0].count("material") == 1:
+            elif verified_states.count("material") == 1:
                 subtype = "blind_hole"
             else:
                 subtype = "cylindrical_void_candidate"
             face_group = [wall["face"]["entity_id"] for wall in group]
-            tip_faces = []
-            bottom_faces = []
+            tip_faces = [item["face_id"] for item in end_boundaries
+                         if item.get("status") == "closed" and item.get("kind") == "conical_tip"]
+            bottom_faces = [item["face_id"] for item in end_boundaries
+                            if item.get("status") == "closed" and item.get("kind") == "flat"]
             tip_depth = None
-            if subtype == "blind_hole" and status == "confirmed":
-                entry_scalar = high if states[0] == ["material", "void"] else low
-                material_end = low if states[0] == ["material", "void"] else high
-                for wall_face_id in face_group:
-                    for neighbor_id in graph.face_neighbors(wall_face_id):
-                        neighbor = graph.entities.get(neighbor_id, {})
-                        if neighbor_id not in face_ids:
-                            continue
-                        if neighbor.get("geometry_type") == "plane":
-                            plane = _plane(neighbor)
-                            axis_point = [basis["origin"][i]+axis[i]*(material_end-_dot(basis["origin"], axis)) for i in range(3)]
-                            bounds = neighbor.get("bounding_box") or {}
-                            if (plane and abs(_dot(plane[0], axis)) > 1-1e-3 and
-                                abs(_dot(plane[0], _sub(axis_point, plane[1]))) <= tolerance and
-                                all(bounds.get("min", [float("inf")]*3)[i]-tolerance <= axis_point[i] <=
-                                    bounds.get("max", [-float("inf")]*3)[i]+tolerance for i in range(3))):
-                                bottom_faces.append(neighbor_id)
-                            continue
-                        if neighbor.get("geometry_type") != "cone":
-                            continue
-                        apex = (neighbor.get("geometry") or {}).get("apex")
-                        if not isinstance(apex, list) or len(apex) != 3:
-                            continue
-                        apex_line_distance = _line_distance(basis, {"origin": apex})
-                        apex_scalar = _dot(apex, axis)
-                        if apex_line_distance <= tolerance and ((material_end == low and apex_scalar < low) or
-                                                                 (material_end == high and apex_scalar > high)):
-                            tip_faces.append(neighbor_id)
-                            tip_depth = abs(entry_scalar-apex_scalar)
+            if subtype == "blind_hole" and status == "confirmed" and tip_faces:
+                cone_end = next(item for item in end_boundaries if item.get("kind") == "conical_tip")
+                entry_scalar = high if verified_states == ["material", "void"] else low
+                tip_depth = abs(entry_scalar-cone_end["apex_scalar_mm"])
             payload = {
                 "subtype": subtype, "diameter_mm": 2*basis["radius"],
                 "cylindrical_wall_length_mm": high-low, "axis_direction": axis,
                 "axis_point_mm": basis["origin"], "angular_coverage_rad": coverage,
                 "angular_bins_verified": len(bins) if bins is not None else 0,
-                "end_states": states[0] if states else [], "wall_face_ids": face_group,
+                "end_states": verified_states,
+                "end_state_definition": "verified_local_shared_end_boundary",
+                "centerline_end_states": states[0] if states else [],
+                "wall_face_ids": face_group,
                 "end_scan": basis["end_scan"],
+                "end_boundary": end_boundaries,
                 "start_point_mm": min(endpoints, key=lambda point: _dot(point, axis)),
                 "end_point_mm": max(endpoints, key=lambda point: _dot(point, axis)),
                 "depth_definition": "bounded_cylindrical_wall_axial_length",

@@ -1,5 +1,7 @@
 # 三维语义端到端状态与验收（2026-10-03）
 
+> 2026-10-04 P3/P4 判定收口：正间隙、孔端局部边界、真实裁剪面、薄壁配对和组合测量预算的修正与验收范围见 [几何正确性修复记录](development/P3_P4_CORRECTNESS_HARDENING.md)。旧算法结果可查看；发布新版状态前需从保存的 STEP 几何重新解析并重新识别、计算组合测量。此修复不需要重新采集 CATIA 原生参数。
+
 > 2026-10-04 P4 增量：P3 方向/角向/材料区间与默认高亮修正见 [P3 验收](development/P3_GEOMETRY_ACCEPTANCE.md)；P4A 四个标准子类见 [P4A 验收](development/P4A_STANDARD_STRUCTURES_ACCEPTANCE.md)；P4B 薄壁和结构角色候选见 [P4B 验收](development/P4B_THIN_STRUCTURES_ACCEPTANCE.md)；P4C 凹圆角和组合距离见 [P4C 验收](development/P4C_COMBINED_ACCEPTANCE.md)。以下早期矩阵是历史基线，不代表 P4 当前执行。P4 合成 STEP、实时 PostgreSQL 入库/查询、浏览器单个合成件的识别列表/筋条详情及连线、前端类型检查/构建已执行；真实业务件与其余子类的浏览器视觉定位仍待验收。
 
 > 2026-10-04 第二开发包更新：P1 几何查询修正见 [P1 修正](development/P1_HARDENING.md)；R21 原生圆角/倒角/草图的新采集证据见 [P2 验收](development/P2_NATIVE_ACCEPTANCE.md)；纯 STEP 孔、直边圆角/倒角的范围与限制见 [P3 验收](development/P3_GEOMETRY_ACCEPTANCE.md)。下方早期矩阵保留历史记录，不能覆盖上述较新验收状态。

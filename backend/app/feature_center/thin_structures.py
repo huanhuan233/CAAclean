@@ -85,7 +85,7 @@ def structural_proposals(graph: EaagGraph, solid_id: str, face_ids: list[str],
             continue
         seen.add(key)
         thickness = float(pair["thickness_mm"])
-        if thickness <= tolerance or pair.get("method") != "trimmed_plane_projection_and_exact_solid_segment_intersection":
+        if thickness <= tolerance or pair.get("method") != "trimmed_plane_projection_and_exact_solid_segment_intersection_v2":
             continue
         parent = next((feature for feature in rectangular_bosses
                        if pair_faces.issubset(set(feature.typed_payload["geometry_recognition"]["wall_face_ids"]))), None)
@@ -103,6 +103,8 @@ def structural_proposals(graph: EaagGraph, solid_id: str, face_ids: list[str],
                 "thickness_end_mm": pair["end_point_mm"], "thickness_direction": pair["direction"],
                 "material_interval_mm": pair["material_interval_mm"],
                 "thickness_method": pair["method"],
+                "thin_wall_pair_id": pair.get("pair_id"),
+                "thickness_scope": pair.get("coverage_status"),
                 "length_definition": "finite_top_edge_projection_in_parent_boss_frame",
                 "height_definition": "parent_cap_to_root_support_plane",
                 "root_support_face_id": boss["support_face_id"],
@@ -128,6 +130,8 @@ def structural_proposals(graph: EaagGraph, solid_id: str, face_ids: list[str],
                 "thickness_end_mm": pair["end_point_mm"], "thickness_direction": pair["direction"],
                 "material_interval_mm": pair["material_interval_mm"],
                 "thickness_method": pair["method"],
+                "thin_wall_pair_id": pair.get("pair_id"),
+                "thickness_scope": pair.get("coverage_status"),
                 "bounded_face_edge_lengths_mm": lengths,
                 "geometry_form_status": "confirmed", "structural_role_status": "candidate",
                 "render_range_status": "candidate_full_opposed_faces",

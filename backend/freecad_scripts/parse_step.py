@@ -21,6 +21,8 @@ if SCRIPT_DIRECTORY not in sys.path:
     sys.path.insert(0, SCRIPT_DIRECTORY)
 
 from bounds import union_bbox
+from bounded_face_evidence import (cylinder_end_boundaries, solid_line_material_intervals,
+                                   trimmed_face_interior_points, trimmed_face_point_status)
 
 
 SCHEMA_VERSION = "cad_parse_v2"
@@ -611,14 +613,9 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
                    for y in (box.YMin, box.YMax) for z in (box.ZMin, box.ZMax)]
         bounds = [((corner-origin).dot(axis)) for corner in corners]
         line_low, line_high = min(bounds)-probe, max(bounds)+probe
-        centerline = Part.makeLine(origin + axis*line_low, origin + axis*line_high)
-        material_shape = solid.common(centerline)
-        intervals = []
-        for edge in material_shape.Edges:
-            scalars = sorted((vertex.Point-origin).dot(axis) for vertex in edge.Vertexes)
-            if len(scalars) == 2 and scalars[1]-scalars[0] > 1e-7:
-                intervals.append(scalars)
-        intervals.sort()
+        intervals = [[start+line_low, stop+line_low] for start, stop in
+                     solid_line_material_intervals(solid, origin+axis*line_low,
+                                                   origin+axis*line_high)]
         end_states = []
         end_scan = []
         for axial, direction, limit in ((low, -1, line_low), (high, 1, line_high)):
@@ -629,12 +626,14 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
                 elif direction > 0 and stop > axial+1e-6:
                     events.append([max(0.0, start-axial), stop-axial])
             events.sort()
-            state = "material" if events else "void"
+            # An interval after an open gap is evidence of remote material,
+            # not a closure of this bounded cylinder end.
+            state = "material" if events and events[0][0] <= 1e-6 else "void"
             end_states.append(state)
             end_scan.append({"state": state, "first_material_offset_mm": events[0][0] if events else None,
                              "material_intervals_mm": events, "complete": True,
                              "boundary_limit_mm": abs(limit-axial),
-                             "method": "exact_centerline_solid_intersection"})
+                             "method": "exact_centerline_solid_intersection_local_end_v3"})
         return {
             "status": "evaluated" if side != "unknown" else "ambiguous_material_side",
             "radial_material_side": side,
@@ -647,7 +646,7 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
             "end_scan": end_scan,
             "sample_count": sampled,
             "probe_mm": probe,
-            "method": "bounded_face_probes_and_exact_centerline_intersection_v2",
+            "method": "bounded_face_probes_and_exact_centerline_intersection_v3",
         }
     except Exception as exc:
         return {"status": "evaluation_failed", "reason": str(exc)[:160]}
@@ -663,49 +662,73 @@ def thin_wall_pair_evidence(solid, faces, max_planes=128, max_pairs=1024):
             u0, u1, v0, v1 = face.ParameterRange
             normal = face.normalAt((u0+u1)*0.5, (v0+v1)*0.5)
             normal.normalize()
-            point = face.CenterOfMass
-            if face.distToShape(Part.Vertex(point))[0] > 1e-5:
-                continue
-            planes.append((face_id, face, point, normal))
+            planes.append((face_id, face, normal))
         except Exception:
             continue
+    planes.sort(key=lambda item: item[0])
     if len(planes) > max_planes:
-        return [], "plane_candidate_budget_exceeded"
+        return [], {"status": "plane_candidate_budget_exceeded", "candidate_count": len(planes),
+                    "limit": max_planes}
     result = []
     checked = 0
-    for index, (first_id, first, point, normal) in enumerate(planes):
-        for second_id, second, _, other_normal in planes[index+1:]:
+    unverified = 0
+    interior_points = {}
+    for index, (first_id, first, normal) in enumerate(planes):
+        for second_id, second, other_normal in planes[index+1:]:
             if normal.dot(other_normal) > -1+1e-4:
                 continue
             checked += 1
             if checked > max_pairs:
-                return result, "pair_candidate_budget_exceeded"
-            distance = (second.CenterOfMass-point).dot(normal)
+                return result, {"status": "pair_candidate_budget_exceeded", "candidate_count": checked,
+                                "limit": max_pairs, "unverified_pair_count": unverified}
+            distance = (second.CenterOfMass-first.CenterOfMass).dot(normal)
             if distance >= -1e-5:
                 continue
             thickness = -distance
             if max(first.BoundBox.DiagonalLength, second.BoundBox.DiagonalLength) < 4*thickness:
                 continue
-            target = point-normal*thickness
-            if second.distToShape(Part.Vertex(target))[0] > 1e-5:
-                continue
             epsilon = min(max(thickness*1e-5, 1e-5), thickness*0.01)
-            inner_start, inner_end = point-normal*epsilon, target+normal*epsilon
-            if not solid.isInside((inner_start+inner_end)*0.5, 1e-7, False):
+            found = None
+            for source, target_face, source_normal, reverse in (
+                    (first, second, normal, False), (second, first, other_normal, True)):
+                source_id = first_id if not reverse else second_id
+                if source_id not in interior_points:
+                    interior_points[source_id] = trimmed_face_interior_points(source, 1e-5)
+                for source_point in interior_points[source_id]:
+                    target_point = source_point-source_normal*thickness
+                    if trimmed_face_point_status(target_face, target_point, 1e-5)["status"] != "inside":
+                        continue
+                    start, end = (target_point, source_point) if reverse else (source_point, target_point)
+                    inner_start = start-normal*epsilon
+                    inner_end = end+normal*epsilon
+                    if not solid.isInside((inner_start+inner_end)*0.5, 1e-7, False):
+                        continue
+                    try:
+                        intervals = solid_line_material_intervals(solid, inner_start, inner_end)
+                    except Exception:
+                        continue
+                    segment_length = thickness-2*epsilon
+                    if (len(intervals) == 1 and
+                        abs(intervals[0][0]) <= max(0.01, thickness*1e-4) and
+                        abs(intervals[0][1]-segment_length) <= max(0.01, thickness*1e-4)):
+                        found = (start, end)
+                        break
+                if found is not None:
+                    break
+            if found is None:
+                unverified += 1
                 continue
-            try:
-                common = solid.common(Part.makeLine(inner_start, inner_end))
-                intervals = [float(edge.Length) for edge in common.Edges if edge.Length > 1e-7]
-            except Exception:
-                continue
-            if len(intervals) != 1 or abs(intervals[0]-(thickness-2*epsilon)) > max(0.01, thickness*1e-4):
-                continue
+            point, target = found
             result.append({"solid_id": None, "face_a_id": first_id, "face_b_id": second_id,
+                           "pair_id": ":".join(sorted((first_id, second_id))),
                            "thickness_mm": thickness, "start_point_mm": vec(point),
                            "end_point_mm": vec(target), "direction": vec(-normal),
                            "material_interval_mm": [0.0, thickness],
-                           "method": "trimmed_plane_projection_and_exact_solid_segment_intersection"})
-    return result, "evaluated"
+                           "coverage_status": "representative_local_sample",
+                           "method": "trimmed_plane_projection_and_exact_solid_segment_intersection_v2"})
+    return result, {"status": "local_projection_unverified" if unverified else "evaluated",
+                    "candidate_count": checked, "evaluated_count": len(result),
+                    "unverified_pair_count": unverified, "sample_limit_per_face": 64}
 
 
 def edge_geometry(edge) -> tuple[str, dict]:
@@ -879,6 +902,7 @@ def parse(job: dict) -> dict:
         vertex_entities: list[tuple[str, object]] = []
         wire_entities: list[tuple[str, object]] = []
         shell_entities: list[tuple[str, object]] = []
+        cylinder_end_boundary_rows: list[dict] = []
         solid_count = 0
         object_boxes = []
 
@@ -1007,6 +1031,12 @@ def parse(job: dict) -> dict:
                             vertex_entities.append((vertex_id, vertex))
                         relation(relations, revision_id, edge_id, vertex_ids[vertex_index], "has_vertex")
                         
+                solid_face_shapes = {}
+                solid_face_entities = {}
+                solid_face_edge_ids = {}
+                solid_edge_faces = {}
+                solid_edge_entities = {entity["id"]: entity for entity in entities
+                                       if entity.get("entity_type") == "edge" and entity.get("parent_entity_id") == solid_id}
                 for face_index, face in enumerate(solid.Faces):
                     face_ref = f"Face{face_index + 1}"
                     geometry_type, geometry = face_geometry(face)
@@ -1032,6 +1062,9 @@ def parse(job: dict) -> dict:
                         geometry=geometry,
                     )
                     face_entities.append((face_id, face))
+                    solid_face_shapes[face_id] = face
+                    solid_face_entities[face_id] = entities[-1]
+                    solid_face_edge_ids[face_id] = []
                     relation(relations, revision_id, solid_id, face_id, "has_face")
 
                     positions, indices = tessellate_face(face, deflection)
@@ -1077,6 +1110,8 @@ def parse(job: dict) -> dict:
                             )
                             edge_entities.append((edge_id, edge))
                         relation(relations, revision_id, face_id, edge_ids[edge_index], "bounded_by_edge")
+                        solid_face_edge_ids[face_id].append(edge_ids[edge_index])
+                        solid_edge_faces.setdefault(edge_ids[edge_index], []).append(face_id)
 
                     # 每个 Wire 作为独立拓扑节点保留，后续开口环和岛屿分析不再依赖边列表猜测。
                     for wire_index, wire in enumerate(safe_attr(face, "Wires") or []):
@@ -1107,6 +1142,18 @@ def parse(job: dict) -> dict:
                             if wire_edge_index in edge_ids:
                                 relation(relations, revision_id, wire_id,
                                          edge_ids[wire_edge_index], "contains_edge")
+
+                for face_id, face_entity in solid_face_entities.items():
+                    if face_entity.get("geometry_type") != "cylinder":
+                        continue
+                    evidence = (face_entity.get("geometry") or {}).get("recognition_evidence") or {}
+                    if evidence.get("status") != "evaluated":
+                        continue
+                    cylinder_end_boundary_rows.append({
+                        "wall_face_id": face_id,
+                        "ends": cylinder_end_boundaries(
+                            face_id, face_entity, solid_face_shapes, solid_face_edge_ids,
+                            solid_edge_faces, solid_edge_entities, solid_face_entities, 1e-5)})
 
                 # Shell 在 Face 之后建立，便于通过同一实体对象反查已分配的面编号。
                 solid_face_index = TopologyIndex(solid.Faces)
@@ -1164,8 +1211,8 @@ def parse(job: dict) -> dict:
             for candidate in candidates:
                 candidate["solid_id"] = current_solid_id
             thin_wall_pairs.extend(candidates)
-            if status != "evaluated":
-                thin_wall_diagnostics.append({"solid_id": current_solid_id, "status": status})
+            if status["status"] != "evaluated":
+                thin_wall_diagnostics.append({"solid_id": current_solid_id, **status})
 
         # Feature Center 请求时，在同一次导入中保存精确子形状。按源 UUID 命名，
         # 后续 Bundle 写出阶段才绑定稳定 ID；不依赖重导入后的 FaceN 顺序。
@@ -1176,6 +1223,7 @@ def parse(job: dict) -> dict:
                 shape.exportBrep(str(export_dir / (entity_id + ".brep")))
 
         return {
+            "cylinder_end_boundaries": cylinder_end_boundary_rows,
             "thin_wall_pairs": thin_wall_pairs,
             "thin_wall_diagnostics": thin_wall_diagnostics,
             "revision_id": revision_id,

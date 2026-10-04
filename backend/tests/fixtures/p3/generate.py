@@ -31,6 +31,7 @@ save('half_slot', block.cut(Part.makeCylinder(5, 30, v(0,30,0))))
 save('step', block.cut(Part.makeCylinder(5, 30, v(40,30,0))).cut(Part.makeCylinder(9, 5, v(40,30,25))))
 save('mouth_chamfer', block.cut(Part.makeCylinder(5, 30, v(40,30,0)).fuse(Part.makeCone(5, 7, 2, v(40,30,28)))))
 save('divider', block.cut(Part.makeCylinder(5, 8, v(40,30,0))).cut(Part.makeCylinder(5, 8, v(40,30,22))))
+save('closed_cavity', block.cut(Part.makeCylinder(5, 14, v(40,30,8))))
 edge = next(e for e in block.Edges if abs(e.Length-80) < 1e-6 and abs(e.CenterOfMass.y) < 1e-6 and abs(e.CenterOfMass.z) < 1e-6)
 save('fillet', block.makeFillet(3, [edge]))
 save('chamfer', block.makeChamfer(4, [edge]))
@@ -40,3 +41,9 @@ save('through_transformed', block.cut(Part.makeCylinder(5, 30, v(40,30,0))).copy
 second = block.cut(Part.makeCylinder(5, 30, v(40,30,0))).copy()
 second.translate(v(120,0,0))
 save('two_solids', Part.makeCompound([block.cut(Part.makeCylinder(5, 30, v(40,30,0))), second]))
+# One connected U-shaped Solid. The first wall has a through hole, while a
+# remote bridge-supported slab intersects the same infinite centerline later.
+near_wall = block.cut(Part.makeCylinder(5, 30, v(40,30,0)))
+bridge = Part.makeBox(10, 60, 20, v(0,0,30))
+far_wall = Part.makeBox(80, 60, 10, v(0,0,50))
+save('remote_material_after_through', near_wall.fuse(bridge).fuse(far_wall).removeSplitter())

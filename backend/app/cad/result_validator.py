@@ -112,6 +112,7 @@ class ParserResult(BaseModel):
     parse_manifest: dict[str, Any] = Field(default_factory=dict)
     thin_wall_pairs: list[dict[str, Any]] = Field(default_factory=list)
     thin_wall_diagnostics: list[dict[str, Any]] = Field(default_factory=list)
+    cylinder_end_boundaries: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def validate_parser_result(data: dict[str, Any]) -> ParserResult:

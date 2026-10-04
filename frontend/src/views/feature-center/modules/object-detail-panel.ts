@@ -104,6 +104,8 @@ const STATUS_LABELS: Record<string, string> = {
   success: '成功',
   succeeded: '成功',
   completed: '完成',
+  complete: '已完成',
+  measured: '已测量',
   ready: '就绪',
   active: '有效',
   up_to_date: '最新',
@@ -120,7 +122,14 @@ const STATUS_LABELS: Record<string, string> = {
   processing: '处理中',
   unavailable: '不可用',
   disabled: '禁用',
-  not_applicable: '不适用'
+  not_applicable: '不适用',
+  not_evaluated: '未判定',
+  budget_exceeded: '预算不足，部分未计算',
+  complete_no_relation: '已计算，未发现适用关系',
+  no_eligible_candidates: '无适用候选',
+  calculation_failed: '计算失败',
+  proxy_overlap_unverified: '代理范围重叠，实体关系未核验',
+  overlap_or_contact: '旧版：重叠或接触未区分'
 };
 
 const STATUS_TONES: Record<string, StatusTone> = {

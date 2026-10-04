@@ -70,6 +70,12 @@ async def test_p4_real_postgres_pagination_and_combined_detail(tmp_path: Path) -
             assert any(item["name"] == "boss_to_rib_shortest_distance" and item["value"] == 20
                        for item in detail["measurements"])
             assert detail["feature"]["typed_payload"]["geometry_recognition"]["combined_measurements"][0]["status"] == "measured"
+            relation = detail["feature"]["typed_payload"]["geometry_recognition"]["combined_measurements"][0]
+            assert relation["within_tolerance"] is False
+            assert relation["intersection_status"] == "not_evaluated"
+            assert detail["feature"]["typed_payload"]["geometry_recognition"]["combined_measurement_status"] == "complete"
+            assert detail["feature"]["typed_payload"]["geometry_recognition"]["combined_measurement_diagnostics"]["unevaluated_count"] == 0
+            assert next(item for item in detail["measurements"] if item["name"] == "boss_to_rib_shortest_distance")["algorithm_version"] == "p4c_combined.v2"
     finally:
         async with sessions() as cleanup:
             await cleanup.execute(delete(ComponentBuild).where(ComponentBuild.id == build_id))

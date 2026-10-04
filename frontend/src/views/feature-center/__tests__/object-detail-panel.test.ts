@@ -13,6 +13,11 @@ import type { SelectionContext, SelectionTarget } from '../modules/viewer-select
 
 test('详情值格式化保留 0、false 和空数组，只对空值显示占位', () => {
   assert.equal(formatDetailValue(0).text, '0');
+  assert.equal(formatDetailValue(0.0005).text, '0.0005');
+  assert.equal(formatDetailValue(0.0005).fullText, '0.0005');
+  assert.equal(formatDetailValue('overlap_or_contact', 'status').text, '旧版：重叠或接触未区分');
+  assert.equal(formatDetailValue('not_evaluated', 'intersection_status').text, '未判定');
+  assert.equal(formatDetailValue('budget_exceeded', 'combined_measurement_status').text, '预算不足，部分未计算');
   assert.equal(formatDetailValue(false).text, 'false');
   assert.equal(formatDetailValue([]).text, '[]');
   assert.equal(formatDetailValue(null).text, '—');

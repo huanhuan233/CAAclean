@@ -45,12 +45,14 @@ def _features(name: str, tmp_path: Path) -> list[dict]:
     ("shallow_large", [("hole", "blind_hole")]),
     ("step", [("hole", "stepped_through_hole")]),
     ("divider", [("hole", "blind_hole"), ("hole", "blind_hole")]),
+    ("closed_cavity", [("hole", "cylindrical_void_candidate")]),
     ("fillet", [("fillet", "constant_radius_straight_edge")]),
     ("chamfer", [("chamfer", "straight_edge_two_plane")]),
     ("chamfer_unequal", [("chamfer", "straight_edge_two_plane")]),
     ("mouth_chamfer", [("hole", "through_hole"), ("chamfer", "circular_hole_mouth_cone")]),
     ("through_transformed", [("hole", "through_hole")]),
     ("two_solids", [("hole", "through_hole"), ("hole", "through_hole")]),
+    ("remote_material_after_through", [("hole", "through_hole")]),
 ])
 def test_pure_step_recognition(name: str, expected: list[tuple[str, str]], tmp_path: Path) -> None:
     features = [feature for feature in _features(name, tmp_path)
@@ -70,11 +72,15 @@ def test_pure_step_recognition(name: str, expected: list[tuple[str, str]], tmp_p
         assert payload["diameter_mm"] == pytest.approx(40)
         assert payload["cylindrical_wall_length_mm"] == pytest.approx(2)
     if name == "blind":
-        assert features[0]["typed_payload"]["geometry_recognition"]["flat_bottom_depth_mm"] == pytest.approx(15)
+        payload = features[0]["typed_payload"]["geometry_recognition"]
+        assert payload["flat_bottom_depth_mm"] == pytest.approx(15)
+        assert payload["bottom_face_ids"] == [payload["end_boundary"][0]["face_id"]]
+        assert payload["end_boundary"][0]["kind"] == "flat"
     if name == "conical_blind":
         payload = features[0]["typed_payload"]["geometry_recognition"]
         assert payload["cylindrical_wall_length_mm"] == pytest.approx(15)
         assert payload["total_depth_mm"] == pytest.approx(18)
+        assert payload["drill_tip_face_ids"] == [payload["end_boundary"][0]["face_id"]]
     if name == "step":
         segments = features[0]["typed_payload"]["geometry_recognition"]["segments"]
         assert [item["diameter_mm"] for item in segments] == pytest.approx([10, 18])
@@ -90,3 +96,14 @@ def test_pure_step_recognition(name: str, expected: list[tuple[str, str]], tmp_p
         assert payload["radial_distance_mm"] == pytest.approx(2)
     if name == "two_solids":
         assert len({feature["geometry_refs"]["solid_ids"][0] for feature in features}) == 2
+    if name == "remote_material_after_through":
+        payload = features[0]["typed_payload"]["geometry_recognition"]
+        assert payload["cylindrical_wall_length_mm"] == pytest.approx(30)
+        assert payload["end_states"] == ["void", "void"]
+        assert payload["end_scan"][1]["first_material_offset_mm"] == pytest.approx(20)
+        assert payload["end_boundary"][1]["status"] == "open"
+    if name == "closed_cavity":
+        payload = features[0]["typed_payload"]["geometry_recognition"]
+        assert features[0]["review_state"] == "needs_review"
+        assert payload["cylindrical_wall_length_mm"] == pytest.approx(14)
+        assert sorted(item["kind"] for item in payload["end_boundary"]) == ["flat", "flat"]
