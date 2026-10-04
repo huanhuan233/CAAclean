@@ -40,6 +40,35 @@ def _line_distance(first: dict[str, Any], second: dict[str, Any]) -> float:
     return _norm(_sub(delta, [component*_dot(delta, axis) for component in axis]))
 
 
+def _common_angular_bins(group: list[dict[str, Any]], axis: list[float]) -> set[int] | None:
+    """Rebin world-space directions; face UV bins have unrelated zero angles."""
+    reference_axis = [1.0, 0.0, 0.0] if abs(axis[0]) < 0.9 else [0.0, 1.0, 0.0]
+    reference = [axis[1]*reference_axis[2]-axis[2]*reference_axis[1],
+                 axis[2]*reference_axis[0]-axis[0]*reference_axis[2],
+                 axis[0]*reference_axis[1]-axis[1]*reference_axis[0]]
+    reference = [value/_norm(reference) for value in reference]
+    perpendicular = [axis[1]*reference[2]-axis[2]*reference[1],
+                     axis[2]*reference[0]-axis[0]*reference[2],
+                     axis[0]*reference[1]-axis[1]*reference[0]]
+    bins: set[int] = set()
+    for wall in group:
+        samples = wall["evidence"].get("angular_sample_directions")
+        if not isinstance(samples, list) or not samples:
+            return None
+        for sample in samples:
+            if not isinstance(sample, list) or len(sample) != 3:
+                return None
+            try:
+                direction = [float(value) for value in sample]
+            except (TypeError, ValueError):
+                return None
+            if not all(math.isfinite(value) for value in direction) or abs(_norm(direction)-1) > 1e-3:
+                return None
+            angle = math.atan2(_dot(direction, perpendicular), _dot(direction, reference)) % (2*math.pi)
+            bins.add(min(35, int(angle*36/(2*math.pi))))
+    return bins
+
+
 def _normalized_wall(face: dict[str, Any]) -> dict[str, Any] | None:
     geometry = face.get("geometry") or {}
     evidence = geometry.get("recognition_evidence") or {}
@@ -55,14 +84,20 @@ def _normalized_wall(face: dict[str, Any]) -> dict[str, Any] | None:
             return None
         if radius <= 0 or high <= low or abs(_norm(axis)-1) > 1e-4:
             return None
-        if next((value for value in axis if abs(value) > 1e-8), 1) < 0:
+        reversed_axis = next((value for value in axis if abs(value) > 1e-8), 1) < 0
+        end_states = list(evidence.get("end_states") or [])
+        end_scan = list(evidence.get("end_scan") or [])
+        if reversed_axis:
             axis = [-value for value in axis]
             low, high = -high, -low
+            end_states.reverse()
+            end_scan.reverse()
         endpoints = [[origin[i]+axis[i]*t for i in range(3)] for t in (low, high)]
         return {"face": face, "axis": axis, "origin": origin, "radius": radius,
                 "start": endpoints[0], "end": endpoints[1], "coverage": coverage,
-                "end_states": evidence.get("end_states", []), "side": evidence.get("radial_material_side"),
-                "evidence": evidence}
+                "end_states": end_states, "end_scan": end_scan,
+                "side": evidence.get("radial_material_side"), "evidence": evidence,
+                "reversed_axis": reversed_axis}
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -390,7 +425,19 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
     for solid_id, face_ids in _solid_faces(graph).items():
         if len(face_ids) > 5000 or sum(graph.entities[face_id].get("geometry_type") == "cylinder"
                                        for face_id in face_ids) > 256:
-            raise ValueError("GEOMETRY_RECOGNITION_CANDIDATE_LIMIT: Solid exceeds 5000 faces or 256 cylinders")
+            result.diagnostics.append({"code": "GEOMETRY_RECOGNITION_CANDIDATE_LIMIT",
+                                       "solid_id": solid_id, "status": "not_evaluated",
+                                       "reason": "Solid exceeds 5000 faces or 256 cylinders"})
+            continue
+        for face_id in face_ids:
+            face = graph.entities[face_id]
+            if face.get("geometry_type") != "cylinder":
+                continue
+            evidence = (face.get("geometry") or {}).get("recognition_evidence") or {}
+            if evidence.get("status") != "evaluated":
+                result.diagnostics.append({"code": "CYLINDER_RECOGNITION_UNEVALUATED",
+                                           "solid_id": solid_id, "face_id": face_id,
+                                           "status": evidence.get("status", "missing")})
         walls = [_normalized_wall(graph.entities[face_id]) for face_id in face_ids]
         walls = [wall for wall in walls if wall and wall["side"] == "inner_wall"]
         walls.sort(key=lambda wall: wall["face"]["entity_id"])
@@ -422,18 +469,24 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
             low = min(_dot(point, axis) for point in endpoints)
             high = max(_dot(point, axis) for point in endpoints)
             coverage = sum(wall["coverage"] for wall in group)
-            bins = {int(index) for wall in group for index in wall["evidence"].get("angular_bins_36", [])}
+            bins = _common_angular_bins(group, axis)
             states = [wall["end_states"] for wall in group]
             consistent_states = bool(states) and all(state == states[0] for state in states)
             full = (coverage >= 2*math.pi-0.05 and coverage <= 2*math.pi+0.05
-                    and len(bins) == 36)
+                    and bins is not None and len(bins) == 36)
             diagnostics = []
             if not full:
-                diagnostics.append("ANGULAR_COVERAGE_INCOMPLETE_OR_OVERLAP")
+                diagnostics.append("ANGULAR_COVERAGE_INCOMPLETE_OR_UNALIGNED")
             if not consistent_states:
                 diagnostics.append("END_MATERIAL_STATES_CONFLICT")
             if not states or len(states[0]) != 2 or states[0] == ["material", "material"]:
                 diagnostics.append("OPENING_AND_BOTTOM_UNVERIFIED")
+            if any(len(scan.get("material_intervals_mm") or []) > 1
+                   for wall in group for scan in wall["end_scan"]):
+                diagnostics.append("MULTIPLE_MATERIAL_INTERVALS_NEED_REVIEW")
+            if any(scan.get("method") != "exact_centerline_solid_intersection"
+                   for wall in group for scan in wall["end_scan"]):
+                diagnostics.append("END_INTERVALS_NOT_EXACTLY_VERIFIED")
             status = "confirmed" if not diagnostics else "candidate"
             if status != "confirmed":
                 subtype = "cylindrical_void_candidate"
@@ -480,8 +533,9 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                 "subtype": subtype, "diameter_mm": 2*basis["radius"],
                 "cylindrical_wall_length_mm": high-low, "axis_direction": axis,
                 "axis_point_mm": basis["origin"], "angular_coverage_rad": coverage,
-                "angular_bins_verified": len(bins),
+                "angular_bins_verified": len(bins) if bins is not None else 0,
                 "end_states": states[0] if states else [], "wall_face_ids": face_group,
+                "end_scan": basis["end_scan"],
                 "start_point_mm": min(endpoints, key=lambda point: _dot(point, axis)),
                 "end_point_mm": max(endpoints, key=lambda point: _dot(point, axis)),
                 "depth_definition": "bounded_cylindrical_wall_axial_length",

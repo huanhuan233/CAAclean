@@ -81,3 +81,12 @@ def test_empty_mesh_does_not_shift_primitive_indices() -> None:
 
     indices = sorted(item["primitive_index"] for item in result.face_mesh_map["faces"].values())
     assert indices == [0, 1]
+
+
+def test_support_face_is_evidence_but_not_default_feature_extent() -> None:
+    parser_result, topology, links = _inputs()
+    links[1]["role"] = "support"
+    result = build_lightweight_mesh(parser_result, topology, links)
+
+    assert result.feature_mesh_map["features"]["FC1"]["face_ids"] == ["FACE-A"]
+    assert result.selection_index["render_face_to_recognized_features"].get("FACE-B") is None

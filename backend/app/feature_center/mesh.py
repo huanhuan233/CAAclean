@@ -10,6 +10,7 @@ from typing import Any
 
 from .contracts import stable_id
 from .selection_index import build_selection_index
+from .display_scope import is_default_render_link
 from .topology import StableTopology
 
 
@@ -163,6 +164,8 @@ def build_lightweight_mesh(
         face_mesh = face_entries.get(face_id)
         if not face_mesh:
             raise ValueError(f"FEATURE_MESH_FACE_MISSING:{feature_id}:{face_id}")
+        if not is_default_render_link(link):
+            continue
         entry = feature_entries.setdefault(feature_id, {"face_ids": [], "mesh_primitive_ids": []})
         entry["face_ids"].append(face_id)
         entry["mesh_primitive_ids"].append(face_mesh["mesh_primitive_id"])

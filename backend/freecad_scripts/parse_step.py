@@ -592,51 +592,62 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
         reference.normalize()
         perpendicular = axis.cross(reference)
         angular_bins = set()
+        angular_samples = []
         for index in range(145):
             point = face.valueAt(u0 + (u1-u0)*index/144.0, (v0+v1)*0.5)
             if face.distToShape(Part.Vertex(point))[0] > 1e-5:
                 continue
             radial = point-origin-axis*((point-origin).dot(axis))
+            if radial.Length < 1e-8:
+                continue
+            radial.normalize()
+            angular_samples.append(vec(radial))
             angle = math.atan2(radial.dot(perpendicular), radial.dot(reference)) % (2*math.pi)
             angular_bins.add(min(35, int(angle*36/(2*math.pi))))
-        # Follow the centerline beyond each bounded end. A conical drill point
-        # can remain void immediately past the cylindrical wall.
+        # Intersect the bounded centerline with this Solid. A fixed-step probe
+        # can jump over a thin divider and cannot certify an empty interval.
         box = solid.BoundBox
         corners = [FreeCAD.Vector(x, y, z) for x in (box.XMin, box.XMax)
                    for y in (box.YMin, box.YMax) for z in (box.ZMin, box.ZMax)]
         bounds = [((corner-origin).dot(axis)) for corner in corners]
+        line_low, line_high = min(bounds)-probe, max(bounds)+probe
+        centerline = Part.makeLine(origin + axis*line_low, origin + axis*line_high)
+        material_shape = solid.common(centerline)
+        intervals = []
+        for edge in material_shape.Edges:
+            scalars = sorted((vertex.Point-origin).dot(axis) for vertex in edge.Vertexes)
+            if len(scalars) == 2 and scalars[1]-scalars[0] > 1e-7:
+                intervals.append(scalars)
+        intervals.sort()
         end_states = []
         end_scan = []
-        for axial, direction, limit in ((low, -1, min(bounds)), (high, 1, max(bounds))):
-            distance = 0.0
-            state = "void"
-            complete = True
-            for _ in range(512):
-                distance += probe
-                if (direction < 0 and axial-distance < limit-probe) or (direction > 0 and axial+distance > limit+probe):
-                    break
-                point = origin + axis * (axial + direction*distance)
-                if solid.isInside(point, 1e-7, False):
-                    state = "material"
-                    break
-            else:
-                complete = False
+        for axial, direction, limit in ((low, -1, line_low), (high, 1, line_high)):
+            events = []
+            for start, stop in intervals:
+                if direction < 0 and start < axial-1e-6:
+                    events.append([max(0.0, axial-stop), axial-start])
+                elif direction > 0 and stop > axial+1e-6:
+                    events.append([max(0.0, start-axial), stop-axial])
+            events.sort()
+            state = "material" if events else "void"
             end_states.append(state)
-            end_scan.append({"state": state, "first_material_offset_mm": distance if state == "material" else None,
-                             "complete": complete})
+            end_scan.append({"state": state, "first_material_offset_mm": events[0][0] if events else None,
+                             "material_intervals_mm": events, "complete": True,
+                             "boundary_limit_mm": abs(limit-axial),
+                             "method": "exact_centerline_solid_intersection"})
         return {
-            "status": ("evaluated" if all(item["complete"] for item in end_scan) else "incomplete_end_scan")
-                      if side != "unknown" else "ambiguous_material_side",
+            "status": "evaluated" if side != "unknown" else "ambiguous_material_side",
             "radial_material_side": side,
             "axis_unit": vec(axis),
             "axial_range_mm": [low, high],
             "angular_coverage_rad": min(u1-u0, 2*math.pi),
             "angular_bins_36": sorted(angular_bins),
+            "angular_sample_directions": angular_samples,
             "end_states": end_states,
             "end_scan": end_scan,
             "sample_count": sampled,
             "probe_mm": probe,
-            "method": "bounded_face_kernel_material_probes_v1",
+            "method": "bounded_face_probes_and_exact_centerline_intersection_v2",
         }
     except Exception as exc:
         return {"status": "evaluation_failed", "reason": str(exc)[:160]}
