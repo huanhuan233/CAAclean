@@ -40,6 +40,11 @@ def attach_geometry_assets(
             "path": f"geometry/{stable_id}.brep",
             "sha256": _file_digest(path),
         }
+        if kind == "solid":
+            # STEP importer geometry is already placed in its exported scene.
+            # The parent is an imported object, not a CATProduct occurrence.
+            assets[stable_id]["source_object_id"] = str(entity.get("parent_entity_id") or "")
+            assets[stable_id]["coordinate_convention"] = "world_placed_step"
         if kind in {"face", "edge", "vertex"}:
             assets[stable_id]["owning_solid_id"] = topology.source_entity_map.get(str(entity.get("parent_entity_id")))
         source_paths[stable_id] = path

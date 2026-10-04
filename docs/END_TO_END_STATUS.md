@@ -1,5 +1,7 @@
 # 三维语义端到端状态与验收（2026-10-03）
 
+> 2026-10-04 P6A 首批：新解析的多导入对象 STEP 可按已放置 Solid 计算距离、正间隙、受限平面接触和实体干涉；原生 CATProduct occurrence→定义 B-Rep 映射仍缺失，不能声称装配实例精确分析，详见 [P6A 验收](development/P6A_ASSEMBLY_GEOMETRY_ACCEPTANCE.md)。
+
 > 2026-10-04 P5 修复：文档归属改用采集会话的原生对象身份，文本/TPS 分类、尺寸单位、公差带字段和 PMI 产物完整性已修正；真实非空 R21 FT&A 样件与 TTRS 到几何的目标映射仍未验收，详见 [P5 验收记录](development/P5_MBD_ACCEPTANCE.md)。P6 对这些未核实引用保持限制。
 
 > 2026-10-04 P5 产品属性/MBD：R21 CAA 采集、类型字段、PostgreSQL/API 和窄侧栏详情的实际支持范围与 `not_run` 项见 [P5 验收记录](development/P5_MBD_ACCEPTANCE.md)。几何识别确认选区为主题色，候选/待复核为警告黄色；未建立 TTRS 到 GLB 面的映射时不伪造 MBD 精确定位。旧包缺少新增字段时需要重新只读采集。

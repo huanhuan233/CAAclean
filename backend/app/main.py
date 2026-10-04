@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.db.session import init_db
 from app.health.router import router as health_router
 from app.measurement.router import router as measurement_router
+from app.assembly.router import router as assembly_router
 
 
 settings = get_settings()
@@ -37,3 +38,4 @@ app.include_router(health_router)
 app.include_router(cad_router)
 app.include_router(component_build_router)
 app.include_router(measurement_router)
+app.include_router(assembly_router)
