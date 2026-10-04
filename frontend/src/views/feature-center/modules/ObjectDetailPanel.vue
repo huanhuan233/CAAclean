@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, resolveComponent } from 'vue';
 import { ElTag, ElTooltip } from 'element-plus';
+import type { GeometryQueryResponse, GeometryReferencePayload } from '@/service/api/cad';
 import type { CanonicalFeatureRecord } from './feature-center-bundle';
+import type { RecognizedFeatureItem } from './recognized-feature-view-model';
 import type { FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
 import type { DetailPanelLayout } from './detail-panel';
 import type { SelectionContext, SelectionTarget } from './viewer-selection';
-import type { GeometryQueryResponse, GeometryReferencePayload } from '@/service/api/cad';
 import type { MeasurementOperation } from './measurement-session';
 import MeasurementPanel from './MeasurementPanel.vue';
 import {
@@ -46,7 +47,7 @@ const props = defineProps<{
   selectedNativeParameterFamily: string;
   selectedNativeFaces: string[];
   selectedFeature: CanonicalFeatureRecord | null;
-  recognizedFeatures: CanonicalFeatureRecord[];
+  recognizedViewItems: RecognizedFeatureItem[];
   recognizedDetailLoading: boolean;
   recognizedDetailError: string;
   selectedFace: Record<string, unknown> | null;
@@ -139,11 +140,14 @@ const featureRows = computed<DetailField[]>(() => {
       props.selectedNativeParameterFamily
     );
   }
-  if (props.selectedFeature) return detailRowsFromRecord({
-    family: props.selectedFeature.family,
-    subtype: props.selectedFeature.subtype,
-    review_state: props.selectedFeature.review_state
-  }, ['family', 'subtype', 'review_state']);
+  if (props.selectedFeature) {
+    const item = props.recognizedViewItems.find(view => view.featureId === props.selectedFeature?.feature_center_id);
+    return item ? [
+      { key: 'recognized_category', label: '类别', value: formatDetailValue(item.category) },
+      { key: 'recognized_name', label: '特征名称', value: formatDetailValue(item.name) },
+      { key: 'recognized_status', label: '核验状态', value: formatDetailValue(item.status.label) }
+    ] : [];
+  }
   if (props.selectedFace) return faceRows(props.selectedFace);
   return bomRows(props.detailNode as unknown as Record<string, unknown> | null);
 });
@@ -197,12 +201,12 @@ const parameterRows = computed<ParameterField[]>(() => {
         value: formatDetailValue(`${budget.candidate_total} / ${budget.evaluated_count} / ${budget.unevaluated_count}`) });
     }
     combined.forEach((item, index) => {
-      const boss = props.recognizedFeatures.find(feature => feature.feature_center_id === item.boss_feature_id);
-      const rib = props.recognizedFeatures.find(feature => feature.feature_center_id === item.rib_feature_id);
+      const boss = props.recognizedViewItems.find(feature => feature.featureId === item.boss_feature_id);
+      const rib = props.recognizedViewItems.find(feature => feature.featureId === item.rib_feature_id);
       rows.push({ key: `combined_${index}_boss`, label: '凸台对象',
-        value: formatDetailValue(boss ? `圆形凸台 · ${boss.feature_center_id}` : String(item.boss_feature_id || '未加载')) });
+        value: formatDetailValue(boss ? `${boss.title} · ${boss.featureId}` : String(item.boss_feature_id || '未加载')) });
       rows.push({ key: `combined_${index}_rib`, label: '筋对象',
-        value: formatDetailValue(rib ? `直筋候选 · ${rib.feature_center_id}` : String(item.rib_feature_id || '未加载')) });
+        value: formatDetailValue(rib ? `${rib.title} · ${rib.featureId}` : String(item.rib_feature_id || '未加载')) });
       rows.push({ key: `combined_${index}_distance`, label: '凸台到筋主体最短距离 (mm)',
         value: formatDetailValue(item.distance_mm, 'distance_mm') });
       rows.push({ key: `combined_${index}_status`, label: '测量核验', value: formatDetailValue(item.status, 'status') });

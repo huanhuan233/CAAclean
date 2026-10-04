@@ -17,8 +17,8 @@ test('没有历史结果时仍保留 Feature Center 工作区框架', () => {
   assert.match(source, /<ElProgress :percentage="viewerProgress"/);
   assert.match(source, /v-if="showErrorCard" class="error-card"/);
   assert.doesNotMatch(source, /v-if="errorText" class="error-card"/);
-  assert.match(source, /class="geometry-toolbar"/);
-  assert.match(source, /<ElTree[\s\S]*:data="geometryTreeNodes"/);
+  assert.match(source, /<TopologyExplorer\s+v-if="activeTab === 'geometry'"/);
+  assert.match(source, /<RecognizedFeatureExplorer\s+v-show="featureSubTab === 'recognized'"/);
   assert.doesNotMatch(source, /class="geometry-tabs"/);
   assert.match(source, /<ObjectDetailPanel[\s\S]*:contract="contract"/);
   assert.match(source, /<ObjectDetailPanel[\s\S]*:detail-node="detailNode"/);

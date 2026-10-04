@@ -1,5 +1,7 @@
 # 三维语义端到端状态与验收（2026-10-03）
 
+> 2026-10-04 识别特征浏览器 UI：左侧“特征 → 识别特征”使用当前 PostgreSQL API 的 Canonical Feature 分页结果，按 family/subtype 显示中文名称和有证据的短标签；`feature_center_id`、原始枚举与复核状态不改写。`auto_verified` 显示“自动核验”，`needs_review` 显示“待复核”；子类型或结构角色仍为候选却与自动核验矛盾时显示“状态需核实”。搜索仅覆盖已加载记录，底部分别显示服务端总量与已加载量；当前版本有实际映射的候选范围可随选择高亮和三维预览，界面标为“候选范围预览”。2026-10-04 实际浏览器用 build `35a05c3a-8983-4f7b-93c0-caca3b587025` 的 221 条结果核查了约 320px 左栏、分页追加、筛选弹层、ID 搜索、圆角与薄板候选的选择及右侧标题联动。380/440px 与暗色主题的视觉复核 `not_run`；该样件未覆盖所有 P4 类别和长名称。此次仅改变展示，旧识别结果无需重新采集或补算。
+
 > 2026-10-04 P3/P4 判定收口：正间隙、孔端局部边界、真实裁剪面、薄壁配对和组合测量预算的修正与验收范围见 [几何正确性修复记录](development/P3_P4_CORRECTNESS_HARDENING.md)。旧算法结果可查看；发布新版状态前需从保存的 STEP 几何重新解析并重新识别、计算组合测量。此修复不需要重新采集 CATIA 原生参数。
 
 > 2026-10-04 P4 增量：P3 方向/角向/材料区间与默认高亮修正见 [P3 验收](development/P3_GEOMETRY_ACCEPTANCE.md)；P4A 四个标准子类见 [P4A 验收](development/P4A_STANDARD_STRUCTURES_ACCEPTANCE.md)；P4B 薄壁和结构角色候选见 [P4B 验收](development/P4B_THIN_STRUCTURES_ACCEPTANCE.md)；P4C 凹圆角和组合距离见 [P4C 验收](development/P4C_COMBINED_ACCEPTANCE.md)。以下早期矩阵是历史基线，不代表 P4 当前执行。P4 合成 STEP、实时 PostgreSQL 入库/查询、浏览器单个合成件的识别列表/筋条详情及连线、前端类型检查/构建已执行；真实业务件与其余子类的浏览器视觉定位仍待验收。

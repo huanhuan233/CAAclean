@@ -29,7 +29,9 @@ import type { DetailGroup } from './modules/detail-panel';
 import CadViewerControls from './modules/CadViewerControls.vue';
 import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
+import RecognizedFeatureExplorer from './modules/RecognizedFeatureExplorer.vue';
 import TopologyExplorer from './modules/TopologyExplorer.vue';
+import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
 import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, topologyRecordKind } from './modules/topology-view-model';
 import type { TopologyExplorerItem, TopologyInput, SourcedTopologyRecord } from './modules/topology-view-model';
 import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
@@ -218,7 +220,9 @@ const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const recognizedHasMore = ref(false);
 const recognizedNextOffset = ref<number | null>(null);
+const recognizedTotal = ref<number | null>(null);
 const recognizedPageLoading = ref(false);
+const recognizedListError = ref('');
 const recognizedDetailLoading = ref(false);
 const recognizedDetailError = ref('');
 let recognizedDetailGeneration = 0;
@@ -362,6 +366,12 @@ const sourceTabs = computed(() => tabsForSource(sourceFormat.value || 'CATPART')
 const selectedFeature = computed(
   () => canonicalFeatures.value.find(item => item.feature_center_id === selectedFeatureId.value) ?? null
 );
+const recognizedViewItems = computed(() => buildRecognizedFeatureItems(
+  canonicalFeatures.value, contract.value?.task_id || '', featureMeshMap.value
+));
+const selectedRecognizedViewItem = computed(() =>
+  recognizedViewItems.value.find(item => item.featureId === selectedFeatureId.value) ?? null
+);
 const selectedNativeFeature = computed(
   () => {
     const tree = nativeFeatures.value.find(item => item.feature_id === selectedNativeFeatureId.value) ?? null;
@@ -427,7 +437,7 @@ const selectedTitle = computed(
     const primary = primarySelection.value;
     if (primary?.kind === 'face') return primary.label || primary.id;
     if (primary?.kind === 'native_feature') return selectedNativeFeature.value?.display_name || primary.label || primary.id;
-    if (primary?.kind === 'recognized_feature') return selectedFeature.value?.subtype || primary.label || primary.id;
+    if (primary?.kind === 'recognized_feature') return selectedRecognizedViewItem.value?.title || primary.label || primary.id;
     if (primary && ['assembly', 'part_instance', 'part', 'body', 'solid', 'loop', 'coedge', 'edge', 'vertex'].includes(primary.kind)) {
       return primary.label || primary.id;
     }
@@ -1017,6 +1027,8 @@ async function loadBuildBundle(buildId: string) {
     const viewerAsset = result.data.viewer_asset;
     if (!viewerAsset) {
       canonicalFeatures.value = [];
+      recognizedTotal.value = null;
+      recognizedListError.value = '';
       measurements.value = [];
       featureMeshMap.value = null;
       faceMeshMap.value = null;
@@ -1065,10 +1077,19 @@ async function loadBuildBundle(buildId: string) {
     const featurePage = await fetchComponentBuildNativeEvidence<Record<string, unknown>>(
       buildId, 'canonical_features', 0, 100, { signal: assetRequestController.signal, silent: true }
     );
-    if (featurePage.error || !featurePage.data) throw featurePage.error || new Error('识别特征列表读取失败');
-    canonicalFeatures.value = featurePage.data.records as unknown as CanonicalFeatureRecord[];
-    recognizedHasMore.value = featurePage.data.has_more;
-    recognizedNextOffset.value = featurePage.data.next_offset;
+    if (featurePage.error || !featurePage.data) {
+      canonicalFeatures.value = [];
+      recognizedTotal.value = null;
+      recognizedHasMore.value = false;
+      recognizedNextOffset.value = 0;
+      recognizedListError.value = featurePage.error instanceof Error ? featurePage.error.message : '识别特征列表读取失败';
+    } else {
+      canonicalFeatures.value = featurePage.data.records as unknown as CanonicalFeatureRecord[];
+      recognizedTotal.value = featurePage.data.total;
+      recognizedHasMore.value = featurePage.data.has_more;
+      recognizedNextOffset.value = featurePage.data.next_offset;
+      recognizedListError.value = '';
+    }
     measurements.value = [];
     featureMeshMap.value = nextFeatureMap;
     faceMeshMap.value = nextFaceMap;
@@ -1486,6 +1507,7 @@ function redrawRelationOverlay() {
 
 async function loadMoreRecognizedFeatures() {
   const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
   const offset = recognizedNextOffset.value;
   if (!buildId || offset == null || recognizedPageLoading.value) return;
   recognizedPageLoading.value = true;
@@ -1494,13 +1516,17 @@ async function loadMoreRecognizedFeatures() {
       buildId, 'canonical_features', offset, 100, { silent: true }
     );
     if (result.error || !result.data) throw result.error || new Error('识别特征列表读取失败');
+    if (contract.value?.part_id !== buildId || contract.value?.task_id !== revisionId) return;
     const seen = new Set(canonicalFeatures.value.map(item => item.feature_center_id));
     canonicalFeatures.value = [...canonicalFeatures.value,
       ...(result.data.records as unknown as CanonicalFeatureRecord[]).filter(item => !seen.has(item.feature_center_id))];
     recognizedHasMore.value = result.data.has_more;
     recognizedNextOffset.value = result.data.next_offset;
+    recognizedTotal.value = result.data.total;
+    recognizedListError.value = '';
   } catch (error) {
-    recognizedDetailError.value = error instanceof Error ? error.message : '识别列表读取失败';
+    if (contract.value?.part_id === buildId && contract.value?.task_id === revisionId)
+      recognizedListError.value = error instanceof Error ? error.message : '识别列表读取失败';
   } finally {
     recognizedPageLoading.value = false;
   }
@@ -1584,15 +1610,16 @@ function clearSelection() {
 // 用途：选择 Canonical Feature 后通过 feature_mesh_map 高亮真实面。
 function selectFeature(featureId: string) {
   const feature = canonicalFeatures.value.find(item => item.feature_center_id === featureId);
+  const title = recognizedViewItems.value.find(item => item.featureId === featureId)?.title;
   selectionTarget.value = {
     source: 'catia',
     kind: 'feature',
     stableId: featureId,
     featureId,
     partId: contract.value?.part_id,
-    displayName: feature?.subtype
+    displayName: title
   };
-  selectTarget({ kind: 'recognized_feature', id: featureId, label: feature?.subtype, raw: feature }, 'recognized_feature');
+  selectTarget({ kind: 'recognized_feature', id: featureId, label: title, raw: feature }, 'recognized_feature');
 }
 
 // 用途：把 CAA 原生 Feature 关联到引用它的 Canonical Feature；无映射时如实保留选择。
@@ -2397,23 +2424,12 @@ onBeforeUnmount(() => {
                 @properties="showNativeTreeNodeProperties"
                 @load-children="loadNativeTreeChildren"
               />
-              <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
-                <button
-                  v-for="feature in canonicalFeatures"
-                  :key="feature.feature_center_id"
-                  type="button"
-                  class="list-card"
-                  :class="{ active: selectedFeatureId === feature.feature_center_id }"
-                  @click="selectFeature(feature.feature_center_id)"
-                >
-                  <strong>{{ feature.family }} / {{ feature.subtype }}</strong>
-                  <span>{{ feature.feature_center_id }} · {{ feature.review_state }}</span>
-                </button>
-                <ElEmpty v-if="!canonicalFeatures.length" :description="recognizedEmptyDescription" />
-                <ElButton v-if="recognizedHasMore" :loading="recognizedPageLoading" size="small" @click="loadMoreRecognizedFeatures">
-                  加载更多
-                </ElButton>
-              </div>
+              <RecognizedFeatureExplorer v-show="featureSubTab === 'recognized'"
+                :items="recognizedViewItems" :selected-id="primarySelection?.kind === 'recognized_feature' ? primarySelection.id : ''"
+                :total="recognizedTotal" :has-more="recognizedHasMore" :loading="loading" :page-loading="recognizedPageLoading"
+                :error="recognizedListError" :empty-description="recognizedEmptyDescription"
+                @select="selectFeature" @locate="selectFeature" @load-more="loadMoreRecognizedFeatures"
+                @retry="loadMoreRecognizedFeatures" />
             </div>
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
@@ -2475,7 +2491,7 @@ onBeforeUnmount(() => {
           <span v-else-if="selectedNativeFeature">
             / {{ selectedNativeFeature.display_name || selectedNativeFeature.feature_id }}
           </span>
-          <span v-else-if="selectedFeature">/ {{ selectedFeature.subtype }}</span>
+          <span v-else-if="selectedFeature">/ {{ selectedRecognizedViewItem?.title || selectedFeature.feature_center_id }}</span>
           <span v-else-if="selectedFace">/ {{ selectedFace.face_id }}</span>
         </div>
         <section ref="containerRef" class="viewer" />
@@ -2534,7 +2550,7 @@ onBeforeUnmount(() => {
           :selected-native-parameter-family="selectedNativeParameterFamily"
           :selected-native-faces="selectedNativeFaces"
           :selected-feature="selectedFeature"
-          :recognized-features="canonicalFeatures"
+          :recognized-view-items="recognizedViewItems"
           :recognized-detail-loading="recognizedDetailLoading"
           :recognized-detail-error="recognizedDetailError"
           :selected-face="selectedFace"
@@ -3113,26 +3129,24 @@ button:disabled {
 .feature-source-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  padding: 0 10px;
+  gap: 3px;
+  margin: 9px 10px 0;
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--el-fill-color-light);
 }
 .feature-source-tabs button {
   border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
-  padding: 8px 4px;
+  padding: 7px 4px;
+  cursor: pointer;
 }
 .feature-source-tabs button.active {
-  border-bottom-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
-}
-.recognized-feature-list {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  padding: 10px;
 }
 .navigation-resizer {
   position: absolute;
@@ -3179,23 +3193,6 @@ button:disabled {
 }
 .rail-button.primary {
   margin-top: 12px;
-}
-.list-card {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  margin-bottom: 7px;
-  text-align: left;
-}
-.list-card span {
-  max-width: 100%;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .feature-group-title {
   margin: 5px 2px 9px;

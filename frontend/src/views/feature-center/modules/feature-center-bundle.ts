@@ -11,6 +11,7 @@ export interface FeatureMeshMap {
 
 export interface CanonicalFeatureRecord {
   feature_center_id: string;
+  display_name?: string;
   family: string;
   subtype: string;
   review_state: string;
