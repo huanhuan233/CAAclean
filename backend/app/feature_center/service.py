@@ -78,7 +78,16 @@ def build_bundle_from_parser_result(
         topology.tolerance_mm,
         topology.shape_hash,
     )
-    recognition = recognize_geometry(part_id, graph, topology.tolerance_mm, topology.shape_hash)
+    thin_wall_pairs = []
+    for pair in parser_result.get("thin_wall_pairs", []):
+        mapped = dict(pair)
+        for key in ("solid_id", "face_a_id", "face_b_id"):
+            mapped[key] = topology.source_entity_map.get(str(pair.get(key)))
+        if all(mapped.get(key) for key in ("solid_id", "face_a_id", "face_b_id")):
+            thin_wall_pairs.append(mapped)
+    recognition = recognize_geometry(part_id, graph, topology.tolerance_mm,
+                                     topology.shape_hash, thin_wall_pairs)
+    recognition.diagnostics.extend(parser_result.get("thin_wall_diagnostics", []))
     _associate_verified_geometry(fusion, recognition)
     fusion_ms = (time.perf_counter() - fusion_started) * 1000.0
     all_links = fusion.feature_geometry_links + recognition.feature_geometry_links
@@ -179,5 +188,5 @@ def build_bundle_from_parser_result(
         },
         vision_enabled=False,
         degraded=False,
-        feature_recognition_scope="native_hole_guided;geometry_holes_straight_fillet_chamfer;geometry_rectangular_boss_pocket_open_slot_circular_boss",
+        feature_recognition_scope="native_hole_guided;geometry_holes_straight_fillet_chamfer;geometry_rectangular_boss_pocket_open_slot_circular_boss;geometry_thin_wall_rib_web_candidates",
     )

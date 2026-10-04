@@ -653,6 +653,61 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
         return {"status": "evaluation_failed", "reason": str(exc)[:160]}
 
 
+def thin_wall_pair_evidence(solid, faces, max_planes=128, max_pairs=1024):
+    """Probe opposing trimmed planes in the already loaded Solid once per task."""
+    planes = []
+    for face_id, face in faces:
+        if face.Surface.__class__.__name__ != "Plane":
+            continue
+        try:
+            u0, u1, v0, v1 = face.ParameterRange
+            normal = face.normalAt((u0+u1)*0.5, (v0+v1)*0.5)
+            normal.normalize()
+            point = face.CenterOfMass
+            if face.distToShape(Part.Vertex(point))[0] > 1e-5:
+                continue
+            planes.append((face_id, face, point, normal))
+        except Exception:
+            continue
+    if len(planes) > max_planes:
+        return [], "plane_candidate_budget_exceeded"
+    result = []
+    checked = 0
+    for index, (first_id, first, point, normal) in enumerate(planes):
+        for second_id, second, _, other_normal in planes[index+1:]:
+            if normal.dot(other_normal) > -1+1e-4:
+                continue
+            checked += 1
+            if checked > max_pairs:
+                return result, "pair_candidate_budget_exceeded"
+            distance = (second.CenterOfMass-point).dot(normal)
+            if distance >= -1e-5:
+                continue
+            thickness = -distance
+            if max(first.BoundBox.DiagonalLength, second.BoundBox.DiagonalLength) < 4*thickness:
+                continue
+            target = point-normal*thickness
+            if second.distToShape(Part.Vertex(target))[0] > 1e-5:
+                continue
+            epsilon = min(max(thickness*1e-5, 1e-5), thickness*0.01)
+            inner_start, inner_end = point-normal*epsilon, target+normal*epsilon
+            if not solid.isInside((inner_start+inner_end)*0.5, 1e-7, False):
+                continue
+            try:
+                common = solid.common(Part.makeLine(inner_start, inner_end))
+                intervals = [float(edge.Length) for edge in common.Edges if edge.Length > 1e-7]
+            except Exception:
+                continue
+            if len(intervals) != 1 or abs(intervals[0]-(thickness-2*epsilon)) > max(0.01, thickness*1e-4):
+                continue
+            result.append({"solid_id": None, "face_a_id": first_id, "face_b_id": second_id,
+                           "thickness_mm": thickness, "start_point_mm": vec(point),
+                           "end_point_mm": vec(target), "direction": vec(-normal),
+                           "material_interval_mm": [0.0, thickness],
+                           "method": "trimmed_plane_projection_and_exact_solid_segment_intersection"})
+    return result, "evaluated"
+
+
 def edge_geometry(edge) -> tuple[str, dict]:
     try:
         curve = edge.Curve
@@ -1097,6 +1152,21 @@ def parse(job: dict) -> dict:
                     relation(relations, revision_id, left_id, right_id, "adjacent_to")
                     relation(relations, revision_id, right_id, left_id, "adjacent_to")
 
+        # Thin-wall proposals use the same loaded Solid, not per-face subprocesses.
+        face_parent = {entity["id"]: entity.get("parent_entity_id") for entity in entities
+                       if entity.get("entity_type") == "face"}
+        thin_wall_pairs = []
+        thin_wall_diagnostics = []
+        for current_solid_id, solid in solid_entities:
+            candidates, status = thin_wall_pair_evidence(
+                solid, [(face_id, face) for face_id, face in face_entities
+                        if face_parent.get(face_id) == current_solid_id])
+            for candidate in candidates:
+                candidate["solid_id"] = current_solid_id
+            thin_wall_pairs.extend(candidates)
+            if status != "evaluated":
+                thin_wall_diagnostics.append({"solid_id": current_solid_id, "status": status})
+
         # Feature Center 请求时，在同一次导入中保存精确子形状。按源 UUID 命名，
         # 后续 Bundle 写出阶段才绑定稳定 ID；不依赖重导入后的 FaceN 顺序。
         if job.get("brep_dir"):
@@ -1106,6 +1176,8 @@ def parse(job: dict) -> dict:
                 shape.exportBrep(str(export_dir / (entity_id + ".brep")))
 
         return {
+            "thin_wall_pairs": thin_wall_pairs,
+            "thin_wall_diagnostics": thin_wall_diagnostics,
             "revision_id": revision_id,
             "parser_name": "FreeCAD",
             "parser_version": parser_version(),

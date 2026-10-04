@@ -10,8 +10,9 @@ from typing import Any
 from .contracts import CanonicalFeature, GeometryRefs, Measurement, Observation, stable_id
 from .eaag import EaagGraph
 from .standard_structures import circular_bosses, planar_structures
+from .thin_structures import structural_proposals
 
-RULE_VERSION = "geometry_p4a_standard_structures.v2"
+RULE_VERSION = "geometry_p4b_thin_structures.v3"
 
 
 @dataclass
@@ -383,7 +384,7 @@ def _link(result: RecognitionResult, feature_id: str, face_id: str, role: str) -
 def _record(result: RecognitionResult, part_id: str, shape_hash: str, solid_id: str,
             family: str, subtype: str, face_roles: dict[str, list[str]], payload: dict[str, Any],
             status: str, diagnostics: list[str], measures: list[tuple[str, float, str, str]],
-            tolerance: float) -> CanonicalFeature:
+            tolerance: float, measurements_verified: bool = False) -> CanonicalFeature:
     face_ids = sorted(set(face_id for ids in face_roles.values() for face_id in ids))
     feature_id = stable_id("FC", shape_hash, solid_id, family, subtype, *face_ids)
     observation_id = stable_id("OBS", feature_id, RULE_VERSION)
@@ -392,7 +393,7 @@ def _record(result: RecognitionResult, part_id: str, shape_hash: str, solid_id: 
         source_id=RULE_VERSION, source_version=RULE_VERSION, proposed_family=family,
         proposed_subtype=subtype, geometry_refs=GeometryRefs(face_ids=face_ids, solid_ids=[solid_id]),
         classification_confidence=1.0 if status == "confirmed" else 0.5,
-        localization_confidence=1.0, measurement_confidence=1.0 if status == "confirmed" else 0.5,
+        localization_confidence=1.0, measurement_confidence=1.0 if status == "confirmed" or measurements_verified else 0.5,
         status=status, diagnostics=diagnostics,
     ))
     feature = CanonicalFeature(
@@ -415,12 +416,13 @@ def _record(result: RecognitionResult, part_id: str, shape_hash: str, solid_id: 
             measurement_id=stable_id("MEAS", feature_id, name), feature_center_id=feature_id,
             name=name, value=value, unit=unit, tolerance=tolerance, source="geometry_recognition",
             method=method, algorithm_version=RULE_VERSION, input_face_ids=face_ids,
-            validity="valid" if status == "confirmed" else "needs_review",
+            validity="valid" if status == "confirmed" or measurements_verified else "needs_review",
         ))
     return feature
 
 
-def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_hash: str) -> RecognitionResult:
+def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_hash: str,
+                       thin_wall_pairs: list[dict[str, Any]] | None = None) -> RecognitionResult:
     """Classify bounded inner cylindrical wall groups; never rely on native features."""
     result = RecognitionResult()
     for solid_id, face_ids in _solid_faces(graph).items():
@@ -564,4 +566,12 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                               proposal["family"], proposal["subtype"], proposal["roles"],
                               proposal["payload"], "confirmed", [], proposal["measures"], tolerance)
             feature.coordinate_frame = proposal["frame"]
+        for proposal in structural_proposals(graph, solid_id, face_ids, thin_wall_pairs or [],
+                                             result.canonical_features, tolerance):
+            feature = _record(result, part_id, shape_hash, solid_id,
+                              proposal["family"], proposal["subtype"], proposal["roles"],
+                              proposal["payload"], "candidate", proposal["diagnostics"],
+                              proposal["measures"], tolerance, measurements_verified=True)
+            feature.coordinate_frame = proposal["frame"]
+            feature.relations.extend(proposal["relations"])
     return result

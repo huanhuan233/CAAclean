@@ -110,6 +110,8 @@ class ParserResult(BaseModel):
     relations: list[ParserRelation] = Field(default_factory=list)
     meshes: list[ParserMesh] = Field(default_factory=list)
     parse_manifest: dict[str, Any] = Field(default_factory=dict)
+    thin_wall_pairs: list[dict[str, Any]] = Field(default_factory=list)
+    thin_wall_diagnostics: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def validate_parser_result(data: dict[str, Any]) -> ParserResult:

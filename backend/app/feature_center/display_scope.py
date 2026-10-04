@@ -8,7 +8,7 @@ from typing import Any
 DEFAULT_RENDER_ROLES = frozenset({
     "wall", "body_wall", "head_wall", "bottom", "drill_tip", "step_transition",
     "transition", "top", "side_wall", "cavity_wall", "cavity_bottom",
-    "rib_web", "flange_web", "boss_top", "boss_wall",
+    "rib_web", "web_side", "flange_web", "boss_top", "boss_wall",
 })
 
 

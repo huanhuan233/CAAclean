@@ -166,7 +166,15 @@ const parameterRows = computed<ParameterField[]>(() => {
       volume_status: '体积状态', cap_face_id: '顶面或底面', wall_face_ids: '侧壁',
       support_face_id: '支撑面', side_opening_face_ids: '侧向开口',
       dimension_method: '尺寸定义', height_definition: '高度或深度定义',
-      profile_axis_ambiguous: '轮廓轴向是否不唯一'
+      profile_axis_ambiguous: '轮廓轴向是否不唯一',
+      local_thickness_mm: '局部厚度 (mm)', thickness_start_mm: '厚度起点 (mm)',
+      thickness_end_mm: '厚度终点 (mm)', thickness_direction: '厚度方向',
+      thickness_method: '厚度测量方法', material_interval_mm: '连续材料区间 (mm)',
+      geometry_form_status: '薄壁几何核验', structural_role_status: '结构角色判定',
+      length_definition: '长度定义', root_support_face_id: '根部支撑面',
+      parent_geometry_feature_id: '关联几何特征',
+      free_edge_face_ids: '自由边侧面', connected_web_face_ids: '相连腹板',
+      bounded_face_edge_lengths_mm: '参与面边长 (mm)'
     };
     return Object.entries(labels).filter(([key]) => Object.hasOwn(source, key)).map(([key, label]) => ({
       key, label, value: formatDetailValue(source[key], key)
