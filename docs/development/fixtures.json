@@ -321,7 +321,7 @@
       "units": "mm",
       "coordinates": "part_local",
       "instances": null,
-      "known_features": ["矩形凸台", "矩形盲腔", "开放槽", "直筋", "薄板", "T 形缘条", "型腔底角圆角", "凸台到筋距离"],
+      "known_features": ["矩形凸台", "矩形盲腔", "开放槽", "直筋", "薄板", "T 形缘条", "型腔底角圆角", "凸台到筋距离", "刚体旋转矩形凸台", "双 Solid 凸台与盲腔"],
       "expected_value": "构造参数见 generate.py 及 P4A/P4B/P4C 自动化测试",
       "expected_value_source": "独立几何构造，不使用识别器输出",
       "requirements": ["P4A-STANDARD", "P4B-STRUCTURAL", "P4C-COMBINED"],

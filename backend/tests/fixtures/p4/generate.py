@@ -28,3 +28,11 @@ bottom_edge = next(edge for edge in pocket.Edges if abs(edge.Length-16) < 1e-6
 save("pocket_bottom_fillet", pocket.makeFillet(2, [bottom_edge]))
 save("boss_rib_distance", block.fuse(Part.makeCylinder(5, 8, v(15, 30, 30)))
      .fuse(Part.makeBox(30, 3, 10, v(40, 28.5, 30))).removeSplitter())
+rotated_boss = block.fuse(Part.makeBox(16, 12, 8, v(32, 24, 30))).removeSplitter()
+rotated_boss.rotate(v(40, 30, 15), v(1, 2, 3), 37)
+rotated_boss.translate(v(100, -20, 50))
+save("rotated_rect_boss", rotated_boss)
+remote_pocket = block.cut(Part.makeBox(16, 12, 8, v(32, 24, 22))).removeSplitter()
+remote_pocket.translate(v(120, 0, 0))
+save("multi_solid_boss_pocket", Part.makeCompound([
+    block.fuse(Part.makeBox(16, 12, 8, v(32, 24, 30))).removeSplitter(), remote_pocket]))
