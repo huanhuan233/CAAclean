@@ -174,11 +174,26 @@ const parameterRows = computed<ParameterField[]>(() => {
       length_definition: '长度定义', root_support_face_id: '根部支撑面',
       parent_geometry_feature_id: '关联几何特征',
       free_edge_face_ids: '自由边侧面', connected_web_face_ids: '相连腹板',
-      bounded_face_edge_lengths_mm: '参与面边长 (mm)'
+      bounded_face_edge_lengths_mm: '参与面边长 (mm)',
+      center_path_length_mm: '圆角中心路径长度 (mm)', center_path_length_definition: '中心路径定义',
+      support_boundary_length_mm: '支撑边界长度 (mm)', cavity_role: '型腔内角色',
+      cavity_role_status: '角色核验', cavity_floor_face_id: '型腔底面',
+      cavity_wall_face_id: '型腔侧壁', cavity_opening_support_face_id: '开口支撑面',
+      role_method: '角色判断方法', combined_measurements: '组合测量',
+      boss_to_rib_shortest_distance_mm: '凸台到筋主体最短距离 (mm)'
     };
-    return Object.entries(labels).filter(([key]) => Object.hasOwn(source, key)).map(([key, label]) => ({
+    const rows = Object.entries(labels).filter(([key]) => Object.hasOwn(source, key) && key !== 'combined_measurements').map(([key, label]) => ({
       key, label, value: formatDetailValue(source[key], key)
     }));
+    const combined = Array.isArray(source.combined_measurements) ? source.combined_measurements as Array<Record<string, unknown>> : [];
+    combined.forEach((item, index) => {
+      rows.push({ key: `combined_${index}_distance`, label: '凸台到筋主体最短距离 (mm)',
+        value: formatDetailValue(item.distance_mm, 'distance_mm') });
+      rows.push({ key: `combined_${index}_scope`, label: '测量范围', value: formatDetailValue(item.scope, 'scope') });
+      rows.push({ key: `combined_${index}_start`, label: '凸台测量点 (mm)', value: formatDetailValue(item.start_point_mm, 'start_point_mm') });
+      rows.push({ key: `combined_${index}_end`, label: '筋测量点 (mm)', value: formatDetailValue(item.end_point_mm, 'end_point_mm') });
+    });
+    return rows;
   }
   const rows = normalizeParameterRows(parameterSourceFor(props.selectedNativeFeature, props.selectedFeature));
   if (rows.length || !props.selectedMeasurements.length) return rows;

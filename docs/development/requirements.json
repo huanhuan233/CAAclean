@@ -30,6 +30,12 @@
       "name": "2026-10-04 P2/P3 用户实施任务",
       "status": "user_provided",
       "fingerprint": null
+    },
+    {
+      "source_id": "development_package_3",
+      "name": "2026-10-04 P4A/P4B/P4C 用户实施任务",
+      "status": "user_provided",
+      "fingerprint": null
     }
   ],
   "requirements": [
@@ -728,6 +734,57 @@
         "FX-REAL-02"
       ],
       "gap": "缺少全部真实样件的数据库及浏览器逐项验收"
+    },
+    {
+      "requirement_id": "P4A-STANDARD",
+      "source_id": "development_package_3",
+      "source_locator": "§5",
+      "source_status": "user_provided",
+      "original_summary": "标准凸台、凹坑、槽与型腔的有限区域和局部尺寸",
+      "module": "Feature Center",
+      "classification": "geometry_recognition",
+      "required_inputs": ["同一 Solid 的 STEP/B-Rep 拓扑、材料与映射"],
+      "expected_outputs": ["类别、主体范围、局部坐标尺寸、证据、状态"],
+      "identity_and_coordinates": "同一 Solid 隔离；局部边方向与法向；支撑面不作主体高亮",
+      "current_implementation": "矩形直壁凸台/盲腔/开放槽及圆形直壁凸台；复杂岛屿未实现",
+      "verification_status": "automated_tested",
+      "phase": "P4A",
+      "fixtures": ["FX-P4-SYNTH"],
+      "gap": "真实业务件、圆角型腔闭合、岛屿及浏览器逐项验收"
+    },
+    {
+      "requirement_id": "P4B-STRUCTURAL",
+      "source_id": "development_package_3",
+      "source_locator": "§6",
+      "source_status": "user_provided",
+      "original_summary": "薄壁区域、直筋、腹板和缘条角色及结构测量",
+      "module": "Feature Center",
+      "classification": "geometry_recognition",
+      "required_inputs": ["同一 Solid 的相对裁剪面和连续材料区间"],
+      "expected_outputs": ["局部厚度、位置、方向、连接与角色状态"],
+      "identity_and_coordinates": "同 Solid 内核求交；结构功能与几何测量分开",
+      "current_implementation": "直筋/腹板/缘条候选；局部厚度已验证",
+      "verification_status": "automated_tested",
+      "phase": "P4B",
+      "fixtures": ["FX-P4-SYNTH"],
+      "gap": "工程角色尚不能唯一确认；复杂交叉和真实业务件未验收"
+    },
+    {
+      "requirement_id": "P4C-COMBINED",
+      "source_id": "development_package_3",
+      "source_locator": "§7",
+      "source_status": "user_provided",
+      "original_summary": "型腔圆角角色、R 路径与凸台到筋主体距离",
+      "module": "Feature Center",
+      "classification": "geometry_measurement",
+      "required_inputs": ["已有规范特征和同一几何快照"],
+      "expected_outputs": ["R、中心路径定义、组合距离、测量点和角色状态"],
+      "identity_and_coordinates": "已识别主体范围；不含基体和根部圆角",
+      "current_implementation": "凹圆角解析 R 和中心路径；内底角角色候选；圆凸台至直筋主体距离",
+      "verification_status": "automated_tested",
+      "phase": "P4C",
+      "fixtures": ["FX-P4-SYNTH"],
+      "gap": "内转角、相交筋 R、内形闭角及真实业务件未验收"
     }
   ]
 }

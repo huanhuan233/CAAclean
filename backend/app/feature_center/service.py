@@ -188,5 +188,5 @@ def build_bundle_from_parser_result(
         },
         vision_enabled=False,
         degraded=False,
-        feature_recognition_scope="native_hole_guided;geometry_holes_straight_fillet_chamfer;geometry_rectangular_boss_pocket_open_slot_circular_boss;geometry_thin_wall_rib_web_candidates",
+        feature_recognition_scope="native_hole_guided;geometry_holes_straight_fillet_chamfer;geometry_rectangular_boss_pocket_open_slot_circular_boss;geometry_thin_wall_rib_web_candidates;geometry_inner_bottom_fillet_candidate_and_boss_rib_distance",
     )

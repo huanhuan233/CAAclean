@@ -11,8 +11,9 @@ from .contracts import CanonicalFeature, GeometryRefs, Measurement, Observation,
 from .eaag import EaagGraph
 from .standard_structures import circular_bosses, planar_structures
 from .thin_structures import structural_proposals
+from .combined_measurements import apply_combined_measurements
 
-RULE_VERSION = "geometry_p4b_thin_structures.v3"
+RULE_VERSION = "geometry_p4c_combined_measurements.v4"
 
 
 @dataclass
@@ -158,7 +159,7 @@ def _recognize_transitions(result: RecognitionResult, part_id: str, graph: EaagG
                 supports.append((neighbor, lines[0]))
         if surface == "cylinder":
             wall = _normalized_wall(face)
-            if not wall or wall["side"] == "inner_wall" or wall["coverage"] >= math.pi + 0.05:
+            if not wall or wall["coverage"] >= math.pi + 0.05:
                 continue
             for first_index in range(len(supports)):
                 for second_index in range(first_index+1, len(supports)):
@@ -181,7 +182,8 @@ def _recognize_transitions(result: RecognitionResult, part_id: str, graph: EaagG
                     payload = {"radius_mm": wall["radius"], "transition_face_ids": [face_id],
                                "support_face_ids": support_ids, "tangency_residuals_mm": [item[0] for item in checks],
                                "tangency_method": "analytic_plane_cylinder_distance_and_shared_finite_edges",
-                               "convexity": "unknown", "path_length_mm": min(float(first_edge.get("length") or 0), float(second_edge.get("length") or 0)),
+                               "convexity": "concave" if wall["side"] == "inner_wall" else "convex" if wall["side"] == "outer_wall" else "unknown",
+                               "path_length_mm": min(float(first_edge.get("length") or 0), float(second_edge.get("length") or 0)),
                                "path_length_definition": "shorter_support_boundary_edge"}
                     _record(result, part_id, shape_hash, solid_id, "fillet", "constant_radius_straight_edge",
                             {"transition": [face_id], "support": support_ids}, payload, "confirmed", [],
@@ -441,8 +443,12 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                 result.diagnostics.append({"code": "CYLINDER_RECOGNITION_UNEVALUATED",
                                            "solid_id": solid_id, "face_id": face_id,
                                            "status": evidence.get("status", "missing")})
+        _recognize_transitions(result, part_id, graph, solid_id, face_ids, tolerance, shape_hash)
+        transition_faces = {link["face_id"] for link in result.feature_geometry_links
+                            if link["role"] == "transition"}
         walls = [_normalized_wall(graph.entities[face_id]) for face_id in face_ids]
-        walls = [wall for wall in walls if wall and wall["side"] == "inner_wall"]
+        walls = [wall for wall in walls if wall and wall["side"] == "inner_wall"
+                 and wall["face"]["entity_id"] not in transition_faces]
         walls.sort(key=lambda wall: wall["face"]["entity_id"])
         parents = list(range(len(walls)))
 
@@ -560,7 +566,6 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                      ("cylindrical_wall_length", high-low, "mm", "bounded_face_edge_projection")]
                     + ([("total_depth", tip_depth, "mm", "entry_to_cone_apex_projection")] if tip_depth is not None else []), tolerance)
         _combine_step_segments(result, part_id, graph, solid_id, tolerance, shape_hash)
-        _recognize_transitions(result, part_id, graph, solid_id, face_ids, tolerance, shape_hash)
         for proposal in planar_structures(graph, solid_id, face_ids, tolerance) + circular_bosses(graph, solid_id, face_ids, tolerance):
             feature = _record(result, part_id, shape_hash, solid_id,
                               proposal["family"], proposal["subtype"], proposal["roles"],
@@ -574,4 +579,5 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                               proposal["measures"], tolerance, measurements_verified=True)
             feature.coordinate_frame = proposal["frame"]
             feature.relations.extend(proposal["relations"])
+    apply_combined_measurements(result, graph, tolerance)
     return result

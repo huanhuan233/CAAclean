@@ -296,6 +296,8 @@ const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
 
 let scene: THREE.Scene | null = null;
 let measurementOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
+let relationOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
+let activeRelationPoints: { a: number[]; b: number[] } | null = null;
 let sketchOverlay: ReturnType<typeof createSketchOverlay> | null = null;
 let activeSketchPayload: NativeSketchPayload | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
@@ -1404,6 +1406,8 @@ function clearStepCurves() {
 }
 
 function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']) {
+  relationOverlay?.clear();
+  activeRelationPoints = null;
   viewerSelection.value = resolveViewerSelection(
     { ...target, source: origin },
     {
@@ -1453,12 +1457,31 @@ async function loadSelectedRecognizedDetail(featureId: string) {
     if (index < 0) canonicalFeatures.value = [...canonicalFeatures.value, feature];
     else canonicalFeatures.value[index] = feature;
     measurements.value = response.data.measurements as unknown as MeasurementRecord[];
+    const recognized = feature.typed_payload?.geometry_recognition as Record<string, unknown> | undefined;
+    const combined = Array.isArray(recognized?.combined_measurements)
+      ? recognized.combined_measurements as Array<Record<string, unknown>> : [];
+    const relation = combined.find(item => item.status === 'measured' &&
+      Array.isArray(item.start_point_mm) && Array.isArray(item.end_point_mm));
+    if (relation) {
+      activeRelationPoints = {
+        a: relation.start_point_mm as number[],
+        b: relation.end_point_mm as number[]
+      };
+      redrawRelationOverlay();
+    }
   } catch (error) {
     if (generation === recognizedDetailGeneration && selectedFeatureId.value === featureId)
       recognizedDetailError.value = error instanceof Error ? error.message : '识别详情读取失败';
   } finally {
     if (generation === recognizedDetailGeneration) recognizedDetailLoading.value = false;
   }
+}
+
+function redrawRelationOverlay() {
+  if (!activeRelationPoints) return;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+  relationOverlay?.show({ status: 'success', operation: 'distance',
+    values: { nearest_points: [activeRelationPoints] } }, color);
 }
 
 async function loadMoreRecognizedFeatures() {
@@ -1856,6 +1879,7 @@ function initViewer() {
   if (!container || scene) return;
   scene = new THREE.Scene();
   measurementOverlay = createMeasurementOverlay(scene);
+  relationOverlay = createMeasurementOverlay(scene);
   sketchOverlay = createSketchOverlay(scene);
   scene.background = new THREE.Color('#f7f8fb');
   camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1_000_000);
@@ -2119,6 +2143,7 @@ watch(toolMode, applyToolMode);
 watch([transparent, isolated, sectionEnabled, sectionOffset], applyVisualState);
 watch(() => themeStore.themeColor, () => {
   applyVisualState();
+  redrawRelationOverlay();
   if (measurementSession.result.value) {
     const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
     measurementOverlay?.show(measurementSession.result.value, color);
@@ -2127,6 +2152,7 @@ watch(() => themeStore.themeColor, () => {
 onMounted(async () => {
   themeObserver = new MutationObserver(() => {
     applyVisualState();
+    redrawRelationOverlay();
     if (measurementSession.result.value) {
       const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
       measurementOverlay?.show(measurementSession.result.value, color);
@@ -2152,6 +2178,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   measurementSession.clear();
   measurementOverlay?.clear();
+  relationOverlay?.clear();
   sketchOverlay?.clear();
   geometryDetailController?.abort();
   nativeDetailLoader.clear();

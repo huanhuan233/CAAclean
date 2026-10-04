@@ -310,6 +310,23 @@
       ],
       "availability": "automated_tested",
       "sha256": null
+    },
+    {
+      "fixture_id": "FX-P4-SYNTH",
+      "path": "backend/tests/fixtures/p4/",
+      "origin": "FreeCAD 独立尺寸构造脚本 generate.py",
+      "restriction": "测试输入，非真实业务样件",
+      "input_type": "STEP",
+      "provenance": "synthetic",
+      "units": "mm",
+      "coordinates": "part_local",
+      "instances": null,
+      "known_features": ["矩形凸台", "矩形盲腔", "开放槽", "直筋", "薄板", "T 形缘条", "型腔底角圆角", "凸台到筋距离"],
+      "expected_value": "构造参数见 generate.py 及 P4A/P4B/P4C 自动化测试",
+      "expected_value_source": "独立几何构造，不使用识别器输出",
+      "requirements": ["P4A-STANDARD", "P4B-STRUCTURAL", "P4C-COMBINED"],
+      "availability": "automated_tested",
+      "sha256": null
     }
   ]
 }
