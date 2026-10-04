@@ -5,8 +5,14 @@
 #include <CATITPS.h>
 #include <CATITPSDimension.h>
 #include <CATITPSLinearDimension.h>
+#include <CATITPSAngularDimension.h>
 #include <CATITPSDimensionLimits.h>
 #include <CATITPSSemanticGDTTolerance.h>
+#include <CATITPSToleranceZone.h>
+#include <CATITPSCompositeTolerance.h>
+#include <CATITPSAssociatedRefFrame.h>
+#include <CATITPSReferenceFrame.h>
+#include <CATITPSList.h>
 #include <CATITPSNonSemanticGDT.h>
 #include <CATITPSRoughness.h>
 #include <CATITPSDatum.h>
@@ -56,6 +62,21 @@ static void Field(FtaSemanticEntity& entity, const std::string& key,
   entity.raw_fields.push_back(field);
 }
 
+static void AssignKind(FtaSemanticEntity& entity, const char* kind)
+{
+  const std::string previous = entity.component_kind;
+  if (previous.empty() || previous == "unknown" || previous == "unknown_tps_component" || previous == "tps" || previous == "text")
+    entity.component_kind = kind;
+  else if ((previous == "datum" && (std::string(kind) == "datum_simple" || std::string(kind) == "datum_system")) ||
+           (previous == "gdt_nonsemantic" && std::string(kind) == "gdt"))
+    entity.component_kind = kind;
+  else if (previous != kind && previous != "multiple_tps_types")
+  {
+    Field(entity, "component_kind_conflict", previous + "," + kind, "", "needs_review", "QueryInterface");
+    entity.component_kind = "multiple_tps_types";
+  }
+}
+
 static void TextField(FtaSemanticEntity& entity, const std::string& key,
                       wchar_t* value, HRESULT result, const std::string& api)
 {
@@ -84,9 +105,17 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSDimension> dimension;
   if (Probe(component, IID_CATITPSDimension, "CATITPSDimension", entity, dimension))
   {
-    entity.component_kind = "dimension";
+    AssignKind(entity, "dimension");
+    CaaInterfaceGuard<CATITPSAngularDimension> angular;
+    const bool angular_dimension = Probe(component, IID_CATITPSAngularDimension,
+                                         "CATITPSAngularDimension", entity, angular);
     CaaInterfaceGuard<CATITPSLinearDimension> linear;
-    if (Probe(component, IID_CATITPSLinearDimension, "CATITPSLinearDimension", entity, linear))
+    const bool linear_dimension = Probe(component, IID_CATITPSLinearDimension,
+                                        "CATITPSLinearDimension", entity, linear);
+    // R21 documents limits in millimetres, but angular and unclassified
+    // dimensions need subtype-specific evidence before unit normalization.
+    const std::string value_unit = linear_dimension && !angular_dimension ? "mm" : "unknown";
+    if (linear_dimension)
     {
       CATTPSLinearDimensionSubType subtype;
       const HRESULT result = linear.Get()->GetLinearDimSubType(&subtype);
@@ -102,13 +131,13 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
             SUCCEEDED(result) ? "available" : "failed", "CATITPSDimensionLimits.GetDimensionLimitType");
       double nominal = 0;
       result = limits.Get()->GetNominalValue(&nominal);
-      Field(entity, "nominal_value", SUCCEEDED(result) ? Number(nominal) : "", "mm",
+      Field(entity, "nominal_value", SUCCEEDED(result) ? Number(nominal) : "", value_unit,
             SUCCEEDED(result) ? "available" : "failed", "CATITPSDimensionLimits.GetNominalValue");
       double bottom = 0, upper = 0;
       result = limits.Get()->GetLimits(&bottom, &upper);
-      Field(entity, "lower_limit", SUCCEEDED(result) ? Number(bottom) : "", "mm",
+      Field(entity, "lower_limit", SUCCEEDED(result) ? Number(bottom) : "", value_unit,
             SUCCEEDED(result) ? "available" : "failed", "CATITPSDimensionLimits.GetLimits");
-      Field(entity, "upper_limit", SUCCEEDED(result) ? Number(upper) : "", "mm",
+      Field(entity, "upper_limit", SUCCEEDED(result) ? Number(upper) : "", value_unit,
             SUCCEEDED(result) ? "available" : "failed", "CATITPSDimensionLimits.GetLimits");
     }
     else Field(entity, "dimension_values", "", "", "unsupported", "CATITPSDimensionLimits");
@@ -117,19 +146,70 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSSemanticGDTTolerance> gdt;
   if (Probe(component, IID_CATITPSSemanticGDTTolerance, "CATITPSSemanticGDTTolerance", entity, gdt))
   {
-    entity.component_kind = "gdt";
+    AssignKind(entity, "gdt");
     int precision = 0;
     const HRESULT result = gdt.Get()->GetPrecision(&precision);
     Field(entity, "precision_raw", SUCCEEDED(result) ? Number(precision) : "", "",
           SUCCEEDED(result) ? "available" : "failed", "CATITPSSemanticGDTTolerance.GetPrecision");
-    Field(entity, "tolerance_value", "", "", "unsupported", "R21 public semantic GDT interface");
+    CaaInterfaceGuard<CATITPSToleranceZone> zone;
+    if (Probe(component, IID_CATITPSToleranceZone, "CATITPSToleranceZone", entity, zone))
+    {
+      double tolerance = 0;
+      HRESULT value_result = zone.Get()->GetValue(&tolerance);
+      Field(entity, "tolerance_zone_value", SUCCEEDED(value_result) ? Number(tolerance) : "", "mm",
+            SUCCEEDED(value_result) ? "available" : "failed", "CATITPSToleranceZone.GetValue");
+      CATTPSToleranceZoneForm form;
+      HRESULT form_result = zone.Get()->GetForm(&form);
+      Field(entity, "tolerance_zone_form_raw", SUCCEEDED(form_result) ? Number(static_cast<long>(form)) : "", "",
+            SUCCEEDED(form_result) ? "available" : "failed", "CATITPSToleranceZone.GetForm");
+    }
+    else Field(entity, "tolerance_zone_value", "", "", "not_verified", "CATITPSToleranceZone");
+    CaaInterfaceGuard<CATITPSCompositeTolerance> composite;
+    if (Probe(component, IID_CATITPSCompositeTolerance, "CATITPSCompositeTolerance", entity, composite))
+    {
+      double value = 0;
+      HRESULT value_result = composite.Get()->GetCompositeValue(&value);
+      Field(entity, "composite_tolerance_value", SUCCEEDED(value_result) ? Number(value) : "", "mm",
+            SUCCEEDED(value_result) ? "available" : "failed", "CATITPSCompositeTolerance.GetCompositeValue");
+      unsigned int box_count = 0;
+      HRESULT count_result = composite.Get()->GetBoxCount(&box_count);
+      Field(entity, "composite_box_count", SUCCEEDED(count_result) ? Number(box_count) : "", "",
+            SUCCEEDED(count_result) ? "available" : "failed", "CATITPSCompositeTolerance.GetBoxCount");
+    }
+    CaaInterfaceGuard<CATITPSAssociatedRefFrame> associated_frame;
+    if (Probe(component, IID_CATITPSAssociatedRefFrame, "CATITPSAssociatedRefFrame", entity, associated_frame))
+    {
+      CATITPSReferenceFrame* frame = 0;
+      HRESULT frame_result = associated_frame.Get()->GetReferenceFrame(&frame);
+      if (SUCCEEDED(frame_result) && frame)
+      {
+        CaaInterfaceGuard<CATITPSReferenceFrame> frame_guard(frame);
+        wchar_t *first = 0, *second = 0, *third = 0;
+        HRESULT boxes_result = frame->GetFrame(&first, &second, &third);
+        Field(entity, "datum_reference_frame_boxes", SUCCEEDED(boxes_result) ?
+              (Utf8(first) + "|" + Utf8(second) + "|" + Utf8(third)) : "", "",
+              SUCCEEDED(boxes_result) ? "available" : "failed", "CATITPSReferenceFrame.GetFrame");
+        delete [] first; delete [] second; delete [] third;
+        CATITPSList* datums = 0;
+        HRESULT datums_result = frame->GetAllDatumsSimple(&datums);
+        if (SUCCEEDED(datums_result) && datums)
+        {
+          CaaInterfaceGuard<CATITPSList> datums_guard(datums);
+          unsigned int datum_count = 0;
+          HRESULT count_result = datums->Count(&datum_count);
+          Field(entity, "datum_reference_count", SUCCEEDED(count_result) ? Number(datum_count) : "", "",
+                SUCCEEDED(count_result) ? "available" : "failed", "CATITPSReferenceFrame.GetAllDatumsSimple.Count");
+        }
+      }
+      else Field(entity, "datum_reference_frame_boxes", "", "", "failed", "CATITPSAssociatedRefFrame.GetReferenceFrame");
+    }
   }
   CaaInterfaceGuard<CATITPSNonSemanticGDT> nonsemantic_gdt;
   if (Probe(component, IID_CATITPSNonSemanticGDT, "CATITPSNonSemanticGDT", entity, nonsemantic_gdt))
   {
     if (entity.component_kind != "gdt")
     {
-      entity.component_kind = "gdt_nonsemantic";
+      AssignKind(entity, "gdt_nonsemantic");
       Field(entity, "tolerance_value", "", "", "unsupported", "CATITPSNonSemanticGDT");
     }
   }
@@ -137,7 +217,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSRoughness> roughness;
   if (Probe(component, IID_CATITPSRoughness, "CATITPSRoughness", entity, roughness))
   {
-    entity.component_kind = "roughness";
+    AssignKind(entity, "roughness");
     for (int index = 1; index <= 9; ++index)
     {
       std::ostringstream key;
@@ -151,11 +231,11 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
 
   CaaInterfaceGuard<CATITPSDatum> datum;
   if (Probe(component, IID_CATITPSDatum, "CATITPSDatum", entity, datum))
-    entity.component_kind = "datum";
+    AssignKind(entity, "datum");
   CaaInterfaceGuard<CATITPSDatumSimple> simple_datum;
   if (Probe(component, IID_CATITPSDatumSimple, "CATITPSDatumSimple", entity, simple_datum))
   {
-    entity.component_kind = "datum_simple";
+    AssignKind(entity, "datum_simple");
     wchar_t* label = 0;
     HRESULT result = E_FAIL;
     try { result = simple_datum.Get()->GetLabel(&label); } catch (...) {}
@@ -164,7 +244,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSDatumSystem> system_datum;
   if (Probe(component, IID_CATITPSDatumSystem, "CATITPSDatumSystem", entity, system_datum))
   {
-    entity.component_kind = "datum_system";
+    AssignKind(entity, "datum_system");
     wchar_t* label = 0;
     HRESULT result = E_FAIL;
     try { result = system_datum.Get()->GetLabel(&label); } catch (...) {}
@@ -174,7 +254,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSFlagNote> flag;
   if (Probe(component, IID_CATITPSFlagNote, "CATITPSFlagNote", entity, flag))
   {
-    entity.component_kind = "flag_note";
+    AssignKind(entity, "flag_note");
     wchar_t* flag_text = 0;
     HRESULT result = E_FAIL;
     try { result = flag.Get()->GetFlagText(&flag_text); } catch (...) {}
@@ -195,7 +275,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSNoa> noa;
   if (Probe(component, IID_CATITPSNoa, "CATITPSNoa", entity, noa))
   {
-    entity.component_kind = "noa";
+    AssignKind(entity, "noa");
     wchar_t* type = 0;
     HRESULT result = E_FAIL;
     try { result = noa.Get()->GetNoaType(&type); } catch (...) {}
@@ -221,8 +301,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   if (Probe(component, IID_CATITPSText, "CATITPSText", entity, text))
   {
     // Several specific TPS types also expose text; keep their more precise kind.
-    if (entity.component_kind.empty() || entity.component_kind == "unknown")
-      entity.component_kind = "text";
+    AssignKind(entity, "text");
   }
 
   CaaInterfaceGuard<CATITPS> tps;
@@ -249,6 +328,19 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
               std::ostringstream key; key << "ttrs_" << index << "_nature_raw";
               Field(entity, key.str(), Number(static_cast<long>(ttrs->GetNature())), "",
                     "available", "CATITTRS.GetNature");
+              CATMmrTTRSClass ttrs_class;
+              key.str(""); key.clear(); key << "ttrs_" << index << "_class_raw";
+              HRESULT class_result = ttrs->GetTTRSClass(ttrs_class);
+              Field(entity, key.str(), SUCCEEDED(class_result) ? Number(static_cast<long>(ttrs_class)) : "", "",
+                    SUCCEEDED(class_result) ? "available" : "failed", "CATITTRS.GetTTRSClass");
+              CATLISTV(CATBaseUnknown_var) components;
+              key.str(""); key.clear(); key << "ttrs_" << index << "_component_count";
+              HRESULT component_result = ttrs->GetComponents(components);
+              Field(entity, key.str(), SUCCEEDED(component_result) ? Number(components.Size()) : "", "",
+                    SUCCEEDED(component_result) ? "available" : "failed", "CATITTRS.GetComponents");
+              key.str(""); key.clear(); key << "ttrs_" << index << "_reference_status";
+              Field(entity, key.str(), "unresolved_native_components", "", "not_verified",
+                    "CATITTRS.GetComponents");
             }
           }
         }

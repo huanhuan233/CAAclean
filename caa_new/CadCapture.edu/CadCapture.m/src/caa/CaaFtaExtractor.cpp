@@ -46,13 +46,6 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
-static std::string RootDocumentSubject(const ReconstructionPackage& package)
-{
-  if (!package.document_graph.documents.empty())
-    return package.document_graph.documents[0].document_id;
-  return "document";
-}
-
 static std::string ReadAlias(IUnknown* object)
 {
   if (!object) return "";
@@ -193,26 +186,17 @@ static void ReadSetOwner(CATITPSSet* set_interface, CATDocument* scan_document,
     CaaInterfaceGuard<CATILinkableObject> linkable_guard(linkable);
     CATDocument* owner = linkable->GetDocument();
     if (!owner) return;
-    if (owner == scan_document)
+    (void)scan_document;
+    for (size_t i = 0; i < package.native_document_bindings.size(); ++i)
     {
-      entity.owning_document_id = RootDocumentSubject(package);
-      entity.ownership_status = "native_document_identity";
-      return;
+      if (package.native_document_bindings[i].native_document == owner)
+      {
+        entity.owning_document_id = package.native_document_bindings[i].document_id;
+        entity.ownership_status = "native_document_identity";
+        return;
+      }
     }
-    const std::string owner_name = UnicodeToUtf8Local(owner->DisplayName());
-    std::string match;
-    for (size_t i = 0; i < package.document_graph.documents.size(); ++i)
-    {
-      const DocumentEntity& candidate = package.document_graph.documents[i];
-      if (candidate.source_file_name != owner_name) continue;
-      if (!match.empty()) { match.clear(); break; }
-      match = candidate.document_id;
-    }
-    if (!match.empty())
-    {
-      entity.owning_document_id = match;
-      entity.ownership_status = "unique_document_name_match";
-    }
+    entity.ownership_status = "unresolved_document_identity";
   }
   catch (...) { entity.ownership_status = "read_exception"; }
 }
@@ -419,7 +403,10 @@ static void AppendFtaSemantic(CATITPSComponent* component,
       entity.fta_semantic_id, "Typed field read failed; other annotation evidence is retained", "fta_extractor"));
   }
   // 支持接口只证明可查询，不能据此宣称语义或拓扑已经完整。
-  if (entity.annotation_text_status == "available" || entity.validation_text_status == "success")
+  bool has_typed_value = false;
+  for (size_t field_index = 0; field_index < entity.raw_fields.size(); ++field_index)
+    if (entity.raw_fields[field_index].read_status == "available") has_typed_value = true;
+  if (entity.annotation_text_status == "available" || entity.validation_text_status == "success" || has_typed_value)
     entity.read_status = "partial";
   else if (!entity.supported_interface_keys.empty())
     entity.read_status = "interface_only";
@@ -438,7 +425,19 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
                               ReconstructionPackage& package)
 {
   CATDocument* document = static_cast<CATDocument*>(document_handle.NativeDocumentForCaaOnly());
-  const std::string document_id = RootDocumentSubject(package);
+  std::string document_id;
+  for (size_t binding_index = 0; binding_index < package.native_document_bindings.size(); ++binding_index)
+    if (package.native_document_bindings[binding_index].native_document == document)
+    {
+      document_id = package.native_document_bindings[binding_index].document_id;
+      break;
+    }
+  if (document_id.empty())
+  {
+    package.diagnostics.push_back(MakeDiagnostic("warning", "tps_document_identity_unregistered", "",
+      "Native CATDocument was not registered by the document scanner", "fta_extractor"));
+    return true;
+  }
   if (!document)
   {
     package.diagnostics.push_back(MakeDiagnostic("info", "tps_document_unavailable", document_id,
@@ -516,7 +515,7 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
 
     PmiEntity pmi;
     pmi.pmi_id = ids.NextPmiId();
-    pmi.subject_id = document_id;
+    pmi.subject_id = "";
     pmi.pmi_kind = "fta_set";
     pmi.source_api = "CATITPSDocument.GetSets";
     pmi.evidence_status = "set_level_counts";
@@ -524,6 +523,7 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
     pmi.read_status = "available";
     pmi.alias = ReadAlias(component);
     ReadSetOwner(set_interface, document, package, pmi);
+    pmi.subject_id = pmi.owning_document_id;
     if (pmi.owning_document_id.empty())
       package.diagnostics.push_back(MakeDiagnostic("warning", "tps_set_owner_unresolved", pmi.pmi_id,
         "Set reference product could not be matched to a unique captured document", "fta_extractor"));

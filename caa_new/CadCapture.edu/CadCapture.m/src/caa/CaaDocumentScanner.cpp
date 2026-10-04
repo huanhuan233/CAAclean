@@ -62,6 +62,10 @@ bool CaaDocumentScanner::Scan(const std::string& input_path,
   }
 
   package.document_graph.AddDocument(document);
+  NativeDocumentBinding binding;
+  binding.document_id = document.document_id;
+  binding.native_document = document_handle.NativeDocumentForCaaOnly();
+  package.native_document_bindings.push_back(binding);
   package.diagnostics.push_back(MakeDiagnostic("info", "document_opened", document.document_id,
                                                "CaaDocumentScanner opened native CATIA document read-only",
                                                "document_scanner"));

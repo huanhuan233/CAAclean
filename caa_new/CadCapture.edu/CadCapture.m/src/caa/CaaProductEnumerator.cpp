@@ -473,8 +473,8 @@ private:
       reference_document_name = UnicodeToUtf8Local(reference_document->DisplayName());
 
     std::string key;
-    if (!reference_document_name.empty())
-      key = "document|" + reference_document_name + "|" + part_number;
+    if (reference_document)
+      key = "document_session|" + PointerKey(reference_document) + "|" + PointerKey(reference_product);
     else
       key = "session_reference|" + PointerKey(reference_product);
     std::map<std::string, std::string>::iterator found = _references.find(key);
@@ -501,7 +501,7 @@ private:
       reference.reference_document_kind = "unresolved";
     reference.definition_status = reference.referenced_document_id.empty() ? "unresolved_reference_document" : "same_document_product_reference";
     reference.value_source = "CATIProduct";
-    reference.identity_method = reference_document_name.empty() ? "session_reference_product_object" : "linkable_document_and_part_number";
+    reference.identity_method = reference_document ? "session_document_and_reference_product" : "session_reference_product_object";
     _package.product_references.push_back(reference);
     ProductReferenceEntity* stored = &_package.product_references[_package.product_references.size() - 1];
     CaptureProductProperties(reference_product, reference_id, true, _ids, _package);
@@ -520,9 +520,8 @@ private:
                                    const std::string& document_name,
                                    const std::string& reference_id)
   {
-    (void)document;
-    std::map<std::string, std::string>::iterator found = _document_ids_by_name.find(document_name);
-    if (found != _document_ids_by_name.end())
+    std::map<CATDocument*, std::string>::iterator found = _document_ids_by_pointer.find(document);
+    if (found != _document_ids_by_pointer.end())
       return found->second;
 
     DocumentEntity entity;
@@ -536,7 +535,11 @@ private:
     entity.definition_status = "reference_document_not_parsed";
     entity.identity_method = "CATILinkableObject.GetDocument";
     _package.document_graph.AddDocument(entity);
-    _document_ids_by_name[document_name] = entity.document_id;
+    _document_ids_by_pointer[document] = entity.document_id;
+    NativeDocumentBinding binding;
+    binding.document_id = entity.document_id;
+    binding.native_document = document;
+    _package.native_document_bindings.push_back(binding);
 
     DocumentLink link;
     link.link_id = _ids.NextDocumentLinkId();
@@ -567,7 +570,7 @@ private:
   CATDocument* _root_document;
   std::string _document_id;
   std::map<std::string, std::string> _references;
-  std::map<std::string, std::string> _document_ids_by_name;
+  std::map<CATDocument*, std::string> _document_ids_by_pointer;
   std::set<std::string> _active_references;
 };
 

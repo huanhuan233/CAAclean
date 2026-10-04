@@ -646,11 +646,19 @@ class ComponentBuildService:
         if len(records) != 1:
             raise ValueError("annotation missing or duplicated")
         relations = await self.repository.list_mbd_relations(build.cad_revision_id, annotation_id)
+        render_relations = [relation for relation in relations
+                            if relation.get("association_kind") == "annotation_render_geometry"]
+        render_mapping_status = "unmapped"
+        if any(relation.get("read_status") == "verified" and relation.get("geometry_snapshot_id")
+               for relation in render_relations):
+            render_mapping_status = "mapped"
+        elif render_relations:
+            render_mapping_status = "candidate"
         return {"annotation": records[0], "relations": relations,
                 "native_geometry_status": (records[0].get("native_geometry_link_status") or
                                            (records[0].get("semantic_payload") or {}).get("native_geometry_link_status") or
                                            "unresolved"),
-                "render_mapping_status": "unmapped"}
+                "render_mapping_status": render_mapping_status}
 
     async def get_mbd_node_detail(self, build_id: UUID, pmi_id: str) -> dict:
         if not pmi_id or len(pmi_id) > 128:

@@ -24,6 +24,14 @@ struct NativeObjectBinding
   NativeObjectBinding() : native_spec_object(0) {}
 };
 
+// Session-only identity. Never serialize a CATDocument pointer as a stable ID.
+struct NativeDocumentBinding
+{
+  std::string document_id;
+  void* native_document;
+  NativeDocumentBinding() : native_document(0) {}
+};
+
 struct ReconstructionPackage
 {
   DocumentGraph document_graph;
@@ -31,6 +39,7 @@ struct ReconstructionPackage
   std::vector<ProductOccurrence> product_occurrences;
   std::vector<ObjectEntity> objects;
   std::vector<NativeObjectBinding> native_object_bindings;
+  std::vector<NativeDocumentBinding> native_document_bindings;
   OccurrenceGraph occurrence_graph;
   std::vector<PropertyFact> properties;
   std::vector<SemanticFacet> semantic_facets;

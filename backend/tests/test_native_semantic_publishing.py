@@ -118,6 +118,34 @@ def test_mbd_bundle_rejects_broken_identity_and_declared_hash(tmp_path):
         CaaNewBundleReader(bundle).native_evidence_streams()
 
 
+def test_mbd_bundle_rejects_missing_declared_channel_and_count_mismatch(tmp_path):
+    from app.component_builds.caa_new_bundle import CaaNewBundleError, CaaNewBundleReader
+
+    bundle = tmp_path / "native-caa"
+    bundle.mkdir()
+    manifest = {"schema_version": "caa_capture_v1", "pmi_count": 2,
+                "output_files": {"pmi_entities.jsonl": {}}}
+    (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(CaaNewBundleError, match="declared artifact missing"):
+        CaaNewBundleReader(bundle).native_evidence_streams()
+    (bundle / "pmi_entities.jsonl").write_text('{"pmi_id":"P1"}\n', encoding="utf-8")
+    with pytest.raises(CaaNewBundleError, match="manifest count mismatch"):
+        CaaNewBundleReader(bundle).native_evidence_streams()
+
+
+def test_mbd_bundle_does_not_accept_associations_without_annotation_channel(tmp_path):
+    from app.component_builds.caa_new_bundle import CaaNewBundleError, CaaNewBundleReader
+
+    bundle = tmp_path / "native-caa"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps({"schema_version": "caa_capture_v1"}), encoding="utf-8")
+    (bundle / "pmi_entities.jsonl").write_text('{"pmi_id":"P1"}\n', encoding="utf-8")
+    (bundle / "pmi_associations.jsonl").write_text(
+        '{"pmi_id":"P1","target_id":"A1","association_kind":"contains_annotation"}\n', encoding="utf-8")
+    with pytest.raises(CaaNewBundleError, match="unresolved endpoint"):
+        CaaNewBundleReader(bundle).native_evidence_streams()
+
+
 @pytest.mark.asyncio
 async def test_missing_tree_channel_imports_evidence_without_replacing_tree(tmp_path):
     bundle = tmp_path / "native-caa"

@@ -176,6 +176,16 @@ class CaaNewBundleReader:
         files = ("pmi_entities.jsonl", "pmi_associations.jsonl", "fta_semantics.jsonl", "fta_sets.jsonl")
         declared = self.manifest.get("output_files") or {}
         present = {name for name in files if (self.bundle_dir / name).is_file()}
+        expected_counts = {
+            "pmi_entities.jsonl": self.manifest.get("pmi_count"),
+            "pmi_associations.jsonl": self.manifest.get("pmi_association_count"),
+        }
+        for name in files:
+            if name in declared and name not in present:
+                raise CaaNewBundleError(f"MBD declared artifact missing: {name}")
+            count = expected_counts.get(name)
+            if isinstance(count, int) and count > 0 and name not in present:
+                raise CaaNewBundleError(f"MBD counted artifact missing: {name}")
         if not present:
             return
         for name in present:
@@ -184,17 +194,30 @@ class CaaNewBundleReader:
                 raise CaaNewBundleError(f"MBD artifact hash mismatch: {name}")
         nodes = self._mbd_ids("pmi_entities.jsonl", "pmi_id") if files[0] in present else set()
         annotations = self._mbd_ids("fta_semantics.jsonl", "fta_semantic_id") if files[2] in present else set()
-        if nodes and annotations:
+        for name, ids in ((files[0], nodes), (files[2], annotations)):
+            count = expected_counts.get(name)
+            if isinstance(count, int) and count != len(ids):
+                raise CaaNewBundleError(f"{name}: manifest count mismatch: {count} != {len(ids)}")
+        if files[0] in present and files[2] in present:
             for record in self._iter_jsonl_required(files[2]):
                 owner = str(record.get("fta_set_id") or "")
                 if owner and owner not in nodes:
                     raise CaaNewBundleError(f"fta_semantics.jsonl: unknown fta_set_id: {owner}")
-        if files[1] in present and files[0] in present and files[2] in present:
+        if files[1] in present:
             known = nodes | annotations
+            relation_count = 0
             for record in self._iter_jsonl_required(files[1]):
+                relation_count += 1
                 source, target = str(record.get("pmi_id") or ""), str(record.get("target_id") or "")
                 if source not in known or target not in known:
                     raise CaaNewBundleError(f"pmi_associations.jsonl: unresolved endpoint: {source} -> {target}")
+            declared_count = expected_counts.get(files[1])
+            if isinstance(declared_count, int) and relation_count != declared_count:
+                raise CaaNewBundleError(f"{files[1]}: manifest count mismatch")
+        if files[3] in present:
+            set_ids = self._mbd_ids(files[3], "fta_set_id")
+            if files[0] in present and not set_ids.issubset(nodes):
+                raise CaaNewBundleError("fta_sets.jsonl: unknown PMI set identity")
 
     def _mbd_ids(self, filename: str, field: str) -> set[str]:
         result: set[str] = set()
