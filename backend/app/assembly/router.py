@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assembly.context import AssemblyContextError
 from app.assembly.service import AssemblyAnalysisService
+from app.assembly.connections import ConnectionService
 from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.measurement.geometry_snapshot import GeometryReferenceError
@@ -30,10 +31,15 @@ def get_assembly_service(session: AsyncSession = Depends(get_session)) -> Assemb
     return AssemblyAnalysisService(session)
 
 
+def get_connection_service(session: AsyncSession = Depends(get_session)) -> ConnectionService:
+    return ConnectionService(session)
+
+
 def _error(exc: ValueError) -> HTTPException:
     code, _, detail = str(exc).partition(":")
     return HTTPException(status_code=409 if code in {"analysis_unavailable", "instance_geometry_mapping_unavailable",
-                                                       "stale_reference", "geometry_unavailable"} else 400,
+                                                       "stale_reference", "geometry_unavailable",
+                                                       "connection_source_unavailable"} else 400,
                          detail={"code": code, "message": detail.strip() or str(exc)})
 
 
@@ -67,6 +73,29 @@ async def relation_detail(build_id: UUID, relation_id: str,
                           service: AssemblyAnalysisService = Depends(get_assembly_service)) -> dict:
     try:
         return await service.relation_detail(build_id, relation_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
+    except AssemblyContextError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/connections")
+async def connections(build_id: UUID, offset: int = Query(default=0, ge=0),
+                      limit: int = Query(default=50, ge=1, le=200), kind: str | None = None,
+                      service: ConnectionService = Depends(get_connection_service)) -> dict:
+    try:
+        return await service.list(build_id, offset=offset, limit=limit, kind=kind)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
+    except AssemblyContextError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/connections/{connection_id}")
+async def connection_detail(build_id: UUID, connection_id: str,
+                            service: ConnectionService = Depends(get_connection_service)) -> dict:
+    try:
+        return await service.detail(build_id, connection_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
     except AssemblyContextError as exc:

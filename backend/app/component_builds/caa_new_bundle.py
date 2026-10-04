@@ -156,6 +156,18 @@ class CaaNewBundleReader:
                 streams[kind] = self.iter_fta_semantics()
             else:
                 streams[kind] = self._iter_jsonl_required(filename)
+        connection_files = ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl",
+                            "product_occurrences.jsonl")
+        if all((self.bundle_dir / name).is_file() for name in connection_files):
+            from app.assembly.connection_semantics import build_connection_semantics
+            connections = build_connection_semantics(*(self._read_jsonl(name) for name in connection_files))
+            streams["connection_semantics"] = connections
+            streams["connection_semantics_status"] = [{
+                "source_channel_status": "captured",
+                "connection_count": len(connections),
+                "rule_version": "customer.connection.v1",
+                "geometry_association_status": "unresolved",
+            }]
         return streams
 
     def iter_fta_semantics(self):

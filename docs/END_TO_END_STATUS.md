@@ -69,3 +69,7 @@ python -m scripts.backfill_native_evidence --all
 - 本轮全后端套件曾得 306 passed、15 failed、5 skipped。失败涉及未改的图纸 API/视觉凭据及工作树缺少的 XMS06 STEP/脚本等；不能记为全套通过。相关后端 83 项、前端 Feature Center 66 项测试及 TypeScript 类型检查通过。
 - 已在本机 PostgreSQL 对保存有完整/部分采集包的 11 个 Revision 实施幂等回填，均无通道错误；最大一份为 34,191 条原始特征、16,706 条规范原生定义。其余 31 个 UUID 工作目录没有可发布保存包，已跳过。旧 Feature Center 包的规范识别数确为零，此次没有伪称识别成功，也没有自动补算。
 - 当前机器本轮没有重新编译/运行 CAA x86 或 x64，也没有真实浏览器逐项验收；这些状态均为 `not_run`。x64 调用配置有代码和 PE 测试，但本机只有 x86 CAA 编译/运行条件，不能称 x64 已验收。
+# P6B connection semantics (2026-10-04)
+
+Native Alias, geometrical-set/point markers, coordinate-point local values and occurrence-scoped connection evidence are implemented and queryable. The R21 build, targeted regression and isolated PostgreSQL test passed. World point placement, fastener stack and seal/bond geometry/material association remain unresolved without trusted source references and a nonempty customer CATProduct capture. See `development/P6B_CONNECTION_ACCEPTANCE.md`.
+

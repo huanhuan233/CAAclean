@@ -8,6 +8,10 @@
 #include <CATICkeType.h>
 #include <CATIInertia.h>
 #include <CATISpecObject.h>
+#include <CATIAlias.h>
+#include <CATIMmiGeometricalSet.h>
+#include <CATIMfPoint.h>
+#include <CATIGSMPointCoord.h>
 #include <CATIVisProperties.h>
 #include <CATUnicodeString.h>
 #include <CATVisGeomType.h>
@@ -125,6 +129,86 @@ static void AddTabDeclaration(CaptureIdRegistry& ids,
   fact.read_only = true;
   fact.hidden_status = "ui_meta";
   package.properties.push_back(fact);
+}
+
+static void AddConnectionSourceFacts(CaptureIdRegistry& ids, ReconstructionPackage& package,
+                                     const ObjectEntity& object, CATISpecObject* spec)
+{
+  if (!spec) return;
+  CATIAlias* alias = 0;
+  try
+  {
+    if (SUCCEEDED(spec->QueryInterface(IID_CATIAlias, reinterpret_cast<void**>(&alias))) && alias)
+    {
+      const std::string raw_alias = UnicodeToUtf8Local(alias->GetAlias());
+      AddFact(ids, package, object.object_id, "assembly", "Assembly", "connection_source", "Connection source",
+              "native_alias", "Native Alias", raw_alias, "string", "CATIAlias.GetAlias", 10);
+      alias->Release(); alias = 0;
+    }
+  }
+  catch (...) { if (alias) alias->Release(); }
+  CATIMmiGeometricalSet* geometric_set = 0;
+  try
+  {
+    if (SUCCEEDED(spec->QueryInterface(IID_CATIMmiGeometricalSet,
+                                       reinterpret_cast<void**>(&geometric_set))) && geometric_set)
+    {
+      AddFact(ids, package, object.object_id, "assembly", "Assembly", "connection_source", "Connection source",
+              "native_object_class", "Native object class", "geometrical_set", "string",
+              "CATIMmiGeometricalSet.QueryInterface", 20);
+      geometric_set->Release(); geometric_set = 0;
+    }
+  }
+  catch (...) { if (geometric_set) geometric_set->Release(); }
+  CATIMfPoint* point = 0;
+  try
+  {
+    if (SUCCEEDED(spec->QueryInterface(IID_CATIMfPoint, reinterpret_cast<void**>(&point))) && point)
+    {
+      AddFact(ids, package, object.object_id, "assembly", "Assembly", "connection_source", "Connection source",
+              "native_object_class", "Native object class", "point_feature", "string",
+              "CATIMfPoint.QueryInterface", 20);
+      point->Release(); point = 0;
+    }
+  }
+  catch (...) { if (point) point->Release(); }
+  // Coordinate-defined GSM points have MKS parameter values. Keep the raw
+  // component precision; a reference point or axis makes them local offsets.
+  CATIGSMPointCoord* coordinate_point = 0;
+  try
+  {
+    if (SUCCEEDED(spec->QueryInterface(IID_CATIGSMPointCoord,
+                                       reinterpret_cast<void**>(&coordinate_point))) && coordinate_point)
+    {
+      CATICkeParm_var x, y, z;
+      CATISpecObject_var reference_point, reference_axis;
+      const bool coordinates_ok = SUCCEEDED(coordinate_point->GetCoordinates(x, y, z)) &&
+                                  x != NULL_var && y != NULL_var && z != NULL_var;
+      const bool references_ok = SUCCEEDED(coordinate_point->GetReferencePoint(reference_point)) &&
+                                 SUCCEEDED(coordinate_point->GetReferenceAxis(reference_axis));
+      if (coordinates_ok && references_ok)
+      {
+        const char* keys[3] = {"native_point_x_m", "native_point_y_m", "native_point_z_m"};
+        const CATICkeParm_var values[3] = {x, y, z};
+        for (int index = 0; index < 3; ++index)
+        {
+          CATICkeInst_var value = values[index]->Value();
+          if (value == NULL_var) continue;
+          PropertyFact* fact = AddFact(ids, package, object.object_id, "assembly", "Assembly",
+                                       "connection_source", "Connection source", keys[index], keys[index],
+                                       DoubleToString(value->AsReal()), "number",
+                                       "CATIGSMPointCoord.GetCoordinates/CATICkeParm.Value", 30 + index);
+          if (fact) fact->raw_unit = fact->display_unit = fact->normalized_unit = "m";
+        }
+        AddFact(ids, package, object.object_id, "assembly", "Assembly", "connection_source",
+                "Connection source", "native_point_reference_status", "Point reference status",
+                reference_point == NULL_var && reference_axis == NULL_var ? "absolute_part_axis" :
+                "relative_reference_unresolved", "string", "CATIGSMPointCoord.GetReferencePoint/GetReferenceAxis", 34);
+      }
+      coordinate_point->Release(); coordinate_point = 0;
+    }
+  }
+  catch (...) { if (coordinate_point) coordinate_point->Release(); }
 }
 
 static bool LooksLikePartOrProduct(const ObjectEntity& object)
@@ -395,6 +479,7 @@ bool CaaPropertyExtractors::ExtractNativeFactsForDocument(CaptureIdRegistry& ids
       continue;
 
     CATISpecObject* spec = bindings.FindSpec(object.object_id);
+    AddConnectionSourceFacts(ids, package, object, spec);
     AddGraphicPropertyFacts(ids, broker, package, object, spec);
     AddMechanicalInertiaFacts(ids, broker, package, object, spec);
     CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package, bindings);
@@ -443,6 +528,7 @@ bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
     AddFact(ids, package, object.object_id, "attributes", "Attributes", "identity", "Identity",
             "object_id", "Object ID", object.object_id, "string", "ObjectEntity", 60);
     CATISpecObject* spec = bindings.FindSpec(object.object_id);
+    AddConnectionSourceFacts(ids, package, object, spec);
     AddGraphicPropertyFacts(ids, broker, package, object, spec);
     AddMechanicalInertiaFacts(ids, broker, package, object, spec);
     CaaSemanticPropertyExtractor().Extract(spec, object.object_id, ids, package, bindings);
