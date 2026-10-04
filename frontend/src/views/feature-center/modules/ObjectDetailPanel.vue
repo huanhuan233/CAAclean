@@ -2,6 +2,7 @@
 import { computed, defineComponent, h, resolveComponent } from 'vue';
 import { ElTag, ElTooltip } from 'element-plus';
 import type { GeometryQueryResponse, GeometryReferencePayload } from '@/service/api/cad';
+import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
 import type { CanonicalFeatureRecord } from './feature-center-bundle';
 import type { RecognizedFeatureItem } from './recognized-feature-view-model';
 import type { FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
@@ -9,6 +10,7 @@ import type { DetailPanelLayout } from './detail-panel';
 import type { SelectionContext, SelectionTarget } from './viewer-selection';
 import type { MeasurementOperation } from './measurement-session';
 import MeasurementPanel from './MeasurementPanel.vue';
+import { mbdFieldName, mbdNodeKindName, mbdReadStatus, mbdSafeExternalUrl, mbdSemanticValue, mbdTypeName } from './mbd-view-model';
 import {
   type DetailField,
   type GeometryLink,
@@ -47,6 +49,14 @@ const props = defineProps<{
   selectedNativeParameterFamily: string;
   selectedNativeFaces: string[];
   selectedFeature: CanonicalFeatureRecord | null;
+  mbdAnnotation: MbdAnnotationRecord | null;
+  mbdNode: MbdNodeRecord | null;
+  mbdRelations: MbdRelationRecord[];
+  mbdDetailLoading: boolean;
+  mbdDetailError: string;
+  productPropertyDetail: Api.ComponentBuild.NativeNodeProperties | null;
+  productPropertyLoading: boolean;
+  productPropertyError: string;
   recognizedViewItems: RecognizedFeatureItem[];
   recognizedDetailLoading: boolean;
   recognizedDetailError: string;
@@ -84,6 +94,7 @@ const emit = defineEmits<{
   clearMeasurement: [];
   showNativeSketch: [];
   hideNativeSketch: [];
+  openMbdRelation: [relation: MbdRelationRecord];
 }>();
 
 const nativeSketch = computed(() => {
@@ -105,6 +116,13 @@ const recognizedSegments = computed(() => {
   const payload = props.selectedFeature?.typed_payload?.geometry_recognition as Record<string, unknown> | undefined;
   return Array.isArray(payload?.segments) ? payload.segments as Array<Record<string, unknown>> : [];
 });
+const isMbdSelection = computed(() => props.primarySelection?.kind?.startsWith('mbd_') || false);
+const mbdRawFields = computed(() => {
+  const payload = props.mbdAnnotation?.semantic_payload;
+  return Array.isArray(payload?.raw_fields) ? payload.raw_fields as Array<{
+    key: string; raw_value: string; unit: string; read_status: string; source_api: string
+  }> : [];
+});
 
 const sourceTypeLabel = computed(() => {
   if (props.sourceFormat === 'CATPRODUCT') return 'CATProduct';
@@ -114,6 +132,7 @@ const sourceTypeLabel = computed(() => {
 });
 
 const sourceTagLabel = computed(() => {
+  if (isMbdSelection.value) return '原生 MBD';
   if (props.primarySelection?.kind === 'native_feature') return '原生特征';
   if (props.primarySelection?.kind === 'recognized_feature') return '识别特征';
   if (props.primarySelection?.kind === 'face') return '几何拓扑';
@@ -129,6 +148,7 @@ const evidenceRows = computed(() => [
 ]);
 
 const featureRows = computed<DetailField[]>(() => {
+  if (isMbdSelection.value) return [];
   if (props.primarySelection?.kind === 'face') return props.selectedFace ? faceRows(props.selectedFace) : [];
   if (['edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || ''))
     return detailRowsFromRecord(props.primarySelection?.raw as Record<string, unknown> | null, []);
@@ -153,6 +173,7 @@ const featureRows = computed<DetailField[]>(() => {
 });
 
 const parameterRows = computed<ParameterField[]>(() => {
+  if (isMbdSelection.value) return [];
   if (['face', 'edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
   if (props.primarySelection?.kind === 'native_feature') {
     return props.nativeDetail ? nativeSemanticParameterRows(props.selectedNativeFeature) : [];
@@ -249,6 +270,26 @@ const nativePropertyRows = computed<DetailField[]>(() => {
     label: `${group.group_label} · ${field.display_name || field.key}${field.display_unit || field.raw_unit ? ` (${field.display_unit || field.raw_unit})` : ''}`,
     value: nativePropertyValue(field)
   }))));
+});
+const productPropertyGroups = computed(() => {
+  if (!props.primarySelection || !['assembly', 'part_instance', 'part'].includes(props.primarySelection.kind)) return [];
+  const labels: Record<string, string> = {
+    product_reference: '原生参考属性', product_instance: '原生实例属性',
+    product_custom: '自定义产品属性', mbd_knowledge: 'MBD 知识参数'
+  };
+  return (props.productPropertyDetail?.tabs || []).flatMap(tab => tab.groups.map(group => ({
+    key: `${tab.tab_id}/${group.group_id}`,
+    title: labels[group.group_id] || group.group_label,
+    rows: group.fields.map(field => {
+      const value = nativePropertyValue(field);
+      const path = field.key.startsWith('custom:') || field.key.startsWith('knowledge:') ? `\n原始路径：${field.key}` : '';
+      return {
+        key: field.property_id,
+        label: field.display_name || field.key,
+        value: { ...value, fullText: `${value.fullText}${path}\n来源：${field.source_api}` }
+      };
+    })
+  })));
 });
 
 const geometryRows = computed<GeometryLink[]>(() =>
@@ -403,6 +444,64 @@ const DetailSection = defineComponent({
         </section>
         <div v-else class="compact-empty">当前对象不存在</div>
 
+        <section v-if="isMbdSelection && mbdDetailLoading" class="compact-empty">正在读取 MBD 原生详情…</section>
+        <section v-if="productPropertyLoading" class="compact-empty">正在读取产品原生属性…</section>
+        <section v-if="productPropertyError" class="compact-empty">{{ productPropertyError }}</section>
+        <DetailSection v-for="group in productPropertyGroups" :key="group.key" :title="group.title"
+          icon="lucide:tag" :rows="group.rows" empty-text="本组无可读字段" />
+        <section v-if="isMbdSelection && mbdDetailError" class="compact-empty">{{ mbdDetailError }}</section>
+        <section v-if="mbdAnnotation" class="detail-section-v2 mbd-detail">
+          <details open>
+            <summary class="section-heading"><span class="section-title">{{ mbdTypeName(mbdAnnotation.component_kind) }}</span></summary>
+            <div class="section-content">
+              <div class="parameter-row"><span>读取状态</span><ElTag size="small" :type="mbdReadStatus(mbdAnnotation.read_status).tone">{{ mbdReadStatus(mbdAnnotation.read_status).label }}</ElTag></div>
+              <div class="parameter-row"><span>所属标注集</span><span>{{ mbdAnnotation.fta_set_id }}</span></div>
+              <div v-if="mbdAnnotation.annotation_text_status === 'available'" class="mbd-body-text">{{ mbdAnnotation.annotation_text }}</div>
+              <p v-else class="compact-empty">原生正文：{{ mbdAnnotation.annotation_text_status || '未读取' }}</p>
+              <div v-for="field in mbdRawFields" :key="field.key" class="parameter-row">
+                <span>{{ mbdFieldName(field.key) }}</span>
+                <a v-if="field.key.startsWith('external_url_') && mbdSafeExternalUrl(field.raw_value)"
+                   :href="mbdSafeExternalUrl(field.raw_value) || undefined" target="_blank" rel="noopener noreferrer">
+                  {{ field.raw_value }}
+                </a>
+                <span v-else class="mbd-field-value">{{ field.read_status === 'available' ? `${field.raw_value}${field.unit ? ` ${field.unit}` : ''}` : mbdReadStatus(field.read_status).label }}</span>
+              </div>
+              <p class="compact-empty">原生 TTRS：{{ mbdSemanticValue(mbdAnnotation, 'annotation_ttrs_count') ?? '未读取' }} · {{ mbdSemanticValue(mbdAnnotation, 'native_geometry_link_status') || '未解析' }}</p>
+              <p class="compact-empty">显示几何：未建立可信映射，当前不执行精确三维定位。</p>
+            </div>
+          </details>
+        </section>
+        <section v-if="mbdNode" class="detail-section-v2 mbd-detail">
+          <details open>
+            <summary class="section-heading"><span class="section-title">标注层级与视图</span></summary>
+            <div class="section-content">
+              <div class="parameter-row"><span>类型</span><span>{{ mbdNodeKindName(mbdNode.pmi_kind) }}</span></div>
+              <div class="parameter-row"><span>所属文档</span><span>{{ mbdNode.owning_document_id || '未解析' }}</span></div>
+              <div class="parameter-row"><span>归属依据</span><span>{{ mbdNode.ownership_status || '未解析' }}</span></div>
+              <template v-if="mbdNode.pmi_kind === 'fta_view'">
+                <div class="parameter-row"><span>坐标状态</span><span>{{ mbdNode.coordinate_frame_status || '未读取' }}</span></div>
+                <div class="parameter-row"><span>原点</span><span>{{ mbdNode.plane_origin || '未读取' }}</span></div>
+                <div class="parameter-row"><span>局部 X</span><span>{{ mbdNode.plane_x_axis || '未读取' }}</span></div>
+                <div class="parameter-row"><span>局部 Y</span><span>{{ mbdNode.plane_y_axis || '未读取' }}</span></div>
+                <div class="parameter-row"><span>法向</span><span>{{ mbdNode.plane_normal || '未读取' }}</span></div>
+              </template>
+              <div v-if="mbdNode.pmi_kind === 'fta_capture'" class="parameter-row"><span>相机</span><span>{{ mbdNode.camera_status || '未读取' }}</span></div>
+              <p class="compact-empty">仅保留实际取得的原生视图事实；不自动更改当前相机。</p>
+            </div>
+          </details>
+        </section>
+        <section v-if="isMbdSelection && mbdRelations.length" class="detail-section-v2 mbd-detail">
+          <details open>
+            <summary class="section-heading"><span class="section-title">集合与捕获关系</span></summary>
+            <div class="section-content">
+              <button v-for="(relation, index) in mbdRelations" :key="`${relation.pmi_id}:${relation.target_id}:${index}`"
+                type="button" class="geometry-link" @click="emit('openMbdRelation', relation)">
+                <span>{{ relation.association_kind }}</span><strong>{{ primarySelection?.id === relation.pmi_id ? relation.target_id : relation.pmi_id }}</strong>
+              </button>
+            </div>
+          </details>
+        </section>
+
         <DetailSection v-if="geometryDetailRows.length" title="几何参数" icon="lucide:hexagon" :rows="geometryDetailRows" empty-text="暂无几何参数" />
         <section v-if="geometryDetailLoading" class="compact-empty">正在读取 B-Rep 几何…</section>
         <section v-if="geometryDetailError" class="compact-empty">{{ geometryDetailError }}</section>
@@ -513,7 +612,7 @@ const DetailSection = defineComponent({
           </details>
         </section>
 
-        <MeasurementPanel
+        <MeasurementPanel v-if="!isMbdSelection"
           :operation="measurementOperation"
           :references="measurementReferences"
           :result="measurementResult"
@@ -527,7 +626,7 @@ const DetailSection = defineComponent({
           @clear="emit('clearMeasurement')"
         />
 
-        <section class="detail-section-v2">
+        <section v-if="!isMbdSelection" class="detail-section-v2">
           <details>
             <summary class="section-heading">
               <span class="section-title">
@@ -556,7 +655,7 @@ const DetailSection = defineComponent({
           </details>
         </section>
 
-        <section v-if="hasGroup('operations')" class="detail-section-v2 actions-v2">
+        <section v-if="!isMbdSelection && hasGroup('operations')" class="detail-section-v2 actions-v2">
           <details open>
             <summary class="section-heading">
               <span class="section-title">
@@ -605,6 +704,10 @@ const DetailSection = defineComponent({
 </template>
 
 <style>
+.mbd-detail .mbd-body-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; color: var(--el-text-color-primary); }
+.mbd-detail .mbd-field-value { white-space: pre-wrap; overflow-wrap: anywhere; text-align: right; }
+.mbd-detail .parameter-row { min-width: 0; }
+.mbd-detail a { overflow-wrap: anywhere; word-break: break-word; }
 .object-detail-panel {
   display: flex;
   height: 100%;

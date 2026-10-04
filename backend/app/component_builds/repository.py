@@ -3,7 +3,8 @@ from __future__ import annotations
 import uuid
 import re
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CadDrawingRegion, CadDrawingFact, CadEntity, CadModel, CadModelRevision, CadNativeEvidence, CadNativePropertyFact, CadSpecSource, CadSpecTask, ComponentBuild, ComponentSpecDraft, utc_now
@@ -37,6 +38,21 @@ class MemoryComponentBuildRepository:
 
     async def get_feature_evidence_by_id(self, revision_id: uuid.UUID, kind: str,
                                          feature_center_id: str) -> list[dict]:
+        return []
+
+    async def list_mbd_annotations(self, revision_id: uuid.UUID, *, offset: int, limit: int,
+                                   annotation_kind: str | None = None, set_id: str | None = None,
+                                   view_id: str | None = None,
+                                   read_status: str | None = None, search: str | None = None) -> tuple[list[dict], int]:
+        return [], 0
+
+    async def get_mbd_annotation(self, revision_id: uuid.UUID, annotation_id: str) -> list[dict]:
+        return []
+
+    async def get_mbd_node(self, revision_id: uuid.UUID, pmi_id: str) -> list[dict]:
+        return []
+
+    async def list_mbd_relations(self, revision_id: uuid.UUID, endpoint_id: str) -> list[dict]:
         return []
 
     async def list_native_dependency_candidates(self, revision_id: uuid.UUID, object_id: str) -> list[dict]:
@@ -239,6 +255,64 @@ class SqlAlchemyComponentBuildRepository:
             CadNativeEvidence.revision_id == revision_id,
             CadNativeEvidence.kind == kind,
             CadNativeEvidence.payload["feature_center_id"].astext == feature_center_id,
+        ).order_by(CadNativeEvidence.ordinal))
+        return [row.payload for row in rows]
+
+    async def list_mbd_annotations(self, revision_id: uuid.UUID, *, offset: int, limit: int,
+                                   annotation_kind: str | None = None, set_id: str | None = None,
+                                   view_id: str | None = None,
+                                   read_status: str | None = None, search: str | None = None) -> tuple[list[dict], int]:
+        filters = [CadNativeEvidence.revision_id == revision_id,
+                   CadNativeEvidence.kind == "fta_semantics"]
+        payload = CadNativeEvidence.payload
+        if annotation_kind:
+            filters.append(payload["component_kind"].astext == annotation_kind)
+        if set_id:
+            filters.append(payload["fta_set_id"].astext == set_id)
+        if view_id:
+            relation = aliased(CadNativeEvidence)
+            filters.append(exists(select(1).select_from(relation).where(
+                relation.revision_id == revision_id,
+                relation.kind == "pmi_associations",
+                relation.payload["pmi_id"].astext == view_id,
+                relation.payload["target_id"].astext == payload["fta_semantic_id"].astext,
+                relation.payload["association_kind"].astext.in_(("view_contains_annotation", "capture_contains_annotation")),
+            )))
+        if read_status:
+            filters.append(payload["read_status"].astext == read_status)
+        if search:
+            needle = f"%{search}%"
+            filters.append(or_(payload["fta_semantic_id"].astext.ilike(needle),
+                               payload["annotation_text"].astext.ilike(needle),
+                               payload["native_alias"].astext.ilike(needle),
+                               payload["semantic_payload"]["native_alias"].astext.ilike(needle)))
+        total = int(await self.session.scalar(select(func.count()).select_from(CadNativeEvidence).where(*filters)) or 0)
+        rows = await self.session.scalars(select(CadNativeEvidence).where(*filters)
+                                          .order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit))
+        return [row.payload for row in rows], total
+
+    async def get_mbd_annotation(self, revision_id: uuid.UUID, annotation_id: str) -> list[dict]:
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == "fta_semantics",
+            CadNativeEvidence.payload["fta_semantic_id"].astext == annotation_id,
+        ).order_by(CadNativeEvidence.ordinal).limit(2))
+        return [row.payload for row in rows]
+
+    async def get_mbd_node(self, revision_id: uuid.UUID, pmi_id: str) -> list[dict]:
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == "pmi_entities",
+            CadNativeEvidence.payload["pmi_id"].astext == pmi_id,
+        ).order_by(CadNativeEvidence.ordinal).limit(2))
+        return [row.payload for row in rows]
+
+    async def list_mbd_relations(self, revision_id: uuid.UUID, endpoint_id: str) -> list[dict]:
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == "pmi_associations",
+            or_(CadNativeEvidence.payload["pmi_id"].astext == endpoint_id,
+                CadNativeEvidence.payload["target_id"].astext == endpoint_id),
         ).order_by(CadNativeEvidence.ordinal))
         return [row.payload for row in rows]
 

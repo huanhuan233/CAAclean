@@ -18,7 +18,8 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildNativeEvidence, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
 import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
@@ -30,8 +31,10 @@ import CadViewerControls from './modules/CadViewerControls.vue';
 import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
 import RecognizedFeatureExplorer from './modules/RecognizedFeatureExplorer.vue';
+import MbdExplorer from './modules/MbdExplorer.vue';
 import TopologyExplorer from './modules/TopologyExplorer.vue';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
+import { mbdAnnotationTitle, mbdNodeTitle } from './modules/mbd-view-model';
 import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, topologyRecordKind } from './modules/topology-view-model';
 import type { TopologyExplorerItem, TopologyInput, SourcedTopologyRecord } from './modules/topology-view-model';
 import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
@@ -226,6 +229,16 @@ const recognizedListError = ref('');
 const recognizedDetailLoading = ref(false);
 const recognizedDetailError = ref('');
 let recognizedDetailGeneration = 0;
+const mbdAnnotationDetail = ref<MbdAnnotationRecord | null>(null);
+const mbdNodeDetail = ref<MbdNodeRecord | null>(null);
+const mbdRelations = ref<MbdRelationRecord[]>([]);
+const mbdDetailLoading = ref(false);
+const mbdDetailError = ref('');
+let mbdDetailGeneration = 0;
+const productPropertyDetail = ref<Api.ComponentBuild.NativeNodeProperties | null>(null);
+const productPropertyLoading = ref(false);
+const productPropertyError = ref('');
+let productPropertyGeneration = 0;
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
 const loadingNativeChildren = ref(new Set<string>());
 const failedNativeChildren = ref(new Set<string>());
@@ -273,7 +286,7 @@ const explicitError = ref(false);
 const detailsOpen = ref(true);
 const bomVisible = ref(false);
 const activeTab = ref<ViewerTab>('bom');
-const featureSubTab = ref<'native' | 'recognized'>('native');
+const featureSubTab = ref<'native' | 'recognized' | 'mbd'>('native');
 const transparent = ref(false);
 const isolated = ref(false);
 const sectionEnabled = ref(false);
@@ -438,6 +451,9 @@ const selectedTitle = computed(
     if (primary?.kind === 'face') return primary.label || primary.id;
     if (primary?.kind === 'native_feature') return selectedNativeFeature.value?.display_name || primary.label || primary.id;
     if (primary?.kind === 'recognized_feature') return selectedRecognizedViewItem.value?.title || primary.label || primary.id;
+    if (primary?.kind === 'mbd_annotation') return mbdAnnotationDetail.value ? mbdAnnotationTitle(mbdAnnotationDetail.value) : primary.label || primary.id;
+    if (primary && ['mbd_set', 'mbd_view', 'mbd_capture'].includes(primary.kind))
+      return mbdNodeDetail.value ? mbdNodeTitle(mbdNodeDetail.value) : primary.label || primary.id;
     if (primary && ['assembly', 'part_instance', 'part', 'body', 'solid', 'loop', 'coedge', 'edge', 'vertex'].includes(primary.kind)) {
       return primary.label || primary.id;
     }
@@ -1460,7 +1476,88 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     recognizedDetailLoading.value = false;
     recognizedDetailError.value = '';
   }
+  if (target.kind === 'mbd_annotation' || ['mbd_set', 'mbd_view', 'mbd_capture'].includes(target.kind))
+    void loadSelectedMbdDetail(target);
+  else {
+    mbdDetailGeneration += 1;
+    mbdAnnotationDetail.value = null;
+    mbdNodeDetail.value = null;
+    mbdRelations.value = [];
+    mbdDetailLoading.value = false;
+    mbdDetailError.value = '';
+  }
+  if (['assembly', 'part_instance', 'part'].includes(target.kind)) {
+    const node = findBomNode(contract.value?.bom.nodes || [], target.id);
+    if (node?.native_node_id) void loadSelectedProductProperties(node.native_node_id, target.id);
+    else {
+      productPropertyGeneration += 1;
+      productPropertyDetail.value = null;
+      productPropertyLoading.value = false;
+      productPropertyError.value = isCatiaNativeSource(sourceFormat.value || '') ? '当前 BOM 对象缺少原生节点身份' : '';
+    }
+  } else {
+    productPropertyGeneration += 1;
+    productPropertyDetail.value = null;
+    productPropertyLoading.value = false;
+    productPropertyError.value = '';
+  }
   applyVisualState();
+}
+
+async function loadSelectedProductProperties(nativeNodeId: string, selectionId: string) {
+  const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
+  if (!buildId || !revisionId) return;
+  const generation = ++productPropertyGeneration;
+  productPropertyDetail.value = null;
+  productPropertyLoading.value = true;
+  productPropertyError.value = '';
+  try {
+    const response = await fetchComponentBuildNativeNodeProperties(buildId, nativeNodeId, { silent: true });
+    if (response.error || !response.data) throw response.error || new Error('产品属性不可用');
+    if (generation !== productPropertyGeneration || contract.value?.task_id !== revisionId ||
+        primarySelection.value?.id !== selectionId) return;
+    productPropertyDetail.value = response.data;
+  } catch (cause) {
+    if (generation === productPropertyGeneration && primarySelection.value?.id === selectionId)
+      productPropertyError.value = cause instanceof Error ? cause.message : '产品属性读取失败';
+  } finally {
+    if (generation === productPropertyGeneration) productPropertyLoading.value = false;
+  }
+}
+
+async function loadSelectedMbdDetail(target: SelectionTarget) {
+  const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
+  if (!buildId || !revisionId) return;
+  const generation = ++mbdDetailGeneration;
+  mbdAnnotationDetail.value = null;
+  mbdNodeDetail.value = null;
+  mbdRelations.value = [];
+  mbdDetailLoading.value = true;
+  mbdDetailError.value = '';
+  try {
+    if (target.kind === 'mbd_annotation') {
+      const response = await fetchComponentBuildMbdAnnotationDetail(buildId, target.id, { silent: true });
+      if (response.error || !response.data) throw response.error || new Error('标注详情不可用');
+      if (generation !== mbdDetailGeneration || contract.value?.task_id !== revisionId ||
+          primarySelection.value?.id !== target.id) return;
+      mbdAnnotationDetail.value = response.data.annotation;
+      mbdRelations.value = response.data.relations;
+    } else {
+      const response = await fetchComponentBuildMbdNodeDetail(buildId, target.id, { silent: true });
+      if (response.error || !response.data) throw response.error || new Error('标注层级详情不可用');
+      if (generation !== mbdDetailGeneration || contract.value?.task_id !== revisionId ||
+          primarySelection.value?.id !== target.id) return;
+      mbdNodeDetail.value = response.data.node;
+      mbdRelations.value = response.data.relations;
+    }
+  } catch (cause) {
+    if (generation === mbdDetailGeneration && primarySelection.value?.id === target.id)
+      mbdDetailError.value = cause instanceof Error ? cause.message : '标注详情读取失败';
+  } finally {
+    if (generation === mbdDetailGeneration) mbdDetailLoading.value = false;
+  }
 }
 
 async function loadSelectedRecognizedDetail(featureId: string) {
@@ -1582,6 +1679,16 @@ function findBomNode(nodes: Api.ComponentBuild.ViewerBomNode[], nodeId: string):
 
 // 用途：清除语义选择但保持相机、透明、隔离和剖切状态。
 function clearSelection() {
+  productPropertyGeneration += 1;
+  productPropertyDetail.value = null;
+  productPropertyLoading.value = false;
+  productPropertyError.value = '';
+  mbdDetailGeneration += 1;
+  mbdAnnotationDetail.value = null;
+  mbdNodeDetail.value = null;
+  mbdRelations.value = [];
+  mbdDetailLoading.value = false;
+  mbdDetailError.value = '';
   recognizedDetailGeneration += 1;
   recognizedDetailLoading.value = false;
   recognizedDetailError.value = '';
@@ -1620,6 +1727,31 @@ function selectFeature(featureId: string) {
     displayName: title
   };
   selectTarget({ kind: 'recognized_feature', id: featureId, label: title, raw: feature }, 'recognized_feature');
+}
+
+function selectMbdAnnotation(record: MbdAnnotationRecord) {
+  selectTarget({ kind: 'mbd_annotation', id: record.fta_semantic_id, label: mbdAnnotationTitle(record), raw: record }, 'mbd');
+}
+
+function selectMbdNode(record: MbdNodeRecord) {
+  const kind = record.pmi_kind === 'fta_view' ? 'mbd_view' :
+    record.pmi_kind === 'fta_capture' ? 'mbd_capture' : 'mbd_set';
+  selectTarget({ kind, id: record.pmi_id, label: mbdNodeTitle(record), raw: record }, 'mbd');
+}
+
+async function openMbdRelation(relation: MbdRelationRecord) {
+  const targetId = primarySelection.value?.id === relation.pmi_id ? relation.target_id : relation.pmi_id;
+  if (targetId === relation.target_id && relation.association_kind.includes('annotation')) {
+    selectTarget({ kind: 'mbd_annotation', id: targetId, label: targetId }, 'mbd');
+    return;
+  }
+  const buildId = contract.value?.part_id;
+  if (!buildId) return;
+  const revisionId = contract.value?.task_id;
+  const response = await fetchComponentBuildMbdNodeDetail(buildId, targetId, { silent: true });
+  if (contract.value?.task_id !== revisionId) return;
+  if (response.data?.node) selectMbdNode(response.data.node);
+  else mbdDetailError.value = '关联层级对象无法读取，请重试。';
 }
 
 // 用途：把 CAA 原生 Feature 关联到引用它的 Canonical Feature；无映射时如实保留选择。
@@ -1822,6 +1954,11 @@ function applyVisualState() {
     context.mappingAuthority === 'whole_part_preview';
   const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0 || canvasObjects.size > 0 || wholePartPreview;
   const primaryColor = themeStore.themeColor;
+  const uncertain = context.mappingStatus === 'candidate' ||
+    (primarySelection.value?.kind === 'recognized_feature' &&
+      (selectedRecognizedViewItem.value?.status.tone === 'warning' || selectedRecognizedViewItem.value?.candidatePreview));
+  const warningColor = getComputedStyle(document.documentElement).getPropertyValue('--el-color-warning').trim() || '#e6a23c';
+  const highlightColor = uncertain ? warningColor : primaryColor;
   for (const object of pickableObjects) {
     if (!(object instanceof THREE.Mesh)) continue;
     const primitiveId = String(object.userData.mesh_primitive_id ?? object.userData.primitive_id ?? '');
@@ -1842,9 +1979,9 @@ function applyVisualState() {
     for (const material of materials) {
       const standard = material as THREE.MeshStandardMaterial;
       restoreMaterial(material);
-      if (hasSelection && active && primaryColor) {
-        standard.color?.set(primaryColor);
-        standard.emissive?.set(primaryColor);
+      if (hasSelection && active && highlightColor) {
+        standard.color?.set(highlightColor);
+        standard.emissive?.set(highlightColor);
         standard.emissiveIntensity = 0.35;
       }
       if (transparent.value) {
@@ -2410,6 +2547,9 @@ onBeforeUnmount(() => {
                 >
                   识别特征
                 </button>
+                <button type="button" :class="{ active: featureSubTab === 'mbd' }" @click="featureSubTab = 'mbd'">
+                  MBD 标注
+                </button>
               </div>
               <NativeFeatureTree
                 v-show="featureSubTab === 'native'"
@@ -2430,6 +2570,11 @@ onBeforeUnmount(() => {
                 :error="recognizedListError" :empty-description="recognizedEmptyDescription"
                 @select="selectFeature" @locate="selectFeature" @load-more="loadMoreRecognizedFeatures"
                 @retry="loadMoreRecognizedFeatures" />
+              <MbdExplorer v-show="featureSubTab === 'mbd'"
+                :build-id="featureSubTab === 'mbd' ? contract?.part_id || '' : ''"
+                :revision-id="contract?.task_id || ''"
+                :selected-id="primarySelection?.source === 'mbd' ? primarySelection.id : ''"
+                @select-annotation="selectMbdAnnotation" @select-node="selectMbdNode" />
             </div>
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
@@ -2550,6 +2695,14 @@ onBeforeUnmount(() => {
           :selected-native-parameter-family="selectedNativeParameterFamily"
           :selected-native-faces="selectedNativeFaces"
           :selected-feature="selectedFeature"
+          :mbd-annotation="mbdAnnotationDetail"
+          :mbd-node="mbdNodeDetail"
+          :mbd-relations="mbdRelations"
+          :mbd-detail-loading="mbdDetailLoading"
+          :mbd-detail-error="mbdDetailError"
+          :product-property-detail="productPropertyDetail"
+          :product-property-loading="productPropertyLoading"
+          :product-property-error="productPropertyError"
           :recognized-view-items="recognizedViewItems"
           :recognized-detail-loading="recognizedDetailLoading"
           :recognized-detail-error="recognizedDetailError"
@@ -2575,6 +2728,7 @@ onBeforeUnmount(() => {
           @highlight="applyVisualState"
           @open-feature-links="openFeatureLinks"
           @open-native-face="openNativeFace"
+          @open-mbd-relation="openMbdRelation"
           @retry-native-detail="primarySelection?.kind === 'native_feature' && loadSelectedNativeDetail(primarySelection.id)"
           @retry-recognized-detail="primarySelection?.kind === 'recognized_feature' && loadSelectedRecognizedDetail(primarySelection.id)"
           @toggle-isolated="isolated = !isolated"

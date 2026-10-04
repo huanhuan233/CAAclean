@@ -63,6 +63,38 @@ async def test_missing_optional_evidence_channel_is_not_reported_as_empty():
 
 
 @pytest.mark.asyncio
+async def test_mbd_annotation_detail_uses_revision_scoped_database_and_preserves_unmapped_status():
+    revision_id = uuid4()
+    manifest = {"native_evidence_storage": {"backend": "postgresql", "complete": True,
+                "counts": {"fta_semantics": 1, "pmi_entities": 1}}}
+
+    class Repository:
+        async def get_raw_revision(self, _revision_id):
+            return SimpleNamespace(id=revision_id, parse_manifest=manifest)
+
+        async def list_native_evidence(self, _revision_id, kind, offset, limit):
+            return [{"fta_semantic_id": "A1"}] if kind == "fta_semantics" else [{"pmi_id": "P1"}]
+
+        async def get_mbd_annotation(self, _revision_id, annotation_id):
+            assert annotation_id == "A1"
+            return [{"fta_semantic_id": "A1", "native_geometry_link_status": "native_ttrs_unmapped"}]
+
+        async def list_mbd_relations(self, _revision_id, endpoint_id):
+            return [{"pmi_id": "P1", "target_id": endpoint_id, "association_kind": "contains_annotation"}]
+
+        async def list_mbd_annotations(self, _revision_id, **_filters):
+            return [{"fta_semantic_id": "A1"}], 1
+
+    service = ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())
+    service._require_build = lambda _build_id: _async_value(SimpleNamespace(cad_revision_id=revision_id))
+    detail = await service.get_mbd_annotation_detail(uuid4(), "A1")
+    assert detail["native_geometry_status"] == "native_ttrs_unmapped"
+    assert detail["render_mapping_status"] == "unmapped"
+    listing = await service.list_mbd_annotations(uuid4(), offset=0, limit=10)
+    assert listing["total"] == 1 and listing["has_more"] is False
+
+
+@pytest.mark.asyncio
 async def test_recognized_detail_reads_persisted_feature_and_measurements_on_demand():
     revision_id = uuid4()
     manifest = {"feature_evidence_storage": {"backend": "postgresql", "complete": True,

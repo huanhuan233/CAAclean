@@ -290,6 +290,50 @@ async def component_build_native_evidence(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_EVIDENCE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/viewer/mbd/annotations")
+async def component_build_mbd_annotations(
+    build_id: UUID,
+    offset: int = Query(0, ge=0),
+    page_size: int = Query(100, ge=1, le=500),
+    annotation_kind: str | None = Query(None, max_length=80),
+    set_id: str | None = Query(None, max_length=128),
+    view_id: str | None = Query(None, max_length=128),
+    read_status: str | None = Query(None, max_length=80),
+    search: str | None = Query(None, max_length=200),
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.list_mbd_annotations(
+            build_id, offset=offset, limit=page_size, annotation_kind=annotation_kind,
+            set_id=set_id, view_id=view_id, read_status=read_status, search=search)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MBD_ANNOTATIONS_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/mbd/annotations/{annotation_id}")
+async def component_build_mbd_annotation_detail(
+    build_id: UUID,
+    annotation_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_mbd_annotation_detail(build_id, annotation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MBD_ANNOTATION_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/mbd/nodes/{pmi_id}")
+async def component_build_mbd_node_detail(
+    build_id: UUID,
+    pmi_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_mbd_node_detail(build_id, pmi_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MBD_NODE_NOT_FOUND", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/viewer/recognized-features/{feature_center_id}")
 async def component_build_recognized_feature_detail(
     build_id: UUID,

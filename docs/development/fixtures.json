@@ -312,6 +312,23 @@
       "sha256": null
     },
     {
+      "fixture_id": "FX-P5-MBD-REAL",
+      "path": null,
+      "origin": "P5 所需非空 R21 FT&A/TPS 与客户属性样件待提供或在隔离目录生成",
+      "restriction": "不得将合成 JSON 入库测试当作原生读取验收；不得改写用户源模型",
+      "input_type": "CATPart/CATProduct",
+      "provenance": "missing_input",
+      "units": null,
+      "coordinates": null,
+      "instances": null,
+      "known_features": [],
+      "expected_value": null,
+      "expected_value_source": null,
+      "requirements": ["F03", "F04"],
+      "availability": "not_run",
+      "sha256": null
+    },
+    {
       "fixture_id": "FX-P4-SYNTH",
       "path": "backend/tests/fixtures/p4/",
       "origin": "FreeCAD 独立尺寸构造脚本 generate.py",

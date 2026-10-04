@@ -127,8 +127,11 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
   CaaInterfaceGuard<CATITPSNonSemanticGDT> nonsemantic_gdt;
   if (Probe(component, IID_CATITPSNonSemanticGDT, "CATITPSNonSemanticGDT", entity, nonsemantic_gdt))
   {
-    entity.component_kind = "gdt_nonsemantic";
-    Field(entity, "tolerance_value", "", "", "unsupported", "CATITPSNonSemanticGDT");
+    if (entity.component_kind != "gdt")
+    {
+      entity.component_kind = "gdt_nonsemantic";
+      Field(entity, "tolerance_value", "", "", "unsupported", "CATITPSNonSemanticGDT");
+    }
   }
 
   CaaInterfaceGuard<CATITPSRoughness> roughness;
@@ -216,7 +219,11 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
 
   CaaInterfaceGuard<CATITPSText> text;
   if (Probe(component, IID_CATITPSText, "CATITPSText", entity, text))
-    entity.component_kind = "text";
+  {
+    // Several specific TPS types also expose text; keep their more precise kind.
+    if (entity.component_kind.empty() || entity.component_kind == "unknown")
+      entity.component_kind = "text";
+  }
 
   CaaInterfaceGuard<CATITPS> tps;
   if (Probe(component, IID_CATITPS, "CATITPS", entity, tps))

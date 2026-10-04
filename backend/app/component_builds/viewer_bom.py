@@ -44,6 +44,7 @@ def _normalize_node(node: dict, source_format: str, level: int) -> dict:
     )
     return {
         "node_id": node_id,
+        "native_node_id": str(metadata.get("native_node_id") or ""),
         "parent_id": str(node.get("parent_entity_id") or node.get("parent_id") or ""),
         "name": str(node.get("label") or node.get("name") or source_ref or entity_type),
         "part_number": str(metadata.get("part_number") or source_ref or ""),

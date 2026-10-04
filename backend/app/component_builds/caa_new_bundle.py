@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -21,6 +22,10 @@ NATIVE_EVIDENCE_FILES = {
     "feature_topology_links": "native_feature_topology_links.jsonl",
     "feature_dependencies": "feature_dependencies.jsonl",
     "geometry_entities": "geometry_entities.jsonl",
+    "pmi_entities": "pmi_entities.jsonl",
+    "pmi_associations": "pmi_associations.jsonl",
+    "fta_sets": "fta_sets.jsonl",
+    "fta_semantics": "fta_semantics.jsonl",
     "canonical_features": "canonical_features.jsonl",
     "measurements": "measurements.jsonl",
     "topology_faces": "topology_faces.jsonl",
@@ -134,6 +139,7 @@ class CaaNewBundleReader:
 
     def native_evidence_streams(self):
         """Expose only present capture channels; typed semantics have one canonical projection."""
+        self._validate_mbd_channels()
         streams = {}
         for kind, filename in NATIVE_EVIDENCE_FILES.items():
             if kind in {"canonical_features", "measurements", "topology_faces", "feature_geometry_links", "selection_index"}:
@@ -146,9 +152,58 @@ class CaaNewBundleReader:
                 streams[kind] = self.iter_topology_entities()
             elif kind == "topology_cells":
                 streams[kind] = self.iter_topology_cells()
+            elif kind == "fta_semantics":
+                streams[kind] = self.iter_fta_semantics()
             else:
                 streams[kind] = self._iter_jsonl_required(filename)
         return streams
+
+    def iter_fta_semantics(self):
+        """Expose typed display/search fields without changing the raw CAA semantic payload."""
+        for row in self._iter_jsonl_required("fta_semantics.jsonl"):
+            payload = row.get("semantic_payload") or {}
+            if not isinstance(payload, dict):
+                raise CaaNewBundleError("fta_semantics.jsonl: semantic_payload must be an object")
+            normalized = dict(row)
+            for key in ("native_alias", "annotation_ttrs_count", "annotation_ttrs_status",
+                        "native_geometry_link_status"):
+                if key not in normalized and key in payload:
+                    normalized[key] = payload[key]
+            yield normalized
+
+    def _validate_mbd_channels(self) -> None:
+        """Reject broken PMI identity and declared checksums before replacing a revision snapshot."""
+        files = ("pmi_entities.jsonl", "pmi_associations.jsonl", "fta_semantics.jsonl", "fta_sets.jsonl")
+        declared = self.manifest.get("output_files") or {}
+        present = {name for name in files if (self.bundle_dir / name).is_file()}
+        if not present:
+            return
+        for name in present:
+            expected = (declared.get(name) or {}).get("sha256")
+            if expected and hashlib.sha256((self.bundle_dir / name).read_bytes()).hexdigest() != expected:
+                raise CaaNewBundleError(f"MBD artifact hash mismatch: {name}")
+        nodes = self._mbd_ids("pmi_entities.jsonl", "pmi_id") if files[0] in present else set()
+        annotations = self._mbd_ids("fta_semantics.jsonl", "fta_semantic_id") if files[2] in present else set()
+        if nodes and annotations:
+            for record in self._iter_jsonl_required(files[2]):
+                owner = str(record.get("fta_set_id") or "")
+                if owner and owner not in nodes:
+                    raise CaaNewBundleError(f"fta_semantics.jsonl: unknown fta_set_id: {owner}")
+        if files[1] in present and files[0] in present and files[2] in present:
+            known = nodes | annotations
+            for record in self._iter_jsonl_required(files[1]):
+                source, target = str(record.get("pmi_id") or ""), str(record.get("target_id") or "")
+                if source not in known or target not in known:
+                    raise CaaNewBundleError(f"pmi_associations.jsonl: unresolved endpoint: {source} -> {target}")
+
+    def _mbd_ids(self, filename: str, field: str) -> set[str]:
+        result: set[str] = set()
+        for record in self._iter_jsonl_required(filename):
+            value = str(record.get(field) or "")
+            if not value or value in result:
+                raise CaaNewBundleError(f"{filename}: missing or duplicate {field}: {value}")
+            result.add(value)
+        return result
 
     def iter_topology_entities(self):
         """Normalize native topology kinds without erasing the capture-side type."""

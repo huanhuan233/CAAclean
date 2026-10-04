@@ -23,6 +23,7 @@ NATIVE_ASSET_FILES = {
     "feature_dependencies": "feature_dependencies.jsonl", "topology_entities": "topology_entities.jsonl",
     "topology_relations": "topology_relations.jsonl", "geometry_entities": "geometry_entities.jsonl",
     "pmi_entities": "pmi_entities.jsonl", "pmi_associations": "pmi_associations.jsonl",
+    "fta_sets": "fta_sets.jsonl", "fta_semantics": "fta_semantics.jsonl",
     "diagnostics": "diagnostics.jsonl", "coverage": "coverage.json",
     "capability_matrix": "capability_matrix.json", "topology_bodies": "native_topology_bodies.jsonl",
     "topology_cells": "native_topology_cells.jsonl", "topology_wires": "native_topology_wires.jsonl",

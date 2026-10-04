@@ -171,7 +171,7 @@ function menuAction(command: string, item: RecognizedFeatureItem) {
           class="recognized-card"
           role="listitem"
           tabindex="0"
-          :class="{ selected: selectedId === item.featureId }"
+          :class="{ selected: selectedId === item.featureId, uncertain: item.status.tone === 'warning' || item.candidatePreview }"
           :aria-selected="selectedId === item.featureId"
           :aria-label="`${item.title}，${item.status.label}，ID ${item.featureId}`"
           @click="emit('select', item.featureId)"
@@ -401,6 +401,13 @@ function menuAction(command: string, item: RecognizedFeatureItem) {
 }
 .recognized-card.selected .card-top strong {
   color: var(--el-color-primary);
+}
+.recognized-card.selected.uncertain {
+  border-color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+}
+.recognized-card.selected.uncertain .card-top strong {
+  color: var(--el-color-warning);
 }
 .card-top :deep(.el-tag) {
   flex: none;

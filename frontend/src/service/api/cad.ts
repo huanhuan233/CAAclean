@@ -387,6 +387,68 @@ export function fetchComponentBuildNativeEvidence<T extends Record<string, unkno
   });
 }
 
+export interface MbdAnnotationRecord {
+  fta_semantic_id: string;
+  fta_set_id: string;
+  component_kind: string;
+  read_status: string;
+  native_alias?: string;
+  annotation_text?: string;
+  annotation_text_status?: string;
+  native_geometry_link_status?: string;
+  annotation_ttrs_count?: number;
+  semantic_payload?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface MbdNodeRecord {
+  pmi_id: string;
+  pmi_kind: string;
+  alias?: string;
+  read_status: string;
+  parent_pmi_id?: string;
+  owning_document_id?: string;
+  coordinate_frame_status?: string;
+  plane_origin?: string;
+  plane_x_axis?: string;
+  plane_y_axis?: string;
+  plane_normal?: string;
+  camera_status?: string;
+  [key: string]: unknown;
+}
+
+export interface MbdRelationRecord {
+  pmi_id: string;
+  target_id: string;
+  association_kind: string;
+  read_status: string;
+}
+
+export function fetchComponentBuildMbdAnnotations(
+  buildId: string,
+  params: { offset?: number; page_size?: number; annotation_kind?: string; set_id?: string; view_id?: string; read_status?: string; search?: string },
+  options?: ComponentBuildQueryOptions
+) {
+  return request<{ records: MbdAnnotationRecord[]; total: number; has_more: boolean; next_offset: number | null }>({
+    url: `/api/component-builds/${buildId}/viewer/mbd/annotations`, params,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchComponentBuildMbdAnnotationDetail(buildId: string, annotationId: string, options?: ComponentBuildQueryOptions) {
+  return request<{ annotation: MbdAnnotationRecord; relations: MbdRelationRecord[]; native_geometry_status: string; render_mapping_status: string }>({
+    url: `/api/component-builds/${buildId}/viewer/mbd/annotations/${encodeURIComponent(annotationId)}`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchComponentBuildMbdNodeDetail(buildId: string, pmiId: string, options?: ComponentBuildQueryOptions) {
+  return request<{ node: MbdNodeRecord; relations: MbdRelationRecord[] }>({
+    url: `/api/component-builds/${buildId}/viewer/mbd/nodes/${encodeURIComponent(pmiId)}`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export function fetchComponentBuildRecognizedFeatureDetail(
   buildId: string,
   featureId: string,

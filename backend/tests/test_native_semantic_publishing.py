@@ -49,6 +49,76 @@ async def test_native_publish_persists_typed_definition_without_replacing_featur
 
 
 @pytest.mark.asyncio
+async def test_native_publish_preserves_mbd_definition_and_membership_without_projection_double_count(tmp_path):
+    bundle = tmp_path / "native-caa"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps({"schema_version": "caa_capture_v1"}), encoding="utf-8")
+    (bundle / "pmi_entities.jsonl").write_text(json.dumps({"pmi_id": "P1", "pmi_kind": "fta_set"}) + "\n", encoding="utf-8")
+    (bundle / "pmi_associations.jsonl").write_text(json.dumps({"pmi_id": "P1", "target_id": "P1_TPS000001", "association_kind": "contains_annotation"}) + "\n", encoding="utf-8")
+    (bundle / "fta_semantics.jsonl").write_text(json.dumps({"fta_semantic_id": "P1_TPS000001", "fta_set_id": "P1", "component_kind": "roughness"}) + "\n", encoding="utf-8")
+    (bundle / "fta_sets.jsonl").write_text(json.dumps({"fta_set_id": "P1"}) + "\n", encoding="utf-8")
+    recorded = {}
+
+    class Repository:
+        @asynccontextmanager
+        async def native_publish_transaction(self):
+            yield
+
+        async def replace_native_evidence(self, _revision, streams, *, replace_all):
+            recorded["records"] = {kind: list(rows) for kind, rows in streams.items()}
+            return {kind: len(rows) for kind, rows in recorded["records"].items()}
+
+        async def update_revision_manifest(self, _revision, payload):
+            recorded["manifest"] = payload
+
+    await _publish_native_progress(Repository(), uuid4(), bundle)
+    assert set(recorded["records"]) == {"pmi_entities", "pmi_associations", "fta_sets", "fta_semantics"}
+    assert recorded["manifest"]["native_evidence_storage"]["counts"]["fta_semantics"] == 1
+    assert recorded["manifest"]["native_evidence_storage"]["counts"]["fta_sets"] == 1
+
+
+def test_mbd_semantic_payload_normalizes_search_and_geometry_fields(tmp_path):
+    from app.component_builds.caa_new_bundle import CaaNewBundleReader
+
+    bundle = tmp_path / "native-caa"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps({"schema_version": "caa_capture_v1"}), encoding="utf-8")
+    (bundle / "fta_semantics.jsonl").write_text(json.dumps({
+        "fta_semantic_id": "A1", "fta_set_id": "P1", "component_kind": "dimension",
+        "semantic_payload": {"native_alias": "孔径", "annotation_ttrs_count": 2,
+                             "native_geometry_link_status": "native_ttrs_unmapped"},
+    }) + "\n", encoding="utf-8")
+    row = list(CaaNewBundleReader(bundle).native_evidence_streams()["fta_semantics"])[0]
+    assert row["native_alias"] == "孔径"
+    assert row["annotation_ttrs_count"] == 2
+    assert row["native_geometry_link_status"] == "native_ttrs_unmapped"
+    assert row["semantic_payload"]["native_alias"] == "孔径"
+
+
+def test_mbd_bundle_rejects_broken_identity_and_declared_hash(tmp_path):
+    from hashlib import sha256
+    from app.component_builds.caa_new_bundle import CaaNewBundleError, CaaNewBundleReader
+
+    bundle = tmp_path / "native-caa"
+    bundle.mkdir()
+    nodes = bundle / "pmi_entities.jsonl"
+    nodes.write_text('{"pmi_id":"P1"}\n', encoding="utf-8")
+    semantics = bundle / "fta_semantics.jsonl"
+    semantics.write_text('{"fta_semantic_id":"A1","fta_set_id":"P1"}\n', encoding="utf-8")
+    relations = bundle / "pmi_associations.jsonl"
+    relations.write_text('{"pmi_id":"P1","target_id":"missing"}\n', encoding="utf-8")
+    manifest = {"schema_version": "caa_capture_v1", "output_files": {
+        "pmi_entities.jsonl": {"sha256": sha256(nodes.read_bytes()).hexdigest()}}}
+    (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(CaaNewBundleError, match="unresolved endpoint"):
+        CaaNewBundleReader(bundle).native_evidence_streams()
+    relations.write_text('{"pmi_id":"P1","target_id":"A1"}\n', encoding="utf-8")
+    nodes.write_text('{"pmi_id":"P2"}\n', encoding="utf-8")
+    with pytest.raises(CaaNewBundleError, match="hash mismatch"):
+        CaaNewBundleReader(bundle).native_evidence_streams()
+
+
+@pytest.mark.asyncio
 async def test_missing_tree_channel_imports_evidence_without_replacing_tree(tmp_path):
     bundle = tmp_path / "native-caa"
     bundle.mkdir()

@@ -113,6 +113,7 @@ def _property_field(fact: dict[str, Any]) -> dict[str, Any]:
         "raw_value": _redact_value(fact.get("raw_value")),
         "raw_unit": str(fact.get("raw_unit") or ""),
         "display_value": _redact_value(fact.get("display_value")),
+        "raw_display_text": _redact_value(fact.get("raw_display_text")),
         "display_unit": str(fact.get("display_unit") or ""),
         "value_type": str(fact.get("value_type") or ""),
         "source_api": str(fact.get("source_api") or ""),
@@ -120,6 +121,8 @@ def _property_field(fact: dict[str, Any]) -> dict[str, Any]:
         "authority": str(fact.get("authority") or ""),
         "display_order": int(fact.get("display_order") or 0),
         "read_only": bool(fact.get("read_only")),
+        "hidden_status": str(fact.get("hidden_status") or "unavailable"),
+        "normalization_status": str(fact.get("normalization_status") or "unavailable"),
     }
 
 

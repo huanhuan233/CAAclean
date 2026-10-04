@@ -621,6 +621,49 @@ class ComponentBuildService:
             build.cad_revision_id, "measurements", feature_center_id)
         return {"feature": features[0], "measurements": measurements}
 
+    async def list_mbd_annotations(self, build_id: UUID, *, offset: int, limit: int,
+                                   annotation_kind: str | None = None, set_id: str | None = None,
+                                   view_id: str | None = None,
+                                   read_status: str | None = None, search: str | None = None) -> dict:
+        await self.get_native_evidence(build_id, "fta_semantics", 0, 1)
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("MBD revision is missing")
+        records, total = await self.repository.list_mbd_annotations(
+            build.cad_revision_id, offset=offset, limit=limit, annotation_kind=annotation_kind,
+            set_id=set_id, view_id=view_id, read_status=read_status, search=search)
+        return {"records": records, "total": total, "has_more": offset + len(records) < total,
+                "next_offset": offset + len(records) if offset + len(records) < total else None}
+
+    async def get_mbd_annotation_detail(self, build_id: UUID, annotation_id: str) -> dict:
+        if not annotation_id or len(annotation_id) > 128:
+            raise ValueError("invalid annotation id")
+        await self.get_native_evidence(build_id, "fta_semantics", 0, 1)
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("MBD revision is missing")
+        records = await self.repository.get_mbd_annotation(build.cad_revision_id, annotation_id)
+        if len(records) != 1:
+            raise ValueError("annotation missing or duplicated")
+        relations = await self.repository.list_mbd_relations(build.cad_revision_id, annotation_id)
+        return {"annotation": records[0], "relations": relations,
+                "native_geometry_status": (records[0].get("native_geometry_link_status") or
+                                           (records[0].get("semantic_payload") or {}).get("native_geometry_link_status") or
+                                           "unresolved"),
+                "render_mapping_status": "unmapped"}
+
+    async def get_mbd_node_detail(self, build_id: UUID, pmi_id: str) -> dict:
+        if not pmi_id or len(pmi_id) > 128:
+            raise ValueError("invalid PMI id")
+        await self.get_native_evidence(build_id, "pmi_entities", 0, 1)
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("MBD revision is missing")
+        records = await self.repository.get_mbd_node(build.cad_revision_id, pmi_id)
+        if len(records) != 1:
+            raise ValueError("PMI node missing or duplicated")
+        return {"node": records[0], "relations": await self.repository.list_mbd_relations(build.cad_revision_id, pmi_id)}
+
     async def get_native_node_selection(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
         del settings
         node = await self.get_native_node(build_id, node_id, None)
@@ -657,6 +700,8 @@ class ComponentBuildService:
             "geometry_entities",
             "pmi_entities",
             "pmi_associations",
+            "fta_sets",
+            "fta_semantics",
             "diagnostics",
             "coverage",
             "capability_matrix",

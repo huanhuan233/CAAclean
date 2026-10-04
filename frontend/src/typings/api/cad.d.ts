@@ -552,6 +552,7 @@ declare namespace Api {
 
     interface ViewerBomNode {
       node_id: string;
+      native_node_id?: string;
       parent_id: string;
       name: string;
       part_number: string;
@@ -647,6 +648,7 @@ declare namespace Api {
       raw_value: unknown;
       raw_unit: string;
       display_value: unknown;
+      raw_display_text?: unknown;
       display_unit: string;
       value_type: string;
       source_api: string;
@@ -654,6 +656,8 @@ declare namespace Api {
       authority: string;
       display_order: number;
       read_only: boolean;
+      hidden_status?: string;
+      normalization_status?: string;
     }
 
     interface NativeTopologyResponse {

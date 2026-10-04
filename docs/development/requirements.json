@@ -103,13 +103,13 @@
         "产品原生/自定义属性与知识参数"
       ],
       "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
-      "current_implementation": "caa_new; app/component_builds/native_property_store.py",
-      "verification_status": "not_run",
-      "phase": "P2",
+      "current_implementation": "P5A/P5C: caa_new CATIPrdProperties/direct custom/Knowledge 参数; native_property_store/PostgreSQL/API/Feature Center；真实样件对照待验收",
+      "verification_status": "automated_tested",
+      "phase": "P5",
       "fixtures": [
         "FX-REAL-01"
       ],
-      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+      "gap": "相同 Reference 多实例、客户字段与 Knowledge 路径仍缺真实 R21 样件对照；M-D53 未定义"
     },
     {
       "requirement_id": "F04",
@@ -127,13 +127,13 @@
         "尺寸、形位公差、粗糙度、基准、文本、旗标、NOA、视图/捕获"
       ],
       "identity_and_coordinates": "定义/实例分离；源坐标系与单位显式记录",
-      "current_implementation": "caa_new; app/component_builds/native_persistence.py",
-      "verification_status": "not_run",
-      "phase": "P2",
+      "current_implementation": "P5A/P5B/P5C: caa_new 类型化 FT&A/TPS、标注集/视图/捕获/成员关系；PostgreSQL/API/Feature Center；TTRS 到显示面未映射",
+      "verification_status": "automated_tested",
+      "phase": "P5",
       "fixtures": [
         "FX-REAL-01"
       ],
-      "gap": "按子项与真实样件逐一验证，不能用模块代码存在推定全覆盖"
+      "gap": "八类非空真实 R21 标注、几何双向映射、原生布局/截图待验收；粗糙度九字段含义未知"
     },
     {
       "requirement_id": "F05",

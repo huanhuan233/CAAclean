@@ -8,6 +8,10 @@ export type SelectionTargetKind =
   | 'body'
   | 'solid'
   | 'native_feature'
+  | 'mbd_annotation'
+  | 'mbd_set'
+  | 'mbd_view'
+  | 'mbd_capture'
   | 'recognized_feature'
   | 'face'
   | 'loop'
@@ -24,7 +28,7 @@ export interface SelectionTarget {
   label?: string;
   instancePath?: string;
   renderObjectUuid?: string;
-  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail';
+  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd';
   raw?: unknown;
 }
 

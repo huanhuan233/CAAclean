@@ -52,9 +52,11 @@ test('已知名称、状态和有限范围来自独立证据，原始枚举保�
   assert.equal(items[0].title, '圆角 001');
   assert.deepEqual(items[0].descriptors, ['恒定半径', '直边']);
   assert.equal(items[0].status.label, '自动核验');
+  assert.equal(items[0].status.tone, 'success');
   assert.equal(items[0].canLocate, true);
   assert.equal(items[1].title, '薄板候选 001');
   assert.equal(items[1].status.label, '待复核');
+  assert.equal(items[1].status.tone, 'warning');
   assert.equal(items[1].canLocate, true);
   assert.equal(items[1].candidatePreview, true);
   assert.equal(items[1].descriptors.includes('等厚'), false);
