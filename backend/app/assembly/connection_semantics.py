@@ -11,6 +11,9 @@ from collections import defaultdict, deque
 import math
 from typing import Any
 
+from app.assembly.context import AssemblyContextError, resolve_occurrence_matrix
+from app.measurement.geometry_snapshot import transform_geometry
+
 
 RULE_VERSION = "customer.connection.v1"
 ROOT_ALIASES = {"连接定义": "fastener", "K_密封定义": "seal", "M_胶接定义": "bond"}
@@ -146,15 +149,27 @@ def build_connection_semantics(objects: list[dict], occurrences: list[dict],
                         local_mm = parsed
                 except ValueError:
                     pass
+            world_mm = None
+            if local_mm is not None:
+                product_occurrence = products_by_id.get(str(row.get("product_occurrence_id") or ""), {})
+                try:
+                    if product_occurrence.get("transform_status") == "identity_root" and not product_occurrence.get("parent_occurrence_id"):
+                        world_mm = local_mm
+                    else:
+                        world_mm = transform_geometry(local_mm,
+                                                      resolve_occurrence_matrix(product_occurrence), "point")
+                except (AssemblyContextError, ValueError, TypeError):
+                    pass
             points.append({"point_occurrence_id": row["occurrence_id"], "point_object_id": row.get("object_id"),
                            "parent_set_occurrence_id": parent.get("occurrence_id"),
                            "parent_set_alias": parent_alias, "raw_number_alias": raw_number,
                            "number_segments": numbers, "number_diagnostics": number_diagnostics,
                            "ancestor_occurrence_ids": [item["occurrence_id"] for item in chain],
                            "in_fastener_set": in_fastener_set,
-                           "coordinate_status": "part_local_only" if local_mm is not None else
+                           "coordinate_status": "assembly_world_verified" if world_mm is not None else
+                                                "part_local_only" if local_mm is not None else
                                                 "unresolved_native_point_geometry",
-                           "part_local_mm": local_mm, "assembly_world_mm": None,
+                           "part_local_mm": local_mm, "assembly_world_mm": world_mm,
                            "reference_status": reference_status or "unavailable"})
         diagnostics = ["member_limit_exceeded"] if truncated else []
         if not product_id or role == "unknown":

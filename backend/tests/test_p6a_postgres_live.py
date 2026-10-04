@@ -79,6 +79,20 @@ Path(job['result_json_path']).write_text('{"status":"success"}', encoding='utf-8
                 await service.analyze(build_id, settings, instance_ids=["OBJ1", "missing"],
                                       candidate_distance_mm=1, tolerance_mm=0.01)
             assert (await service.list_relations(build_id, offset=0, limit=10))["total"] == 1
+            derived = await service.derive_boolean(build_id, settings, shell_instance_id="OBJ1",
+                                                    other_instance_id="OBJ2", operation="union",
+                                                    purpose="explicit test union")
+            assert derived["result"]["status"] == "complete"
+            assert derived["result"]["volume_mm3"] == pytest.approx(2000)
+            assert derived["shell_role_status"] == "request_declared_unverified"
+            assert (bundle / derived["asset"]["relative_path"]).is_file()
+            assert (await service.list_booleans(build_id, offset=0, limit=10))["total"] == 1
+            second = await service.derive_boolean(build_id, settings, shell_instance_id="OBJ1",
+                                                  other_instance_id="OBJ2", operation="difference",
+                                                  purpose="explicit test difference")
+            assert second["result"]["status"] == "complete"
+            assert (await service.list_booleans(build_id, offset=0, limit=10))["total"] == 2
+            assert all((geometry / (name + ".brep")).is_file() for name in ("S1", "S2"))
     finally:
         async with sessions() as cleanup:
             await cleanup.execute(delete(CadNativeEvidence).where(CadNativeEvidence.revision_id == revision_id))

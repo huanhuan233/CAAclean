@@ -17,7 +17,8 @@ export type SelectionTargetKind =
   | 'loop'
   | 'coedge'
   | 'edge'
-  | 'vertex';
+  | 'vertex'
+  | 'assembly_relation';
 
 export type SelectionMappingStatus = 'exact' | 'runtime_current_revision' | 'candidate' | 'ambiguous' | 'unavailable';
 
@@ -28,7 +29,7 @@ export interface SelectionTarget {
   label?: string;
   instancePath?: string;
   renderObjectUuid?: string;
-  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd';
+  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly';
   raw?: unknown;
 }
 

@@ -250,3 +250,13 @@ test('single CATPart without a feature crosswalk previews whole part but never c
   assert.equal(selection.context.mappingAuthority, 'whole_part_preview');
   assert.match(selection.context.diagnostics.join(';'), /WHOLE_PART_PREVIEW/);
 });
+
+test('assembly evidence without an instance display crosswalk never highlights an arbitrary part', () => {
+  const selection = resolveViewerSelection({ kind: 'assembly_relation', id: 'REL-1', source: 'assembly' }, {
+    faceMeshMap, featureMeshMap,
+    bomNodes: [{ node_id: 'PART', node_type: 'part', children: [] } as never]
+  });
+  assert.equal(selection.primary?.id, 'REL-1');
+  assert.equal(selection.context.mappingStatus, 'unavailable');
+  assert.deepEqual(selection.context.primitiveIds, []);
+});

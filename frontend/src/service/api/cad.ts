@@ -387,6 +387,39 @@ export function fetchComponentBuildNativeEvidence<T extends Record<string, unkno
   });
 }
 
+export interface AssemblyEvidenceRecord extends Record<string, unknown> {
+  relation_id?: string;
+  connection_id?: string;
+  kind?: string;
+  contact_kind?: string;
+  instance_a?: string;
+  instance_b?: string;
+  part_number?: string;
+  status?: string;
+  result_version?: string;
+}
+
+export function fetchAssemblyRelations(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {
+  return request<{ records: AssemblyEvidenceRecord[]; total: number; has_more: boolean; run: Record<string, unknown> }>({
+    url: `/api/component-builds/${buildId}/assembly/relations`, params: { offset, limit },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchAssemblyConnections(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {
+  return request<{ records: AssemblyEvidenceRecord[]; total: number; has_more: boolean; source_status: Record<string, unknown> }>({
+    url: `/api/component-builds/${buildId}/assembly/connections`, params: { offset, limit },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchAssemblyBooleans(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {
+  return request<{ records: AssemblyEvidenceRecord[]; total: number; has_more: boolean }>({
+    url: `/api/component-builds/${buildId}/assembly/booleans`, params: { offset, limit },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export interface MbdAnnotationRecord {
   fta_semantic_id: string;
   fta_set_id: string;

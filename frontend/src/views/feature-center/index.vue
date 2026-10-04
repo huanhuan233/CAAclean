@@ -20,6 +20,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
 import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
+import type { AssemblyEvidenceRecord } from '@/service/api/cad';
 import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
@@ -33,6 +34,8 @@ import NativeFeatureTree from './modules/NativeFeatureTree.vue';
 import RecognizedFeatureExplorer from './modules/RecognizedFeatureExplorer.vue';
 import MbdExplorer from './modules/MbdExplorer.vue';
 import TopologyExplorer from './modules/TopologyExplorer.vue';
+import AssemblyRelationExplorer from './modules/AssemblyRelationExplorer.vue';
+import AssemblyRelationDetail from './modules/AssemblyRelationDetail.vue';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
 import { mbdAnnotationTitle, mbdNodeTitle } from './modules/mbd-view-model';
 import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, topologyRecordKind } from './modules/topology-view-model';
@@ -286,6 +289,8 @@ const explicitError = ref(false);
 const detailsOpen = ref(true);
 const bomVisible = ref(false);
 const activeTab = ref<ViewerTab>('bom');
+const bomPanelMode = ref<'tree' | 'relations'>('tree');
+const assemblySelection = ref<{ group: 'relations' | 'connections' | 'booleans'; record: AssemblyEvidenceRecord } | null>(null);
 const featureSubTab = ref<'native' | 'recognized' | 'mbd'>('native');
 const transparent = ref(false);
 const isolated = ref(false);
@@ -1002,6 +1007,7 @@ let progressiveNativeTreeBuildId = '';
 
 async function loadBuildBundle(buildId: string) {
   clearStatusPoll();
+  assemblySelection.value = null;
   geometrySnapshot.value = null;
   measurementSession.clear();
   measurementOverlay?.clear();
@@ -1443,6 +1449,7 @@ function clearStepCurves() {
 }
 
 function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']) {
+  if (target.kind !== 'assembly_relation') assemblySelection.value = null;
   relationOverlay?.clear();
   activeRelationPoints = null;
   viewerSelection.value = resolveViewerSelection(
@@ -1502,6 +1509,14 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     productPropertyError.value = '';
   }
   applyVisualState();
+}
+
+function selectAssemblyRelation(group: 'relations' | 'connections' | 'booleans', record: AssemblyEvidenceRecord) {
+  const id = String(record.relation_id || record.connection_id || record.result_version || '');
+  if (!id) return;
+  assemblySelection.value = { group, record };
+  selectTarget({ kind: 'assembly_relation', id, label: '装配关系', raw: record }, 'assembly');
+  detailsOpen.value = true;
 }
 
 async function loadSelectedProductProperties(nativeNodeId: string, selectionId: string) {
@@ -2516,9 +2531,13 @@ onBeforeUnmount(() => {
               {{ tabLabel(tab) }}
             </button>
           </div>
-          <div class="panel-scroll" :class="{ 'feature-tree-panel': activeTab === 'recognized', 'geometry-panel': activeTab === 'geometry' }">
+          <div class="panel-scroll" :class="{ 'feature-tree-panel': activeTab === 'recognized', 'geometry-panel': activeTab === 'geometry', 'assembly-panel': activeTab === 'bom' && bomPanelMode === 'relations' }">
+            <div v-if="activeTab === 'bom'" class="bom-panel-switch">
+              <button type="button" :class="{ active: bomPanelMode === 'tree' }" @click="bomPanelMode = 'tree'">BOM</button>
+              <button type="button" :class="{ active: bomPanelMode === 'relations' }" @click="bomPanelMode = 'relations'">装配关系</button>
+            </div>
             <ElTree
-              v-if="activeTab === 'bom' && contract?.bom.nodes.length"
+              v-if="activeTab === 'bom' && bomPanelMode === 'tree' && contract?.bom.nodes.length"
               :data="contract.bom.nodes"
               node-key="node_id"
               :default-expanded-keys="bomDefaultExpandedKeys"
@@ -2533,7 +2552,11 @@ onBeforeUnmount(() => {
                 </span>
               </template>
             </ElTree>
-            <ElEmpty v-else-if="activeTab === 'bom'" description="当前文件没有装配 BOM" />
+            <ElEmpty v-else-if="activeTab === 'bom' && bomPanelMode === 'tree'" description="当前文件没有装配 BOM" />
+            <AssemblyRelationExplorer v-if="activeTab === 'bom' && bomPanelMode === 'relations'"
+              :build-id="contract?.part_id || ''"
+              :selected-id="primarySelection?.kind === 'assembly_relation' ? primarySelection.id : ''"
+              @select="selectAssemblyRelation" />
 
             <div v-show="activeTab === 'recognized'" class="feature-tab-content">
               <div class="feature-source-tabs">
@@ -2677,7 +2700,9 @@ onBeforeUnmount(() => {
       </section>
 
       <aside class="details" :class="{ open: detailsOpen }">
-        <ObjectDetailPanel
+        <AssemblyRelationDetail v-if="primarySelection?.kind === 'assembly_relation' && assemblySelection"
+          :group="assemblySelection.group" :record="assemblySelection.record" />
+        <ObjectDetailPanel v-else
           :contract="contract"
           :source-format="sourceFormat"
           :selected-title="selectedTitle"
@@ -3274,6 +3299,10 @@ button:disabled {
   overflow: hidden;
   padding: 0;
 }
+.panel-scroll.assembly-panel { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.bom-panel-switch { display: grid; grid-template-columns: 1fr 1fr; flex: none; gap: 4px; padding: 8px; }
+.bom-panel-switch button { min-width: 0; padding: 7px; border-radius: 5px; color: var(--el-text-color-regular); }
+.bom-panel-switch button.active { color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
 .feature-tab-content {
   display: flex;
   min-height: 0;

@@ -25,6 +25,15 @@ class AnalyzeIn(BaseModel):
     candidate_distance_mm: float = Field(default=10.0, ge=0, le=10000)
     tolerance_mm: float = Field(default=0.01, gt=0, le=0.1)
     source_policy: str = "auxiliary_brep"
+    minimum_lap_fraction: float = Field(default=0.5, gt=0, le=1)
+
+
+class BooleanIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shell_instance_id: str = Field(min_length=1, max_length=128)
+    other_instance_id: str = Field(min_length=1, max_length=128)
+    operation: str
+    purpose: str = Field(min_length=1, max_length=256)
 
 
 def get_assembly_service(session: AsyncSession = Depends(get_session)) -> AssemblyAnalysisService:
@@ -77,6 +86,28 @@ async def relation_detail(build_id: UUID, relation_id: str,
         raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
     except AssemblyContextError as exc:
         raise _error(exc) from exc
+
+
+@router.post("/booleans")
+async def derive_boolean(build_id: UUID, payload: BooleanIn,
+                         service: AssemblyAnalysisService = Depends(get_assembly_service),
+                         settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return await service.derive_boolean(build_id, settings, **payload.model_dump())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
+    except (AssemblyContextError, GeometryReferenceError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/booleans")
+async def booleans(build_id: UUID, offset: int = Query(default=0, ge=0),
+                   limit: int = Query(default=50, ge=1, le=200),
+                   service: AssemblyAnalysisService = Depends(get_assembly_service)) -> dict:
+    try:
+        return await service.list_booleans(build_id, offset=offset, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
 
 
 @router.get("/connections")

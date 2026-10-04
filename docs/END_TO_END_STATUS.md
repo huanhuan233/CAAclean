@@ -73,3 +73,7 @@ python -m scripts.backfill_native_evidence --all
 
 Native Alias, geometrical-set/point markers, coordinate-point local values and occurrence-scoped connection evidence are implemented and queryable. The R21 build, targeted regression and isolated PostgreSQL test passed. World point placement, fastener stack and seal/bond geometry/material association remain unresolved without trusted source references and a nonempty customer CATProduct capture. See `development/P6B_CONNECTION_ACCEPTANCE.md`.
 
+# P6C assembly relations (2026-10-04)
+
+Confirmed orthogonal plate lap subclass and explicit auxiliary B-Rep union/intersection/difference are implemented, persisted and exposed through the existing assembly API. The BOM side panel now browses assembly, connection and boolean results without claiming exact Viewer localization when mappings are absent. Butt/fit classification, configured business shell roles, CATProduct crosswalk, nonempty browser relation detail and actual customer assembly acceptance remain incomplete. See `development/P6C_ASSEMBLY_ACCEPTANCE.md`.
+

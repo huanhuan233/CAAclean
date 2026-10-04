@@ -111,6 +111,28 @@ def test_path_a_counts_only_points_under_fastener_set_and_keeps_local_precision(
     assert "outside_fastener_parent" in outside["number_diagnostics"]
 
 
+def test_coordinate_defined_point_uses_verified_absolute_product_transform_once():
+    matrix = [1, 0, 0, 10, 0, 1, 0, -5, 0, 0, 1, 3, 0, 0, 0, 1]
+    objects = [{"object_id": "set"}, {"object_id": "point"}]
+    occurrences = [
+        {"occurrence_id": "root", "object_id": "set", "document_id": "D",
+         "product_occurrence_id": "R1", "parent_occurrence_id": "R1"},
+        {"occurrence_id": "point", "object_id": "point", "document_id": "D",
+         "product_occurrence_id": "R1", "parent_occurrence_id": "root"},
+    ]
+    facts = [_fact("set", "native_alias", "连接定义"),
+             _fact("set", "native_object_class", "geometrical_set"),
+             _fact("point", "native_object_class", "point_feature"),
+             _fact("point", "native_point_reference_status", "absolute_part_axis")]
+    facts += [_fact("point", f"native_point_{axis}_m", value)
+              for axis, value in zip("xyz", ("0.001", "0.002", "0.003"))]
+    product = {"occurrence_id": "R1", "part_number": "R_1", "transform_status": "resolved_absolute",
+               "transform_4x4": matrix}
+    point = build_connection_semantics(objects, occurrences, facts, [product])[0]["points"][0]
+    assert point["assembly_world_mm"] == [11, -3, 6]
+    assert point["coordinate_status"] == "assembly_world_verified"
+
+
 def test_bundle_publishes_native_connection_projection_only_from_captured_alias_and_hierarchy(tmp_path):
     bundle = tmp_path / "capture"
     bundle.mkdir()

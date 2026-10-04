@@ -117,7 +117,46 @@ def verified_box_contact_area(left, right, tolerance):
     return spans[0] * spans[1]
 
 
-def evaluate_pair(left, right, tolerance):
+def orthogonal_plate_overlap(left, right, tolerance, minimum_fraction):
+    """Customer lap rule, only for two validated axis-aligned rectangular plates."""
+    def bounds(shape):
+        box = shape.BoundBox
+        spans = [box.XLength, box.YLength, box.ZLength]
+        if (len(shape.Faces) != 6 or not shape.isClosed() or
+                any(type(face.Surface).__name__ != "Plane" for face in shape.Faces) or
+                any(span <= tolerance for span in spans)):
+            return None
+        if abs(shape.Volume - spans[0] * spans[1] * spans[2]) > max(tolerance ** 3, shape.Volume * 1e-8):
+            return None
+        return [(box.XMin, box.XMax), (box.YMin, box.YMax), (box.ZMin, box.ZMax)]
+
+    a, b = bounds(left), bounds(right)
+    if a is None or b is None:
+        return None
+    axes = [i for i in range(3) if abs(a[i][1] - b[i][0]) <= tolerance or
+            abs(b[i][1] - a[i][0]) <= tolerance]
+    if len(axes) != 1:
+        return None
+    axis = axes[0]
+    side = [i for i in range(3) if i != axis]
+    sizes_a = [a[i][1] - a[i][0] for i in range(3)]
+    sizes_b = [b[i][1] - b[i][0] for i in range(3)]
+    if any(sizes[axis] >= min(sizes[i] for i in side) for sizes in (sizes_a, sizes_b)):
+        return None
+    overlap = [max(0, min(a[i][1], b[i][1]) - max(a[i][0], b[i][0])) for i in side]
+    actual = overlap[0] * overlap[1]
+    smaller_face = min(sizes_a[side[0]] * sizes_a[side[1]],
+                       sizes_b[side[0]] * sizes_b[side[1]])
+    fraction = actual / smaller_face
+    return {"subclass": "orthogonal_plate_face_overlap", "joint_kind": "lap",
+            "status": "confirmed" if actual > tolerance * tolerance and fraction >= minimum_fraction else "candidate",
+            "contact_area_mm2": actual, "denominator": "smaller_finite_plate_face",
+            "denominator_area_mm2": smaller_face, "overlap_fraction": fraction,
+            "contact_normal_axis": "XYZ"[axis], "opposed_normals": True,
+            "minimum_fraction": minimum_fraction, "rule_version": "customer.lap.orthogonal_plate.v1"}
+
+
+def evaluate_pair(left, right, tolerance, minimum_lap_fraction=0.5):
     distance, witnesses, _ = left.distToShape(right)
     if not math.isfinite(distance) or not witnesses:
         return {"status": "failed", "diagnostic": "finite shortest distance unavailable"}
@@ -146,6 +185,8 @@ def evaluate_pair(left, right, tolerance):
             if contact_area > 0:
                 result["actual_contact_area_mm2"] = contact_area
                 result["contact_region_count"] = region_count
+                result["joint_classification"] = orthogonal_plate_overlap(left, right, tolerance,
+                                                                             minimum_lap_fraction)
             return result
         volume = float(overlap.Volume)
         result["interference_volume_mm3"] = volume
@@ -162,6 +203,8 @@ def evaluate_pair(left, right, tolerance):
                 result["contact_kind"] = "face_contact"
                 result["actual_contact_area_mm2"] = contact_area if contact_area > 0 else area
                 result["contact_region_count"] = region_count if contact_area > 0 else len(overlap.Faces)
+                result["joint_classification"] = orthogonal_plate_overlap(left, right, tolerance,
+                                                                             minimum_lap_fraction)
             elif any(edge.Length > tolerance for edge in overlap.Edges):
                 result["contact_kind"] = "line_contact"
             elif overlap.Vertexes:
@@ -179,7 +222,8 @@ def run(job):
     items = job.get("instances") or []
     tolerance = float(job.get("tolerance_mm", 0.01))
     radius = float(job.get("candidate_distance_mm", 10.0))
-    if not 1 <= len(items) <= MAX_SOLIDS or not math.isfinite(tolerance) or tolerance <= 0 or not math.isfinite(radius) or radius < 0:
+    minimum_lap_fraction = float(job.get("minimum_lap_fraction", 0.5))
+    if not 1 <= len(items) <= MAX_SOLIDS or not math.isfinite(tolerance) or tolerance <= 0 or not math.isfinite(radius) or radius < 0 or not math.isfinite(minimum_lap_fraction) or not 0 < minimum_lap_fraction <= 1:
         raise ValueError("invalid_input: solid count or tolerance")
     if any(item.get("coordinate_convention") != "world_placed_step" or
            not item.get("instance_id") or not item.get("solid_id") for item in items):
@@ -200,7 +244,7 @@ def run(job):
                 continue
             if len(records) >= MAX_PAIRS:
                 raise ValueError("invalid_input: candidate pair limit exceeded; narrow analysis scope")
-            relation = evaluate_pair(context.shapes[i], context.shapes[j], tolerance)
+            relation = evaluate_pair(context.shapes[i], context.shapes[j], tolerance, minimum_lap_fraction)
             records.append({"instance_a": left["instance_id"], "instance_b": right["instance_id"],
                             "solid_a": left["solid_id"], "solid_b": right["solid_id"], **relation})
     return {"status": "success", "relations": records, "excluded_pair_count": excluded,
