@@ -673,6 +673,21 @@ int main()
   output_report.object_count = static_cast<int>(package.objects.size());
   output_report.occurrence_count = static_cast<int>(package.occurrence_graph.object_occurrences.size());
   const std::string output_dir = "build_core\\transaction_output";
+  PmiEntity annotation_set;
+  annotation_set.pmi_id = "pmi_1";
+  annotation_set.subject_id = "doc_1";
+  annotation_set.pmi_kind = "fta_set";
+  annotation_set.source_api = "CATITPSDocument.GetSets";
+  annotation_set.evidence_status = "set_level_counts";
+  annotation_set.read_status = "available";
+  annotation_set.owning_document_id = "doc_1";
+  annotation_set.ownership_status = "native_document_identity";
+  package.pmi.push_back(annotation_set);
+  PmiEntity annotation_view = annotation_set;
+  annotation_view.pmi_id = "pmi_2";
+  annotation_view.pmi_kind = "fta_view";
+  annotation_view.parent_pmi_id = "pmi_1";
+  package.pmi.push_back(annotation_view);
   FtaSemanticEntity text_annotation;
   text_annotation.fta_semantic_id = "pmi_1_TPS000001";
   text_annotation.fta_set_id = "pmi_1";
@@ -711,6 +726,10 @@ int main()
   Check(CountLines(output_dir + "\\features.jsonl") ==
         static_cast<long>(package.occurrence_graph.object_occurrences.size()),
         "Legacy features are occurrence projection");
+  Check(CountLines(output_dir + "\\pmi_entities.jsonl") == 2,
+        "Normalized PMI retains set and view hierarchy nodes");
+  Check(CountLines(output_dir + "\\fta_sets.jsonl") == 1,
+        "Legacy FTA set projection excludes view nodes");
   Check(CountLines(output_dir + "\\object_entities.jsonl") ==
         static_cast<long>(package.objects.size()),
         "Object entities JSONL line count");

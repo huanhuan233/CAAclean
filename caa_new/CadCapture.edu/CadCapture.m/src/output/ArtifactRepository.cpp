@@ -453,8 +453,10 @@ static bool VerifyStaging(const ReconstructionPackage& package,
     error = "pmi_entities.jsonl line count mismatch";
     return false;
   }
-  if (CountLines(JoinPath(staging, "fta_sets.jsonl")) !=
-      static_cast<long>(package.pmi.size()))
+  long fta_set_count = 0;
+  for (size_t pmi_index = 0; pmi_index < package.pmi.size(); ++pmi_index)
+    if (package.pmi[pmi_index].pmi_kind == "fta_set") ++fta_set_count;
+  if (CountLines(JoinPath(staging, "fta_sets.jsonl")) != fta_set_count)
   {
     error = "fta_sets.jsonl line count mismatch";
     return false;

@@ -13,6 +13,10 @@ struct PmiEntity
   std::string pmi_kind;
   std::string source_api;
   std::string evidence_status;
+  std::string alias;
+  std::string owning_document_id;
+  std::string ownership_status;
+  std::string parent_pmi_id;
   long set_index;
   long tps_count;
   long geometry_reference_count;
@@ -22,7 +26,8 @@ struct PmiEntity
     : set_index(0),
       tps_count(0),
       geometry_reference_count(0),
-      read_status("unavailable")
+      read_status("unavailable"),
+      ownership_status("unresolved")
   {
   }
 };

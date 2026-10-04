@@ -1,4 +1,6 @@
 #include "caa/CaaProductEnumerator.h"
+#include "caa/CaaParameterReader.h"
+#include "caa/CaaPropertyEvidence.h"
 
 #include <CATBaseUnknown.h>
 #include <CATDocument.h>
@@ -6,6 +8,11 @@
 #include <CATIDocRoots.h>
 #include <CATILinkableObject.h>
 #include <CATIProduct.h>
+#include <CATIPrdProperties.h>
+#include <CATIParmPublisher.h>
+#include <CATICkeParm.h>
+#include <CATISpecObject.h>
+#include <CATLISTV_CATISpecObject.h>
 #include <CATIMovable.h>
 #include <CATLISTV_CATBaseUnknown.h>
 #include <CATMathTransformation.h>
@@ -57,6 +64,157 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
     byte_count = buffer.size() - 1;
   buffer[byte_count] = 0;
   return std::string(&buffer[0], byte_count);
+}
+
+static void AppendProductField(ReconstructionPackage& package, CaptureIdRegistry& ids,
+                               const std::string& subject, const char* group,
+                               const char* key, const char* label,
+                               CATIPrdProperties* properties,
+                               HRESULT (CATIPrdProperties::*getter)(CATUnicodeString&))
+{
+  const std::string api = std::string("CATIPrdProperties.") + key;
+  PropertyFact fact = evidence::Failure(properties ? "failed" : "unsupported", api);
+  if (properties)
+  {
+    try
+    {
+      CATUnicodeString value;
+      if (SUCCEEDED((properties->*getter)(value))) fact = evidence::Text(UnicodeToUtf8Local(value), api);
+    }
+    catch (...) { fact.read_status = "exception"; }
+  }
+  evidence::Append(ids, package, subject, group, key, label, fact);
+}
+
+static void CaptureProductProperties(CATBaseUnknown* product, const std::string& subject,
+                                     bool reference, CaptureIdRegistry& ids,
+                                     ReconstructionPackage& package)
+{
+  CATIPrdProperties* raw = 0;
+  if (product)
+  {
+    try { product->QueryInterface(IID_CATIPrdProperties, reinterpret_cast<void**>(&raw)); }
+    catch (...) { raw = 0; }
+  }
+  CaaInterfaceGuard<CATIPrdProperties> guard(raw);
+  CATIPrdProperties* properties = guard.Get();
+  const char* group = reference ? "product_reference" : "product_instance";
+  if (reference)
+  {
+    AppendProductField(package, ids, subject, group, "PartNumber", "Part number", properties, &CATIPrdProperties::GetPartNumber);
+    AppendProductField(package, ids, subject, group, "Revision", "Revision", properties, &CATIPrdProperties::GetRevision);
+    AppendProductField(package, ids, subject, group, "Definition", "Definition", properties, &CATIPrdProperties::GetDefinition);
+    AppendProductField(package, ids, subject, group, "Nomenclature", "Nomenclature", properties, &CATIPrdProperties::GetNomenclature);
+    AppendProductField(package, ids, subject, group, "DescriptionRef", "Reference description", properties, &CATIPrdProperties::GetDescriptionRef);
+    PropertyFact source = evidence::Failure(properties ? "failed" : "unsupported", "CATIPrdProperties.GetSource");
+    if (properties)
+    {
+      try
+      {
+        CatProductSource value = catProductSourceUnknown;
+        if (SUCCEEDED(properties->GetSource(value)))
+        {
+          source = evidence::Text(evidence::Number(static_cast<long>(value)), "CATIPrdProperties.GetSource");
+          source.value_type = "enum";
+          source.display_value = value == catProductMade ? "自制" :
+                                 value == catProductBought ? "外购" :
+                                 value == catProductSourceUnknown ? "未知" : "unrecognized_enum";
+        }
+      }
+      catch (...) { source.read_status = "exception"; }
+    }
+    evidence::Append(ids, package, subject, group, "Source", "Source", source);
+    if (!properties) return;
+    CATIParmPublisher* publisher = 0;
+    try
+    {
+      if (FAILED(properties->GetUserProperties(publisher, FALSE)) || !publisher)
+      {
+        evidence::Append(ids, package, subject, "product_custom", "read_status", "Custom attributes",
+                         evidence::Failure("unavailable", "CATIPrdProperties.GetUserProperties"));
+        return;
+      }
+      CaaInterfaceGuard<CATIParmPublisher> publisher_guard(publisher);
+      CATListValCATISpecObject_var children;
+      publisher->GetDirectChildren("CATICkeParm", children);
+      for (int i = 1; i <= children.Size(); ++i)
+      {
+        CATISpecObject_var child = children[i];
+        CATICkeParm* parameter = 0;
+        if (child == NULL_var || FAILED(child->QueryInterface(IID_CATICkeParm, reinterpret_cast<void**>(&parameter))) || !parameter)
+          continue;
+        CaaInterfaceGuard<CATICkeParm> parameter_guard(parameter);
+        PropertyFact fact = ReadCaaParameter(parameter);
+        std::string path;
+        try { path = UnicodeToUtf8Local(parameter->Pathname()); } catch (...) {}
+        if (path.empty()) path = fact.display_name;
+        const std::string::size_type separator = path.find_last_of("/\\");
+        const std::string short_name = separator == std::string::npos ? path : path.substr(separator + 1);
+        evidence::Append(ids, package, subject, "product_custom", "custom:" + path,
+                         short_name, fact);
+        PropertyFact role = evidence::Failure("unavailable", "CATICkeParm.InternalRole");
+        try { role = evidence::Text(UnicodeToUtf8Local(parameter->InternalRole()), "CATICkeParm.InternalRole"); }
+        catch (...) { role.read_status = "exception"; }
+        evidence::Append(ids, package, subject, "product_custom", "custom:" + path + ":internal_role",
+                         short_name + " role", role);
+      }
+    }
+    catch (...)
+    {
+      evidence::Append(ids, package, subject, "product_custom", "read_status", "Custom attributes",
+                       evidence::Failure("exception", "CATIParmPublisher.GetDirectChildren"));
+    }
+  }
+  else
+  {
+    AppendProductField(package, ids, subject, group, "InstanceName", "Instance name", properties, &CATIPrdProperties::GetInstanceName);
+    AppendProductField(package, ids, subject, group, "DescriptionInst", "Instance description", properties, &CATIPrdProperties::GetDescriptionInst);
+  }
+}
+
+static void CapturePartKnowledgeParameters(CATBaseUnknown* part_root,
+                                           const std::string& document_id,
+                                           CaptureIdRegistry& ids,
+                                           ReconstructionPackage& package)
+{
+  CATIParmPublisher* publisher = 0;
+  try
+  {
+    if (!part_root || FAILED(part_root->QueryInterface(IID_CATIParmPublisher,
+        reinterpret_cast<void**>(&publisher))) || !publisher)
+    {
+      evidence::Append(ids, package, document_id, "mbd_knowledge", "read_status",
+        "Knowledge parameters", evidence::Failure("unsupported", "CATIParmPublisher.GetAllChildren"));
+      return;
+    }
+    CaaInterfaceGuard<CATIParmPublisher> guard(publisher);
+    CATListValCATISpecObject_var children;
+    publisher->GetAllChildren("CATICkeParm", children);
+    for (int i = 1; i <= children.Size(); ++i)
+    {
+      CATISpecObject_var child = children[i];
+      CATICkeParm* parameter = 0;
+      if (child == NULL_var || FAILED(child->QueryInterface(IID_CATICkeParm,
+          reinterpret_cast<void**>(&parameter))) || !parameter) continue;
+      CaaInterfaceGuard<CATICkeParm> parameter_guard(parameter);
+      PropertyFact fact = ReadCaaParameter(parameter);
+      std::string path;
+      try { path = UnicodeToUtf8Local(parameter->Pathname()); } catch (...) {}
+      if (path.empty()) path = fact.display_name;
+      evidence::Append(ids, package, document_id, "mbd_knowledge", "knowledge:" + path,
+                       fact.display_name, fact);
+      PropertyFact role = evidence::Failure("unavailable", "CATICkeParm.InternalRole");
+      try { role = evidence::Text(UnicodeToUtf8Local(parameter->InternalRole()), "CATICkeParm.InternalRole"); }
+      catch (...) { role.read_status = "exception"; }
+      evidence::Append(ids, package, document_id, "mbd_knowledge", "knowledge:" + path + ":internal_role",
+                       fact.display_name + " role", role);
+    }
+  }
+  catch (...)
+  {
+    evidence::Append(ids, package, document_id, "mbd_knowledge", "read_status",
+      "Knowledge parameters", evidence::Failure("exception", "CATIParmPublisher.GetAllChildren"));
+  }
 }
 
 static std::string MachineSegment(long index, const std::string& name)
@@ -236,6 +394,7 @@ public:
     catch (...) { occurrence.child_count = 0; }
     ReadAbsTransform(product, occurrence, _package);
     _package.product_occurrences.push_back(occurrence);
+    CaptureProductProperties(product, occurrence_id, false, _ids, _package);
 
     if (_active_references.find(reference_id) != _active_references.end())
     {
@@ -345,6 +504,7 @@ private:
     reference.identity_method = reference_document_name.empty() ? "session_reference_product_object" : "linkable_document_and_part_number";
     _package.product_references.push_back(reference);
     ProductReferenceEntity* stored = &_package.product_references[_package.product_references.size() - 1];
+    CaptureProductProperties(reference_product, reference_id, true, _ids, _package);
 
     if (reference.referenced_document_id.empty())
     {
@@ -416,9 +576,10 @@ bool CaaProductEnumerator::Enumerate(CaaDocumentHandle& document_handle,
                                      ReconstructionPackage& package,
                                      std::string& error)
 {
-  if (package.document_graph.documents.empty() ||
-      package.document_graph.documents[0].document_kind != "catproduct")
+  if (package.document_graph.documents.empty())
     return true;
+  const std::string document_kind = package.document_graph.documents[0].document_kind;
+  if (document_kind != "catproduct" && document_kind != "catpart") return true;
 
   CATDocument* document = static_cast<CATDocument*>(document_handle.NativeDocumentForCaaOnly());
   if (!document)
@@ -452,6 +613,13 @@ bool CaaProductEnumerator::Enumerate(CaaDocumentHandle& document_handle,
   {
     error = "CATProduct root object is null";
     return false;
+  }
+
+  if (document_kind == "catpart")
+  {
+    CaptureProductProperties(root_base, package.document_graph.documents[0].document_id, true, ids, package);
+    CapturePartKnowledgeParameters(root_base, package.document_graph.documents[0].document_id, ids, package);
+    return true;
   }
 
   CATIProduct* root_product = 0;

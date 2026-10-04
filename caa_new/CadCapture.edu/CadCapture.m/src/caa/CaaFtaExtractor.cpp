@@ -10,6 +10,13 @@
 #include <CATITPSList.h>
 #include <CATITPSSemanticValidity.h>
 #include <CATITPSSet.h>
+#include <CATITPSView.h>
+#include <CATITPSViewList.h>
+#include <CATITPSCapture.h>
+#include <CATITPSCaptureList.h>
+#include <CATIAlias.h>
+#include <CATIProduct.h>
+#include <CATILinkableObject.h>
 #include <CATITPSText.h>
 #include <CATITPSFlagNote.h>
 #include <CATITPSNoa.h>
@@ -38,6 +45,85 @@ static std::string RootDocumentSubject(const ReconstructionPackage& package)
   if (!package.document_graph.documents.empty())
     return package.document_graph.documents[0].document_id;
   return "document";
+}
+
+static std::string ReadAlias(IUnknown* object)
+{
+  if (!object) return "";
+  CATIAlias* alias = 0;
+  try
+  {
+    if (SUCCEEDED(object->QueryInterface(IID_CATIAlias, reinterpret_cast<void**>(&alias))) && alias)
+    {
+      CaaInterfaceGuard<CATIAlias> guard(alias);
+      return UnicodeToUtf8Local(alias->GetAlias());
+    }
+  }
+  catch (...) {}
+  return "";
+}
+
+static void AddHierarchyChild(ReconstructionPackage& package, CaptureIdRegistry& ids,
+                              const PmiEntity& parent, const char* kind,
+                              const char* api, IUnknown* object, long index)
+{
+  PmiEntity child;
+  child.pmi_id = ids.NextPmiId();
+  child.subject_id = parent.subject_id;
+  child.pmi_kind = kind;
+  child.source_api = api;
+  child.evidence_status = "native_hierarchy";
+  child.parent_pmi_id = parent.pmi_id;
+  child.owning_document_id = parent.owning_document_id;
+  child.ownership_status = parent.ownership_status;
+  child.alias = ReadAlias(object);
+  child.set_index = index + 1;
+  child.read_status = "available";
+  package.pmi.push_back(child);
+  PmiAssociation link;
+  link.pmi_id = parent.pmi_id;
+  link.target_id = child.pmi_id;
+  link.association_kind = "contains";
+  link.read_status = "available";
+  package.pmi_associations.push_back(link);
+}
+
+static void ReadSetOwner(CATITPSSet* set_interface, CATDocument* scan_document,
+                         const ReconstructionPackage& package, PmiEntity& entity)
+{
+  CATIProduct* product = 0;
+  try
+  {
+    if (FAILED(set_interface->GetReferenceProduct(&product)) || !product) return;
+    CaaInterfaceGuard<CATIProduct> product_guard(product);
+    CATILinkableObject* linkable = 0;
+    if (FAILED(product->QueryInterface(IID_CATILinkableObject,
+                                      reinterpret_cast<void**>(&linkable))) || !linkable) return;
+    CaaInterfaceGuard<CATILinkableObject> linkable_guard(linkable);
+    CATDocument* owner = linkable->GetDocument();
+    if (!owner) return;
+    if (owner == scan_document)
+    {
+      entity.owning_document_id = RootDocumentSubject(package);
+      entity.ownership_status = "native_document_identity";
+      return;
+    }
+    const std::string owner_name = UnicodeToUtf8Local(owner->DisplayName());
+    std::string match;
+    for (size_t i = 0; i < package.document_graph.documents.size(); ++i)
+    {
+      const DocumentEntity& candidate = package.document_graph.documents[i];
+      if (candidate.source_file_name != owner_name) continue;
+      if (!match.empty()) { match.clear(); break; }
+      match = candidate.document_id;
+    }
+    if (!match.empty())
+    {
+      entity.owning_document_id = match;
+      entity.ownership_status = "unique_document_name_match";
+    }
+  }
+  catch (...) { entity.ownership_status = "read_exception"; }
 }
 
 static long SafeListCount(CATITPSList* list,
@@ -269,10 +355,11 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
   try
   {
     // 保留递归扫描契约，覆盖子装配标注；不因增加文本读取而缩小原有采集范围。
-    if (FAILED(tps_document->GetSets(&sets, CATTPSSSMRecursive, FALSE)) || !sets)
+    const HRESULT sets_result = tps_document->GetSets(&sets, CATTPSSSMRecursive, FALSE);
+    if (FAILED(sets_result) || !sets)
     {
-      package.diagnostics.push_back(MakeDiagnostic("info", "tps_sets_empty_or_unavailable", document_id,
-                                                   "CATITPSDocument::GetSets returned no set list",
+      package.diagnostics.push_back(MakeDiagnostic("warning", "tps_sets_read_failed", document_id,
+                                                   "CATITPSDocument::GetSets failed or returned no list; absence of annotations is unverified",
                                                    "fta_extractor"));
       return true;
     }
@@ -331,6 +418,55 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
     pmi.evidence_status = "set_level_counts";
     pmi.set_index = index + 1;
     pmi.read_status = "available";
+    pmi.alias = ReadAlias(component);
+    ReadSetOwner(set_interface, document, package, pmi);
+    if (pmi.owning_document_id.empty())
+      package.diagnostics.push_back(MakeDiagnostic("warning", "tps_set_owner_unresolved", pmi.pmi_id,
+        "Set reference product could not be matched to a unique captured document", "fta_extractor"));
+
+    CATITPSViewList* views = 0;
+    try
+    {
+      if (SUCCEEDED(set_interface->GetViews(&views)) && views)
+      {
+        CaaInterfaceGuard<CATITPSViewList> guard(views);
+        unsigned int count = 0;
+        if (SUCCEEDED(views->Count(&count)))
+          for (unsigned int v = 0; v < count; ++v)
+          {
+            CATITPSView* view = 0;
+            if (SUCCEEDED(views->Item(v, &view)) && view)
+            {
+              CaaInterfaceGuard<CATITPSView> view_guard(view);
+              AddHierarchyChild(package, ids, pmi, "fta_view", "CATITPSSet.GetViews", view, v);
+            }
+          }
+        else pmi.read_status = "partial";
+      }
+    }
+    catch (...) { pmi.read_status = "partial"; }
+
+    CATITPSCaptureList* captures = 0;
+    try
+    {
+      if (SUCCEEDED(set_interface->GetCaptures(&captures)) && captures)
+      {
+        CaaInterfaceGuard<CATITPSCaptureList> guard(captures);
+        unsigned int count = 0;
+        if (SUCCEEDED(captures->Count(&count)))
+          for (unsigned int c = 0; c < count; ++c)
+          {
+            CATITPSCapture* capture = 0;
+            if (SUCCEEDED(captures->Item(c, &capture)) && capture)
+            {
+              CaaInterfaceGuard<CATITPSCapture> capture_guard(capture);
+              AddHierarchyChild(package, ids, pmi, "fta_capture", "CATITPSSet.GetCaptures", capture, c);
+            }
+          }
+        else pmi.read_status = "partial";
+      }
+    }
+    catch (...) { pmi.read_status = "partial"; }
 
     CATITPSList* tps_list = 0;
     try

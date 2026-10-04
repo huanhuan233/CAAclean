@@ -599,6 +599,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   for (i = 0; i < package.pmi.size(); ++i)
   {
     const PmiEntity& entity = package.pmi[i];
+    if (entity.pmi_kind != "fta_set") continue;
     fta_sets << "{"
              << JsonQuote("fta_set_id") << ":" << JsonQuote(entity.pmi_id) << ","
              << JsonQuote("document_id") << ":" << JsonQuote(entity.subject_id) << ","
@@ -812,18 +813,25 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   for (i = 0; i < package.feature_dependencies.size(); ++i)
     if (package.feature_dependencies[i].dependency_kind == "has_resultout_body") ++resultout_count;
   std::ostringstream capabilities;
+  long fta_set_count = 0;
+  for (i = 0; i < package.pmi.size(); ++i)
+    if (package.pmi[i].pmi_kind == "fta_set") ++fta_set_count;
+  bool fta_scan_failed = false;
+  for (i = 0; i < package.diagnostics.size(); ++i)
+    if (package.diagnostics[i].code == "tps_sets_read_failed" ||
+        package.diagnostics[i].code == "tps_set_count_failed") fta_scan_failed = true;
   capabilities << "{"
                << JsonQuote("spec_tree_extraction") << ":" << JsonQuote(package.occurrence_graph.object_occurrences.empty() ? "not_available" : "partial") << ","
                << JsonQuote("native_feature_extraction") << ":" << JsonQuote(package.semantic_facets.empty() ? "not_available" : (has_typed_native_payload ? "typed_payloads" : "type_only")) << ","
                << JsonQuote("topology_extraction") << ":" << JsonQuote(package.topology.empty() ? "not_available" : "partial") << ","
                << JsonQuote("mesh_face_mapping") << ":" << JsonQuote(package.geometry.empty() ? "not_available" : "partial") << ","
-               << JsonQuote("fta_extraction") << ":" << JsonQuote(package.pmi.empty() ? "set_scan_complete_zero_sets_or_unavailable" : "set_level_counts") << ","
+               << JsonQuote("fta_extraction") << ":" << JsonQuote(fta_scan_failed ? "read_failed" : fta_set_count == 0 ? "no_sets_observed_or_unavailable" : "set_level_counts") << ","
                << JsonQuote("feature_result_extraction") << ":" << JsonQuote(resultout_count == 0 ? "not_available" : "resultout_body_counts") << ","
                << JsonQuote("product_instance_extraction") << ":" << JsonQuote(package.product_occurrences.empty() ? "not_available" : "complete") << ","
                << JsonQuote("native_feature_record_count") << ":" << package.semantic_facets.size() << ","
                << JsonQuote("native_topology_cell_count") << ":" << package.topology.size() << ","
                << JsonQuote("native_mesh_face_map_count") << ":" << package.geometry.size() << ","
-               << JsonQuote("fta_set_count") << ":" << package.pmi.size() << ","
+               << JsonQuote("fta_set_count") << ":" << fta_set_count << ","
                << JsonQuote("product_reference_count") << ":" << package.product_references.size() << ","
                << JsonQuote("product_instance_count") << ":" << package.product_occurrences.size() << ","
                << JsonQuote("native_feature_result_count") << ":" << resultout_count
@@ -845,7 +853,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
            << JsonQuote("mesh_triangle_count") << ":" << package.mesh_triangles.size() << ","
            << JsonQuote("native_feature_result_cell_count") << ":" << package.native_feature_result_cells.size() << ","
            << JsonQuote("native_feature_topology_link_count") << ":" << package.native_feature_topology_links.size() << ","
-           << JsonQuote("fta_set_count") << ":" << package.pmi.size() << ","
+           << JsonQuote("fta_set_count") << ":" << fta_set_count << ","
            << JsonQuote("product_reference_count") << ":" << package.product_references.size() << ","
            << JsonQuote("product_instance_count") << ":" << package.product_occurrences.size() << ","
            << JsonQuote("coverage_status") << ":" << JsonQuote("measured_from_reconstruction_package")
