@@ -5,6 +5,7 @@ const GEOMETRY_LABELS: Record<string, string> = {
   cone: '圆锥面',
   sphere: '球面',
   torus: '圆环面',
+  toroid: '圆环面',
   bspline_surface: 'B 样条曲面',
   line: '直线',
   circle: '圆',

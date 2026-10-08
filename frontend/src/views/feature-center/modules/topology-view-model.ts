@@ -47,6 +47,21 @@ function stringField(raw: Record<string, unknown>, key: string): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 }
 
+/** Persisted face pages are optional for CATPart; the SelectionIndex faces remain usable. */
+export function preferMappedTopologyFaces<T>(mappedFaces: T[], persistedFaces: T[]): T[] {
+  return persistedFaces.length ? persistedFaces : mappedFaces;
+}
+
+function faceGeometryType(raw: Record<string, unknown>): string {
+  const type = stringField(raw, 'surface_type') || stringField(raw, 'geometry_type') ||
+    stringField(raw, 'kernel_surface_type');
+  if (type && type !== 'other') return type;
+  const geometry = raw.geometry;
+  const kernelClass = geometry && typeof geometry === 'object' ?
+    stringField(geometry as Record<string, unknown>, 'surface_type_raw') : '';
+  return kernelClass || type;
+}
+
 export function ownId(raw: Record<string, unknown>, kind: TopologyKind, source: TopologySource): string {
   if (source === 'step_render') return stringField(raw, 'entity_id') || stringField(raw, 'id') || stringField(raw, 'face_id');
   if (kind === 'body') return stringField(raw, 'body_id');
@@ -96,7 +111,7 @@ function subtitle(raw: Record<string, unknown>, kind: TopologyKind, id: string):
     stringField(raw, 'closed_status') && `闭合 ${stringField(raw, 'closed_status')}`
   ].filter(Boolean).join(' · ') || id;
   if (kind === 'face') return [
-    topologyGeometryLabel(stringField(raw, 'surface_type') || stringField(raw, 'geometry_type') || stringField(raw, 'kernel_surface_type')),
+    topologyGeometryLabel(faceGeometryType(raw)),
     (raw.area_mm2 ?? raw.area) != null && `面积 ${raw.area_mm2 ?? raw.area} mm²`
   ].filter(Boolean).join(' · ') || id;
   if (kind === 'edge') return [
@@ -147,8 +162,8 @@ export function buildTopologyItems(inputs: TopologyInput[], revisionId: string, 
       (kind === 'body' ? stringField(raw, 'name') : '');
     const title = name || `${kindNames[kind]} ${String(nativeOrdinal || ordinal).padStart(3, '0')}`;
     const secondary = subtitle(raw, kind, entityId);
-    const rawGeometryType = stringField(raw, 'surface_type') || stringField(raw, 'geometry_type') ||
-      stringField(raw, 'kernel_surface_type') || stringField(raw, 'curve_type');
+    const rawGeometryType = kind === 'face' ? faceGeometryType(raw) :
+      stringField(raw, 'geometry_type') || stringField(raw, 'curve_type');
     items.push({ key, entityId, source: input.source, kind, category: input.category,
       title, subtitle: secondary, searchText: `${title} ${secondary} ${entityId} ${kindNames[kind]} ${rawGeometryType}`.toLowerCase(),
       raw, owningBodyId, owningFaceId, wireId, underlyingEdgeId,

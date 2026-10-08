@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { adaptNativeTopologyRecord, buildTopologyItems, filterTopologyItems, sameTopologySelection } from '../modules/topology-view-model';
+import { adaptNativeTopologyRecord, buildTopologyItems, filterTopologyItems, preferMappedTopologyFaces, sameTopologySelection } from '../modules/topology-view-model';
+import { resolveViewerSelection } from '../modules/viewer-selection';
 import type { TopologyCategory, TopologyInput } from '../modules/topology-view-model';
 
 test('20 coedges under one body retain 20 own IDs and relations', () => {
@@ -76,4 +77,27 @@ test('topology summaries show Chinese geometry types while raw codes remain sear
   assert.equal(model.items[2].subtitle, 'vendor_surface');
   assert.equal(filterTopologyItems(model.items, 'face', 'torus')[0].entityId, 'F-TOR');
   assert.equal(model.items[1].raw.geometry_type, 'torus');
+});
+
+test('missing persisted CATPart face channel retains mapped STEP faces for exact highlighting', () => {
+  const mappedFaces = [{ entity_id: 'FACE_RENDER_1', face_id: 'FACE_RENDER_1',
+    topology_source: 'step_render', geometry_type: 'cylinder' }];
+  const faces = preferMappedTopologyFaces(mappedFaces, []);
+  const item = buildTopologyItems([{ category: 'face', source: 'step_render', records: faces }],
+    'rev-1', new Set(['FACE_RENDER_1'])).items[0];
+  assert.equal(item.source, 'step_render');
+  assert.equal(item.canLocate, true);
+  const selection = resolveViewerSelection({ kind: 'face', id: item.entityId, namespace: item.source }, {
+    selectionIndex: { schema_version: 'cad_viewer_selection_v1',
+      render_face_to_primitives: { FACE_RENDER_1: ['PRIM_1'] } }
+  });
+  assert.equal(selection.context.mappingStatus, 'exact');
+  assert.deepEqual(selection.context.primitiveIds, ['PRIM_1']);
+});
+
+test('mapped STEP Toroid surface keeps a readable face summary', () => {
+  const model = buildTopologyItems([{ category: 'face', source: 'step_render', records: [{
+    entity_id: 'FACE_TOROID', geometry_type: 'other', geometry: { surface_type_raw: 'Toroid' }
+  }] }], 'rev-1', new Set(['FACE_TOROID']));
+  assert.equal(model.items[0].subtitle, '圆环面');
 });

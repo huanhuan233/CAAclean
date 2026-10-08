@@ -41,7 +41,7 @@ import TubeDetail from './modules/TubeDetail.vue';
 import { createTubePathOverlay } from './modules/tube-path-overlay';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
 import { mbdAnnotationTitle, mbdNodeTitle } from './modules/mbd-view-model';
-import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, topologyRecordKind } from './modules/topology-view-model';
+import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, preferMappedTopologyFaces, topologyRecordKind } from './modules/topology-view-model';
 import type { TopologyExplorerItem, TopologyInput, SourcedTopologyRecord } from './modules/topology-view-model';
 import ObjectDetailPanel from './modules/ObjectDetailPanel.vue';
 import OrientationGizmo from './modules/OrientationGizmo.vue';
@@ -55,6 +55,9 @@ import type { NativeSketchPayload } from './modules/sketch-overlay';
 import { nativeChildPages } from './modules/native-tree-loading';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
+import { applySelectedMaterial, normalizeCssColorForThree, rememberMaterial, restoreMaterial } from './modules/viewer-highlight-material';
+import { focusCameraOnObjects } from './modules/viewer-locate';
+import { replaceSelectionSurfaceOverlay } from './modules/selection-surface-overlay';
 import type { CadSelectionTarget } from './modules/cad-selection';
 import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
 import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
@@ -343,6 +346,7 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const faceObjects = new Map<string, THREE.Mesh[]>();
 const primitiveObjects = new Map<string, THREE.Mesh[]>();
+const selectionSurfaceOverlay = new THREE.Group();
 let pickableObjects: THREE.Object3D[] = [];
 let pointerDownPosition: { x: number; y: number } | null = null;
 const clippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
@@ -1284,7 +1288,7 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     if (viewerContract.feature_center.bundle_available) {
       const faces = hasStoredEvidence(viewerContract, 'topology_faces', true)
         ? await loadNativeEvidencePages(buildId, 'topology_faces') : [];
-      topologyFaces.value = faces as unknown as TopologyFaceRecord[];
+      topologyFaces.value = preferMappedTopologyFaces(topologyFaces.value, faces as unknown as TopologyFaceRecord[]);
     }
     const cells = hasStoredEvidence(viewerContract, 'topology_cells')
       ? await loadNativeEvidencePages(buildId, 'topology_cells') : [];
@@ -1381,6 +1385,7 @@ async function loadGlb(buffer: ArrayBuffer) {
     new GLTFLoader().parse(buffer, '', resolve, reject);
   });
   clearStepCurves();
+  replaceSelectionSurfaceOverlay(selectionSurfaceOverlay, [], '', false);
   if (modelRoot) scene.remove(modelRoot);
   disposeModel(modelRoot);
   faceObjects.clear();
@@ -1781,6 +1786,23 @@ function selectFeature(featureId: string) {
   selectTarget({ kind: 'recognized_feature', id: featureId, label: title, raw: feature }, 'recognized_feature');
 }
 
+function locateCurrentSelection() {
+  if (!camera || !controls) return;
+  const context = selectionContext.value;
+  if (context.mappingStatus !== 'exact' && context.mappingStatus !== 'runtime_current_revision') return;
+  const objects = [...new Set([
+    ...context.primitiveIds.flatMap(id => primitiveObjects.get(id) || []),
+    ...context.renderFaceIds.flatMap(id => faceObjects.get(id) || [])
+  ])];
+  if (focusCameraOnObjects(camera, controls, objects)) updateOrientationAxes();
+}
+
+function locateFeature(featureId: string) {
+  if (primarySelection.value?.kind !== 'recognized_feature' || primarySelection.value.id !== featureId)
+    selectFeature(featureId);
+  locateCurrentSelection();
+}
+
 function selectMbdAnnotation(record: MbdAnnotationRecord) {
   selectTarget({ kind: 'mbd_annotation', id: record.fta_semantic_id, label: mbdAnnotationTitle(record), raw: record }, 'mbd');
 }
@@ -1955,40 +1977,10 @@ function selectGeometryTreeNode(item: TopologyExplorerItem) {
     namespace: item.source, raw: item.raw }, 'topology');
 }
 
-interface MaterialSnapshot {
-  color?: number;
-  emissive?: number;
-  emissiveIntensity?: number;
-  transparent: boolean;
-  opacity: number;
-  depthWrite: boolean;
-}
-
-// 用途：保存每个克隆材质的原始外观，关闭透明或高亮后能够完整恢复而不污染共享材质。
-function rememberMaterial(material: THREE.Material) {
-  const standard = material as THREE.MeshStandardMaterial;
-  const snapshot: MaterialSnapshot = {
-    color: standard.color?.getHex(),
-    emissive: standard.emissive?.getHex(),
-    emissiveIntensity: standard.emissiveIntensity,
-    transparent: material.transparent,
-    opacity: material.opacity,
-    depthWrite: material.depthWrite
-  };
-  material.userData.cad_original_material = snapshot;
-}
-
-// 用途：恢复材质的颜色、发光、透明度和深度写入，避免多次切换模式后累积视觉误差。
-function restoreMaterial(material: THREE.Material) {
-  const snapshot = material.userData.cad_original_material as MaterialSnapshot | undefined;
-  if (!snapshot) return;
-  const standard = material as THREE.MeshStandardMaterial;
-  if (snapshot.color != null && standard.color) standard.color.setHex(snapshot.color);
-  if (snapshot.emissive != null && standard.emissive) standard.emissive.setHex(snapshot.emissive);
-  if (snapshot.emissiveIntensity != null) standard.emissiveIntensity = snapshot.emissiveIntensity;
-  material.transparent = snapshot.transparent;
-  material.opacity = snapshot.opacity;
-  material.depthWrite = snapshot.depthWrite;
+function locateGeometryTreeNode(item: TopologyExplorerItem) {
+  if (primarySelection.value?.kind !== item.kind || primarySelection.value.id !== item.entityId ||
+      primarySelection.value.namespace !== item.source) selectGeometryTreeNode(item);
+  locateCurrentSelection();
 }
 
 // 用途：统一计算选中、高亮、隔离、透明和剖切，不因侧栏响应式变化重置模型状态。
@@ -2006,11 +1998,12 @@ function applyVisualState() {
     context.mappingAuthority === 'whole_part_preview';
   const hasSelection = featureFaces.size > 0 || bomPrimitives.size > 0 || canvasObjects.size > 0 || wholePartPreview;
   const primaryColor = themeStore.themeColor;
-  const uncertain = context.mappingStatus === 'candidate' ||
+  const uncertain = Boolean(context.mappingStatus === 'candidate' ||
     (primarySelection.value?.kind === 'recognized_feature' &&
-      (selectedRecognizedViewItem.value?.status.tone === 'warning' || selectedRecognizedViewItem.value?.candidatePreview));
+      (selectedRecognizedViewItem.value?.status.tone === 'warning' || selectedRecognizedViewItem.value?.candidatePreview)));
   const warningColor = getComputedStyle(document.documentElement).getPropertyValue('--el-color-warning').trim() || '#e6a23c';
-  const highlightColor = uncertain ? warningColor : primaryColor;
+  const highlightColor = normalizeCssColorForThree(uncertain ? warningColor : primaryColor);
+  const overlayObjects: THREE.Mesh[] = [];
   for (const object of pickableObjects) {
     if (!(object instanceof THREE.Mesh)) continue;
     const primitiveId = String(object.userData.mesh_primitive_id ?? object.userData.primitive_id ?? '');
@@ -2025,26 +2018,27 @@ function applyVisualState() {
       featureFaces.has(faceId) ||
       bomPrimitives.has(primitiveId) ||
       canvasObjects.has(object.uuid);
+    if (active && !wholePartPreview &&
+        ['face', 'recognized_feature', 'native_feature'].includes(primarySelection.value?.kind || ''))
+      overlayObjects.push(object);
     const originalVisible = object.userData.cad_original_visible !== false;
     object.visible = originalVisible && (!isolated.value || !hasSelection || active);
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of materials) {
       const standard = material as THREE.MeshStandardMaterial;
       restoreMaterial(material);
-      if (hasSelection && active && highlightColor) {
-        standard.color?.set(highlightColor);
-        standard.emissive?.set(highlightColor);
-        standard.emissiveIntensity = 0.35;
-      }
       if (transparent.value) {
         standard.transparent = true;
         standard.opacity = hasSelection && active ? 0.94 : 0.2;
         standard.depthWrite = Boolean(hasSelection && active);
       }
+      if (hasSelection && active && highlightColor) applySelectedMaterial(material, highlightColor, uncertain);
       standard.clippingPlanes = sectionEnabled.value ? [clippingPlane] : [];
       standard.needsUpdate = true;
     }
   }
+  replaceSelectionSurfaceOverlay(selectionSurfaceOverlay, overlayObjects, highlightColor, uncertain,
+    sectionEnabled.value ? [clippingPlane] : []);
   clippingPlane.constant = sectionOffset.value;
 }
 
@@ -2094,6 +2088,7 @@ function initViewer() {
   const container = containerRef.value;
   if (!container || scene) return;
   scene = new THREE.Scene();
+  scene.add(selectionSurfaceOverlay);
   measurementOverlay = createMeasurementOverlay(scene);
   relationOverlay = createMeasurementOverlay(scene);
   tubePathOverlay = createTubePathOverlay(scene);
@@ -2393,6 +2388,7 @@ onMounted(async () => {
   await loadBuildBundle(buildId);
 });
 onBeforeUnmount(() => {
+  replaceSelectionSurfaceOverlay(selectionSurfaceOverlay, [], '', false);
   measurementSession.clear();
   measurementOverlay?.clear();
   relationOverlay?.clear();
@@ -2632,7 +2628,7 @@ onBeforeUnmount(() => {
                 :items="recognizedViewItems" :selected-id="primarySelection?.kind === 'recognized_feature' ? primarySelection.id : ''"
                 :total="recognizedTotal" :has-more="recognizedHasMore" :loading="loading" :page-loading="recognizedPageLoading"
                 :error="recognizedListError" :empty-description="recognizedEmptyDescription"
-                @select="selectFeature" @locate="selectFeature" @load-more="loadMoreRecognizedFeatures"
+                @select="selectFeature" @locate="locateFeature" @load-more="loadMoreRecognizedFeatures"
                 @retry="loadMoreRecognizedFeatures" />
               <MbdExplorer v-show="featureSubTab === 'mbd'"
                 :build-id="featureSubTab === 'mbd' ? contract?.part_id || '' : ''"
@@ -2648,7 +2644,7 @@ onBeforeUnmount(() => {
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
               :diagnostics="topologyExplorerModel.diagnostics" :selected="primarySelection"
-              :loading="loading" :error="topologyError" @select="selectGeometryTreeNode" @locate="selectGeometryTreeNode" />
+              :loading="loading" :error="topologyError" @select="selectGeometryTreeNode" @locate="locateGeometryTreeNode" />
           </div>
           <div class="navigation-resizer" title="拖动调整侧栏宽度" @pointerdown="startNavigationResize" />
         </template>
