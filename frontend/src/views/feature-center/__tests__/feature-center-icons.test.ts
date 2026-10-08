@@ -6,7 +6,9 @@ test('all four composite object icons and the offline fallback are bundled', () 
   for (const name of [
     'mdi:layers-triple-outline', 'mdi:folder-multiple-outline',
     'mdi:format-list-numbered', 'mdi:rhombus-outline',
-    'mdi:information-outline', 'mdi:magnify', 'mdi:content-copy'
+    'mdi:information-outline', 'mdi:magnify', 'mdi:content-copy',
+    'carbon:tree-view-alt', 'carbon:3d-mpr-toggle',
+    'material-symbols:sunny', 'heroicons:language'
   ]) {
     const icon = featureCenterIcons[name];
     assert.ok(icon?.body, name);

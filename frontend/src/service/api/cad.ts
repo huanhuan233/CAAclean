@@ -414,6 +414,7 @@ export interface CompositeStructureRecord extends Record<string, unknown> {
   boundary?: {
     status: string;
     geometry_role: string;
+    area_mm2?: number | null;
     raw_edge_occurrence_length_mm: number | null;
     effective_boundary_length_mm: number | null;
     diagnostics: string[];

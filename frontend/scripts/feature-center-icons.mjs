@@ -3,7 +3,9 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { getIconData } from '@iconify/utils';
 
 const root = resolve(import.meta.dirname, '..');
-const source = join(root, 'src/views/feature-center');
+// Feature Center also renders the shared application shell. Bundle its static
+// icons here so the route never replaces header/menu controls with a fallback.
+const source = join(root, 'src');
 const output = join(root, 'src/assets/iconify/feature-center-icons.ts');
 const required = [
   'mdi:layers-triple-outline', 'mdi:folder-multiple-outline',
@@ -24,9 +26,12 @@ function sources(directory) {
 
 function iconNames() {
   const names = new Set(required);
+  const collections = JSON.parse(readFileSync(join(root, 'node_modules/@iconify/json/collections.json'), 'utf8'));
   for (const path of sources(source)) {
     const text = readFileSync(path, 'utf8');
-    for (const match of text.matchAll(/\b(?:mdi|lucide):[a-z0-9-]+\b/g)) names.add(match[0]);
+    for (const match of text.matchAll(/\b([a-z][a-z0-9-]*):([a-z0-9-]+)\b/g)) {
+      if (collections[match[1]]) names.add(match[0]);
+    }
   }
   return [...names].sort();
 }

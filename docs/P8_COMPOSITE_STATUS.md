@@ -27,3 +27,11 @@ R21 线框轮廓使用 `CATBody.GetDomain/CATDomain.GetCell` 按原生边使用�
 数据库沿用 `cad_native_evidence`，`composite_structure` 保存规范原生投影，`composite_coverage` 保存按铺层组重算的派生结果；`composite_coverage_storage` 发布标记与证据同事务提交。API：`GET /api/component-builds/{build_id}/viewer/native/evidence/composite_structure` 分页，`GET /api/component-builds/{build_id}/viewer/composites/{object_id}` 详情，`GET /api/component-builds/{build_id}/viewer/composites/coverage/{group_id}` 区域，`GET .../coverage/{group_id}/at?x_mm=&y_mm=&z_mm=` 位置查询，`POST .../coverage/{group_id}/recompute?thickness_basis=cured|uncured` 受控重算。旧包有原生属性可回填 P8A；有序边界缺失需重新采集；已有完整新包可只重算 P8C。
 
 独立 FreeCAD 100×100 mm 底层 0.2 mm 加半幅 0.3 mm 测试得到两个 5,000 mm² 区域，名义厚度为 0.2/0.5 mm；孔洞、相切/分离和边界查询也通过。用户提供的真实平板采集包计算出 1 个 1,000,000 mm² 区域、4 个不同物理层、固化名义厚度 1.32 mm，角度分别为 0/+45/-45/90°。R21 x86 编译、真实采集、FreeCAD 与 PostgreSQL 指定测试已运行。对现有 Revision `ac4c4e32-1b4e-44f8-9708-3e02ed534f60`，先按源文件 SHA 与 34,191 条树 occurrence 身份核对，再只回填新复材结构投影；没有重写原树、通用属性或其他证据。真实浏览器已显示 10 个复材定义、铺层组和四层，点击计算后显示一个四层区域及 1.32 mm 固化名义厚度；数据库 API 再读及区域内点查询一致。浏览器只验收了该平板的桌面宽度、左侧选择和右侧区域列表；曲面单层独立显示/曲面面积、可信规则曲面多层映射、周期缝、多面拼接、装配实例变换和真实制造缺陷判定不在已确认范围。
+
+## P8 复材界面与离线图标
+
+左侧复材列表使用真实 `composite_structure` 分页结果，显示中文类型、原生名称、顺序状态和定义 ID；叠层、铺层组、序列、单层使用固定且不同的 `mdi` 图标。右侧按四种对象拆分详情，成员按原生关系导航；单层分别显示材料、原生设计字段与派生平面轮廓测量，不把轮廓预览写成独立单层曲面。数字只在显示层格式化，原始值留在诊断中。当前页面仍使用三栏和同一个 Viewer。
+
+完整 `@iconify/json@2.2.458` 归档与哈希清单见 `offline-assets/iconify/`；生产页面仅打包经本地生成器校验的 147 个图标。Windows x64、Node 22.23.2、pnpm 9.15.9 的隔离目录运行 `pnpm install --offline --ignore-scripts --frozen-lockfile`、`pnpm icons:check` 和 `pnpm build` 通过。原有全量依赖缓存已存在；这不证明另一台机器能从空缓存安装。离线浏览器首次打开并强制阻断外网、Linux 离线重建均为 `not_run`。
+
+前端类型检查、8 项复材展示与图标测试、生产构建通过。真实浏览器按列表及四种对象分别截图，检查了列表选择、组的固化/未固化计算入口、序列成员、单层材料及边界字段、360px 右侧栏和明暗主题；截图位于本机忽略目录 `.runtime/p8-acceptance/`，不是原型图。复材样件只有轮廓曲线而没有可显示的三角网格，页面保留曲线 Viewer；独立单层面片定位仍不可用。其他平台、曲面铺层和真实制造工艺推断未验收。

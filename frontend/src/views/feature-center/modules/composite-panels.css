@@ -1,0 +1,37 @@
+.composite-detail { box-sizing: border-box; height: 100%; min-width: 0; overflow-y: auto; padding: 12px; color: var(--el-text-color-primary); font-size: 12px; line-height: 1.55; }
+.composite-detail * { box-sizing: border-box; min-width: 0; }
+.composite-header { display: flex; align-items: flex-start; gap: 10px; padding: 2px 0 12px; }
+.composite-type-icon, .composite-row-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 7px; background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-size: 21px; }
+.composite-header h3 { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
+.composite-header-main { flex: 1; }
+.composite-id-line { display: flex; align-items: center; gap: 4px; color: var(--el-text-color-secondary); font-size: 11px; }
+.composite-id-line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composite-icon-action { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border: 0; border-radius: 5px; background: transparent; color: var(--el-text-color-secondary); cursor: pointer; }
+.composite-icon-action:hover, .composite-icon-action:focus-visible { color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.composite-status { display: inline-block; margin-top: 3px; padding: 1px 6px; border-radius: 4px; background: var(--el-fill-color-light); color: var(--el-text-color-secondary); font-size: 11px; }
+.composite-status.success { background: var(--el-color-success-light-9); color: var(--el-color-success); }
+.composite-status.warning { background: var(--el-color-warning-light-9); color: var(--el-color-warning); }
+.composite-panel { min-width: 0; margin: 0 0 10px; padding: 11px 12px; border: 1px solid var(--el-border-color-light); border-radius: 7px; background: var(--el-fill-color-blank); }
+.composite-panel h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.composite-panel p { margin: 5px 0; overflow-wrap: anywhere; }
+.composite-muted { color: var(--el-text-color-secondary); }
+.composite-fields { display: grid; grid-template-columns: minmax(92px, 38%) minmax(0, 1fr); margin: 0; }
+.composite-fields dt, .composite-fields dd { margin: 0; padding: 5px 0; border-bottom: 1px solid var(--el-border-color-extra-light); overflow-wrap: anywhere; }
+.composite-fields dt { padding-right: 8px; color: var(--el-text-color-secondary); }
+.composite-member { display: flex; align-items: center; width: 100%; gap: 8px; padding: 6px 2px; border: 0; border-bottom: 1px solid var(--el-border-color-extra-light); background: transparent; color: var(--el-text-color-primary); text-align: left; cursor: pointer; }
+.composite-member:hover, .composite-member:focus-visible { background: var(--el-fill-color-light); }
+.composite-member .composite-row-icon { width: 28px; height: 28px; font-size: 17px; }
+.composite-member-body { flex: 1; display: flex; flex-direction: column; }
+.composite-member-body strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.composite-member-body small { color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
+.composite-member-index { flex: none; width: 16px; color: var(--el-text-color-secondary); }
+.composite-actions { display: flex; flex-direction: column; gap: 6px; }
+.composite-actions button { width: 100%; padding: 7px 8px; border: 1px solid var(--el-border-color); border-radius: 5px; background: var(--el-fill-color-blank); color: var(--el-text-color-primary); text-align: left; cursor: pointer; }
+.composite-actions button:hover:not(:disabled) { border-color: var(--el-color-primary); color: var(--el-color-primary); }
+.composite-actions button:disabled { opacity: .55; cursor: not-allowed; }
+.composite-region { display: flex; flex-direction: column; width: 100%; gap: 2px; margin: 5px 0; padding: 7px 8px; border: 1px solid var(--el-border-color); border-radius: 5px; background: var(--el-fill-color-blank); text-align: left; color: var(--el-text-color-primary); cursor: pointer; }
+.composite-region.active { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.composite-region small { color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
+.composite-diagnostics { margin: 8px 0; color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
+.composite-diagnostics summary { cursor: pointer; }
+.composite-diagnostics p { margin: 4px 0; }

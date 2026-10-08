@@ -304,6 +304,7 @@ const bomPanelMode = ref<'tree' | 'relations'>('tree');
 const assemblySelection = ref<{ group: 'relations' | 'connections' | 'booleans'; record: AssemblyEvidenceRecord } | null>(null);
 const tubeAvailable = ref(false);
 const compositeAvailable = ref(false);
+const compositeRecords = ref<CompositeStructureRecord[]>([]);
 const compositeDetail = ref<CompositeStructureRecord | null>(null);
 const compositeDetailLoading = ref(false);
 const compositeDetailError = ref('');
@@ -1560,7 +1561,7 @@ function selectEngineeringTab(command: string) {
   if (command === 'tube' || command === 'composite') featureSubTab.value = command;
 }
 
-async function selectComposite(record: CompositeStructureRecord) {
+async function selectComposite(record: CompositeStructureRecord, preloadedDetail?: CompositeStructureRecord) {
   const buildId = contract.value?.part_id;
   const revisionId = contract.value?.task_id;
   if (!buildId || !revisionId) return;
@@ -1576,11 +1577,12 @@ async function selectComposite(record: CompositeStructureRecord) {
   compositeCoverageComputing.value = false;
   compositeCoverageError.value = '';
   selectedCompositeRegionId.value = '';
-  const response = await fetchCompositeDetail(buildId, record.object_id, { silent: true });
+  const response = preloadedDetail ? { error: null, data: preloadedDetail } :
+    await fetchCompositeDetail(buildId, record.object_id, { silent: true });
   if (token !== compositeDetailGeneration || contract.value?.task_id !== revisionId ||
       primarySelection.value?.kind !== 'composite_object' || primarySelection.value.id !== record.object_id) return;
   compositeDetailLoading.value = false;
-  if (response.error || !response.data) compositeDetailError.value = '单层详情读取失败，请重新选择。';
+  if (response.error || !response.data) compositeDetailError.value = '复材对象详情读取失败，请重新选择。';
   else {
     compositeDetail.value = response.data;
     // This is a native contour preview in definition coordinates. It does not
@@ -1603,6 +1605,18 @@ async function selectComposite(record: CompositeStructureRecord) {
     } else if (!coverageResponse.error && coverageResponse.data)
       compositeCoverageError.value = '覆盖结果对应旧 Revision，请重新计算。';
   }
+}
+
+async function selectCompositeMember(objectId: string) {
+  const found = compositeRecords.value.find(row => row.object_id === objectId);
+  if (found) { await selectComposite(found); return; }
+  const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
+  if (!buildId || !revisionId) return;
+  const response = await fetchCompositeDetail(buildId, objectId, { silent: true });
+  if (contract.value?.task_id !== revisionId) return;
+  if (response.data && !response.error) await selectComposite(response.data, response.data);
+  else compositeDetailError.value = `成员 ${objectId} 的详情未能读取。`;
 }
 
 async function recomputeSelectedCompositeCoverage(basis: 'cured' | 'uncured') {
@@ -2787,8 +2801,9 @@ onBeforeUnmount(() => {
                   : (tubeSelection.record as TubePathRecord).path_id) : ''"
                 @availability="tubeAvailable = $event" @select="selectTube" @recomputed="onTubeRecomputed" />
               <CompositeExplorer v-show="featureSubTab === 'composite'" :build-id="contract?.part_id || ''"
+                :revision-id="contract?.task_id || ''"
                 :selected-id="primarySelection?.kind === 'composite_object' ? primarySelection.id : ''"
-                @availability="compositeAvailable = $event" @select="selectComposite" />
+                @availability="compositeAvailable = $event" @records="compositeRecords = $event" @select="selectComposite" />
             </div>
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
@@ -2865,12 +2880,13 @@ onBeforeUnmount(() => {
           description="该文件没有可用的轻量化几何，BOM、特征树和属性仍可正常浏览。"
         />
         <ElEmpty
-          v-else-if="contract.viewer_geometry?.displayable === false"
+          v-else-if="contract.viewer_geometry?.displayable === false && !contract.viewer_asset.curves_url"
           class="viewer-empty"
           description="解析已完成，但本次结果没有可显示的三角网格。可浏览已提取的结构与属性；三维显示需要重新检查源模型和网格生成结果。"
         />
         <CadViewerControls
-          v-if="contract && contract.viewer_asset && contract.viewer_geometry?.displayable !== false"
+          v-if="contract && contract.viewer_asset &&
+            (contract.viewer_geometry?.displayable !== false || Boolean(contract.viewer_asset.curves_url))"
           :tool-mode="toolMode"
           :scene-mode="sceneMode"
           :transparent="transparent"
@@ -2903,10 +2919,11 @@ onBeforeUnmount(() => {
           :display-current="tubeSelection.displayCurrent" />
         <CompositeDetail v-else-if="primarySelection?.kind === 'composite_object'"
           :record="compositeDetail" :loading="compositeDetailLoading" :error="compositeDetailError"
+          :related-records="compositeRecords"
           :coverage="compositeCoverage" :coverage-loading="compositeCoverageLoading"
           :coverage-error="compositeCoverageError" :coverage-computing="compositeCoverageComputing"
           :selected-region-id="selectedCompositeRegionId" @recompute="recomputeSelectedCompositeCoverage"
-          @select-region="selectCompositeRegion" />
+          @select-region="selectCompositeRegion" @select-member="selectCompositeMember" />
         <ObjectDetailPanel v-else
           :contract="contract"
           :source-format="sourceFormat"
