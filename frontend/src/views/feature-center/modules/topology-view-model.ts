@@ -1,4 +1,5 @@
 import type { SelectionTargetKind, TopologySelectionRecord } from './viewer-selection';
+import { topologyGeometryLabel } from './topology-geometry-labels';
 
 export type TopologyCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
 export type TopologySource = 'caa_native' | 'step_render';
@@ -95,11 +96,11 @@ function subtitle(raw: Record<string, unknown>, kind: TopologyKind, id: string):
     stringField(raw, 'closed_status') && `闭合 ${stringField(raw, 'closed_status')}`
   ].filter(Boolean).join(' · ') || id;
   if (kind === 'face') return [
-    stringField(raw, 'surface_type') || stringField(raw, 'geometry_type') || stringField(raw, 'kernel_surface_type'),
+    topologyGeometryLabel(stringField(raw, 'surface_type') || stringField(raw, 'geometry_type') || stringField(raw, 'kernel_surface_type')),
     (raw.area_mm2 ?? raw.area) != null && `面积 ${raw.area_mm2 ?? raw.area} mm²`
   ].filter(Boolean).join(' · ') || id;
   if (kind === 'edge') return [
-    stringField(raw, 'geometry_type') || stringField(raw, 'curve_type'),
+    topologyGeometryLabel(stringField(raw, 'geometry_type') || stringField(raw, 'curve_type')),
     (raw.length_mm ?? raw.length) != null && `长度 ${raw.length_mm ?? raw.length} mm`
   ].filter(Boolean).join(' · ') || id;
   if (kind === 'vertex') {
@@ -146,8 +147,10 @@ export function buildTopologyItems(inputs: TopologyInput[], revisionId: string, 
       (kind === 'body' ? stringField(raw, 'name') : '');
     const title = name || `${kindNames[kind]} ${String(nativeOrdinal || ordinal).padStart(3, '0')}`;
     const secondary = subtitle(raw, kind, entityId);
+    const rawGeometryType = stringField(raw, 'surface_type') || stringField(raw, 'geometry_type') ||
+      stringField(raw, 'kernel_surface_type') || stringField(raw, 'curve_type');
     items.push({ key, entityId, source: input.source, kind, category: input.category,
-      title, subtitle: secondary, searchText: `${title} ${secondary} ${entityId} ${kindNames[kind]}`.toLowerCase(),
+      title, subtitle: secondary, searchText: `${title} ${secondary} ${entityId} ${kindNames[kind]} ${rawGeometryType}`.toLowerCase(),
       raw, owningBodyId, owningFaceId, wireId, underlyingEdgeId,
       canLocate: kind === 'face' && input.source === 'step_render' && renderFaceIds.has(entityId) });
   }

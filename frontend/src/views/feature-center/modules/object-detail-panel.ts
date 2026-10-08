@@ -1,6 +1,7 @@
 import type { CanonicalFeatureRecord } from './feature-center-bundle';
 import type { NativeFeatureRecord } from './native-feature-tree';
 import type { SelectionContext, SelectionTarget } from './viewer-selection';
+import { topologyGeometryLabel } from './topology-geometry-labels';
 
 export type StatusTone = 'primary' | 'success' | 'warning' | 'danger' | 'info';
 
@@ -261,8 +262,9 @@ export function formatDetailValue(value: unknown, key = ''): DetailValue {
   const text = String(value);
   const normalized = text.toLowerCase();
   const statusTone = STATUS_KEYS.has(key) || STATUS_TONES[normalized] ? STATUS_TONES[normalized] : undefined;
+  const geometryType = ['surface_type', 'kernel_surface_type', 'geometry_type', 'curve_type'].includes(key);
   return {
-    text: STATUS_LABELS[normalized] || text,
+    text: geometryType ? topologyGeometryLabel(text) : STATUS_LABELS[normalized] || text,
     fullText: text,
     empty: false,
     raw: value,

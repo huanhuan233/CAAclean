@@ -64,3 +64,16 @@ test('real native body record without kind uses body_id as its own identity', ()
   assert.equal(model.items[0].kind, 'body');
   assert.equal(model.items[0].entityId, 'TB000001');
 });
+
+test('topology summaries show Chinese geometry types while raw codes remain searchable', () => {
+  const model = buildTopologyItems([{ category: 'face', source: 'step_render', records: [
+    { entity_id: 'F-CYL', geometry_type: 'cylinder', area: 1294.15 },
+    { entity_id: 'F-TOR', geometry_type: 'torus', area: 140.635 },
+    { entity_id: 'F-UNKNOWN', geometry_type: 'vendor_surface' }
+  ] }], 'rev-1');
+  assert.match(model.items[0].subtitle, /^圆柱面 · 面积 1294.15 mm²$/);
+  assert.match(model.items[1].subtitle, /^圆环面 · 面积 140.635 mm²$/);
+  assert.equal(model.items[2].subtitle, 'vendor_surface');
+  assert.equal(filterTopologyItems(model.items, 'face', 'torus')[0].entityId, 'F-TOR');
+  assert.equal(model.items[1].raw.geometry_type, 'torus');
+});

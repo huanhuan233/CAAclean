@@ -24,6 +24,14 @@ test('详情值格式化保留 0、false 和空数组，只对空值显示占位
   assert.equal(formatDetailValue(undefined).text, '—');
 });
 
+test('face geometry values display in Chinese and retain their exact raw value', () => {
+  assert.equal(formatDetailValue('torus', 'surface_type').text, '圆环面');
+  assert.equal(formatDetailValue('cylinder', 'kernel_surface_type').text, '圆柱面');
+  assert.equal(formatDetailValue('plane', 'geometry_type').text, '平面');
+  assert.equal(formatDetailValue('vendor_surface', 'surface_type').text, 'vendor_surface');
+  assert.equal(formatDetailValue('torus', 'surface_type').fullText, 'torus');
+});
+
 test('参数集合支持对象和数组形态，并复制完整格式化值', () => {
   const objectRows = normalizeParameterRows({
     long_name: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ_ABCDEFGHIJKLMNOPQRSTUVWXYZ',
