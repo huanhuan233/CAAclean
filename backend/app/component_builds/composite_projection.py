@@ -133,6 +133,30 @@ def build_composite_structure(
     for row in entities.values():
         if row["kind"] != "ply":
             continue
+        from app.component_builds.composite_boundaries import assess_native_boundaries
+        surface_fact = row["fields"].get("composite_surface_native_boundary_loops")
+        contour_fact = row["fields"].get("composite_contour_native_boundary_loops")
+        selected_boundary = surface_fact if surface_fact and surface_fact["read_status"] in {"available", "partial"} else contour_fact
+        if selected_boundary and selected_boundary["read_status"] in {"available", "partial"}:
+            try:
+                boundary_payload = json.loads(selected_boundary["raw_value"])
+            except (ValueError, TypeError):
+                boundary_payload = None
+            row["boundary"] = assess_native_boundaries(boundary_payload, selected_boundary["read_status"])
+            row["boundary"]["geometry_role"] = "ply_surface" if selected_boundary is surface_fact else "ply_contour"
+        else:
+            row["boundary"] = {"status": "unavailable", "geometry_role": "unknown",
+                               "diagnostics": ["native_ordered_boundary_not_captured"]}
+        if contour_fact and contour_fact["read_status"] == "available":
+            from app.component_builds.composite_regions import derive_planar_regions
+            try:
+                contour_payload = json.loads(contour_fact["raw_value"])
+            except (ValueError, TypeError):
+                contour_payload = None
+            row["contour_planar_region"] = derive_planar_regions(contour_payload)
+        else:
+            row["contour_planar_region"] = {"status": "unavailable", "diagnostics": ["ordered_contour_not_captured"]}
+        row["render_status"] = "unavailable_without_verified_ply_mesh"
         pieces_fact = row["fields"].get("composite_cut_piece_object_ids")
         if not pieces_fact or pieces_fact["read_status"] not in {"available", "partial"}:
             row["cut_piece_object_ids"] = None

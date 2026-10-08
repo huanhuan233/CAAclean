@@ -1,3 +1,5 @@
+import json
+
 from app.component_builds.composite_projection import build_composite_structure
 
 
@@ -79,3 +81,20 @@ def test_unknown_units_and_unresolved_order_are_explicit():
     assert row["ordered_child_object_ids"] == ["missing", None]
     assert "unresolved_native_order_member" in row["diagnostics"]
     assert row["fields"]["composite_cured_thickness"]["normalized_value"] is None
+
+
+def test_native_surface_boundary_keeps_geometry_role_and_original_area_separate():
+    payload = {"expected_unique_edges": 1, "visited_unique_edges": 1,
+               "visited_edge_occurrences": 1, "faces": [{"face_index": 1, "loops": [
+                   {"domain_index": 1, "location": "outer", "edges": [
+                       {"edge_index": 1, "length_mm": 10, "curve_type": "circle"}]}]}]}
+    rows = build_composite_structure([_object("p", "CATCompPly")], [], [
+        _fact("p", "composite_surface_native_boundary_loops", json.dumps(payload)),
+        _fact("p", "composite_area_m2", "0.25", "m2"),
+    ])
+    row = rows[0]
+    assert row["boundary"]["geometry_role"] == "ply_surface"
+    assert row["boundary"]["effective_boundary_length_mm"] == 10
+    assert row["boundary"]["area_mm2"] is None
+    assert row["fields"]["composite_area_m2"]["normalized_value"] == 250_000
+    assert row["render_status"] == "unavailable_without_verified_ply_mesh"

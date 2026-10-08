@@ -42,6 +42,7 @@ import TubeDetail from './modules/TubeDetail.vue';
 import CompositeExplorer from './modules/CompositeExplorer.vue';
 import CompositeDetail from './modules/CompositeDetail.vue';
 import { createTubePathOverlay } from './modules/tube-path-overlay';
+import { createCompositeContourOverlay } from './modules/composite-contour-overlay';
 import { tubeResultCanOverlay } from './modules/tube-result-context';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
 import { mbdAnnotationTitle, mbdNodeTitle } from './modules/mbd-view-model';
@@ -338,6 +339,7 @@ let scene: THREE.Scene | null = null;
 let measurementOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
 let relationOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
 let tubePathOverlay: ReturnType<typeof createTubePathOverlay> | null = null;
+let compositeContourOverlay: ReturnType<typeof createCompositeContourOverlay> | null = null;
 let activeRelationPoints: { a: number[]; b: number[] } | null = null;
 let sketchOverlay: ReturnType<typeof createSketchOverlay> | null = null;
 let activeSketchPayload: NativeSketchPayload | null = null;
@@ -1482,6 +1484,7 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     compositeDetailError.value = '';
   }
   tubePathOverlay?.clear();
+  compositeContourOverlay?.clear();
   relationOverlay?.clear();
   activeRelationPoints = null;
   viewerSelection.value = resolveViewerSelection(
@@ -1563,7 +1566,15 @@ async function selectComposite(record: CompositeStructureRecord) {
       primarySelection.value?.kind !== 'composite_object' || primarySelection.value.id !== record.object_id) return;
   compositeDetailLoading.value = false;
   if (response.error || !response.data) compositeDetailError.value = '单层详情读取失败，请重新选择。';
-  else compositeDetail.value = response.data;
+  else {
+    compositeDetail.value = response.data;
+    // This is a native contour preview in definition coordinates. It does not
+    // establish a separately meshed ply surface or an assembly placement.
+    if (sourceFormat.value === 'CATPART' && response.data.contour_planar_region?.status === 'derived_planar') {
+      const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+      compositeContourOverlay?.show(response.data.contour_planar_region, color);
+    }
+  }
 }
 
 function selectAssemblyRelation(group: 'relations' | 'connections' | 'booleans', record: AssemblyEvidenceRecord) {
@@ -2150,6 +2161,7 @@ function initViewer() {
   measurementOverlay = createMeasurementOverlay(scene);
   relationOverlay = createMeasurementOverlay(scene);
   tubePathOverlay = createTubePathOverlay(scene);
+  compositeContourOverlay = createCompositeContourOverlay(scene);
   sketchOverlay = createSketchOverlay(scene);
   scene.background = new THREE.Color('#f7f8fb');
   camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1_000_000);

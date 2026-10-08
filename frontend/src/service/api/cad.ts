@@ -411,6 +411,26 @@ export interface CompositeStructureRecord extends Record<string, unknown> {
   order_status: 'native_complete' | 'partial' | 'unavailable';
   fields: Record<string, CompositeField>;
   diagnostics: string[];
+  boundary?: {
+    status: string;
+    geometry_role: string;
+    raw_edge_occurrence_length_mm: number | null;
+    effective_boundary_length_mm: number | null;
+    diagnostics: string[];
+  };
+  contour_planar_region?: {
+    status: string;
+    area_mm2: number | null;
+    area_error_bound_mm2: number | null;
+    outer_boundary_length_mm: number | null;
+    inner_boundary_length_mm: number | null;
+    region_count: number;
+    hole_count: number;
+    display_sampling_error_mm: number;
+    loops: Array<{ role: string; sampled_points_mm: number[][]; native_length_mm: number }>;
+    diagnostics: string[];
+  };
+  render_status?: string;
 }
 
 export function fetchCompositeStructure(buildId: string, offset: number, pageSize = 100,
