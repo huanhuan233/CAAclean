@@ -31,6 +31,8 @@ NATIVE_EVIDENCE_FILES = {
     "topology_faces": "topology_faces.jsonl",
     "feature_geometry_links": "feature_geometry_links.jsonl",
     "selection_index": "selection_index.json",
+    # Derived from object definitions, occurrences and raw property facts.
+    "composite_structure": "object_entities.jsonl",
 }
 
 _TOPOLOGY_KINDS = frozenset({"body", "solid", "volume", "face", "edge", "vertex", "wire", "loop", "coedge"})
@@ -142,6 +144,12 @@ class CaaNewBundleReader:
         self._validate_mbd_channels()
         streams = {}
         for kind, filename in NATIVE_EVIDENCE_FILES.items():
+            if kind == "composite_structure":
+                required = ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl")
+                if all((self.bundle_dir / name).is_file() for name in required):
+                    from app.component_builds.composite_projection import build_composite_structure
+                    streams[kind] = build_composite_structure(*(self._read_jsonl(name) for name in required))
+                continue
             if kind in {"canonical_features", "measurements", "topology_faces", "feature_geometry_links", "selection_index"}:
                 continue
             if not (self.bundle_dir / filename).is_file():

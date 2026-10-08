@@ -245,6 +245,18 @@ class CadRepository:
         ).order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit))
         return [row.payload for row in rows]
 
+    async def get_native_evidence_object(self, revision_id: uuid.UUID, kind: str, object_id: str) -> dict | None:
+        """Resolve a definition in PostgreSQL without rereading its capture bundle."""
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == kind,
+            CadNativeEvidence.payload["object_id"].astext == object_id,
+        ).limit(2))
+        matches = list(rows)
+        if len(matches) > 1:
+            raise ValueError(f"duplicate native evidence object: {kind}/{object_id}")
+        return matches[0].payload if matches else None
+
     async def persist_parser_result(self, revision_id: uuid.UUID, result: Any) -> None:
         try:
             async with self.session.begin():

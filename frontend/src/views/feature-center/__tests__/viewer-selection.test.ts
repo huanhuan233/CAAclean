@@ -270,3 +270,11 @@ test('stale tube result does not highlight a solid in the current viewer', () =>
   assert.deepEqual(selection.context.primitiveIds, []);
   assert.equal(selection.context.mappingStatus, 'unavailable');
 });
+
+test('composite ply without a verified ply render map keeps its identity and paints no whole part', () => {
+  const selection = resolveViewerSelection({ kind: 'composite_object', id: 'ply_a', source: 'composite',
+    raw: { kind: 'ply', document_id: 'doc_1' } }, { faceMeshMap, featureMeshMap });
+  assert.equal(selection.primary?.id, 'ply_a');
+  assert.equal(selection.context.mappingStatus, 'unavailable');
+  assert.deepEqual(selection.context.primitiveIds, []);
+});

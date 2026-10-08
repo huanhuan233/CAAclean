@@ -387,6 +387,44 @@ export function fetchComponentBuildNativeEvidence<T extends Record<string, unkno
   });
 }
 
+export interface CompositeField {
+  raw_value: unknown;
+  raw_unit: string;
+  raw_display_text?: string;
+  normalized_value: number | null;
+  normalized_unit: string;
+  read_status: string;
+  source_api?: string;
+  property_id?: string;
+}
+
+export interface CompositeStructureRecord extends Record<string, unknown> {
+  object_id: string;
+  kind: 'stacking' | 'group' | 'sequence' | 'ply' | 'cut_piece' | 'cut_piece_group';
+  document_id: string;
+  display_name: string;
+  update_status: string;
+  occurrence_ids: string[];
+  occurrence_paths: string[];
+  parent_object_ids: string[];
+  ordered_child_object_ids: Array<string | null> | null;
+  order_status: 'native_complete' | 'partial' | 'unavailable';
+  fields: Record<string, CompositeField>;
+  diagnostics: string[];
+}
+
+export function fetchCompositeStructure(buildId: string, offset: number, pageSize = 100,
+  options?: ComponentBuildQueryOptions) {
+  return fetchComponentBuildNativeEvidence<CompositeStructureRecord>(buildId, 'composite_structure', offset, pageSize, options);
+}
+
+export function fetchCompositeDetail(buildId: string, objectId: string, options?: ComponentBuildQueryOptions) {
+  return request<CompositeStructureRecord>({
+    url: `/api/component-builds/${buildId}/viewer/composites/${encodeURIComponent(objectId)}`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export interface AssemblyEvidenceRecord extends Record<string, unknown> {
   relation_id?: string;
   connection_id?: string;

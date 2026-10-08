@@ -14,6 +14,7 @@ No source document updates, geometry creation, XML-value injection or database r
 - Native comments: `CATIAllowUserInfo.GetComment`.
 - Composite materials: name/type, cured/uncured thickness, width, warning/limit angles, surface weight, density and material cost per mass.
 - Plies/groups: orientation, rosette frame, reference surface, draping direction and native reference IDs where the referenced object was captured.
+- R21 stacking/group/sequence membership: `GetElementsUnderStacking`, `GetSequences` and `GetPliesAndCores` are captured as ordered object IDs with per-field status. Ply cut pieces are read through `GetCutPiecesGroup/GetCutPieces`. Unresolved member IDs remain null/partial; legacy captures without these facts have unknown order.
 - Direction palette: numeric directions and native RGB values.
 - Ply geometry: native contour vertices, total edge length, existing composite surface area and center. Vertices are explicitly marked as **native enumeration, not ordered outer/inner contour loops**.
 - Native composite attributes: typed scalar values and SDK dumps of lists/references; unknown storage units remain unknown. Attributes such as `CPDContext` and `NonStructural` are retained without guessing their semantic enum mapping.

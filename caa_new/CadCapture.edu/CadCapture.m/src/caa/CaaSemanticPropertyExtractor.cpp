@@ -12,6 +12,8 @@
 #include <CATICciPly.h>
 #include <CATICciPliesGroup.h>
 #include <CATICciStacking.h>
+#include <CATICciSequence.h>
+#include <CATICciCutPiece.h>
 #include <CATICciCompositesParameters.h>
 #include <CATIACompositesMaterial.h>
 #include <CATIMaterialFeature.h>
@@ -117,11 +119,22 @@ public:
     // 价格在关联的材料对象上，不拿惯性密度或 XML 的固定数字替代读取结果。
     const char* api = "CATIACompositesMaterial.get_MassCost";
     PropertyFact cost = evidence::Failure("unavailable", api);
+    bool material_ref_written = false;
     try
     {
       CATIMaterialFeature_var feature;
       if (SUCCEEDED(material->GetMaterial(feature)) && feature != NULL_var)
       {
+        CaaInterfaceGuard<CATISpecObject> material_spec;
+        if (Acquire(feature, IID_CATISpecObject, material_spec))
+        {
+          CATISpecObject_var reference(material_spec.Get());
+          const std::string id = _bindings.Resolve(reference);
+          Put("composite_material_object_id", id.empty() ? evidence::Failure("not_captured", "CATICciMaterialCache.GetMaterial")
+              : evidence::Text(id, "CATICciMaterialCache.GetMaterial"));
+          material_ref_written = true;
+        }
+        else { Put("composite_material_object_id", evidence::Failure("unsupported", "CATICciMaterialCache.GetMaterial")); material_ref_written = true; }
         CaaInterfaceGuard<CATIACompositesMaterial> composite;
         if (Acquire(feature, IID_CATIACompositesMaterial, composite))
         {
@@ -130,15 +143,19 @@ public:
           {
             cost = evidence::Text(evidence::Number(value), api);
             cost.value_type = "number";
-            cost.raw_unit = cost.display_unit = "USD/kg";
+            // R21 接口只返回数值；无法从签名证明币种或质量单位。
+            cost.raw_unit = cost.display_unit = "";
           }
           else cost.read_status = "failed";
         }
         else cost.read_status = "unsupported";
       }
+      else { Put("composite_material_object_id", evidence::Failure("unavailable", "CATICciMaterialCache.GetMaterial")); material_ref_written = true; }
     }
-    catch (...) { cost.read_status = "exception"; }
+    catch (...) { cost.read_status = "exception";
+      if (!material_ref_written) Put("composite_material_object_id", evidence::Failure("exception", "CATICciMaterialCache.GetMaterial")); }
     Put("composite_cost_per_mass", cost);
+    Put("composite_cost_unit_status", evidence::Text("unknown_currency_and_mass_unit", api));
   }
 
   void Physical(CATICciPhysicalEntity* physical)
@@ -231,6 +248,81 @@ public:
     }
   }
 
+  // 中文：R21 顺序接口返回真实的叠放成员；解析失败时保留空位和状态，不回退名称排序。
+  template<class T> void OrderedChildren(T* owner,
+      HRESULT (T::*getter)(CATLISTV(CATBaseUnknown_var)&), const char* api)
+  {
+    CATLISTV(CATBaseUnknown_var) elements;
+    PropertyFact fact = evidence::Failure("failed", api);
+    int captured_count = -1;
+    try
+    {
+      if (SUCCEEDED((owner->*getter)(elements)))
+      {
+        captured_count = elements.Size();
+        std::ostringstream ids;
+        ids << "[";
+        bool unresolved = false;
+        for (int index = 1; index <= elements.Size(); ++index)
+        {
+          if (index > 1) ids << ",";
+          CaaInterfaceGuard<CATISpecObject> member;
+          std::string id;
+          CATBaseUnknown_var element = elements[index];
+          if (element != NULL_var && Acquire(element, IID_CATISpecObject, member))
+          {
+            CATISpecObject_var spec(member.Get());
+            id = _bindings.Resolve(spec);
+          }
+          if (id.empty()) { unresolved = true; ids << "null"; }
+          else ids << "\"" << id << "\"";
+        }
+        ids << "]";
+        fact = evidence::Text(ids.str(), api);
+        fact.value_type = "json";
+        if (unresolved) fact.read_status = "partial";
+      }
+    }
+    catch (...) { fact = evidence::Failure("exception", api); }
+    Put("composite_native_ordered_child_ids", fact);
+    if (captured_count >= 0) Numeric("composite_native_ordered_child_count", captured_count, "1", api);
+    else Put("composite_native_ordered_child_count", evidence::Failure(fact.read_status, api));
+  }
+
+  void CutPieces(CATICciPly* ply)
+  {
+    const char* api = "CATICciPly.GetCutPiecesGroup/CATICciCutPiecesGroup.GetCutPieces";
+    PropertyFact fact = evidence::Failure("unavailable", api);
+    try
+    {
+      CATICciCutPiecesGroup_var group;
+      if (SUCCEEDED(ply->GetCutPiecesGroup(group)) && group != NULL_var)
+      {
+        CATLISTV(CATISpecObject_var) pieces;
+        if (SUCCEEDED(group->GetCutPieces(pieces)))
+        {
+          std::ostringstream ids;
+          ids << "[";
+          bool unresolved = false;
+          for (int index = 1; index <= pieces.Size(); ++index)
+          {
+            if (index > 1) ids << ",";
+            const std::string id = _bindings.Resolve(pieces[index]);
+            if (id.empty()) { ids << "null"; unresolved = true; }
+            else ids << "\"" << id << "\"";
+          }
+          ids << "]";
+          fact = evidence::Text(ids.str(), api);
+          fact.value_type = "json";
+          if (unresolved) fact.read_status = "partial";
+        }
+        else fact = evidence::Failure("failed", api);
+      }
+    }
+    catch (...) { fact = evidence::Failure("exception", api); }
+    Put("composite_cut_piece_object_ids", fact);
+  }
+
 private:
   std::string _subject;
   CaptureIdRegistry& _ids;
@@ -280,11 +372,19 @@ void CaaSemanticPropertyExtractor::Extract(CATISpecObject* spec, const std::stri
     if (Acquire(spec, IID_CATICciPly, ply))
     {
       capture.Shell(ply.Get(), "CATICciPly.GetReferenceShell");
+      capture.CutPieces(ply.Get());
       const std::vector<PropertyFact> geometry = ReadCompositeGeometry(ply.Get());
       for (size_t i = 0; i < geometry.size(); ++i) capture.Put(geometry[i].key, geometry[i]);
     }
   }
   catch (...) { capture.Put("composite_ply_status", evidence::Failure("exception", "CATICciPly")); }
+  try
+  {
+    CaaInterfaceGuard<CATICciCutPiece> piece;
+    if (Acquire(spec, IID_CATICciCutPiece, piece))
+      capture.Put("composite_cut_piece_identity", evidence::Text("native_cut_piece", "CATICciCutPiece"));
+  }
+  catch (...) { capture.Put("composite_cut_piece_identity", evidence::Failure("exception", "CATICciCutPiece")); }
   try
   {
     CaaInterfaceGuard<CATICciPliesGroup> group;
@@ -295,9 +395,22 @@ void CaaSemanticPropertyExtractor::Extract(CATISpecObject* spec, const std::stri
       CATMathAxis axis;
       if (SUCCEEDED(group.Get()->GetRosette(axis))) capture.Axis(axis, "composite_rosette", "CATICciPliesGroup.GetRosette");
       else capture.Put("composite_rosette", evidence::Failure("failed", "CATICciPliesGroup.GetRosette"));
+      capture.OrderedChildren(group.Get(), &CATICciPliesGroup::GetSequences,
+                              "CATICciPliesGroup.GetSequences");
     }
   }
   catch (...) { capture.Put("composite_group_status", evidence::Failure("exception", "CATICciPliesGroup")); }
+  try
+  {
+    CaaInterfaceGuard<CATICciSequence> sequence;
+    if (Acquire(spec, IID_CATICciSequence, sequence))
+    {
+      is_composite = true;
+      capture.OrderedChildren(sequence.Get(), &CATICciSequence::GetPliesAndCores,
+                              "CATICciSequence.GetPliesAndCores");
+    }
+  }
+  catch (...) { capture.Put("composite_sequence_status", evidence::Failure("exception", "CATICciSequence")); }
   try
   {
     CaaInterfaceGuard<CATIMf3DAxisSystem> axis;
@@ -312,7 +425,12 @@ void CaaSemanticPropertyExtractor::Extract(CATISpecObject* spec, const std::stri
   try
   {
     CaaInterfaceGuard<CATICciStacking> stacking;
-    if (Acquire(spec, IID_CATICciStacking, stacking)) is_composite = true;
+    if (Acquire(spec, IID_CATICciStacking, stacking))
+    {
+      is_composite = true;
+      capture.OrderedChildren(stacking.Get(), &CATICciStacking::GetElementsUnderStacking,
+                              "CATICciStacking.GetElementsUnderStacking");
+    }
     if (is_composite)
     {
       const std::vector<PropertyFact> attributes = ReadCaaNativeAttributes(spec);

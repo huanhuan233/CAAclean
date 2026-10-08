@@ -49,6 +49,52 @@ async def test_native_publish_persists_typed_definition_without_replacing_featur
 
 
 @pytest.mark.asyncio
+async def test_composite_projection_is_published_once_per_definition(tmp_path):
+    from app.component_builds.native_persistence import publish_native_capture
+
+    bundle = tmp_path / "native-caa"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps({"schema_version": "caa_capture_v1"}), encoding="utf-8")
+    (bundle / "object_entities.jsonl").write_text(
+        json.dumps({"object_id": "ply1", "document_id": "doc1", "startup_type": "CATCompPly", "display_name": "Ply.1"}) + "\n",
+        encoding="utf-8")
+    (bundle / "tree_occurrences.jsonl").write_text("\n".join(json.dumps(row) for row in [
+        {"occurrence_id": "o1", "object_id": "ply1", "document_id": "doc1"},
+        {"occurrence_id": "o2", "object_id": "ply1", "document_id": "doc1"},
+    ]) + "\n", encoding="utf-8")
+    (bundle / "property_facts.jsonl").write_text(json.dumps({
+        "property_id": "f1", "subject_id": "ply1", "key": "composite_orientation",
+        "raw_value": "0", "raw_unit": "rad", "read_status": "available",
+    }) + "\n", encoding="utf-8")
+    recorded = {}
+
+    class Repository:
+        @asynccontextmanager
+        async def native_publish_transaction(self):
+            yield
+
+        async def replace_native_tree_entities(self, _revision, rows, _expected):
+            return len(rows)
+
+        async def replace_native_property_facts(self, _revision, rows):
+            return len(list(rows))
+
+        async def replace_native_evidence(self, _revision, streams, *, replace_all):
+            recorded["streams"] = {kind: list(records) for kind, records in streams.items()}
+            return {kind: len(records) for kind, records in recorded["streams"].items()}
+
+        async def update_revision_manifest(self, _revision, payload):
+            recorded["manifest"] = payload
+
+    await publish_native_capture(Repository(), uuid4(), bundle)
+    rows = recorded["streams"]["composite_structure"]
+    assert len(rows) == 1
+    assert rows[0]["occurrence_ids"] == ["o1", "o2"]
+    assert rows[0]["fields"]["composite_orientation"]["normalized_value"] == 0
+    assert recorded["manifest"]["native_evidence_storage"]["counts"]["composite_structure"] == 1
+
+
+@pytest.mark.asyncio
 async def test_native_publish_preserves_mbd_definition_and_membership_without_projection_double_count(tmp_path):
     bundle = tmp_path / "native-caa"
     bundle.mkdir()

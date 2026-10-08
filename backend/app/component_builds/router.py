@@ -290,6 +290,18 @@ async def component_build_native_evidence(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_EVIDENCE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/viewer/composites/{object_id}")
+async def component_build_composite_detail(
+    build_id: UUID,
+    object_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_composite_ply_detail(build_id, object_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "COMPOSITE_OBJECT_NOT_FOUND", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/viewer/mbd/annotations")
 async def component_build_mbd_annotations(
     build_id: UUID,

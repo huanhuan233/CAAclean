@@ -18,9 +18,10 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchCompositeDetail, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
 import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
 import type { AssemblyEvidenceRecord, TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
+import type { CompositeStructureRecord } from '@/service/api/cad';
 import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
@@ -38,6 +39,8 @@ import AssemblyRelationExplorer from './modules/AssemblyRelationExplorer.vue';
 import AssemblyRelationDetail from './modules/AssemblyRelationDetail.vue';
 import TubeExplorer from './modules/TubeExplorer.vue';
 import TubeDetail from './modules/TubeDetail.vue';
+import CompositeExplorer from './modules/CompositeExplorer.vue';
+import CompositeDetail from './modules/CompositeDetail.vue';
 import { createTubePathOverlay } from './modules/tube-path-overlay';
 import { tubeResultCanOverlay } from './modules/tube-result-context';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
@@ -299,9 +302,14 @@ const activeTab = ref<ViewerTab>('bom');
 const bomPanelMode = ref<'tree' | 'relations'>('tree');
 const assemblySelection = ref<{ group: 'relations' | 'connections' | 'booleans'; record: AssemblyEvidenceRecord } | null>(null);
 const tubeAvailable = ref(false);
+const compositeAvailable = ref(false);
+const compositeDetail = ref<CompositeStructureRecord | null>(null);
+const compositeDetailLoading = ref(false);
+const compositeDetailError = ref('');
+let compositeDetailGeneration = 0;
 const tubeSelection = ref<{ group: 'native' | 'step' | 'clearance'; record: TubePathRecord | TubeClearanceRecord;
   segment?: Record<string, unknown>; displayCurrent: boolean } | null>(null);
-const featureSubTab = ref<'native' | 'recognized' | 'mbd' | 'tube'>('native');
+const featureSubTab = ref<'native' | 'recognized' | 'mbd' | 'tube' | 'composite'>('native');
 const transparent = ref(false);
 const isolated = ref(false);
 const sectionEnabled = ref(false);
@@ -1467,6 +1475,12 @@ function clearStepCurves() {
 function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']) {
   if (target.kind !== 'assembly_relation') assemblySelection.value = null;
   if (!['tube_path', 'tube_segment', 'tube_clearance'].includes(target.kind)) tubeSelection.value = null;
+  if (target.kind !== 'composite_object') {
+    compositeDetailGeneration += 1;
+    compositeDetail.value = null;
+    compositeDetailLoading.value = false;
+    compositeDetailError.value = '';
+  }
   tubePathOverlay?.clear();
   relationOverlay?.clear();
   activeRelationPoints = null;
@@ -1527,6 +1541,29 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     productPropertyError.value = '';
   }
   applyVisualState();
+}
+
+function selectEngineeringTab(command: string) {
+  if (command === 'tube' || command === 'composite') featureSubTab.value = command;
+}
+
+async function selectComposite(record: CompositeStructureRecord) {
+  const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
+  if (!buildId || !revisionId) return;
+  selectionTarget.value = null;
+  selectTarget({ kind: 'composite_object', id: record.object_id,
+    label: record.display_name || record.object_id, raw: record }, 'composite');
+  const token = ++compositeDetailGeneration;
+  compositeDetail.value = null;
+  compositeDetailLoading.value = true;
+  compositeDetailError.value = '';
+  const response = await fetchCompositeDetail(buildId, record.object_id, { silent: true });
+  if (token !== compositeDetailGeneration || contract.value?.task_id !== revisionId ||
+      primarySelection.value?.kind !== 'composite_object' || primarySelection.value.id !== record.object_id) return;
+  compositeDetailLoading.value = false;
+  if (response.error || !response.data) compositeDetailError.value = '单层详情读取失败，请重新选择。';
+  else compositeDetail.value = response.data;
 }
 
 function selectAssemblyRelation(group: 'relations' | 'connections' | 'booleans', record: AssemblyEvidenceRecord) {
@@ -1753,6 +1790,10 @@ function findBomNode(nodes: Api.ComponentBuild.ViewerBomNode[], nodeId: string):
 
 // 用途：清除语义选择但保持相机、透明、隔离和剖切状态。
 function clearSelection() {
+  compositeDetailGeneration += 1;
+  compositeDetail.value = null;
+  compositeDetailLoading.value = false;
+  compositeDetailError.value = '';
   productPropertyGeneration += 1;
   productPropertyDetail.value = null;
   productPropertyLoading.value = false;
@@ -2611,7 +2652,7 @@ onBeforeUnmount(() => {
               @select="selectAssemblyRelation" />
 
             <div v-show="activeTab === 'recognized'" class="feature-tab-content">
-              <div class="feature-source-tabs" :class="{ 'has-tube': tubeAvailable }">
+              <div class="feature-source-tabs" :class="{ 'has-tube': tubeAvailable || compositeAvailable }">
                 <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">
                   原生特征
                 </button>
@@ -2625,8 +2666,14 @@ onBeforeUnmount(() => {
                 >
                   识别特征
                 </button>
-                <button v-if="tubeAvailable" type="button" :class="{ active: featureSubTab === 'tube' }"
-                  @click="featureSubTab = 'tube'">导管</button>
+                <ElDropdown v-if="tubeAvailable || compositeAvailable" trigger="click" @command="selectEngineeringTab">
+                  <button type="button" :class="{ active: featureSubTab === 'tube' || featureSubTab === 'composite' }"
+                    aria-label="工程信息">{{ featureSubTab === 'tube' ? '导管' : featureSubTab === 'composite' ? '复材' : '工程信息' }}</button>
+                  <template #dropdown><ElDropdownMenu>
+                    <ElDropdownItem v-if="tubeAvailable" command="tube">导管</ElDropdownItem>
+                    <ElDropdownItem v-if="compositeAvailable" command="composite">复材铺层</ElDropdownItem>
+                  </ElDropdownMenu></template>
+                </ElDropdown>
               </div>
               <NativeFeatureTree
                 v-show="featureSubTab === 'native'"
@@ -2657,6 +2704,9 @@ onBeforeUnmount(() => {
                   ? (tubeSelection.record as TubeClearanceRecord).clearance_id
                   : (tubeSelection.record as TubePathRecord).path_id) : ''"
                 @availability="tubeAvailable = $event" @select="selectTube" @recomputed="onTubeRecomputed" />
+              <CompositeExplorer v-show="featureSubTab === 'composite'" :build-id="contract?.part_id || ''"
+                :selected-id="primarySelection?.kind === 'composite_object' ? primarySelection.id : ''"
+                @availability="compositeAvailable = $event" @select="selectComposite" />
             </div>
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
@@ -2764,6 +2814,8 @@ onBeforeUnmount(() => {
         <TubeDetail v-else-if="primarySelection?.source === 'tube' && tubeSelection"
           :group="tubeSelection.group" :record="tubeSelection.record" :segment="tubeSelection.segment"
           :display-current="tubeSelection.displayCurrent" />
+        <CompositeDetail v-else-if="primarySelection?.kind === 'composite_object'"
+          :record="compositeDetail" :loading="compositeDetailLoading" :error="compositeDetailError" />
         <ObjectDetailPanel v-else
           :contract="contract"
           :source-format="sourceFormat"

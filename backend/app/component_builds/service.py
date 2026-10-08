@@ -610,6 +610,18 @@ class ComponentBuildService:
         return {"kind": kind, "records": records[:limit], "total": total,
                 "has_more": has_more, "next_offset": offset + limit if has_more else None}
 
+    async def get_composite_ply_detail(self, build_id: UUID, object_id: str) -> dict:
+        if not object_id or len(object_id) > 128:
+            raise ValueError("invalid composite object id")
+        # The evidence gate checks revision, publication completeness and channel presence.
+        await self.get_native_evidence(build_id, "composite_structure", 0, 1)
+        build = await self._require_build(build_id)
+        row = await self.repository.get_native_evidence_object(
+            build.cad_revision_id, "composite_structure", object_id)
+        if row is None:
+            raise ValueError(f"composite object not found: {object_id}")
+        return row
+
     async def get_recognized_feature_detail(self, build_id: UUID, feature_center_id: str) -> dict:
         if not feature_center_id or len(feature_center_id) > 128:
             raise ValueError("invalid feature center id")

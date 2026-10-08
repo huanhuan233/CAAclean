@@ -21,7 +21,8 @@ export type SelectionTargetKind =
   | 'assembly_relation'
   | 'tube_path'
   | 'tube_segment'
-  | 'tube_clearance';
+  | 'tube_clearance'
+  | 'composite_object';
 
 export type SelectionMappingStatus = 'exact' | 'runtime_current_revision' | 'candidate' | 'ambiguous' | 'unavailable';
 
@@ -32,7 +33,7 @@ export interface SelectionTarget {
   label?: string;
   instancePath?: string;
   renderObjectUuid?: string;
-  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly' | 'tube';
+  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly' | 'tube' | 'composite';
   raw?: unknown;
 }
 
