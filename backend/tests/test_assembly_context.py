@@ -36,6 +36,22 @@ def test_legacy_or_merged_geometry_cannot_be_claimed_as_instance_mapping(tmp_pat
         step_world_solids(snapshot)
 
 
+def test_explicit_scope_ignores_unrelated_legacy_asset_but_reports_it(tmp_path):
+    assets = {}
+    for solid_id, object_id in (("A", "OBJ_A"), ("B", "OBJ_B"), ("LEGACY", None)):
+        path = tmp_path / f"{solid_id}.brep"
+        path.write_bytes(solid_id.encode())
+        assets[solid_id] = {"kind": "solid", "path": path.name,
+                            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                            "source_object_id": object_id,
+                            "coordinate_convention": "world_placed_step" if object_id else None}
+    diagnostics = []
+    solids = step_world_solids(GeometrySnapshot(tmp_path, "REV", "SNAP", assets),
+                               {"OBJ_A", "OBJ_B"}, diagnostics=diagnostics)
+    assert {item.solid_id for item in solids} == {"A", "B"}
+    assert diagnostics == [{"solid_id": "LEGACY", "code": "unscoped_identity_unavailable"}]
+
+
 def test_absolute_occurrence_matrix_is_not_composed_twice():
     parent = [[1, 0, 0, 10], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
     absolute = [[1, 0, 0, 15], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]

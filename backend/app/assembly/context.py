@@ -46,17 +46,22 @@ def resolve_occurrence_matrix(occurrence: dict, parent_world: list[list[float]] 
     return composed
 
 
-def step_world_solids(snapshot: GeometrySnapshot, selected_ids: set[str] | None = None) -> list[InstanceSolid]:
+def step_world_solids(snapshot: GeometrySnapshot, selected_ids: set[str] | None = None,
+                      diagnostics: list[dict[str, str]] | None = None) -> list[InstanceSolid]:
     """STEP imported objects are already world placed; CATProduct occurrences are not inferred."""
     records: list[InstanceSolid] = []
     for solid_id, asset in sorted(snapshot.assets.items()):
         if asset.get("kind") != "solid":
             continue
         object_id = str(asset.get("source_object_id") or "")
-        if not object_id or asset.get("coordinate_convention") != "world_placed_step":
-            raise AssemblyContextError("instance_geometry_mapping_unavailable: reparse STEP with world-placed object provenance")
+        if selected_ids is not None and not object_id:
+            if diagnostics is not None:
+                diagnostics.append({"solid_id": solid_id, "code": "unscoped_identity_unavailable"})
+            continue
         if selected_ids is not None and object_id not in selected_ids:
             continue
+        if not object_id or asset.get("coordinate_convention") != "world_placed_step":
+            raise AssemblyContextError("instance_geometry_mapping_unavailable: reparse selected STEP object with world-placed provenance")
         reference: dict[str, Any] = {"revision_id": snapshot.revision_id,
                                      "geometry_snapshot_id": snapshot.snapshot_id, "entity_id": solid_id}
         records.append(InstanceSolid(object_id, solid_id, str(snapshot.resolve(reference)),

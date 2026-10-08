@@ -41,26 +41,14 @@ def coplanar_contact_area(left, right, tolerance):
                 continue
             p0, p1, q0, q1 = face_b.ParameterRange
             normal_b = face_b.normalAt((p0 + p1) / 2, (q0 + q1) / 2)
-            if abs(normal_a.dot(normal_b)) < 0.999999:
+            # A physical face contact needs opposed outward normals. Parallel
+            # coplanar faces with the same material side are not a joint.
+            if normal_a.dot(normal_b) > -0.999999:
                 continue
             if abs((face_b.CenterOfMass - face_a.CenterOfMass).dot(normal_a)) > tolerance:
                 continue
             overlap = face_a.common(face_b)
             local_area = float(sum(face.Area for face in overlap.Faces))
-            if local_area <= tolerance * tolerance:
-                # OCC can return an empty face common for coincident trimmed
-                # planes. Only accept a bounded convex tri/quad entirely on
-                # the other trimmed face; do not approximate partial overlap.
-                for smaller, larger in sorted(((face_a, face_b), (face_b, face_a)),
-                                              key=lambda pair: pair[0].Area):
-                    if len(smaller.Wires) != 1 or len(larger.Wires) != 1 or len(smaller.Vertexes) not in (3, 4):
-                        continue
-                    samples = [vertex.Point for vertex in smaller.Vertexes]
-                    samples.extend(edge.valueAt((edge.FirstParameter + edge.LastParameter) / 2)
-                                   for edge in smaller.Edges)
-                    if all(larger.distToShape(Part.Vertex(point))[0] <= tolerance for point in samples):
-                        local_area = float(smaller.Area)
-                        break
             if local_area <= tolerance * tolerance:
                 # Exact rectangle intersection for the deliberately narrow
                 # axis-aligned planar subclass (e.g. orthogonal plate faces).
@@ -290,7 +278,7 @@ def run(job):
                             "solid_a": left["solid_id"], "solid_b": right["solid_id"], **relation})
     return {"status": "success", "relations": records, "excluded_pair_count": excluded,
             "evaluated_pair_count": len(records), "coordinate_system": "step_world",
-            "source": "auxiliary_brep", "algorithm_version": "assembly.p6c.v2",
+            "source": "auxiliary_brep", "algorithm_version": "assembly.p6c.v3",
             "diagnostics": {"load_ms": round(context.load_ms, 3),
                             "compute_ms": round((time.perf_counter() - started) * 1000, 3),
                             "loaded_shapes": context.loaded_shapes, "pair_count": len(records)},

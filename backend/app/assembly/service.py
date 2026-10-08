@@ -22,7 +22,26 @@ from app.measurement.geometry_snapshot import GeometrySnapshot
 from app.measurement.repository import MeasurementRepository
 
 
-ALGORITHM_VERSION = "assembly.p6c.v2"
+ALGORITHM_VERSION = "assembly.p6c.v3"
+
+
+def summarize_assembly_coverage(result: dict) -> dict:
+    """Separate process completion from trustworthy conclusions for each candidate pair."""
+    relations = result.get("relations")
+    if not isinstance(relations, list) or result.get("evaluated_pair_count") != len(relations):
+        raise AssemblyContextError("geometry_result_invalid: pair count does not match relation records")
+    failed = sum(row.get("status") != "evaluated" or row.get("intersection_status") == "boolean_failed"
+                 for row in relations)
+    unknown = sum(row.get("status") == "evaluated" and row.get("intersection_status") != "boolean_failed" and
+                  row.get("contact_kind") in {None, "unknown", "uncertain", "indeterminate_zero_distance", "separated"}
+                  for row in relations)
+    successful = len(relations) - failed - unknown
+    return {"status": "complete" if failed == 0 and unknown == 0 else "partial",
+            "candidate_pair_count": len(relations), "evaluated_pair_count": len(relations),
+            "successful_pair_count": successful, "failed_pair_count": failed,
+            "unknown_pair_count": unknown,
+            "excluded_pair_count": int(result.get("excluded_pair_count", 0)),
+            "budget_exceeded_pair_count": 0}
 
 
 class AssemblyAnalysisService:
@@ -50,7 +69,9 @@ class AssemblyAnalysisService:
         _, revision, _ = context
         bundle = Path(settings.cad_work_dir) / str(revision.id) / "feature-center"
         snapshot = GeometrySnapshot.from_bundle(bundle, str(revision.id))
-        solids = step_world_solids(snapshot, set(instance_ids) if instance_ids else None)
+        scope_diagnostics: list[dict[str, str]] = []
+        solids = step_world_solids(snapshot, set(instance_ids) if instance_ids else None,
+                                   diagnostics=scope_diagnostics)
         job = {"instances": [{"instance_id": item.instance_id, "solid_id": item.solid_id,
                               "asset_path": item.asset_path,
                               "coordinate_convention": item.coordinate_convention} for item in solids],
@@ -65,6 +86,7 @@ class AssemblyAnalysisService:
         if result.get("status") != "success":
             raise AssemblyContextError(str(result.get("status") or "failed") + ": " +
                                        str(result.get("diagnostic") or "assembly kernel failed"))
+        coverage = summarize_assembly_coverage(result)
         config = {"candidate_distance_mm": candidate_distance_mm, "tolerance_mm": tolerance_mm,
                   "minimum_lap_fraction": minimum_lap_fraction,
                   "instances": sorted({item.instance_id for item in solids}),
@@ -83,11 +105,10 @@ class AssemblyAnalysisService:
         run = {"result_version": result_version, "revision_id": str(revision.id),
                "geometry_snapshot_id": snapshot.snapshot_id, "algorithm_version": ALGORITHM_VERSION,
                "source": "auxiliary_brep", "coordinate_system": "step_world",
-               "config": config, "evaluated_pair_count": result["evaluated_pair_count"],
-               "excluded_pair_count": result["excluded_pair_count"],
+               "config": config, **coverage, "scope_diagnostics": scope_diagnostics,
                "diagnostics": result.get("diagnostics"), "kernel": result.get("kernel"),
                "kernel_version": result.get("kernel_version"),
-               "freecad_version": result.get("freecad_version"), "status": "complete"}
+               "freecad_version": result.get("freecad_version")}
         # Compute and validate before replacing either channel. Failure leaves the prior run readable.
         async with self.cad.native_publish_transaction():
             await self.cad.replace_native_evidence(revision.id,
