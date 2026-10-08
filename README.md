@@ -77,6 +77,25 @@ Get-Content .runtime\startup-logs\backend.err.log -Tail 50 -Wait
 
 要停止本次服务，请在任务管理器中按启动时显示的 PID 结束三个进程；**不要直接按进程名批量结束 `python.exe` 或 `node.exe`**，以免影响其他项目。脚本若在启动途中失败，只清理它本次启动的进程。
 
+### 查看原生树的补充采集记录
+
+Feature Center 的“特征 → 原生特征”默认只显示与 CATIA 主规格树对应的节点。`Sag`、`Step`、`Edge`、`Angle` 等通过容器扫描取得的铺层参数属于补充采集记录，仍保存在原解析包和 PostgreSQL 中，但不会被提升到主树最外层。页面底部的“显示系统节点”只控制技术容器的显示，**不会**显示这批补充记录；“MBD 标注”页签展示的是另一类 FT&A/TPS 标注。
+
+需要检查补充记录时，从 Feature Center 页面地址复制 `build_id`，访问后端原生树接口，并传入 `include_supplemental=true`。例如在 PowerShell 中查看根层，再用返回的 `node_id` 查询某一层：
+
+```powershell
+$buildId = '<页面地址中的 build_id>'
+$api = "http://127.0.0.1:5181/api/component-builds/$buildId/viewer/native/tree"
+$root = Invoke-RestMethod "${api}?include_supplemental=true&page_size=200"
+$root.roots | Select-Object node_id, display_name, presentation_status
+
+$parentId = '<要展开的父节点 node_id>'
+$page = Invoke-RestMethod "${api}?include_supplemental=true&parent_id=$([uri]::EscapeDataString($parentId))&page_size=200"
+$page.roots | Select-Object node_id, display_name, presentation_status, parameter_value
+```
+
+`presentation_status=non_primary` 表示补充发现节点。接口按父节点分页；若 `has_more=true`，用返回的 `next_offset` 继续请求同一 `parent_id`。这些数据只是采集证据，不应当作 CATIA 主树节点或 MBD 标注。切换默认显示不需要重新解析、回填或清理数据库。
+
 ## 四、手动启动（调试时）
 
 先在三个终端设置相同的 `backend\.env`，并确保 `CAA_CAPTURE_PROJECT_ROOT` 指向当前仓库的 `caa_new`；终端一、二的工作目录设为 `backend`，终端三设为 `frontend`：
