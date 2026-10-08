@@ -145,10 +145,8 @@ class CaaNewBundleReader:
         streams = {}
         for kind, filename in NATIVE_EVIDENCE_FILES.items():
             if kind == "composite_structure":
-                required = ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl")
-                if all((self.bundle_dir / name).is_file() for name in required):
-                    from app.component_builds.composite_projection import build_composite_structure
-                    streams[kind] = build_composite_structure(*(self._read_jsonl(name) for name in required))
+                if self.has_composite_source():
+                    streams[kind] = self.composite_structure()
                 continue
             if kind in {"canonical_features", "measurements", "topology_faces", "feature_geometry_links", "selection_index"}:
                 continue
@@ -177,6 +175,17 @@ class CaaNewBundleReader:
                 "geometry_association_status": "unresolved",
             }]
         return streams
+
+    def has_composite_source(self) -> bool:
+        return all((self.bundle_dir / name).is_file() for name in
+                   ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl"))
+
+    def composite_structure(self) -> list[dict[str, Any]]:
+        if not self.has_composite_source():
+            raise CaaNewBundleError("composite source records are incomplete")
+        from app.component_builds.composite_projection import build_composite_structure
+        names = ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl")
+        return build_composite_structure(*(self._read_jsonl(name) for name in names))
 
     def iter_fta_semantics(self):
         """Expose typed display/search fields without changing the raw CAA semantic payload."""

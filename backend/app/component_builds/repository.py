@@ -36,6 +36,9 @@ class MemoryComponentBuildRepository:
         """内存测试仓储不伪造数据库语义；生产实现只从 PostgreSQL 读取。"""
         return []
 
+    async def get_native_evidence_object(self, revision_id: uuid.UUID, kind: str, object_id: str) -> dict | None:
+        return None
+
     async def get_feature_evidence_by_id(self, revision_id: uuid.UUID, kind: str,
                                          feature_center_id: str) -> list[dict]:
         return []
@@ -251,6 +254,17 @@ class SqlAlchemyComponentBuildRepository:
             ).order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit)
         )
         return [row.payload for row in rows]
+
+    async def get_native_evidence_object(self, revision_id: uuid.UUID, kind: str, object_id: str) -> dict | None:
+        rows = await self.session.scalars(select(CadNativeEvidence).where(
+            CadNativeEvidence.revision_id == revision_id,
+            CadNativeEvidence.kind == kind,
+            CadNativeEvidence.payload["object_id"].astext == object_id,
+        ).limit(2))
+        matches = list(rows)
+        if len(matches) > 1:
+            raise ValueError(f"duplicate {kind} identity: {object_id}")
+        return matches[0].payload if matches else None
 
     async def get_feature_evidence_by_id(self, revision_id: uuid.UUID, kind: str,
                                          feature_center_id: str) -> list[dict]:

@@ -4,6 +4,7 @@ import json
 import shutil as _shutil
 from pathlib import Path
 from uuid import UUID
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,8 @@ from app.component_builds.component_spec_document import (
 )
 from app.component_builds.ingest import FEATURE_EVIDENCE_KINDS
 from app.component_builds.caa_new_bundle import NATIVE_EVIDENCE_FILES
+from app.component_builds.composite_coverage import compute_planar_coverage, coverage_at_point
+from app.cad.repository import CadRepository
 from app.component_builds.fusion import FusionSourceUnavailable, fuse_component_spec
 from app.component_builds.native_property_store import (
     build_database_properties,
@@ -583,7 +586,7 @@ class ComponentBuildService:
 
     async def get_native_evidence(self, build_id: UUID, kind: str, offset: int, limit: int) -> dict:
         """只从已完整导入 PostgreSQL 的原生证据提供分页记录。"""
-        if kind not in NATIVE_EVIDENCE_FILES:
+        if kind not in NATIVE_EVIDENCE_FILES and kind != "composite_coverage":
             raise ValueError(f"unknown native evidence kind: {kind}")
         build = await self._require_build(build_id)
         if build.cad_revision_id is None:
@@ -591,7 +594,8 @@ class ComponentBuildService:
         revision = await self.repository.get_raw_revision(build.cad_revision_id)
         if revision is None:
             raise ValueError("native capture revision is missing")
-        storage_key = "feature_evidence_storage" if kind in FEATURE_EVIDENCE_KINDS else "native_evidence_storage"
+        storage_key = ("composite_coverage_storage" if kind == "composite_coverage" else
+                       "feature_evidence_storage" if kind in FEATURE_EVIDENCE_KINDS else "native_evidence_storage")
         storage = dict((revision.parse_manifest or {}).get(storage_key) or {})
         if storage.get("backend") != "postgresql" or not storage.get("complete"):
             raise ValueError("native evidence is not persisted in PostgreSQL")
@@ -621,6 +625,52 @@ class ComponentBuildService:
         if row is None:
             raise ValueError(f"composite object not found: {object_id}")
         return row
+
+    async def get_composite_coverage(self, build_id: UUID, group_id: str) -> dict:
+        if not group_id or len(group_id) > 128:
+            raise ValueError("invalid composite group id")
+        await self.get_native_evidence(build_id, "composite_coverage", 0, 1)
+        build = await self._require_build(build_id)
+        row = await self.repository.get_native_evidence_object(
+            build.cad_revision_id, "composite_coverage", group_id)
+        if row is None or row.get("revision_id") != str(build.cad_revision_id):
+            raise ValueError("composite coverage result is unavailable or stale")
+        return row
+
+    async def get_composite_coverage_at(self, build_id: UUID, group_id: str,
+                                        point_mm: tuple[float, float, float]) -> dict:
+        result = await self.get_composite_coverage(build_id, group_id)
+        return coverage_at_point(result, point_mm)
+
+    async def recompute_composite_coverage(self, build_id: UUID, group_id: str,
+                                           thickness_basis: str, settings: Settings) -> dict:
+        if not group_id or len(group_id) > 128 or not all(ch.isalnum() or ch in "_-" for ch in group_id):
+            raise ValueError("invalid composite group id")
+        page = await self.get_native_evidence(build_id, "composite_structure", 0, 50000)
+        if page["has_more"]:
+            raise ValueError("composite definition budget exceeded")
+        build = await self._require_build(build_id)
+        revision = await self.repository.get_raw_revision(build.cad_revision_id)
+        if revision is None:
+            raise ValueError("composite source revision is missing")
+        source_storage = dict((revision.parse_manifest or {}).get("native_evidence_storage") or {})
+        work_dir = Path(settings.cad_work_dir) / str(revision.id) / "composite-coverage" / str(uuid4())
+        result = await compute_planar_coverage(page["records"], group_id, thickness_basis,
+                                                str(revision.id), None, settings, work_dir)
+        writer = CadRepository(self.repository.session)
+        async with writer.native_publish_transaction():
+            await self.repository.session.refresh(revision)
+            if (revision.parse_manifest or {}).get("native_evidence_storage") != source_storage:
+                raise ValueError("composite source changed during coverage computation")
+            previous = await writer.list_native_evidence(revision.id, "composite_coverage", 0, 5000)
+            retained = [item for item in previous if item.get("object_id") != group_id]
+            counts = await writer.replace_native_evidence(
+                revision.id, {"composite_coverage": [*retained, result]}, replace_all=False)
+            await writer.update_revision_manifest(revision.id, {
+                "composite_coverage_storage": {"backend": "postgresql", "complete": True,
+                    "counts": counts, "source_fingerprint": result["source_fingerprint"],
+                    "algorithm": result["algorithm"], "status": "current"}})
+        return result
 
     async def get_recognized_feature_detail(self, build_id: UUID, feature_center_id: str) -> dict:
         if not feature_center_id or len(feature_center_id) > 128:

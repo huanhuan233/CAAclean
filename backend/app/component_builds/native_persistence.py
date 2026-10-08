@@ -81,9 +81,13 @@ async def publish_native_capture(repository: CadRepository, revision_id: UUID, b
             property_count = await repository.replace_native_property_facts(
                 revision_id, iter_native_property_rows(revision_id, reader.iter_property_facts()),
             )
-        evidence_counts = await repository.replace_native_evidence(
-            revision_id, streams, replace_all=False,
-        ) if streams else {}
+        # New native material, order or contour facts invalidate every derived
+        # coverage result even when the final B-Rep hash remains stable.
+        publish_streams = {**streams, **({"composite_coverage": []} if "composite_structure" in streams else {})}
+        published_counts = await repository.replace_native_evidence(
+            revision_id, publish_streams, replace_all=False,
+        ) if publish_streams else {}
+        evidence_counts = {kind: count for kind, count in published_counts.items() if kind != "composite_coverage"}
         result = {
             "native_semantics": {"available": True, **assets},
             "native_capture": {
@@ -123,6 +127,9 @@ async def publish_native_capture(repository: CadRepository, revision_id: UUID, b
             result["native_property_storage"] = {"backend": "postgresql", "fact_count": property_count, "complete": True}
         if streams:
             result["native_evidence_storage"] = {"backend": "postgresql", "counts": evidence_counts, "complete": True}
+        if "composite_structure" in streams:
+            result["composite_coverage_storage"] = {"backend": "postgresql", "counts": {},
+                                                     "complete": False, "status": "source_changed"}
         await repository.update_revision_manifest(revision_id, result)
     return result
 

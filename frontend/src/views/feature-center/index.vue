@@ -18,10 +18,10 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchCompositeDetail, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchCompositeCoverage, fetchCompositeDetail, recomputeCompositeCoverage, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
 import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
 import type { AssemblyEvidenceRecord, TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
-import type { CompositeStructureRecord } from '@/service/api/cad';
+import type { CompositeCoverageRecord, CompositeStructureRecord } from '@/service/api/cad';
 import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
@@ -307,6 +307,11 @@ const compositeAvailable = ref(false);
 const compositeDetail = ref<CompositeStructureRecord | null>(null);
 const compositeDetailLoading = ref(false);
 const compositeDetailError = ref('');
+const compositeCoverage = ref<CompositeCoverageRecord | null>(null);
+const compositeCoverageLoading = ref(false);
+const compositeCoverageComputing = ref(false);
+const compositeCoverageError = ref('');
+const selectedCompositeRegionId = ref('');
 let compositeDetailGeneration = 0;
 const tubeSelection = ref<{ group: 'native' | 'step' | 'clearance'; record: TubePathRecord | TubeClearanceRecord;
   segment?: Record<string, unknown>; displayCurrent: boolean } | null>(null);
@@ -1482,6 +1487,11 @@ function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']
     compositeDetail.value = null;
     compositeDetailLoading.value = false;
     compositeDetailError.value = '';
+    compositeCoverage.value = null;
+    compositeCoverageLoading.value = false;
+    compositeCoverageComputing.value = false;
+    compositeCoverageError.value = '';
+    selectedCompositeRegionId.value = '';
   }
   tubePathOverlay?.clear();
   compositeContourOverlay?.clear();
@@ -1561,6 +1571,11 @@ async function selectComposite(record: CompositeStructureRecord) {
   compositeDetail.value = null;
   compositeDetailLoading.value = true;
   compositeDetailError.value = '';
+  compositeCoverage.value = null;
+  compositeCoverageLoading.value = false;
+  compositeCoverageComputing.value = false;
+  compositeCoverageError.value = '';
+  selectedCompositeRegionId.value = '';
   const response = await fetchCompositeDetail(buildId, record.object_id, { silent: true });
   if (token !== compositeDetailGeneration || contract.value?.task_id !== revisionId ||
       primarySelection.value?.kind !== 'composite_object' || primarySelection.value.id !== record.object_id) return;
@@ -1572,9 +1587,54 @@ async function selectComposite(record: CompositeStructureRecord) {
     // establish a separately meshed ply surface or an assembly placement.
     if (sourceFormat.value === 'CATPART' && response.data.contour_planar_region?.status === 'derived_planar') {
       const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
-      compositeContourOverlay?.show(response.data.contour_planar_region, color);
+      compositeContourOverlay?.show(response.data.contour_planar_region, color, response.data.nominal_direction);
     }
   }
+  if (record.kind === 'group') {
+    compositeCoverageLoading.value = true;
+    const coverageResponse = await fetchCompositeCoverage(buildId, record.object_id, { silent: true });
+    if (token !== compositeDetailGeneration || contract.value?.task_id !== revisionId ||
+        primarySelection.value?.id !== record.object_id) return;
+    compositeCoverageLoading.value = false;
+    if (!coverageResponse.error && coverageResponse.data?.revision_id === revisionId) {
+      compositeCoverage.value = coverageResponse.data;
+      const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+      if (sourceFormat.value === 'CATPART') compositeContourOverlay?.showCoverage(coverageResponse.data.cells, color);
+    } else if (!coverageResponse.error && coverageResponse.data)
+      compositeCoverageError.value = '覆盖结果对应旧 Revision，请重新计算。';
+  }
+}
+
+async function recomputeSelectedCompositeCoverage(basis: 'cured' | 'uncured') {
+  const record = compositeDetail.value;
+  const buildId = contract.value?.part_id;
+  const revisionId = contract.value?.task_id;
+  if (!record || record.kind !== 'group' || !buildId || !revisionId || compositeCoverageComputing.value) return;
+  compositeCoverageComputing.value = true;
+  compositeCoverageError.value = '';
+  const token = compositeDetailGeneration;
+  const response = await recomputeCompositeCoverage(buildId, record.object_id, basis);
+  if (token !== compositeDetailGeneration || contract.value?.task_id !== revisionId ||
+      primarySelection.value?.id !== record.object_id) return;
+  compositeCoverageComputing.value = false;
+  if (response.error || !response.data || response.data.revision_id !== revisionId)
+    compositeCoverageError.value = '覆盖计算未完成：请核查层序、共同参考曲面、轮廓与厚度来源。';
+  else {
+    compositeCoverage.value = response.data;
+    selectedCompositeRegionId.value = '';
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+    if (sourceFormat.value === 'CATPART') compositeContourOverlay?.showCoverage(response.data.cells, color);
+  }
+}
+
+function selectCompositeRegion(regionId: string) {
+  const coverage = compositeCoverage.value;
+  const region = coverage?.cells.find(cell => cell.region_id === regionId);
+  if (!coverage || !region || coverage.revision_id !== contract.value?.task_id) return;
+  selectedCompositeRegionId.value = regionId;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+  if (sourceFormat.value === 'CATPART')
+    compositeContourOverlay?.showCoverage(coverage.cells, color, region.region_id);
 }
 
 function selectAssemblyRelation(group: 'relations' | 'connections' | 'booleans', record: AssemblyEvidenceRecord) {
@@ -1805,6 +1865,11 @@ function clearSelection() {
   compositeDetail.value = null;
   compositeDetailLoading.value = false;
   compositeDetailError.value = '';
+  compositeCoverage.value = null;
+  compositeCoverageLoading.value = false;
+  compositeCoverageComputing.value = false;
+  compositeCoverageError.value = '';
+  selectedCompositeRegionId.value = '';
   productPropertyGeneration += 1;
   productPropertyDetail.value = null;
   productPropertyLoading.value = false;
@@ -2125,6 +2190,11 @@ function handlePointerUp(event: PointerEvent) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
+  if (sourceFormat.value === 'CATPART' && compositeCoverage.value?.revision_id === contract.value?.task_id &&
+      primarySelection.value?.kind === 'composite_object') {
+    const regionId = compositeContourOverlay?.pickRegion(raycaster);
+    if (regionId) { selectCompositeRegion(regionId); return; }
+  }
   const hit = raycaster
     .intersectObjects(pickableObjects, false)
     .find(item => item.object.visible && item.object.userData.pickable !== false);
@@ -2827,7 +2897,11 @@ onBeforeUnmount(() => {
           :group="tubeSelection.group" :record="tubeSelection.record" :segment="tubeSelection.segment"
           :display-current="tubeSelection.displayCurrent" />
         <CompositeDetail v-else-if="primarySelection?.kind === 'composite_object'"
-          :record="compositeDetail" :loading="compositeDetailLoading" :error="compositeDetailError" />
+          :record="compositeDetail" :loading="compositeDetailLoading" :error="compositeDetailError"
+          :coverage="compositeCoverage" :coverage-loading="compositeCoverageLoading"
+          :coverage-error="compositeCoverageError" :coverage-computing="compositeCoverageComputing"
+          :selected-region-id="selectedCompositeRegionId" @recompute="recomputeSelectedCompositeCoverage"
+          @select-region="selectCompositeRegion" />
         <ObjectDetailPanel v-else
           :contract="contract"
           :source-format="sourceFormat"

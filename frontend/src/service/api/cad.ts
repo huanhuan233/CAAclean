@@ -431,6 +431,15 @@ export interface CompositeStructureRecord extends Record<string, unknown> {
     diagnostics: string[];
   };
   render_status?: string;
+  nominal_direction?: {
+    status: string;
+    vector: number[] | null;
+    angle_deg: number | null;
+    handedness: string | null;
+    rule?: string;
+    scope?: string;
+    diagnostics: string[];
+  };
 }
 
 export function fetchCompositeStructure(buildId: string, offset: number, pageSize = 100,
@@ -442,6 +451,53 @@ export function fetchCompositeDetail(buildId: string, objectId: string, options?
   return request<CompositeStructureRecord>({
     url: `/api/component-builds/${buildId}/viewer/composites/${encodeURIComponent(objectId)}`,
     ...componentBuildQueryConfig(options)
+  });
+}
+
+export interface CompositeCoverageRegion {
+  region_id: string;
+  ply_object_ids: string[];
+  layer_count: number;
+  area_mm2: number;
+  nominal_thickness_mm: number | null;
+  known_thickness_subtotal_mm: number;
+  thickness_status: 'complete' | 'incomplete';
+  unknown_thickness_ply_object_ids: string[];
+  display_vertices_mm: number[][];
+  display_triangles: number[][];
+  contributions: Array<{ ply_object_id: string; thickness_mm: number | null; status: string }>;
+}
+
+export interface CompositeCoverageRecord {
+  object_id: string;
+  revision_id: string;
+  status: string;
+  algorithm: string;
+  source_fingerprint: string;
+  reference_surface_object_id: string;
+  thickness_basis: 'cured' | 'uncured';
+  ply_object_ids: string[];
+  layer_order_status: 'native_complete' | 'unavailable';
+  ordered_ply_object_ids: string[] | null;
+  cells: CompositeCoverageRegion[];
+  transitions: Array<Record<string, unknown>>;
+  geometry_method: string;
+  limits: string;
+}
+
+export function fetchCompositeCoverage(buildId: string, groupId: string, options?: ComponentBuildQueryOptions) {
+  return request<CompositeCoverageRecord>({
+    url: `/api/component-builds/${buildId}/viewer/composites/coverage/${encodeURIComponent(groupId)}`,
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function recomputeCompositeCoverage(buildId: string, groupId: string,
+  thicknessBasis: 'cured' | 'uncured') {
+  return request<CompositeCoverageRecord>({
+    method: 'post',
+    url: `/api/component-builds/${buildId}/viewer/composites/coverage/${encodeURIComponent(groupId)}/recompute`,
+    params: { thickness_basis: thicknessBasis }
   });
 }
 

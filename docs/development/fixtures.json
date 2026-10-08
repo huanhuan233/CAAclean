@@ -344,6 +344,23 @@
       "requirements": ["P4A-STANDARD", "P4B-STRUCTURAL", "P4C-COMBINED"],
       "availability": "automated_tested",
       "sha256": null
+    },
+    {
+      "fixture_id": "FX-P8-REAL-PLY",
+      "path": null,
+      "origin": "用户提供的外部只读 CATPart；本机绝对路径不写入仓库",
+      "restriction": "只读采集；不提交模型副本",
+      "input_type": "CATPart",
+      "provenance": "native",
+      "units": "原生长度 mm；厚度原始 m",
+      "coordinates": "part_definition",
+      "instances": "单零件定义级；装配变换未验收",
+      "known_features": ["1 个叠层、1 个组、4 个序列、4 个物理单层；每层原生有序方形轮廓；名义方向 0/+45/-45/90 度"],
+      "expected_value": "每层原生面积 1 m²；独立轮廓面积 1000000 mm²、周长 4000 mm；4 层固化名义厚度合计 1.32 mm",
+      "expected_value_source": "R21 原生属性和用户样件；厚度总和为明确的派生量",
+      "requirements": ["P8A-IDENTITY", "P8B-BOUNDARY", "P8C-COVERAGE"],
+      "availability": "fixture_verified_read_only",
+      "sha256": "e39bba86c83d464d8c0ea98fa19e747699f0bff99ff8ab6fd7f87a9bdb41a3c7"
     }
   ]
 }

@@ -290,6 +290,47 @@ async def component_build_native_evidence(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_EVIDENCE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/viewer/composites/coverage/{group_id}")
+async def component_build_composite_coverage(
+    build_id: UUID,
+    group_id: str,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_composite_coverage(build_id, group_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "COMPOSITE_COVERAGE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@router.get("/{build_id}/viewer/composites/coverage/{group_id}/at")
+async def component_build_composite_coverage_at(
+    build_id: UUID,
+    group_id: str,
+    x_mm: float,
+    y_mm: float,
+    z_mm: float,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        return await service.get_composite_coverage_at(build_id, group_id, (x_mm, y_mm, z_mm))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "COMPOSITE_POINT_UNAVAILABLE", "message": str(exc)}) from exc
+
+
+@router.post("/{build_id}/viewer/composites/coverage/{group_id}/recompute")
+async def recompute_component_build_composite_coverage(
+    build_id: UUID,
+    group_id: str,
+    thickness_basis: str = Query(..., pattern="^(cured|uncured)$"),
+    service: ComponentBuildService = Depends(get_component_build_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await service.recompute_composite_coverage(build_id, group_id, thickness_basis, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "COMPOSITE_COVERAGE_UNAVAILABLE", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/viewer/composites/{object_id}")
 async def component_build_composite_detail(
     build_id: UUID,

@@ -785,6 +785,57 @@
       "phase": "P4C",
       "fixtures": ["FX-P4-SYNTH"],
       "gap": "内转角、相交筋 R、内形闭角及真实业务件未验收"
+    },
+    {
+      "requirement_id": "P8A-IDENTITY",
+      "source_id": "development_package_p8",
+      "source_locator": "§6–7",
+      "source_status": "user_provided",
+      "original_summary": "原生叠层、铺层组、序列、单层及材料方向身份",
+      "module": "composite_structure",
+      "classification": "native_semantics",
+      "required_inputs": ["R21 CATPart 原生对象和属性"],
+      "expected_outputs": ["定义级层序、材料、厚度、名义方向与来源"],
+      "identity_and_coordinates": "原生定义与树出现位置分离；零件定义坐标",
+      "current_implementation": "R21 实件验证 4 个物理单层及原生成员顺序；材料引用未捕获时显式不可用",
+      "verification_status": "fixture_verified",
+      "phase": "P8A",
+      "fixtures": ["FX-P8-REAL-PLY"],
+      "gap": "真实裁片引用、同名材料版本及装配实例映射未验收"
+    },
+    {
+      "requirement_id": "P8B-BOUNDARY",
+      "source_id": "development_package_p8",
+      "source_locator": "§8–10",
+      "source_status": "user_provided",
+      "original_summary": "原生有序边界、单层曲面与面积周长",
+      "module": "composite_regions",
+      "classification": "native_and_derived_geometry",
+      "required_inputs": ["有序原生边界、实际铺层曲面或验证平面"],
+      "expected_outputs": ["环、边界、真实曲面面积、独立显示范围"],
+      "identity_and_coordinates": "单层定义坐标；派生平面轮廓不充当曲面网格",
+      "current_implementation": "实件 4 个完整方形环；平面轮廓面积与周长验证；支持圆弧/内孔/多区域派生计算",
+      "verification_status": "partial_fixture_verified",
+      "phase": "P8B",
+      "fixtures": ["FX-P8-REAL-PLY"],
+      "gap": "弯曲单层独立曲面资产与面积、周期缝和多面拼接实件未验收"
+    },
+    {
+      "requirement_id": "P8C-COVERAGE",
+      "source_id": "development_package_p8",
+      "source_locator": "§11–13",
+      "source_status": "user_provided",
+      "original_summary": "共同参考域覆盖、固化/未固化名义厚度与局部名义方向",
+      "module": "composite_coverage",
+      "classification": "derived_geometry",
+      "required_inputs": ["共同参考曲面身份、可信物理层归属和核验平面轮廓；原生层序可用时另存"],
+      "expected_outputs": ["覆盖物理层集合、区域面积、厚度小计和终止边"],
+      "identity_and_coordinates": "同一零件定义平面；结果绑定 Revision 与来源指纹",
+      "current_implementation": "平面布尔分区；100×100/半幅基准及真实四层完全覆盖计算通过；未知厚度保留不完整",
+      "verification_status": "partial_fixture_verified",
+      "phase": "P8C",
+      "fixtures": ["FX-P8-REAL-PLY"],
+      "gap": "真实浏览器已验收平板列表、详情和区域重算；曲面覆盖映射、装配实例变换及其他样件逐项验收未完成"
     }
   ]
 }

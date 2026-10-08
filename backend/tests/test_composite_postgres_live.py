@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.cad.repository import CadRepository
+from app.component_builds.repository import SqlAlchemyComponentBuildRepository
 from app.core.config import get_settings
 
 
@@ -35,5 +36,16 @@ async def test_composite_definition_pagination_and_detail_identity():
                     revision, "composite_structure", "ply_b") == rows[1]
                 assert await repository.get_native_evidence_object(
                     revision, "composite_structure", "missing") is None
+                viewer_repository = SqlAlchemyComponentBuildRepository(session)
+                assert await viewer_repository.get_native_evidence_object(
+                    revision, "composite_structure", "ply_b") == rows[1]
+                coverage = {"object_id": "group", "status": "computed", "cells": [
+                    {"region_id": "region_1", "ply_object_ids": ["ply_a", "ply_b"],
+                     "nominal_thickness_mm": 0.5}]}
+                assert await repository.replace_native_evidence(
+                    revision, {"composite_coverage": [coverage]}, replace_all=False,
+                ) == {"composite_coverage": 1}
+                assert await viewer_repository.get_native_evidence_object(
+                    revision, "composite_coverage", "group") == coverage
     finally:
         await engine.dispose()

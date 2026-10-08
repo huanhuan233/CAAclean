@@ -156,6 +156,8 @@ def build_composite_structure(
             row["contour_planar_region"] = derive_planar_regions(contour_payload)
         else:
             row["contour_planar_region"] = {"status": "unavailable", "diagnostics": ["ordered_contour_not_captured"]}
+        from app.component_builds.composite_direction import derive_nominal_planar_direction
+        row["nominal_direction"] = derive_nominal_planar_direction(row)
         row["render_status"] = "unavailable_without_verified_ply_mesh"
         pieces_fact = row["fields"].get("composite_cut_piece_object_ids")
         if not pieces_fact or pieces_fact["read_status"] not in {"available", "partial"}:

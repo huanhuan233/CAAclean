@@ -88,6 +88,8 @@ async def test_composite_projection_is_published_once_per_definition(tmp_path):
 
     await publish_native_capture(Repository(), uuid4(), bundle)
     rows = recorded["streams"]["composite_structure"]
+    assert recorded["streams"]["composite_coverage"] == []
+    assert recorded["manifest"]["composite_coverage_storage"]["complete"] is False
     assert len(rows) == 1
     assert rows[0]["occurrence_ids"] == ["o1", "o2"]
     assert rows[0]["fields"]["composite_orientation"]["normalized_value"] == 0
