@@ -579,13 +579,15 @@ function handleRowClick(buildId: string) {
   openDialogForBuild(buildId);
 }
 
-// 用途：根据真实源格式进入对应工作台，防止 STEP 被错误送入 CATPart 专属 Feature Center。
+// STEP 与 CATIA 模型均从零件库进入共用 Feature Center Viewer。
 function openModelViewer(buildId: string, revisionId: string) {
   const row = displayedRows.value.find(item => item.id === buildId);
   router.push(modelViewerLocation(buildId, revisionId, row?.sourceFormat));
 }
 
 async function openDialogForBuild(buildId: string) {
+  // 列表行可直接打开编辑弹窗，不能依赖先选中目录节点才取得来源解析状态。
+  await loadSelectedBuild(buildId, { silent: true });
   const build =
     selectedBuild.value?.id === buildId
       ? selectedBuild.value
