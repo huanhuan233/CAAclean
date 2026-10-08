@@ -107,6 +107,7 @@ static bool SketchElement(CATIAGeometricElement* element, long index,
   CAT_VARIANT_BOOL construction = FALSE;
   const bool construction_ok = SUCCEEDED(geometry.Get()->get_Construction(construction));
   std::ostringstream out;
+  out << std::setprecision(15);
   out << "{\"element_id\":\"" << (stable ? "report_" : "index_")
       << (stable ? report : index) << "\",\"id_status\":\""
       << (stable ? "native_report_name" : "collection_index") << "\","
@@ -139,18 +140,22 @@ static bool SketchElement(CATIAGeometricElement* element, long index,
     {
       SketchGuard<CATIACircle2D> circle;
       if (FAILED(element->QueryInterface(IID_CATIACircle2D, reinterpret_cast<void**>(&circle.Out()))) || !circle.Get()) return false;
-      double radius = 0, range[2];
+      double radius = 0, range[2], center[2];
       CAT_VARIANT_BOOL periodic = FALSE;
+      CATSafeArrayVariant* center_array = SafeArrayCreateVector(VT_VARIANT, 0, 2);
+      if (!center_array) return false;
+      const bool center_read = SUCCEEDED(circle.Get()->GetCenter(*center_array)) && SketchValues(center_array, 2, center);
+      SafeArrayDestroy(center_array);
       if (FAILED(circle.Get()->get_Radius(radius)) || radius <= 0 ||
           FAILED(circle.Get()->IsPeriodic(periodic)) ||
-          !CurveValues(curve.Get(), 1, 0, 2, range)) return false;
+          !center_read || !CurveValues(curve.Get(), 1, 0, 2, range)) return false;
       const double span = fabs(range[1]-range[0]);
       if (span <= 0 || span > 7.0) return false;
       int samples = static_cast<int>(ceil(span*sqrt(radius/0.8)));
       if (samples < 16) samples = 16;
       if (samples > 256) { samples = 256; partial = true; }
       out << "\"kind\":\"" << (periodic != FALSE ? "circle" : "arc") << "\","
-          << "\"radius_mm\":" << radius << ",\"parameter_range_raw\":["
+          << "\"center_2d_mm\":[" << center[0] << "," << center[1] << "],\"radius_mm\":" << radius << ",\"parameter_range_raw\":["
           << range[0] << "," << range[1] << "],\"display_chord_error_target_mm\":0.1,"
           << "\"display_sample_limit_reached\":" << (samples == 256 ? "true" : "false")
           << ",\"display_points_3d_mm\":[";
