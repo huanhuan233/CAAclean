@@ -471,7 +471,7 @@ class ComponentBuildService:
         page_size: int | None = None,
     ) -> dict:
         """只从 PostgreSQL 返回一层 CAA 树；不允许回读或兜底 JSONL。"""
-        del settings, include_supplemental
+        del settings
         build = await self._require_build(build_id)
         if build.cad_revision_id is None:
             raise ValueError("native capture source is not attached")
@@ -489,12 +489,15 @@ class ComponentBuildService:
             if not 1 <= page_size <= 500 or offset < 0:
                 raise ValueError("invalid native tree page")
             entities = await self.repository.list_native_tree_entities(
-                revision.id, parent_id, offset=offset, limit=page_size + 1
+                revision.id, parent_id, offset=offset, limit=page_size + 1,
+                include_supplemental=include_supplemental,
             )
             has_more = len(entities) > page_size
             entities = entities[:page_size]
         else:
-            entities = await self.repository.list_native_tree_entities(revision.id, parent_id)
+            entities = await self.repository.list_native_tree_entities(
+                revision.id, parent_id, include_supplemental=include_supplemental,
+            )
             has_more = False
         page = await self._database_tree_page(revision.id, entities, total)
         page.update({"has_more": has_more, "next_offset": offset + len(entities) if has_more else None})
@@ -502,7 +505,9 @@ class ComponentBuildService:
         # 更深层仍通过 parent_id 分页，绝不恢复整棵 JSONL。
         if parent_id is None and page_size is None:
             for root in page["roots"]:
-                children = await self.repository.list_native_tree_entities(revision.id, root["node_id"])
+                children = await self.repository.list_native_tree_entities(
+                    revision.id, root["node_id"], include_supplemental=include_supplemental,
+                )
                 child_page = await self._database_tree_page(revision.id, children, total)
                 root["children"] = child_page["roots"]
             page["node_count"] = sum(1 + len(root["children"]) for root in page["roots"])

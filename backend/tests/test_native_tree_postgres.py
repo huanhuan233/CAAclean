@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.cad.repository import CadRepository
 from app.component_builds.caa_new_bundle import CaaNewBundleReader
 from app.component_builds.native_tree_store import native_tree_rows
+from app.component_builds.repository import SqlAlchemyComponentBuildRepository
 from app.core.config import get_settings
 
 
@@ -92,3 +93,37 @@ async def test_linked_catproduct_bundle_with_real_foreign_keys():
     rows = native_tree_rows(revision_id, tree)
     assert rows
     await check_database_rows(rows, revision_id)
+
+
+@pytest.mark.asyncio
+async def test_default_tree_query_excludes_supplemental_after_sql_pagination():
+    revision_id = uuid4()
+    rows = native_tree_rows(revision_id, {"roots": [{
+        "node_id": "root", "presentation_status": "visible", "children": [
+            {"node_id": "sag", "presentation_status": "non_primary"},
+            {"node_id": "plies", "presentation_status": "visible"},
+        ],
+    }], "node_count": 3})
+    engine = create_async_engine(get_settings().database_url)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text(
+                "CREATE TEMP TABLE cad_entities (LIKE public.cad_entities INCLUDING DEFAULTS, "
+                "PRIMARY KEY (id), FOREIGN KEY (parent_entity_id) REFERENCES pg_temp.cad_entities(id))"
+            ))
+            await connection.commit()
+            async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                await CadRepository(session).replace_native_tree_entities(revision_id, rows, 3)
+                repository = SqlAlchemyComponentBuildRepository(session)
+                visible = await repository.list_native_tree_entities(
+                    revision_id, "root", limit=2, include_supplemental=False
+                )
+                assert [row.metadata_json["node_id"] for row in visible] == ["plies"]
+                all_rows = await repository.list_native_tree_entities(
+                    revision_id, "root", limit=2, include_supplemental=True
+                )
+                assert [row.metadata_json["node_id"] for row in all_rows] == ["sag", "plies"]
+            await connection.execute(text("DROP TABLE pg_temp.cad_entities"))
+            await connection.commit()
+    finally:
+        await engine.dispose()

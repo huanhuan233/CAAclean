@@ -112,6 +112,7 @@ function flattenNativeTreeNode(
     tree_path: node.tree_path,
     update_status: node.update_status,
     parameter_value: node.parameter_value,
+    presentation_status: node.presentation_status,
     attributes: {
       document_id: node.document_id,
       object_id: node.object_id,

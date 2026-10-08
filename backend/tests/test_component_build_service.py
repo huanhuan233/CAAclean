@@ -753,7 +753,7 @@ async def test_native_tree_api_reads_postgresql_level_without_file_fallback(tmp_
         metadata_json={"native_tree": True, "native_node_id": "child", "parent_id": "root",
                        "node_kind": "product_occurrence", "display_name": "510.000.2"},
     )
-    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None: _async_value(
+    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None, **_options: _async_value(
         [root_entity] if parent_node_id is None else ([child_entity] if parent_node_id == "root" else [])
     )
     repository.count_native_tree_entities = lambda _revision_id: _async_value(2)
@@ -801,7 +801,7 @@ async def test_native_tree_api_includes_parameter_value_from_postgresql_facts(tm
             "startup_type": "String",
         },
     )
-    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None: _async_value(
+    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None, **_options: _async_value(
         [root_entity] if parent_node_id is None else ([parameter_entity] if parent_node_id == "root" else [])
     )
     repository.count_native_tree_entities = lambda _revision_id: _async_value(2)
@@ -824,6 +824,52 @@ async def test_native_tree_api_includes_parameter_value_from_postgresql_facts(tm
     )
 
     assert tree["roots"][0]["children"][0]["parameter_value"] == "M00001453"
+
+
+@pytest.mark.asyncio
+async def test_native_tree_defaults_to_visible_catia_occurrences_but_can_query_supplemental():
+    revision_id = uuid4()
+    build_id = uuid4()
+    root = SimpleNamespace(metadata_json={"node_id": "root", "presentation_status": "visible"},
+                           source_ref="caa-native:root", source_index=0, sort_order=0,
+                           name="Part1", label="Part1", tree_path="/Part1")
+    primary = SimpleNamespace(metadata_json={"node_id": "plies", "parent_id": "root",
+                                "presentation_status": "visible"},
+                              source_ref="caa-native:plies", source_index=1, sort_order=1,
+                              name="Plies Group", label="Plies Group", tree_path="/Part1/Plies Group")
+    supplemental = SimpleNamespace(metadata_json={"node_id": "sag", "parent_id": "root",
+                                     "presentation_status": "non_primary"},
+                                   source_ref="caa-native:sag", source_index=2, sort_order=2,
+                                   name="Sag", label="Sag", tree_path="/Part1/Sag")
+
+    class Repository:
+        async def get_raw_revision(self, _revision_id):
+            return SimpleNamespace(id=revision_id, parse_manifest={
+                "native_tree_storage": {"backend": "postgresql", "node_count": 3, "complete": True}
+            })
+
+        async def count_native_tree_entities(self, _revision_id):
+            return 3
+
+        async def list_native_tree_entities(self, _revision_id, parent_node_id=None, *,
+                                            offset=0, limit=None, include_supplemental=True):
+            rows = [root] if parent_node_id is None else [primary, supplemental]
+            if not include_supplemental:
+                rows = [row for row in rows if row.metadata_json["presentation_status"] == "visible"]
+            return rows[offset:offset + limit] if limit is not None else rows[offset:]
+
+        async def list_native_property_facts(self, *_args, **_kwargs):
+            return []
+
+    service = ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())
+    service._require_build = lambda _build_id: _async_value(SimpleNamespace(cad_revision_id=revision_id))
+    visible = await service.get_native_tree(build_id, SimpleNamespace(), parent_id="root", page_size=1)
+    assert [node["node_id"] for node in visible["roots"]] == ["plies"]
+    assert visible["has_more"] is False
+    all_nodes = await service.get_native_tree(build_id, SimpleNamespace(), include_supplemental=True,
+                                              parent_id="root", page_size=1)
+    assert [node["node_id"] for node in all_nodes["roots"]] == ["plies"]
+    assert all_nodes["has_more"] is True
 
 
 @pytest.mark.asyncio
@@ -946,7 +992,7 @@ async def test_native_tree_api_reads_caa_new_bundle_without_local_paths(tmp_path
         },
     ))
     repository.count_native_tree_entities = lambda _revision_id: _async_value(len(entities))
-    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None: _async_value([
+    repository.list_native_tree_entities = lambda _revision_id, parent_node_id=None, **_options: _async_value([
         entity for entity in entities
         if entity.parent_entity_id == (entity_ids[parent_node_id] if parent_node_id else None)
     ])

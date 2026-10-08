@@ -139,6 +139,23 @@ test('PostgreSQL 树接口内联的参数值显示为黑体等号值', () => {
   assert.equal(nodes.find(node => node.id === 'parameter')?.parameterValue, 'M00001453');
 });
 
+test('默认原生树不把补充发现的铺层参数提升到 CATIA 顶层', () => {
+  const source = buildNativeFeatureTree([
+    { feature_id: 'doc', startup_type: 'CATDocument', display_name: 'source.CATPart' },
+    { feature_id: 'container', parent_id: 'doc', startup_type: 'CATIPrtContainer', display_name: 'PartSpecContainer' },
+    { feature_id: 'part', parent_id: 'container', startup_type: 'MechanicalPart', display_name: 'Part1' },
+    { feature_id: 'plies', parent_id: 'part', startup_type: 'GSMTool', display_name: 'Plies Group.2_STLMeshData',
+      attributes: { presentation_status: 'visible' } },
+    { feature_id: 'sag', parent_id: 'container', startup_type: 'LENGTH', display_name: 'Sag',
+      attributes: { presentation_status: 'non_primary' } },
+    { feature_id: 'step', parent_id: 'sag', startup_type: 'LENGTH', display_name: 'Step',
+      attributes: { presentation_status: 'visible' } }
+  ], 'source.CATPart');
+  const visible = flattenFeatureTree(projectFeatureTree(source, { showSystem: false }).nodes);
+  assert.equal(visible.some(node => node.id === 'plies'), true);
+  assert.equal(visible.some(node => node.id === 'sag' || node.id === 'step'), false);
+});
+
 test('同一容器下优先使用 CAA 原生枚举顺序而不是 occurrence 字符串顺序', () => {
   const source = buildNativeFeatureTree(
     [

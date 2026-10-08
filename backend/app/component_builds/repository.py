@@ -73,7 +73,7 @@ class MemoryComponentBuildRepository:
         """用途：内存仓储没有 CAD 实体表时返回空结构，保持旧单元测试向前兼容。"""
         return []
 
-    async def list_native_tree_entities(self, revision_id: uuid.UUID, parent_node_id: str | None = None, *, offset: int = 0, limit: int | None = None) -> list:
+    async def list_native_tree_entities(self, revision_id: uuid.UUID, parent_node_id: str | None = None, *, offset: int = 0, limit: int | None = None, include_supplemental: bool = True) -> list:
         return []
 
     async def count_native_tree_entities(self, revision_id: uuid.UUID) -> int:
@@ -205,14 +205,19 @@ class SqlAlchemyComponentBuildRepository:
         *,
         offset: int = 0,
         limit: int | None = None,
+        include_supplemental: bool = True,
     ) -> list[CadEntity]:
         parent_entity_id = uuid.uuid5(revision_id, parent_node_id) if parent_node_id else None
+        visibility = [] if include_supplemental else [
+            func.coalesce(CadEntity.metadata_json["presentation_status"].astext, "visible") == "visible"
+        ]
         result = await self.session.execute(
             select(CadEntity)
             .where(
                 CadEntity.revision_id == revision_id,
                 CadEntity.source_ref.like(f"{NATIVE_SOURCE_PREFIX}%"),
                 CadEntity.parent_entity_id == parent_entity_id,
+                *visibility,
             )
             .order_by(CadEntity.source_index.nullslast(), CadEntity.sort_order, CadEntity.id)
             .offset(offset)

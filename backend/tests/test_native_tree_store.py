@@ -1,9 +1,33 @@
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from app.component_builds.native_tree_store import build_database_tree, native_tree_rows, order_native_tree_rows
+from app.component_builds.caa_new_bundle import CaaNewBundleReader
+
+
+def test_reader_does_not_promote_visible_descendants_of_supplemental_nodes(tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema_version": "caa_capture_v1"}), encoding="utf-8")
+    records = [
+        {"occurrence_id": "part", "display_name": "Part", "presentation_status": "visible"},
+        {"occurrence_id": "scan", "parent_occurrence_id": "part", "display_name": "Scan",
+         "presentation_status": "non_primary"},
+        {"occurrence_id": "sag", "parent_occurrence_id": "scan", "display_name": "Sag",
+         "presentation_status": "visible"},
+    ]
+    (tmp_path / "tree_occurrences.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in records) + "\n", encoding="utf-8"
+    )
+
+    reader = CaaNewBundleReader(tmp_path)
+    visible = reader.build_tree()
+    complete = reader.build_tree(include_supplemental=True)
+
+    assert [node["node_id"] for node in visible["roots"]] == ["part"]
+    assert visible["node_count"] == 1
+    assert complete["node_count"] == 3
 
 
 def test_native_tree_rows_preserve_every_node_and_parent_link():

@@ -42,6 +42,7 @@ export interface NativeFeatureRecord {
   attributes?: Record<string, unknown>;
   parameter?: Record<string, unknown>;
   parameter_value?: string;
+  presentation_status?: string;
   [key: string]: unknown;
 }
 
@@ -315,6 +316,10 @@ export function projectFeatureTree(
 
   function hideSystem(nodes: FeatureTreeNode[]): FeatureTreeNode[] {
     return nodes.flatMap(node => {
+      // Supplemental container scans are capture evidence, not CATIA tree nodes.
+      // Suppress their whole subtree so visible descendants never become false roots.
+      const presentationStatus = node.raw?.presentation_status || node.raw?.attributes?.presentation_status;
+      if (presentationStatus && presentationStatus !== 'visible') return [];
       const children = hideSystem(node.children);
       if (node.isSystem && !options.showSystem) return children;
       return [{ ...node, children }];

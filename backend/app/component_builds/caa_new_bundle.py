@@ -291,8 +291,29 @@ class CaaNewBundleReader:
                 node_id,
             )
 
-        for record in self._read_jsonl("tree_occurrences.jsonl"):
-            if not include_supplemental and str(record.get("presentation_status") or "visible") != "visible":
+        tree_records = self._read_jsonl("tree_occurrences.jsonl")
+        tree_by_id = {str(record.get("occurrence_id") or ""): record for record in tree_records}
+        visible_cache: dict[str, bool] = {}
+
+        def visible_in_primary_tree(record: dict[str, Any], ancestors: set[str] | None = None) -> bool:
+            node_id = str(record.get("occurrence_id") or "")
+            if node_id in visible_cache:
+                return visible_cache[node_id]
+            if str(record.get("presentation_status") or "visible") != "visible":
+                visible_cache[node_id] = False
+                return False
+            ancestors = (ancestors or set()) | {node_id}
+            parent_id = str(record.get("parent_occurrence_id") or "")
+            parent = tree_by_id.get(parent_id)
+            # A missing parent is handled by the existing root behavior; a cycle is invalid.
+            visible = parent_id not in ancestors and (
+                parent is None or visible_in_primary_tree(parent, ancestors)
+            )
+            visible_cache[node_id] = visible
+            return visible
+
+        for record in tree_records:
+            if not include_supplemental and not visible_in_primary_tree(record):
                 continue
             node_id = str(record.get("occurrence_id") or "")
             object_id = str(record.get("object_id") or "")
