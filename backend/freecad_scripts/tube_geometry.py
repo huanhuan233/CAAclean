@@ -17,6 +17,7 @@ import FreeCAD
 import Part
 
 from measure_geometry import GeometryKernelContext, xyz
+from assembly_relations import evaluate_pair
 
 
 MAX_SOLIDS = 32
@@ -129,7 +130,52 @@ def run(job):
                             "source": "derived_geometry", "unmet_conditions": ["face_count_over_256"]})
         else:
             records.append({"solid_id": item["solid_id"], **_classify_straight_tube(solid, tolerance)})
-    return {"status": "success", "records": records, "algorithm_version": "tube.geometry.p7b.v1",
+    clearances = []
+    target_id = job.get("target_tube_solid_id")
+    if target_id is not None:
+        matches = [index for index, item in enumerate(items) if item["solid_id"] == target_id]
+        if len(matches) != 1 or records[matches[0]]["status"] != "confirmed_straight_hollow_tube":
+            raise ValueError("unsupported: target is not one verified straight hollow tube")
+        target_index = matches[0]
+        tube = context.shapes[target_index]
+        outer = max((face for face in tube.Faces if type(face.Surface).__name__ == "Cylinder"),
+                    key=lambda face: face.Surface.Radius)
+        # The inner cylindrical wall is intentionally excluded from the
+        # installation exterior. The two annular end faces remain included.
+        exterior = Part.makeCompound([outer, *(face for face in tube.Faces if type(face.Surface).__name__ == "Plane")])
+        path = records[target_index]["path"]
+        start = FreeCAD.Vector(*path["start_mm"])
+        direction = FreeCAD.Vector(*path["direction"])
+        for index, item in enumerate(items):
+            if index == target_index:
+                continue
+            neighbor = context.shapes[index]
+            pair = evaluate_pair(tube, neighbor, tolerance)
+            try:
+                distance, witnesses, _ = exterior.distToShape(neighbor)
+                if not math.isfinite(distance) or not witnesses:
+                    raise ValueError("finite exterior witness unavailable")
+                actual = [{"tube": xyz(a), "target": xyz(b),
+                           "s_mm": max(0.0, min(path["length_mm"], (a - start).dot(direction)))}
+                          for a, b in witnesses[:16]]
+                status = "evaluated" if pair.get("status") == "evaluated" else "partial"
+                if distance > tolerance and pair.get("distance_mm", 0) <= tolerance:
+                    status = "partial"
+                clearances.append({"tube_solid_id": target_id, "target_solid_id": item["solid_id"],
+                                   "status": status, "distance_mm": float(distance),
+                                   "within_tolerance": bool(distance <= tolerance),
+                                   "witnesses": actual, "solution_count": len(witnesses),
+                                   "intersection_status": pair.get("intersection_status", "not_evaluated"),
+                                   "contact_kind": pair.get("contact_kind", "unknown"),
+                                   "method": "exact_exterior_faces_to_target_solid",
+                                   "scope": "full_outer_cylindrical_wall_and_two_annular_ends",
+                                   "threshold_status": "not_provided"})
+            except Exception as exc:
+                clearances.append({"tube_solid_id": target_id, "target_solid_id": item["solid_id"],
+                                   "status": "failed", "diagnostic": type(exc).__name__,
+                                   "distance_mm": None, "intersection_status": pair.get("intersection_status", "not_evaluated")})
+    return {"status": "success", "records": records, "clearances": clearances,
+            "algorithm_version": "tube.geometry.p7c.v1" if target_id is not None else "tube.geometry.p7b.v1",
             "diagnostics": {"loaded_shapes": context.loaded_shapes, "load_ms": context.load_ms,
                             "compute_ms": round((time.perf_counter() - started) * 1000, 3)},
             "kernel": "OpenCascade", "kernel_version": str(getattr(Part, "OCC_VERSION", "unknown") or "unknown"),

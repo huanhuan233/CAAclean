@@ -20,7 +20,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
 import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
-import type { AssemblyEvidenceRecord } from '@/service/api/cad';
+import type { AssemblyEvidenceRecord, TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
 import type { GeometryQueryResponse, GeometrySnapshotResponse, GeometryReferencePayload } from '@/service/api/cad';
 import { useThemeStore } from '@/store/modules/theme';
 import { sha256Buffer } from './modules/asset-integrity';
@@ -36,6 +36,9 @@ import MbdExplorer from './modules/MbdExplorer.vue';
 import TopologyExplorer from './modules/TopologyExplorer.vue';
 import AssemblyRelationExplorer from './modules/AssemblyRelationExplorer.vue';
 import AssemblyRelationDetail from './modules/AssemblyRelationDetail.vue';
+import TubeExplorer from './modules/TubeExplorer.vue';
+import TubeDetail from './modules/TubeDetail.vue';
+import { createTubePathOverlay } from './modules/tube-path-overlay';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
 import { mbdAnnotationTitle, mbdNodeTitle } from './modules/mbd-view-model';
 import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, topologyRecordKind } from './modules/topology-view-model';
@@ -291,7 +294,10 @@ const bomVisible = ref(false);
 const activeTab = ref<ViewerTab>('bom');
 const bomPanelMode = ref<'tree' | 'relations'>('tree');
 const assemblySelection = ref<{ group: 'relations' | 'connections' | 'booleans'; record: AssemblyEvidenceRecord } | null>(null);
-const featureSubTab = ref<'native' | 'recognized' | 'mbd'>('native');
+const tubeAvailable = ref(false);
+const tubeSelection = ref<{ group: 'native' | 'step' | 'clearance'; record: TubePathRecord | TubeClearanceRecord;
+  segment?: Record<string, unknown> } | null>(null);
+const featureSubTab = ref<'native' | 'recognized' | 'mbd' | 'tube'>('native');
 const transparent = ref(false);
 const isolated = ref(false);
 const sectionEnabled = ref(false);
@@ -319,6 +325,7 @@ const orientationAxes = ref<Record<'x' | 'y' | 'z', GizmoAxisPoint>>({
 let scene: THREE.Scene | null = null;
 let measurementOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
 let relationOverlay: ReturnType<typeof createMeasurementOverlay> | null = null;
+let tubePathOverlay: ReturnType<typeof createTubePathOverlay> | null = null;
 let activeRelationPoints: { a: number[]; b: number[] } | null = null;
 let sketchOverlay: ReturnType<typeof createSketchOverlay> | null = null;
 let activeSketchPayload: NativeSketchPayload | null = null;
@@ -1008,6 +1015,9 @@ let progressiveNativeTreeBuildId = '';
 async function loadBuildBundle(buildId: string) {
   clearStatusPoll();
   assemblySelection.value = null;
+  tubeSelection.value = null;
+  if (contract.value?.part_id !== buildId) tubeAvailable.value = false;
+  tubePathOverlay?.clear();
   geometrySnapshot.value = null;
   measurementSession.clear();
   measurementOverlay?.clear();
@@ -1450,6 +1460,8 @@ function clearStepCurves() {
 
 function selectTarget(target: SelectionTarget, origin: SelectionTarget['source']) {
   if (target.kind !== 'assembly_relation') assemblySelection.value = null;
+  if (!['tube_path', 'tube_segment', 'tube_clearance'].includes(target.kind)) tubeSelection.value = null;
+  tubePathOverlay?.clear();
   relationOverlay?.clear();
   activeRelationPoints = null;
   viewerSelection.value = resolveViewerSelection(
@@ -1517,6 +1529,31 @@ function selectAssemblyRelation(group: 'relations' | 'connections' | 'booleans',
   assemblySelection.value = { group, record };
   selectTarget({ kind: 'assembly_relation', id, label: '装配关系', raw: record }, 'assembly');
   detailsOpen.value = true;
+}
+
+function selectTube(group: 'native' | 'step' | 'clearance', record: TubePathRecord | TubeClearanceRecord,
+                    segment?: Record<string, unknown>) {
+  const id = group === 'clearance' ? (record as TubeClearanceRecord).clearance_id : (record as TubePathRecord).path_id;
+  if (!id) return;
+  tubeSelection.value = { group, record, segment };
+  selectTarget({ kind: group === 'clearance' ? 'tube_clearance' : segment ? 'tube_segment' : 'tube_path',
+    id: segment ? `${id}:${segment.source_id || segment.order}` : id,
+    label: group === 'clearance' ? '导管安装间隙' : segment ? '中心线段' : '导管路径', raw: record }, 'tube');
+  detailsOpen.value = true;
+  if (group === 'clearance') {
+    const witness = (record as TubeClearanceRecord).witnesses?.[0];
+    if (witness?.tube?.length === 3 && witness.target?.length === 3) {
+      activeRelationPoints = { a: witness.tube, b: witness.target };
+      redrawRelationOverlay();
+    }
+    return;
+  }
+  const path = (record as TubePathRecord).path || {};
+  const rawSegments = segment ? [segment] : Array.isArray(path.segments) ? path.segments as Array<Record<string, unknown>>
+    : path.kind === 'straight' ? [{ kind: 'line', start_mm: path.start_mm, end_mm: path.end_mm }] : [];
+  if (group === 'native' && sourceFormat.value !== 'CATPART') return;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
+  tubePathOverlay?.show(rawSegments, color);
 }
 
 async function loadSelectedProductProperties(nativeNodeId: string, selectionId: string) {
@@ -2059,6 +2096,7 @@ function initViewer() {
   scene = new THREE.Scene();
   measurementOverlay = createMeasurementOverlay(scene);
   relationOverlay = createMeasurementOverlay(scene);
+  tubePathOverlay = createTubePathOverlay(scene);
   sketchOverlay = createSketchOverlay(scene);
   scene.background = new THREE.Color('#f7f8fb');
   camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1_000_000);
@@ -2358,6 +2396,7 @@ onBeforeUnmount(() => {
   measurementSession.clear();
   measurementOverlay?.clear();
   relationOverlay?.clear();
+  tubePathOverlay?.clear();
   sketchOverlay?.clear();
   geometryDetailController?.abort();
   nativeDetailLoader.clear();
@@ -2559,7 +2598,7 @@ onBeforeUnmount(() => {
               @select="selectAssemblyRelation" />
 
             <div v-show="activeTab === 'recognized'" class="feature-tab-content">
-              <div class="feature-source-tabs">
+              <div class="feature-source-tabs" :class="{ 'has-tube': tubeAvailable }">
                 <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">
                   原生特征
                 </button>
@@ -2573,6 +2612,8 @@ onBeforeUnmount(() => {
                 >
                   识别特征
                 </button>
+                <button v-if="tubeAvailable" type="button" :class="{ active: featureSubTab === 'tube' }"
+                  @click="featureSubTab = 'tube'">导管</button>
               </div>
               <NativeFeatureTree
                 v-show="featureSubTab === 'native'"
@@ -2598,6 +2639,11 @@ onBeforeUnmount(() => {
                 :revision-id="contract?.task_id || ''"
                 :selected-id="primarySelection?.source === 'mbd' ? primarySelection.id : ''"
                 @select-annotation="selectMbdAnnotation" @select-node="selectMbdNode" />
+              <TubeExplorer v-show="featureSubTab === 'tube'" :build-id="contract?.part_id || ''"
+                :selected-id="tubeSelection ? (tubeSelection.group === 'clearance'
+                  ? (tubeSelection.record as TubeClearanceRecord).clearance_id
+                  : (tubeSelection.record as TubePathRecord).path_id) : ''"
+                @availability="tubeAvailable = $event" @select="selectTube" />
             </div>
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
@@ -2702,6 +2748,8 @@ onBeforeUnmount(() => {
       <aside class="details" :class="{ open: detailsOpen }">
         <AssemblyRelationDetail v-if="primarySelection?.kind === 'assembly_relation' && assemblySelection"
           :group="assemblySelection.group" :record="assemblySelection.record" />
+        <TubeDetail v-else-if="primarySelection?.source === 'tube' && tubeSelection"
+          :group="tubeSelection.group" :record="tubeSelection.record" :segment="tubeSelection.segment" />
         <ObjectDetailPanel v-else
           :contract="contract"
           :source-format="sourceFormat"
@@ -3318,6 +3366,7 @@ button:disabled {
   border-radius: 7px;
   background: var(--el-fill-color-light);
 }
+.feature-source-tabs.has-tube { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .feature-source-tabs button {
   min-width: 0;
   border: 0;

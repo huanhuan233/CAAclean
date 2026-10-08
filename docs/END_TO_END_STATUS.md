@@ -77,3 +77,7 @@ Native Alias, geometrical-set/point markers, coordinate-point local values and o
 
 Confirmed orthogonal plate lap subclass and explicit auxiliary B-Rep union/intersection/difference are implemented, persisted and exposed through the existing assembly API. The BOM side panel now browses assembly, connection and boolean results without claiming exact Viewer localization when mappings are absent. Butt/fit classification, configured business shell roles, CATProduct crosswalk, nonempty browser relation detail and actual customer assembly acceptance remain incomplete. See `development/P6C_ASSEMBLY_ACCEPTANCE.md`.
 
+# P7 导管首批（2026-10-08）
+
+P6 前置修正、P7A 原生中心线分段、P7B 截面/有界直管、P7C 安装间隙分别提交。已用本机 R21 RADE 完成 x86 编译，真实 CATPart 重新采集得到 13 段中心线与同心圆草图；FreeCAD 和 PostgreSQL 的指定用例通过。浏览器用真实已入库旧包验证原生路径列表、选择与右侧详情；该旧包缺少新圆心/截面字段和可信 STEP 快照，几何导管及安装间隙的实件浏览器验收为 `not_run`。详见 `docs/tube-process-capture.md`。弯管 STEP 空心壁测量、复杂端部与实际 CATProduct 位置间隙仍未实现，不计为已确认能力。
+

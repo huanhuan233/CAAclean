@@ -420,6 +420,48 @@ export function fetchAssemblyBooleans(buildId: string, offset = 0, limit = 50, o
   });
 }
 
+export interface TubePathRecord extends Record<string, unknown> {
+  path_id: string;
+  source: 'native_sweep_path' | 'derived_geometry';
+  object_id?: string;
+  solid_id?: string;
+  instance_id?: string;
+  status?: string;
+  path?: Record<string, unknown>;
+  section?: Record<string, unknown>;
+  ends?: Array<Record<string, unknown>>;
+}
+
+export interface TubeClearanceRecord extends Record<string, unknown> {
+  clearance_id: string;
+  tube_instance_id: string;
+  target_instance_id: string;
+  distance_mm?: number | null;
+  status: string;
+  witnesses?: Array<{ tube: number[]; target: number[]; s_mm: number }>;
+}
+
+export function fetchTubeNativePaths(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {
+  return request<{ records: TubePathRecord[]; total: number; has_more: boolean }>({
+    url: `/api/component-builds/${buildId}/tube/paths/native`, params: { offset, limit },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchTubeStepPaths(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {
+  return request<{ records: TubePathRecord[]; total: number; has_more: boolean; run: Record<string, unknown> }>({
+    url: `/api/component-builds/${buildId}/tube/paths/step`, params: { offset, limit },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
+export function fetchTubeClearances(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {
+  return request<{ records: TubeClearanceRecord[]; total: number; has_more: boolean; run: Record<string, unknown> }>({
+    url: `/api/component-builds/${buildId}/tube/clearances`, params: { offset, limit },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export interface MbdAnnotationRecord {
   fta_semantic_id: string;
   fta_set_id: string;

@@ -18,7 +18,10 @@ export type SelectionTargetKind =
   | 'coedge'
   | 'edge'
   | 'vertex'
-  | 'assembly_relation';
+  | 'assembly_relation'
+  | 'tube_path'
+  | 'tube_segment'
+  | 'tube_clearance';
 
 export type SelectionMappingStatus = 'exact' | 'runtime_current_revision' | 'candidate' | 'ambiguous' | 'unavailable';
 
@@ -29,7 +32,7 @@ export interface SelectionTarget {
   label?: string;
   instancePath?: string;
   renderObjectUuid?: string;
-  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly';
+  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly' | 'tube';
   raw?: unknown;
 }
 
@@ -236,6 +239,15 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     push(context.solidIds, target.id);
     pushMany(context.renderFaceIds, descendantTopologyIds(topology, target.id, 'faces'));
     collectPrimitivesForFaces(context, resources);
+  }
+  if (target.kind === 'tube_path' || target.kind === 'tube_segment') {
+    const raw = target.raw as { solid_id?: string; source?: string } | undefined;
+    if (target.kind === 'tube_path' && raw?.source === 'derived_geometry' && raw.solid_id) {
+      push(context.solidIds, raw.solid_id);
+      pushMany(context.renderFaceIds, descendantTopologyIds(topology, raw.solid_id, 'faces'));
+      collectPrimitivesForFaces(context, resources);
+    }
+    if (!context.primitiveIds.length) diagnostics.push('TUBE_WALL_RENDER_MAPPING_UNAVAILABLE_CENTERLINE_ONLY');
   }
   if (target.kind === 'loop') {
     push(context.loopIds, target.id);
