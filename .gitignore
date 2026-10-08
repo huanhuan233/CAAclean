@@ -4,6 +4,8 @@ backend/.venv/
 cad-work/
 frontend/node_modules/
 frontend/dist/
+offline-assets/iconify/*.tar.gz
+offline-assets/iconify/pnpm-store/
 frontend/.tmp-three-pack/
 .worktrees/
 .runtime/

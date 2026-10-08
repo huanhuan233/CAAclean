@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue';
 import { Icon } from '@iconify/vue';
+import { featureCenterIcons } from '@/assets/iconify/feature-center-icons';
 
 defineOptions({ name: 'SvgIcon', inheritAttrs: false });
 
@@ -38,6 +39,12 @@ const symbolId = computed(() => {
 
 /** If localIcon is passed, render localIcon first */
 const renderLocalIcon = computed(() => props.localIcon || !props.icon);
+// Feature Center icons are bundled as resolved Iconify data. An unknown icon
+// stays local instead of falling through to the public Iconify API.
+const resolvedIcon = computed(() => {
+  if (!props.icon || !window.location.pathname.startsWith('/feature-center')) return props.icon || '';
+  return featureCenterIcons[props.icon] || featureCenterIcons['mdi:information-outline'];
+});
 </script>
 
 <template>
@@ -47,7 +54,7 @@ const renderLocalIcon = computed(() => props.localIcon || !props.icon);
     </svg>
   </template>
   <template v-else>
-    <Icon v-if="icon" :icon="icon" v-bind="bindAttrs" />
+    <Icon v-if="icon" :icon="resolvedIcon" v-bind="bindAttrs" />
   </template>
 </template>
 
