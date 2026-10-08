@@ -2857,15 +2857,20 @@ onBeforeUnmount(() => {
         <ElEmpty
           v-if="!contract"
           class="viewer-empty"
-          description="暂无 CATPart 解析结果，请从零件库打开已完成的 CATPart"
+          description="暂无模型解析结果，请从零件库打开已完成的模型"
         />
         <ElEmpty
           v-else-if="!contract.viewer_asset"
           class="viewer-empty"
           description="该文件没有可用的轻量化几何，BOM、特征树和属性仍可正常浏览。"
         />
+        <ElEmpty
+          v-else-if="contract.viewer_geometry?.displayable === false"
+          class="viewer-empty"
+          description="解析已完成，但本次结果没有可显示的三角网格。可浏览已提取的结构与属性；三维显示需要重新检查源模型和网格生成结果。"
+        />
         <CadViewerControls
-          v-if="contract && contract.viewer_asset"
+          v-if="contract && contract.viewer_asset && contract.viewer_geometry?.displayable !== false"
           :tool-mode="toolMode"
           :scene-mode="sceneMode"
           :transparent="transparent"

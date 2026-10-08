@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { modelViewerLocation } from '../model-viewer-route';
 
-// 用途：STEP 留在零件库，不能误进 CATPart 专属 Feature Center。
-test('step opens component library route', () => {
+// STEP 的查看动作应进入现有共用 Viewer，不能导航回当前零件库页面。
+test('step opens shared feature center viewer', () => {
   assert.deepEqual(modelViewerLocation('build-1', 'revision-1', 'STEP'), {
-    path: '/component-build',
-    query: { build_id: 'build-1', revision_id: 'revision-1' }
+    path: '/feature-center',
+    query: { build_id: 'build-1' }
   });
 });
 

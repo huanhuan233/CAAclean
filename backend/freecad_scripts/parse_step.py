@@ -834,6 +834,18 @@ def tessellate_face(face, deflection: float) -> tuple[list[list[float]], list[li
             return [], []
 
 
+def bounded_display_face(face) -> bool:
+    """Exclude infinite STEP datum planes from surface-only display meshes."""
+    bounds = bbox(face)
+    values = (bounds.get("min") or []) + (bounds.get("max") or [])
+    return (
+        len(values) == 6
+        and all(math.isfinite(float(value)) and abs(float(value)) < 1e12 for value in values)
+        and math.isfinite(float(getattr(face, "Area", 0.0) or 0.0))
+        and float(getattr(face, "Area", 0.0) or 0.0) > 0.0
+    )
+
+
 def add_entity(entities: list[dict], **kwargs) -> dict:
     entity = {
         "source_ref": None,
@@ -1186,6 +1198,56 @@ def parse(job: dict) -> dict:
                         if shell_face_index in face_ids_by_index:
                             relation(relations, revision_id, shell_id,
                                      face_ids_by_index[shell_face_index], "contains_face")
+
+            # A surface STEP can contain trimmed Faces but no closed Solid. Keep
+            # these faces renderable without promoting them to material-bearing solids.
+            if not solids:
+                for face_index, face in enumerate(safe_attr(shape, "Faces") or []):
+                    if not bounded_display_face(face):
+                        continue
+                    positions, indices = tessellate_face(face, deflection)
+                    if not positions or not indices or any(
+                        not all(math.isfinite(value) and abs(value) < 1e12 for value in point)
+                        for point in positions
+                    ):
+                        continue
+                    face_ref = f"Face{face_index + 1}"
+                    face_id = stable_uuid(revision_id, "surface_face", object_path, face_ref)
+                    geometry_type, geometry = face_geometry(face)
+                    geometry.update(face_analysis_geometry(face))
+                    add_entity(
+                        entities,
+                        id=face_id,
+                        revision_id=revision_id,
+                        parent_entity_id=object_id,
+                        entity_type="face",
+                        source_ref=face_ref,
+                        source_index=face_index,
+                        tree_path=f"{object_path}/face-{face_index}",
+                        sort_order=face_index,
+                        geometry_type=geometry_type,
+                        area=float(face.Area),
+                        center=center(face),
+                        bounding_box=bbox(face),
+                        geometry=geometry,
+                        metadata={"surface_without_solid": True},
+                    )
+                    face_entities.append((face_id, face))
+                    relation(relations, revision_id, object_id, face_id, "has_face")
+                    meshes.append({
+                        "id": stable_uuid(revision_id, "mesh", face_id),
+                        "revision_id": revision_id,
+                        "entity_id": face_id,
+                        "mesh_type": "face",
+                        "positions": positions,
+                        "indices": indices,
+                        "normals": None,
+                        "color": None,
+                        "linear_deflection": deflection,
+                        "angular_deflection": 0.5,
+                        "vertex_count": len(positions),
+                        "triangle_count": len(indices),
+                    })
 
         # 用途：只有共享真实几何边的面才建立邻接，避免仅凭空间接近产生伪邻接。
         face_solid_ids = {entity["id"]: entity.get("parent_entity_id") for entity in entities

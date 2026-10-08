@@ -379,6 +379,29 @@ def test_parse_step_v2_merges_bounding_boxes_for_all_imported_objects(tmp_path, 
     assert result["bounding_box"] == {"min": [-5.0, -4.0, -3.0], "max": [2.0, 3.0, 4.0]}
 
 
+def test_surface_only_step_keeps_bounded_faces_for_viewer_without_claiming_solids(tmp_path, monkeypatch):
+    finite_face = Face("finite", Plane(), [])
+    unbounded_face = Face("datum", Plane(), [])
+    unbounded_face.BoundBox = Box((-1e100, -1e100, 0), (1e100, 1e100, 0))
+    shape = Shape([finite_face, unbounded_face], [], [], Box((0, 0, 0), (1, 1, 1)))
+    shape.ShapeType = "Compound"
+    obj = types.SimpleNamespace(Name="SurfacePart", Label="SurfacePart", Shape=shape)
+    module = load_parse_step(monkeypatch, [obj])
+    source = tmp_path / "surfaces.stp"
+    source.write_text("ISO-10303-21;", encoding="utf-8")
+
+    result = module.parse({"revision_id": str(uuid4()), "source_file_path": str(source), "mesh_deflection": 0.1})
+
+    assert result["summary"]["solid_count"] == 0
+    assert result["summary"]["face_count"] == 1
+    face = next(entity for entity in result["entities"] if entity["entity_type"] == "face")
+    assert face["parent_entity_id"] == next(
+        entity["id"] for entity in result["entities"] if entity["entity_type"] == "imported_object"
+    )
+    assert result["meshes"][0]["entity_id"] == face["id"]
+    assert result["meshes"][0]["triangle_count"] == 1
+
+
 @pytest.mark.parametrize(
     ("curve", "expected_type", "field", "expected"),
     [
