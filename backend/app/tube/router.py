@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/component-builds/{build_id}/tube", tags=["tube"]
 class AnalyzeTubeIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tube_instance_id: str = Field(min_length=1, max_length=128)
-    target_instance_ids: list[str] = Field(min_length=1, max_length=31)
+    target_instance_ids: list[str] = Field(default_factory=list, max_length=31)
     tolerance_mm: float = Field(default=0.01, gt=0, le=0.1)
 
 
@@ -42,6 +42,17 @@ async def analyze_tube(build_id: UUID, payload: AnalyzeTubeIn,
                        settings: Settings = Depends(get_settings)) -> dict:
     try:
         return await service.analyze(build_id, settings, **payload.model_dump())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
+    except (AssemblyContextError, GeometryReferenceError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/candidates")
+async def tube_candidates(build_id: UUID, service: TubeAnalysisService = Depends(get_tube_service),
+                          settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return await service.list_candidates(build_id, settings)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail={"code": "build_not_found"}) from exc
     except (AssemblyContextError, GeometryReferenceError) as exc:

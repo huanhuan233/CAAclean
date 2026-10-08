@@ -52,6 +52,17 @@ def test_explicit_scope_ignores_unrelated_legacy_asset_but_reports_it(tmp_path):
     assert diagnostics == [{"solid_id": "LEGACY", "code": "unscoped_identity_unavailable"}]
 
 
+def test_single_world_placed_solid_is_valid_for_definition_level_tube_analysis(tmp_path):
+    path = tmp_path / "tube.brep"
+    path.write_bytes(b"tube")
+    snapshot = GeometrySnapshot(tmp_path, "REV", "SNAP", {
+        "T": {"kind": "solid", "path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              "source_object_id": "TUBE", "coordinate_convention": "world_placed_step"}
+    })
+    solids = step_world_solids(snapshot, {"TUBE"}, minimum_instances=1)
+    assert [(item.instance_id, item.solid_id) for item in solids] == [("TUBE", "T")]
+
+
 def test_absolute_occurrence_matrix_is_not_composed_twice():
     parent = [[1, 0, 0, 10], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
     absolute = [[1, 0, 0, 15], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]

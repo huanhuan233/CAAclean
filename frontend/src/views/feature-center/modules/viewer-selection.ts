@@ -241,8 +241,8 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
     collectPrimitivesForFaces(context, resources);
   }
   if (target.kind === 'tube_path' || target.kind === 'tube_segment') {
-    const raw = target.raw as { solid_id?: string; source?: string } | undefined;
-    if (target.kind === 'tube_path' && raw?.source === 'derived_geometry' && raw.solid_id) {
+    const raw = target.raw as { solid_id?: string; source?: string; display_current?: boolean } | undefined;
+    if (target.kind === 'tube_path' && raw?.source === 'derived_geometry' && raw.display_current !== false && raw.solid_id) {
       push(context.solidIds, raw.solid_id);
       pushMany(context.renderFaceIds, descendantTopologyIds(topology, raw.solid_id, 'faces'));
       collectPrimitivesForFaces(context, resources);

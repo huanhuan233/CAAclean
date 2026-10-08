@@ -462,6 +462,22 @@ export function fetchTubeClearances(buildId: string, offset = 0, limit = 50, opt
   });
 }
 
+export function fetchTubeCandidates(buildId: string, options?: ComponentBuildQueryOptions) {
+  return request<{ revision_id: string; geometry_snapshot_id: string;
+    candidates: Array<{ instance_id: string; solid_id: string; coordinate_system: string }> }>({
+    url: `/api/component-builds/${buildId}/tube/candidates`, ...componentBuildQueryConfig(options)
+  });
+}
+
+export function analyzeTube(buildId: string, tubeInstanceId: string, targetInstanceIds: string[] = [],
+                            options?: ComponentBuildQueryOptions) {
+  return request<{ run: Record<string, unknown>; tube_count: number; clearance_count: number }>({
+    url: `/api/component-builds/${buildId}/tube/analyze`, method: 'post',
+    data: { tube_instance_id: tubeInstanceId, target_instance_ids: targetInstanceIds },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export interface MbdAnnotationRecord {
   fta_semantic_id: string;
   fta_set_id: string;

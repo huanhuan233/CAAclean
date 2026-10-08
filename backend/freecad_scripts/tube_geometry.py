@@ -33,7 +33,7 @@ def _axial_interval(face, origin, axis):
     return (min(values), max(values)) if values else None
 
 
-def _classify_straight_tube(solid, tolerance):
+def _classify_straight_tube(solid, tolerance, coordinate_system="step_world"):
     base = {"status": "unsupported_geometry", "source": "derived_geometry",
             "unmet_conditions": ["bounded_concentric_hollow_straight_tube_not_proved"]}
     if solid.ShapeType != "Solid" or not solid.isValid() or not solid.isClosed() or len(solid.Faces) != 4:
@@ -89,7 +89,7 @@ def _classify_straight_tube(solid, tolerance):
             return base
         ends.append({"kind": "flat", "position_mm": xyz(_point_on_axis(face.CenterOfMass, origin, axis)),
                      "plane_normal": xyz(normal), "boundary_radii_mm": edge_radii,
-                     "evidence": "analytic_annular_planar_face"})
+                     "evidence": "analytic_annular_planar_face", "coordinate_system": coordinate_system})
     if abs(ends[0]["plane_normal"][0] * ends[1]["plane_normal"][0] +
            ends[0]["plane_normal"][1] * ends[1]["plane_normal"][1] +
            ends[0]["plane_normal"][2] * ends[1]["plane_normal"][2] + 1) > 1e-8:
@@ -98,19 +98,22 @@ def _classify_straight_tube(solid, tolerance):
     if tuple(xyz(finish)) < tuple(xyz(start)):
         start, finish = finish, start
         axis = axis * -1
-        ends.reverse()
+    ends.sort(key=lambda end: (FreeCAD.Vector(*end["position_mm"]) - start).dot(axis))
+    for index, end in enumerate(ends):
+        end["role"] = "A" if index == 0 else "B"
+        end["station_s_mm"] = max(0.0, min(length, (FreeCAD.Vector(*end["position_mm"]) - start).dot(axis)))
     middle = (start + finish) * 0.5
     return {"status": "confirmed_straight_hollow_tube", "source": "derived_geometry",
             "path": {"kind": "straight", "start_mm": xyz(start), "end_mm": xyz(finish),
                      "direction": xyz(axis), "length_mm": length,
-                     "coordinate_system": "solid_definition", "method": "concentric_cylindrical_walls"},
+                     "coordinate_system": coordinate_system, "method": "concentric_cylindrical_walls"},
             "section": {"status": "analytic_concentric_annulus", "station_s_mm": length / 2,
                         "origin_mm": xyz(middle), "normal": xyz(axis),
                         "outer_diameter_mm": 2 * ro, "inner_diameter_mm": 2 * ri,
                         "wall_thickness_mm": ro - ri,
                         "material_area_mm2": expected_area,
                         "method": "two_full_cylinders_and_annular_end_faces",
-                        "scope": "validated_straight_solid"},
+                        "scope": "validated_straight_solid", "coordinate_system": coordinate_system},
             "ends": ends, "unmet_conditions": []}
 
 
@@ -121,6 +124,11 @@ def run(job):
         raise ValueError("invalid_input: solid count or tolerance")
     if any(not item.get("solid_id") or not item.get("asset_path") for item in items):
         raise ValueError("invalid_input: solid identity and asset required")
+    if len({item["solid_id"] for item in items}) != len(items):
+        raise ValueError("invalid_input: duplicate solid identity")
+    coordinate_system = job.get("coordinate_system", "step_world")
+    if coordinate_system != "step_world":
+        raise ValueError("invalid_input: unsupported coordinate system")
     context = GeometryKernelContext([item["asset_path"] for item in items], ["solid"] * len(items), tolerance)
     started = time.perf_counter()
     records = []
@@ -129,7 +137,7 @@ def run(job):
             records.append({"solid_id": item["solid_id"], "status": "analysis_budget_exceeded",
                             "source": "derived_geometry", "unmet_conditions": ["face_count_over_256"]})
         else:
-            records.append({"solid_id": item["solid_id"], **_classify_straight_tube(solid, tolerance)})
+            records.append({"solid_id": item["solid_id"], **_classify_straight_tube(solid, tolerance, coordinate_system)})
     clearances = []
     target_id = job.get("target_tube_solid_id")
     if target_id is not None:
@@ -175,7 +183,7 @@ def run(job):
                                    "status": "failed", "diagnostic": type(exc).__name__,
                                    "distance_mm": None, "intersection_status": pair.get("intersection_status", "not_evaluated")})
     return {"status": "success", "records": records, "clearances": clearances,
-            "algorithm_version": "tube.geometry.p7c.v1" if target_id is not None else "tube.geometry.p7b.v1",
+            "algorithm_version": "tube.geometry.p7c.v2",
             "diagnostics": {"loaded_shapes": context.loaded_shapes, "load_ms": context.load_ms,
                             "compute_ms": round((time.perf_counter() - started) * 1000, 3)},
             "kernel": "OpenCascade", "kernel_version": str(getattr(Part, "OCC_VERSION", "unknown") or "unknown"),

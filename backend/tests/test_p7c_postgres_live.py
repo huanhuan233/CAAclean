@@ -64,6 +64,8 @@ Path(job['result_json_path']).write_text('{"status":"success"}',encoding='utf-8'
                                        component_type="test", cad_model_id=model_id, cad_revision_id=revision_id))
             await session.commit()
             service = TubeAnalysisService(session)
+            candidates = await service.list_candidates(build_id, settings)
+            assert {item["instance_id"] for item in candidates["candidates"]} == {"TUBE", "NEIGHBOR"}
             result = await service.analyze(build_id, settings, tube_instance_id="TUBE",
                                            target_instance_ids=["NEIGHBOR"], tolerance_mm=0.01)
             assert result["run"]["status"] == "complete"
@@ -76,6 +78,11 @@ Path(job['result_json_path']).write_text('{"status":"success"}',encoding='utf-8'
             assert gaps["total"] == 1
             assert gaps["records"][0]["distance_mm"] == pytest.approx(2)
             assert gaps["records"][0]["threshold_status"] == "not_provided"
+            solo = await service.analyze(build_id, settings, tube_instance_id="TUBE", target_instance_ids=[])
+            assert solo["run"]["self_analysis_status"] == "complete"
+            assert solo["run"]["installation_clearance_status"] == "not_requested"
+            solo_gaps = await service.list_results(build_id, settings, kind="tube_clearances", offset=0, limit=10)
+            assert solo_gaps["total"] == 0
     finally:
         async with sessions() as cleanup:
             await cleanup.execute(delete(CadNativeEvidence).where(CadNativeEvidence.revision_id == revision_id))

@@ -39,6 +39,7 @@ import AssemblyRelationDetail from './modules/AssemblyRelationDetail.vue';
 import TubeExplorer from './modules/TubeExplorer.vue';
 import TubeDetail from './modules/TubeDetail.vue';
 import { createTubePathOverlay } from './modules/tube-path-overlay';
+import { tubeResultCanOverlay } from './modules/tube-result-context';
 import { buildRecognizedFeatureItems } from './modules/recognized-feature-view-model';
 import { mbdAnnotationTitle, mbdNodeTitle } from './modules/mbd-view-model';
 import { adaptNativeTopologyRecord, adaptSelectionIndexRecord, buildTopologyItems, preferMappedTopologyFaces, topologyRecordKind } from './modules/topology-view-model';
@@ -299,7 +300,7 @@ const bomPanelMode = ref<'tree' | 'relations'>('tree');
 const assemblySelection = ref<{ group: 'relations' | 'connections' | 'booleans'; record: AssemblyEvidenceRecord } | null>(null);
 const tubeAvailable = ref(false);
 const tubeSelection = ref<{ group: 'native' | 'step' | 'clearance'; record: TubePathRecord | TubeClearanceRecord;
-  segment?: Record<string, unknown> } | null>(null);
+  segment?: Record<string, unknown>; displayCurrent: boolean } | null>(null);
 const featureSubTab = ref<'native' | 'recognized' | 'mbd' | 'tube'>('native');
 const transparent = ref(false);
 const isolated = ref(false);
@@ -1537,14 +1538,18 @@ function selectAssemblyRelation(group: 'relations' | 'connections' | 'booleans',
 }
 
 function selectTube(group: 'native' | 'step' | 'clearance', record: TubePathRecord | TubeClearanceRecord,
-                    segment?: Record<string, unknown>) {
+                    segment?: Record<string, unknown>, run?: Record<string, unknown> | null) {
   const id = group === 'clearance' ? (record as TubeClearanceRecord).clearance_id : (record as TubePathRecord).path_id;
   if (!id) return;
-  tubeSelection.value = { group, record, segment };
+  const displayCurrent = tubeResultCanOverlay(record, run || null, contract.value?.task_id,
+    geometrySnapshot.value?.geometry_snapshot_id);
+  tubeSelection.value = { group, record, segment, displayCurrent };
   selectTarget({ kind: group === 'clearance' ? 'tube_clearance' : segment ? 'tube_segment' : 'tube_path',
     id: segment ? `${id}:${segment.source_id || segment.order}` : id,
-    label: group === 'clearance' ? '导管安装间隙' : segment ? '中心线段' : '导管路径', raw: record }, 'tube');
+    label: group === 'clearance' ? '导管安装间隙' : segment ? '中心线段' : '导管路径',
+    raw: { ...record, display_current: displayCurrent } }, 'tube');
   detailsOpen.value = true;
+  if (!displayCurrent) return;
   if (group === 'clearance') {
     const witness = (record as TubeClearanceRecord).witnesses?.[0];
     if (witness?.tube?.length === 3 && witness.target?.length === 3) {
@@ -1559,6 +1564,18 @@ function selectTube(group: 'native' | 'step' | 'clearance', record: TubePathReco
   if (group === 'native' && sourceFormat.value !== 'CATPART') return;
   const color = getComputedStyle(document.documentElement).getPropertyValue('--el-color-primary').trim() || '#409eff';
   tubePathOverlay?.show(rawSegments, color);
+}
+
+function onTubeRecomputed() {
+  tubeSelection.value = null;
+  tubePathOverlay?.clear();
+  relationOverlay?.clear();
+  activeRelationPoints = null;
+  if (primarySelection.value?.source === 'tube') {
+    viewerSelection.value = clearViewerSelection();
+    selectionTarget.value = null;
+    applyVisualState();
+  }
 }
 
 async function loadSelectedProductProperties(nativeNodeId: string, selectionId: string) {
@@ -2639,7 +2656,7 @@ onBeforeUnmount(() => {
                 :selected-id="tubeSelection ? (tubeSelection.group === 'clearance'
                   ? (tubeSelection.record as TubeClearanceRecord).clearance_id
                   : (tubeSelection.record as TubePathRecord).path_id) : ''"
-                @availability="tubeAvailable = $event" @select="selectTube" />
+                @availability="tubeAvailable = $event" @select="selectTube" @recomputed="onTubeRecomputed" />
             </div>
 
             <TopologyExplorer v-if="activeTab === 'geometry'" :items="topologyExplorerModel.items"
@@ -2745,7 +2762,8 @@ onBeforeUnmount(() => {
         <AssemblyRelationDetail v-if="primarySelection?.kind === 'assembly_relation' && assemblySelection"
           :group="assemblySelection.group" :record="assemblySelection.record" />
         <TubeDetail v-else-if="primarySelection?.source === 'tube' && tubeSelection"
-          :group="tubeSelection.group" :record="tubeSelection.record" :segment="tubeSelection.segment" />
+          :group="tubeSelection.group" :record="tubeSelection.record" :segment="tubeSelection.segment"
+          :display-current="tubeSelection.displayCurrent" />
         <ObjectDetailPanel v-else
           :contract="contract"
           :source-format="sourceFormat"

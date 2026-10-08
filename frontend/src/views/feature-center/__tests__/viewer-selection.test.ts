@@ -260,3 +260,13 @@ test('assembly evidence without an instance display crosswalk never highlights a
   assert.equal(selection.context.mappingStatus, 'unavailable');
   assert.deepEqual(selection.context.primitiveIds, []);
 });
+
+test('stale tube result does not highlight a solid in the current viewer', () => {
+  const selection = resolveViewerSelection({ kind: 'tube_path', id: 'step:T', source: 'tube',
+    raw: { source: 'derived_geometry', solid_id: 'T', display_current: false } }, {
+    selectionIndex: { topology: { solids: { T: { faces: ['FACE-1'] } } } } as never,
+    faceMeshMap, featureMeshMap
+  });
+  assert.deepEqual(selection.context.primitiveIds, []);
+  assert.equal(selection.context.mappingStatus, 'unavailable');
+});

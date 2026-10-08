@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import type { TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
 
 const props = defineProps<{ group: 'native' | 'step' | 'clearance'; record: TubePathRecord | TubeClearanceRecord;
-  segment?: Record<string, unknown> | null }>();
+  segment?: Record<string, unknown> | null; displayCurrent?: boolean }>();
 const path = computed<Record<string, unknown>>(() => props.group !== 'clearance'
   ? (props.record as TubePathRecord).path || {} : {});
 const section = computed<Record<string, unknown>>(() => props.group !== 'clearance'
@@ -62,7 +62,8 @@ const rows = computed(() => {
 
 <template>
   <section class="tube-detail">
-    <header><h3>{{ title }}</h3><small>当前 Revision · {{ isClearance ? '静态安装几何' : '导管工程信息' }}</small></header>
+    <header><h3>{{ title }}</h3><small>{{ displayCurrent ? '当前几何' : '历史或未核验显示版本' }} · {{ isClearance ? '静态安装几何' : '导管工程信息' }}</small></header>
+    <p v-if="!displayCurrent" class="notice">结果数值可查看；当前模型的几何版本未核验一致，已停用三维定位、路径及见证点叠加。</p>
     <dl><template v-for="[label, value] in rows" :key="String(label)">
       <template v-if="value !== undefined && value !== null && value !== ''"><dt>{{ label }}</dt><dd>{{ value }}</dd></template>
     </template></dl>

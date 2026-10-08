@@ -20,7 +20,26 @@ from app.measurement.geometry_snapshot import GeometryReferenceError, GeometrySn
 from app.measurement.repository import MeasurementRepository
 
 
-ALGORITHM_VERSION = "tube.geometry.p7c.v1"
+ALGORITHM_VERSION = "tube.geometry.p7c.v2"
+
+
+def validate_tube_result_scope(result: dict, solids: list, tube_solid_id: str) -> tuple[dict[str, dict], list[dict]]:
+    """Reject incomplete or duplicated kernel identities before publishing any result."""
+    expected = {item.solid_id for item in solids}
+    records = result.get("records")
+    clearances = result.get("clearances")
+    if not isinstance(records, list) or not isinstance(clearances, list) or result.get("algorithm_version") != ALGORITHM_VERSION:
+        raise AssemblyContextError("geometry_result_invalid: tube result scope or version mismatch")
+    identities = [row.get("solid_id") for row in records if isinstance(row, dict)]
+    if len(identities) != len(records) or len(identities) != len(expected) or set(identities) != expected:
+        raise AssemblyContextError("geometry_result_invalid: duplicate, missing or extra solid record")
+    targets = expected - {tube_solid_id}
+    pairs = [(row.get("tube_solid_id"), row.get("target_solid_id"))
+             for row in clearances if isinstance(row, dict)]
+    if (len(pairs) != len(clearances) or len(pairs) != len(targets) or
+        set(pairs) != {(tube_solid_id, target) for target in targets}):
+        raise AssemblyContextError("geometry_result_invalid: duplicate, missing or extra target clearance")
+    return dict(zip(identities, records)), clearances
 
 
 class TubeAnalysisService:
@@ -35,13 +54,30 @@ class TubeAnalysisService:
             raise LookupError("component build or revision unavailable")
         return context[1]
 
+    async def list_candidates(self, build_id: UUID, settings: Settings) -> dict:
+        revision = await self._context(build_id)
+        snapshot = GeometrySnapshot.from_bundle(
+            Path(settings.cad_work_dir) / str(revision.id) / "feature-center", str(revision.id))
+        candidate_ids = {str(asset.get("source_object_id")) for asset in snapshot.assets.values()
+                         if asset.get("kind") == "solid" and asset.get("source_object_id") and
+                         asset.get("coordinate_convention") == "world_placed_step"}
+        if not candidate_ids:
+            raise AssemblyContextError("instance_geometry_mapping_unavailable: no world-placed solid candidates")
+        solids = step_world_solids(snapshot, candidate_ids, minimum_instances=1)
+        if len(solids) > 64:
+            raise AssemblyContextError("analysis_budget_exceeded: more than 64 scoped solids")
+        return {"revision_id": str(revision.id), "geometry_snapshot_id": snapshot.snapshot_id,
+                "candidates": [{"instance_id": item.instance_id, "solid_id": item.solid_id,
+                                "coordinate_system": "step_world"} for item in solids]}
+
     async def analyze(self, build_id: UUID, settings: Settings, *, tube_instance_id: str,
-                      target_instance_ids: list[str], tolerance_mm: float = 0.01) -> dict:
+                      target_instance_ids: list[str] | None = None, tolerance_mm: float = 0.01) -> dict:
+        target_instance_ids = target_instance_ids or []
         if (not tube_instance_id or len(tube_instance_id) > 128 or
-            not target_instance_ids or len(target_instance_ids) > 31 or
+            len(target_instance_ids) > 31 or
             any(not value or len(value) > 128 or value == tube_instance_id for value in target_instance_ids) or
             len(set(target_instance_ids)) != len(target_instance_ids)):
-            raise AssemblyContextError("invalid_input: one tube and 1-31 distinct targets required")
+            raise AssemblyContextError("invalid_input: one tube and 0-31 distinct targets required")
         if not 0 < tolerance_mm <= settings.geometry_tolerance_max_mm:
             raise AssemblyContextError("invalid_input: tolerance outside geometry budget")
         revision = await self._context(build_id)
@@ -49,12 +85,13 @@ class TubeAnalysisService:
         snapshot = GeometrySnapshot.from_bundle(bundle, str(revision.id))
         scope_diagnostics: list[dict[str, str]] = []
         solids = step_world_solids(snapshot, {tube_instance_id, *target_instance_ids},
-                                   diagnostics=scope_diagnostics)
+                                   diagnostics=scope_diagnostics, minimum_instances=1 if not target_instance_ids else 2)
         tube_solids = [item for item in solids if item.instance_id == tube_instance_id]
         if len(tube_solids) != 1:
             raise AssemblyContextError("unsupported: tube requires one exactly mapped Solid")
         job = {"solids": [{"solid_id": item.solid_id, "asset_path": item.asset_path} for item in solids],
-               "target_tube_solid_id": tube_solids[0].solid_id, "tolerance_mm": tolerance_mm}
+               "target_tube_solid_id": tube_solids[0].solid_id, "tolerance_mm": tolerance_mm,
+               "coordinate_system": "step_world"}
         try:
             with tempfile.TemporaryDirectory(prefix="tube-p7c-", dir=bundle.parent) as work:
                 result = await run_freecad_job(Path(settings.cad_script_dir) / "tube_geometry.py",
@@ -64,12 +101,7 @@ class TubeAnalysisService:
         if result.get("status") != "success":
             raise AssemblyContextError(str(result.get("status") or "failed") + ": " +
                                        str(result.get("diagnostic") or "tube kernel failed"))
-        records = result.get("records")
-        clearances = result.get("clearances")
-        if (not isinstance(records, list) or len(records) != len(solids) or
-            not isinstance(clearances, list) or len(clearances) != len(solids) - 1 or
-            result.get("algorithm_version") != ALGORITHM_VERSION):
-            raise AssemblyContextError("geometry_result_invalid: tube result scope or version mismatch")
+        records_by_solid, clearances = validate_tube_result_scope(result, solids, tube_solids[0].solid_id)
         config = {"tube_instance_id": tube_instance_id, "target_instance_ids": sorted(target_instance_ids),
                   "tolerance_mm": tolerance_mm,
                   "assets": {item.solid_id: item.asset_sha256 for item in solids}}
@@ -79,8 +111,8 @@ class TubeAnalysisService:
         common = {"result_version": version, "revision_id": str(revision.id),
                   "geometry_snapshot_id": snapshot.snapshot_id, "algorithm_version": ALGORITHM_VERSION,
                   "source": "derived_geometry", "coordinate_system": "step_world", "tolerance_mm": tolerance_mm}
-        stored_records = [{**record, **common, "instance_id": solids[index].instance_id,
-                           "path_id": "step:" + record["solid_id"]} for index, record in enumerate(records)]
+        stored_records = [{**records_by_solid[item.solid_id], **common, "instance_id": item.instance_id,
+                           "path_id": "step:" + item.solid_id} for item in solids]
         by_solid = {item.solid_id: item.instance_id for item in solids}
         stored_clearances = [{**row, **common, "tube_instance_id": tube_instance_id,
                               "target_instance_id": by_solid[row["target_solid_id"]],
@@ -90,7 +122,10 @@ class TubeAnalysisService:
         unknown = sum(row.get("status") == "evaluated" and row.get("intersection_status") in
                       {"boolean_failed", "indeterminate_zero_distance", "numerically_uncertain_volume"}
                       for row in clearances)
-        run = {**common, "config": config, "status": "complete" if not failed and not unknown else "partial",
+        own_status = "complete" if records_by_solid[tube_solids[0].solid_id].get("status") == "confirmed_straight_hollow_tube" else "partial"
+        clearance_status = "not_requested" if not target_instance_ids else "complete" if not failed and not unknown else "partial"
+        run = {**common, "config": config, "status": "complete" if own_status == "complete" and clearance_status in {"complete", "not_requested"} else "partial",
+               "self_analysis_status": own_status, "installation_clearance_status": clearance_status,
                "execution_status": "finished", "candidate_pair_count": len(clearances),
                "successful_pair_count": len(clearances) - failed - unknown,
                "failed_pair_count": failed, "unknown_pair_count": unknown,

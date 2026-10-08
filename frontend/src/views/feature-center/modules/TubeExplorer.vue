@@ -1,22 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
-import { fetchTubeClearances, fetchTubeNativePaths, fetchTubeStepPaths } from '@/service/api';
+import { analyzeTube, fetchTubeCandidates, fetchTubeClearances, fetchTubeNativePaths, fetchTubeStepPaths } from '@/service/api';
 import type { TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
 
 type Group = 'native' | 'step' | 'clearance';
 type Row = TubePathRecord | TubeClearanceRecord;
 const props = defineProps<{ buildId: string; selectedId: string }>();
 const emit = defineEmits<{
-  select: [group: Group, record: Row, segment?: Record<string, unknown>];
+  select: [group: Group, record: Row, segment?: Record<string, unknown>, run?: Record<string, unknown> | null];
   availability: [available: boolean];
+  recomputed: [];
 }>();
 const group = ref<Group>('native');
 const labels: Record<Group, string> = { native: '原生路径', step: '几何导管', clearance: '安装间隙' };
-const state = reactive<Record<Group, { rows: Row[]; total: number; loading: boolean; error: string }>>({
-  native: { rows: [], total: 0, loading: false, error: '' },
-  step: { rows: [], total: 0, loading: false, error: '' },
-  clearance: { rows: [], total: 0, loading: false, error: '' }
+const state = reactive<Record<Group, { rows: Row[]; total: number; loading: boolean; error: string; run: Record<string, unknown> | null }>>({
+  native: { rows: [], total: 0, loading: false, error: '', run: null },
+  step: { rows: [], total: 0, loading: false, error: '', run: null },
+  clearance: { rows: [], total: 0, loading: false, error: '', run: null }
 });
+const candidates = ref<Array<{ instance_id: string; solid_id: string }>>([]);
+const tubeId = ref('');
+const targetIds = ref<string[]>([]);
+const analyzing = ref(false);
+const analyzeError = ref('');
 let generation = 0;
 let controller: AbortController | null = null;
 const current = computed(() => state[group.value]);
@@ -40,18 +46,42 @@ async function load(kind: Group, reset = false) {
   }
   state[kind].rows = [...state[kind].rows, ...response.data.records];
   state[kind].total = response.data.total;
+  state[kind].run = 'run' in response.data ? response.data.run || null : null;
   emit('availability', Object.values(state).some(item => item.total > 0));
 }
 
 watch(() => props.buildId, async () => {
   controller?.abort(); controller = new AbortController(); generation += 1;
-  (Object.keys(state) as Group[]).forEach(kind => { state[kind].rows = []; state[kind].total = 0; state[kind].error = ''; state[kind].loading = false; });
+  (Object.keys(state) as Group[]).forEach(kind => { state[kind].rows = []; state[kind].total = 0; state[kind].error = ''; state[kind].loading = false; state[kind].run = null; });
+  candidates.value = []; tubeId.value = ''; targetIds.value = []; analyzeError.value = '';
   emit('availability', false);
   if (!props.buildId) return;
+  const candidateResponse = await fetchTubeCandidates(props.buildId, { signal: controller.signal, silent: true });
+  if (candidateResponse.data && !candidateResponse.error) {
+    candidates.value = candidateResponse.data.candidates;
+    tubeId.value = candidates.value[0]?.instance_id || '';
+  }
   await Promise.all((['native', 'step', 'clearance'] as Group[]).map(kind => load(kind)));
   group.value = state.native.total ? 'native' : state.step.total ? 'step' : 'clearance';
+  emit('availability', candidates.value.length > 0 || Object.values(state).some(item => item.total > 0));
 }, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
+
+async function runAnalysis() {
+  if (!props.buildId || !tubeId.value || analyzing.value) return;
+  analyzing.value = true; analyzeError.value = '';
+  const token = generation;
+  const response = await analyzeTube(props.buildId, tubeId.value, targetIds.value, { silent: true });
+  if (token !== generation) return;
+  analyzing.value = false;
+  if (response.error || !response.data) {
+    analyzeError.value = '导管分析失败。请核对选中几何及后端诊断后重试。';
+    return;
+  }
+  emit('recomputed');
+  await Promise.all((['step', 'clearance'] as Group[]).map(kind => load(kind, true)));
+  group.value = 'step';
+}
 
 function isClearance(record: Row): record is TubeClearanceRecord {
   return typeof (record as TubeClearanceRecord).clearance_id === 'string';
@@ -81,6 +111,17 @@ function segments(record: Row): Array<Record<string, unknown>> {
       <button v-for="item in (['native', 'step', 'clearance'] as const)" :key="item" type="button"
         :class="{ active: group === item }" @click="group = item">{{ labels[item] }}</button>
     </div>
+    <div v-if="candidates.length" class="tube-analyze">
+      <select v-model="tubeId" aria-label="选择导管对象"><option v-for="item in candidates" :key="item.solid_id"
+        :value="item.instance_id">{{ item.instance_id }} · {{ item.solid_id }}</option></select>
+      <select v-model="targetIds" multiple aria-label="安装间隙目标对象（可不选）">
+        <option v-for="item in candidates.filter(candidate => candidate.instance_id !== tubeId)" :key="item.solid_id"
+          :value="item.instance_id">{{ item.instance_id }}</option>
+      </select>
+      <button type="button" :disabled="analyzing || !tubeId" @click="runAnalysis">{{ analyzing ? '分析中…' : '分析 / 重算' }}</button>
+      <small>不选目标时只分析导管自身；安装间隙需选择目标。</small>
+      <small v-if="analyzeError" role="alert">{{ analyzeError }}</small>
+    </div>
     <div class="tube-list">
       <p v-if="current.loading && !current.rows.length" class="tube-state">正在读取{{ labels[group] }}…</p>
       <p v-else-if="current.error && !current.rows.length" class="tube-state">{{ current.error }}
@@ -89,13 +130,13 @@ function segments(record: Row): Array<Record<string, unknown>> {
       <div v-for="record in current.rows" :key="`${group}:${rowId(record)}`" class="tube-row"
         :class="{ selected: selectedId === rowId(record) }">
         <button type="button" class="tube-primary" :aria-label="`查看${title(record)} ${rowId(record)}`"
-          @click="emit('select', group, record)">
+          @click="emit('select', group, record, undefined, state[group].run)">
           <strong>{{ title(record) }}</strong><small>{{ subtitle(record) }}</small>
           <small v-if="isClearance(record)">{{ typeof record.distance_mm === 'number' ? mm(record.distance_mm) : '距离未测得' }}</small>
         </button>
         <div v-if="segments(record).length" class="tube-segments">
           <button v-for="segment in segments(record)" :key="String(segment.source_id)" type="button"
-            @click="emit('select', group, record, segment)">
+            @click="emit('select', group, record, segment, state[group].run)">
             {{ segment.kind === 'arc' ? '弯段' : '直段' }} {{ segment.order }} · {{ mm(segment.length_mm) }}
           </button>
         </div>
@@ -112,6 +153,10 @@ function segments(record: Row): Array<Record<string, unknown>> {
 .tube-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 8px; }
 .tube-groups button { min-width: 0; padding: 7px 2px; border-radius: 5px; color: var(--el-text-color-regular); font-size: 12px; }
 .tube-groups button.active { color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.tube-analyze { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 8px; border-bottom: 1px solid var(--el-border-color-light); }
+.tube-analyze select { min-width: 0; max-width: 100%; flex: 1 1 100px; font-size: 11px; }
+.tube-analyze button { color: var(--el-color-primary); font-size: 12px; }
+.tube-analyze small { flex: 1 1 100%; color: var(--el-text-color-secondary); font-size: 11px; }
 .tube-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
 .tube-row { margin-bottom: 6px; border: 1px solid var(--el-border-color-light); border-radius: 6px; }
 .tube-row:hover { background: var(--el-fill-color-light); }

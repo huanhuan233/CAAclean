@@ -49,7 +49,23 @@ Path(job['result_json_path']).write_text('{"status":"success"}', encoding='utf-8
     assert tube["section"]["wall_thickness_mm"] == pytest.approx(2)
     assert tube["path"]["length_mm"] == pytest.approx(80)
     assert len(tube["ends"]) == 2 and all(end["kind"] == "flat" for end in tube["ends"])
+    assert tube["ends"][0]["role"] == "A"
+    assert tube["ends"][0]["station_s_mm"] == pytest.approx(0)
+    assert tube["ends"][1]["role"] == "B"
+    assert tube["ends"][1]["station_s_mm"] == pytest.approx(80)
+    assert tube["path"]["coordinate_system"] == "step_world"
     assert by_id["rotated"]["status"] == "confirmed_straight_hollow_tube"
     assert by_id["rotated"]["path"]["length_mm"] == pytest.approx(80)
+    assert [end["role"] for end in by_id["rotated"]["ends"]] == ["A", "B"]
+    assert [end["station_s_mm"] for end in by_id["rotated"]["ends"]] == pytest.approx([0, 80])
     assert by_id["rod"]["status"] != "confirmed_straight_hollow_tube"
     assert by_id["block"]["status"] != "confirmed_straight_hollow_tube"
+
+    solo = await run_freecad_job(Path(settings.cad_script_dir) / "tube_geometry.py",
+                                 {"solids": [{"solid_id": "tube", "asset_path": str(tmp_path / "tube.brep")}],
+                                  "target_tube_solid_id": "tube", "tolerance_mm": 0.01,
+                                  "coordinate_system": "step_world"},
+                                 tmp_path / "solo-job", settings)
+    assert solo["status"] == "success"
+    assert solo["clearances"] == []
+    assert solo["algorithm_version"] == "tube.geometry.p7c.v2"

@@ -47,7 +47,8 @@ def resolve_occurrence_matrix(occurrence: dict, parent_world: list[list[float]] 
 
 
 def step_world_solids(snapshot: GeometrySnapshot, selected_ids: set[str] | None = None,
-                      diagnostics: list[dict[str, str]] | None = None) -> list[InstanceSolid]:
+                      diagnostics: list[dict[str, str]] | None = None,
+                      minimum_instances: int = 2) -> list[InstanceSolid]:
     """STEP imported objects are already world placed; CATProduct occurrences are not inferred."""
     records: list[InstanceSolid] = []
     for solid_id, asset in sorted(snapshot.assets.items()):
@@ -68,8 +69,11 @@ def step_world_solids(snapshot: GeometrySnapshot, selected_ids: set[str] | None 
                                      str(asset["sha256"]), "world_placed_step"))
     if selected_ids is not None and selected_ids - {record.instance_id for record in records}:
         raise AssemblyContextError("instance_geometry_mapping_unavailable: selected instance has no exact solid")
-    if len({record.instance_id for record in records}) < 2:
-        raise AssemblyContextError("instance_geometry_mapping_unavailable: at least two distinct imported objects required")
+    if minimum_instances not in {1, 2}:
+        raise AssemblyContextError("invalid_input: minimum instance scope")
+    if len({record.instance_id for record in records}) < minimum_instances:
+        raise AssemblyContextError(
+            f"instance_geometry_mapping_unavailable: at least {minimum_instances} distinct imported objects required")
     if len(records) > 64:
         raise AssemblyContextError("analysis_budget_exceeded: more than 64 scoped solids")
     return records
