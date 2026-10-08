@@ -20,17 +20,29 @@ struct TubeStep {
   TubeSegment segment;
   bool reversed, has_rotation;
   double bend_deg, rotation_deg, straight_before_mm;
+  double s0_mm, s1_mm;
+  TubeVector tangent_start, tangent_end, bend_center_mm, bend_normal;
   // 首弯没有基准平面，转角必须保持未定义。
-  TubeStep():reversed(false),has_rotation(false),bend_deg(0),rotation_deg(0),straight_before_mm(0) {}
+  TubeStep():reversed(false),has_rotation(false),bend_deg(0),rotation_deg(0),straight_before_mm(0),s0_mm(0),s1_mm(0) {}
+};
+struct TubeGeometryGroup {
+  std::string kind;
+  std::vector<std::string> source_ids;
+  TubeVector start, end, center, normal;
+  double s0_mm, s1_mm, length_mm, radius_mm, bend_deg;
+  TubeGeometryGroup():s0_mm(0),s1_mm(0),length_mm(0),radius_mm(0),bend_deg(0) {}
 };
 struct TubePathResult {
   std::string status;
   std::vector<TubeStep> steps;
+  std::vector<TubeGeometryGroup> groups;
+  TubeVector terminal_a, terminal_b;
+  bool reverse_direction;
   double developed_length_mm, trailing_straight_mm;
   // 失败时不返回可被误用的半份工艺表。
-  TubePathResult():status("unavailable"),developed_length_mm(0),trailing_straight_mm(0) {}
+  TubePathResult():status("unavailable"),reverse_direction(false),developed_length_mm(0),trailing_straight_mm(0) {}
 };
 // 验证并排序单条开口、相切的直线圆弧链；方向从字典序较小的端点起算。
-TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments, double tolerance_mm=0.001);
+TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments, double tolerance_mm=0.001, bool reverse_direction=false);
 }
 #endif

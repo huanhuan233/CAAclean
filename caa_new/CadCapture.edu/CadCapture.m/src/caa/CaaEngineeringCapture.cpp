@@ -227,8 +227,10 @@ public:
     const char* api="AnalyzeTubePath(CATIMeasurableCurve;CATIMeasurableCircle)";
     Put(subject,"tube_path_status",evidence::Text(result.status,api),"tube_process");
     if(result.status!="available") return;
-    std::ostringstream out;out<<"{\"schema_version\":\"tube_geometry_v1\",\"centerline_id\":"<<JsonQuote(center)
-      <<",\"direction\":\"lexicographically_smaller_terminal_to_other\",\"rotation_convention\":\"right_hand_about_incoming_tangent_between_bend_normals\","
+    Put(subject,"tube_object_status",evidence::Text("native_sweep_path_candidate;hollow_section_unverified",api),"tube_process");
+    std::ostringstream out;out<<"{\"schema_version\":\"tube_geometry_v2\",\"centerline_id\":"<<JsonQuote(center)
+      <<",\"direction\":\"lexicographically_smaller_terminal_to_other\",\"reverse_direction\":false,\"terminal_a_mm\":"<<PointJson(result.terminal_a)
+      <<",\"terminal_b_mm\":"<<PointJson(result.terminal_b)<<",\"coordinate_system\":\"part_definition\",\"rotation_convention\":\"right_hand_about_incoming_tangent_between_bend_normals\"," 
       <<"\"sequence_kind\":\"geometric_traversal_not_machine_operations\",\"machine_compensation_status\":\"not_provided\","
       <<"\"length_unit\":\"mm\",\"angle_unit\":\"deg\",\"developed_length_mm\":"<<evidence::Number(result.developed_length_mm)
       <<",\"trailing_straight_mm\":"<<evidence::Number(result.trailing_straight_mm)<<",\"segments\":[";
@@ -237,17 +239,34 @@ public:
       const TubeStep& s=result.steps[i];if(i) out<<",";
       out<<"{\"order\":"<<i+1<<",\"source_id\":"<<JsonQuote(s.segment.source_id)<<",\"kind\":"<<JsonQuote(s.segment.kind)
         <<",\"reversed\":"<<(s.reversed?"true":"false")<<",\"start_mm\":"<<PointJson(s.segment.start)<<",\"middle_mm\":"<<PointJson(s.segment.middle)
-        <<",\"end_mm\":"<<PointJson(s.segment.end)<<",\"length_mm\":"<<evidence::Number(s.segment.length_mm);
+        <<",\"end_mm\":"<<PointJson(s.segment.end)<<",\"length_mm\":"<<evidence::Number(s.segment.length_mm)
+        <<",\"s0_mm\":"<<evidence::Number(s.s0_mm)<<",\"s1_mm\":"<<evidence::Number(s.s1_mm)
+        <<",\"tangent_start\":"<<PointJson(s.tangent_start)<<",\"tangent_end\":"<<PointJson(s.tangent_end);
       if(s.segment.kind=="arc") {
         ++bends;out<<",\"bend_order\":"<<bends<<",\"radius_mm\":"<<evidence::Number(s.segment.radius_mm)<<",\"bend_deg\":"<<evidence::Number(s.bend_deg)
+          <<",\"center_mm\":"<<PointJson(s.bend_center_mm)<<",\"plane_normal\":"<<PointJson(s.bend_normal)
           <<",\"straight_before_mm\":"<<evidence::Number(s.straight_before_mm)<<",\"rotation_deg\":"<<(s.has_rotation?evidence::Number(s.rotation_deg):"null");
       }
+      out<<"}";
+    }
+    out<<"],\"geometry_groups\":[";
+    for(size_t i=0;i<result.groups.size();++i) {
+      const TubeGeometryGroup& group=result.groups[i];if(i) out<<",";
+      out<<"{\"order\":"<<i+1<<",\"kind\":"<<JsonQuote(group.kind)<<",\"source_ids\":[";
+      for(size_t j=0;j<group.source_ids.size();++j) { if(j) out<<",";out<<JsonQuote(group.source_ids[j]); }
+      out<<"],\"start_mm\":"<<PointJson(group.start)<<",\"end_mm\":"<<PointJson(group.end)
+         <<",\"s0_mm\":"<<evidence::Number(group.s0_mm)<<",\"s1_mm\":"<<evidence::Number(group.s1_mm)
+         <<",\"length_mm\":"<<evidence::Number(group.length_mm);
+      if(group.kind=="arc") out<<",\"center_mm\":"<<PointJson(group.center)<<",\"plane_normal\":"<<PointJson(group.normal)
+                                <<",\"radius_mm\":"<<evidence::Number(group.radius_mm)<<",\"bend_deg\":"<<evidence::Number(group.bend_deg);
       out<<"}";
     }
     out<<"]}";
     PropertyFact fact=evidence::Text(out.str(),api);fact.value_type="json";
     Put(subject,"tube_bending_geometry",fact,"tube_process");
-    Number(subject,"tube_bend_count",bends,"1",api);
+    int bend_groups=0;
+    for(size_t i=0;i<result.groups.size();++i) if(result.groups[i].kind=="arc") ++bend_groups;
+    Number(subject,"tube_bend_count",bend_groups,"1",api);
     Number(subject,"tube_developed_length_mm",result.developed_length_mm,"mm",api);
   }
   // 截面是独立证据通道，读取失败不阻止中心线的几何分析。

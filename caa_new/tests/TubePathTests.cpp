@@ -27,6 +27,15 @@ int main() {
   assert(std::fabs(r.steps[1].bend_deg-90)<1e-8);assert(!r.steps[1].has_rotation);
   assert(std::fabs(r.developed_length_mm-(20+5*3.14159265358979323846))<1e-8);
   assert(r.steps[1].straight_before_mm==10&&r.trailing_straight_mm==10);
+  assert(std::fabs(r.steps[1].s0_mm-10)<1e-8);
+  assert(std::fabs(r.steps[1].s1_mm-(10+5*3.14159265358979323846))<1e-8);
+  assert(std::fabs(r.steps[1].bend_center_mm.x-10)<1e-8);
+  assert(std::fabs(r.steps[1].bend_center_mm.y-10)<1e-8);
+  assert(r.groups.size()==3&&r.groups[1].source_ids[0]=="bend");
+  TubePathResult reverse=AnalyzeTubePath(s,0.001,true);
+  assert(reverse.status=="available"&&reverse.steps[0].segment.source_id=="out");
+  assert(reverse.steps[1].bend_deg==r.steps[1].bend_deg);
+  assert(reverse.steps[1].straight_before_mm==10);
   std::swap(s[1].start,s[1].end);r=AnalyzeTubePath(s);assert(r.status=="available"&&r.steps[1].reversed);
   TubeSegment b;b.source_id="bend2";b.kind="arc";b.start=TubeVector(20,20,0);b.end=TubeVector(20,30,10);
   b.middle=TubeVector(20,20+std::sqrt(50.0),10-std::sqrt(50.0));b.radius_mm=10;b.length_mm=5*3.14159265358979323846;
@@ -41,6 +50,9 @@ int main() {
   s=Sample();s[0].source_id=s[1].source_id;assert(AnalyzeTubePath(s).status=="duplicate_or_missing_source");
   s=Sample();s[0].middle.z=1;assert(AnalyzeTubePath(s).status=="inconsistent_line_measurement");
   s=Sample();assert(AnalyzeTubePath(s,0).status=="invalid_tolerance");
+  s=Sample();s.push_back(Line("out2",TubeVector(20,20,0),TubeVector(20,30,0)));
+  r=AnalyzeTubePath(s);assert(r.status=="available"&&r.groups.size()==3);
+  assert(r.groups[2].source_ids.size()==2&&std::fabs(r.groups[2].length_mm-20)<1e-8);
   s=Sample();s[1].kind="spline";assert(AnalyzeTubePath(s).status=="unsupported_curve");
   // 大于半圆的弧不能被误算成补角，单弧反向仍应保持实际弧长。
   TubeSegment major;major.source_id="major";major.kind="arc";major.radius_mm=10;

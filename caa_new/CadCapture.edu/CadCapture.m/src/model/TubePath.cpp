@@ -32,7 +32,7 @@ TubePathResult Failure(const char* status) { TubePathResult r; r.status=status; 
 // 按坐标选择稳定的起点，独立于树节点名称和枚举顺序。
 bool Less(const TubeVector& a,const TubeVector& b) { return a.x!=b.x?a.x<b.x:(a.y!=b.y?a.y<b.y:a.z<b.z); }
 // 从圆弧三点恢复圆心并验证实测半径、弧长和弧方向。
-bool ArcFrame(const TubeSegment& s,double tol,TubeVector& normal,TubeVector& incoming,TubeVector& outgoing,double& angle)
+bool ArcFrame(const TubeSegment& s,double tol,TubeVector& center,TubeVector& normal,TubeVector& incoming,TubeVector& outgoing,double& angle)
 {
   TubeVector a=Sub(s.middle,s.start), b=Sub(s.end,s.start), cross=Cross(a,b);
   double c2=Dot(cross,cross);
@@ -43,6 +43,7 @@ bool ArcFrame(const TubeSegment& s,double tol,TubeVector& normal,TubeVector& inc
                     (Dot(a,a)*ca.z+Dot(b,b)*cb.z)/(2*c2));
   double radius=Norm(offset);
   if(!Finite(radius)||std::fabs(radius-s.radius_mm)>std::max(tol, s.radius_mm*1e-5)) return false;
+  center=TubeVector(s.start.x+offset.x,s.start.y+offset.y,s.start.z+offset.z);
   normal=Unit(cross);
   TubeVector rs(-offset.x,-offset.y,-offset.z);
   TubeVector re=Sub(b,offset);
@@ -54,7 +55,7 @@ bool ArcFrame(const TubeSegment& s,double tol,TubeVector& normal,TubeVector& inc
 }
 }
 // 仅由端点连通性生成几何遍历顺序，所有异常链整体拒绝计算。
-TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double tolerance)
+TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double tolerance,bool reverse_direction)
 {
   if(segments.empty()) return Failure("empty_path");
   if(!Finite(tolerance)||tolerance<=0) return Failure("invalid_tolerance");
@@ -78,7 +79,10 @@ TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double t
   }
   if(terminals.size()!=2) return Failure(terminals.empty()?"closed_path":"disconnected_path");
   int cursor=Less(ends[terminals[0]],ends[terminals[1]])?terminals[0]:terminals[1];
+  if(reverse_direction) cursor=cursor==terminals[0]?terminals[1]:terminals[0];
   TubePathResult result; std::set<int> visited; TubeVector previous_out, previous_normal;
+  result.terminal_a=ends[cursor];result.terminal_b=ends[cursor==terminals[0]?terminals[1]:terminals[0]];
+  result.reverse_direction=reverse_direction;
   bool have_previous=false, have_bend=false; double straight=0;
   while(cursor>=0) {
     int index=cursor/2;
@@ -94,7 +98,8 @@ TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double t
       in=out=Unit(d);straight+=step.segment.length_mm;
     } else {
       double angle=0;
-      if(!ArcFrame(step.segment,tolerance,normal,in,out,angle)) return Failure("inconsistent_arc_measurement");
+      if(!ArcFrame(step.segment,tolerance,step.bend_center_mm,normal,in,out,angle)) return Failure("inconsistent_arc_measurement");
+      step.bend_normal=normal;
       step.bend_deg=angle*180/pi;step.straight_before_mm=straight;straight=0;
       if(have_bend) {
         step.has_rotation=true;
@@ -103,11 +108,39 @@ TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double t
       previous_normal=normal;have_bend=true;
     }
     if(have_previous&&Dot(previous_out,in)<std::cos(0.1*pi/180)) return Failure("non_tangent_path");
+    step.tangent_start=in;step.tangent_end=out;
+    step.s0_mm=result.developed_length_mm;step.s1_mm=step.s0_mm+step.segment.length_mm;
     previous_out=out;have_previous=true;
     result.developed_length_mm+=step.segment.length_mm;result.steps.push_back(step);
     cursor=mate[cursor^1];
   }
   if(visited.size()!=n) return Failure("disconnected_path");
-  result.trailing_straight_mm=straight;result.status="available";return result;
+  result.trailing_straight_mm=straight;
+  for(size_t i=0;i<result.steps.size();++i) {
+    const TubeStep& step=result.steps[i];
+    bool merge=false;
+    if(!result.groups.empty()) {
+      TubeGeometryGroup& last=result.groups.back();
+      if(last.kind==step.segment.kind&&Norm(Sub(last.end,step.segment.start))<=tolerance) {
+        if(last.kind=="line") {
+          TubeVector old_direction=Unit(Sub(last.end,last.start));
+          merge=Dot(old_direction,step.tangent_start)>std::cos(0.1*pi/180);
+        } else {
+          merge=Norm(Sub(last.center,step.bend_center_mm))<=tolerance&&
+                std::fabs(last.radius_mm-step.segment.radius_mm)<=std::max(tolerance,last.radius_mm*1e-5)&&
+                Dot(last.normal,step.bend_normal)>std::cos(0.1*pi/180);
+        }
+      }
+    }
+    if(!merge) {
+      TubeGeometryGroup group;group.kind=step.segment.kind;group.start=step.segment.start;
+      group.s0_mm=step.s0_mm;group.center=step.bend_center_mm;group.normal=step.bend_normal;
+      group.radius_mm=step.segment.radius_mm;result.groups.push_back(group);
+    }
+    TubeGeometryGroup& group=result.groups.back();
+    group.source_ids.push_back(step.segment.source_id);group.end=step.segment.end;
+    group.s1_mm=step.s1_mm;group.length_mm+=step.segment.length_mm;group.bend_deg+=step.bend_deg;
+  }
+  result.status="available";return result;
 }
 }
