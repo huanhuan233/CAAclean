@@ -2725,6 +2725,10 @@ onBeforeUnmount(() => {
               <button type="button" :class="{ active: bomPanelMode === 'tree' }" @click="bomPanelMode = 'tree'">BOM</button>
               <button type="button" :class="{ active: bomPanelMode === 'relations' }" @click="bomPanelMode = 'relations'">装配关系</button>
             </div>
+            <p v-if="activeTab === 'bom' && bomPanelMode === 'tree' && contract?.bom.hierarchy_status === 'not_preserved'"
+              class="bom-hierarchy-notice">
+              当前 STEP 的装配层级未保留；下方仅显示文件入口。几何面可在“几何拓扑”查看。
+            </p>
             <ElTree
               v-if="activeTab === 'bom' && bomPanelMode === 'tree' && contract?.bom.nodes.length"
               :data="contract.bom.nodes"
@@ -3525,6 +3529,7 @@ button:disabled {
 .bom-panel-switch { display: grid; grid-template-columns: 1fr 1fr; flex: none; gap: 4px; padding: 8px; }
 .bom-panel-switch button { min-width: 0; padding: 7px; border-radius: 5px; color: var(--el-text-color-regular); }
 .bom-panel-switch button.active { color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.bom-hierarchy-notice { margin: 0 8px 8px; padding: 8px 10px; border-radius: 5px; background: var(--el-color-warning-light-9); color: var(--el-text-color-regular); font-size: 12px; line-height: 1.5; }
 .feature-tab-content {
   display: flex;
   min-height: 0;

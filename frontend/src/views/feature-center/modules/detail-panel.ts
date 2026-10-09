@@ -12,7 +12,7 @@ export type DetailGroup =
 
 export interface DetailPanelContext {
   selectionKind?: 'model' | 'feature' | 'geometry';
-  assemblyMode: 'none' | 'single_part' | 'assembly';
+  assemblyMode: 'none' | 'single_part' | 'assembly' | 'unavailable';
   nodeType?: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
   hasParent?: boolean;
   sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT';

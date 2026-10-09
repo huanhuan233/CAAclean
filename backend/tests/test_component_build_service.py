@@ -17,6 +17,65 @@ from app.db.models import CadModelRevision, CadSpecTask, ComponentBuild
 
 
 @pytest.mark.asyncio
+async def test_step_bom_does_not_present_flattened_faces_and_datums_as_parts():
+    revision_id = uuid4()
+    root_id = uuid4()
+    imported_face_id = uuid4()
+
+    class Repository:
+        async def list_structure_entities(self, requested_revision_id):
+            assert requested_revision_id == revision_id
+            return [
+                SimpleNamespace(id=root_id, parent_entity_id=None, entity_type="root",
+                                label="duoyimian234.stp", name="duoyimian234", source_ref="",
+                                placement=None, volume=None, bounding_box=None, metadata_json={}),
+                SimpleNamespace(id=imported_face_id, parent_entity_id=root_id,
+                                entity_type="imported_object", label="FACE055", name="FACE055",
+                                source_ref="FACE055", placement=None, volume=0,
+                                bounding_box=None, metadata_json={}),
+                SimpleNamespace(id=uuid4(), parent_entity_id=root_id, entity_type="imported_object",
+                                label="XY-plane001", name="XY-plane001", source_ref="XY-plane001",
+                                placement=None, volume=0, bounding_box=None, metadata_json={}),
+            ]
+
+    bom = await ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())._viewer_bom(
+        SimpleNamespace(id=revision_id, source_file_name="duoyimian234.stp"),
+        "STEP", {"assembly_hierarchy_preserved": False},
+    )
+
+    assert bom["assembly_mode"] == "unavailable"
+    assert bom["hierarchy_status"] == "not_preserved"
+    assert bom["part_count"] == 0
+    assert [node["name"] for node in bom["nodes"]] == ["duoyimian234.stp"]
+    assert bom["nodes"][0]["children"] == []
+
+
+@pytest.mark.asyncio
+async def test_step_bom_keeps_explicit_assembly_entities():
+    revision_id = uuid4()
+    assembly_id = uuid4()
+
+    class Repository:
+        async def list_structure_entities(self, _revision_id):
+            return [
+                SimpleNamespace(id=assembly_id, parent_entity_id=None, entity_type="assembly",
+                                label="总成", name="总成", source_ref="", placement=None,
+                                volume=None, bounding_box=None, metadata_json={}),
+                SimpleNamespace(id=uuid4(), parent_entity_id=assembly_id, entity_type="part",
+                                label="零件 A", name="零件 A", source_ref="A", placement=None,
+                                volume=None, bounding_box=None, metadata_json={}),
+            ]
+
+    bom = await ComponentBuildService(Repository(), source_status_reader=FakeSourceStatusReader())._viewer_bom(
+        SimpleNamespace(id=revision_id, source_file_name="assembly.stp"), "STEP", {}
+    )
+
+    assert bom["assembly_mode"] == "assembly"
+    assert bom["part_count"] == 1
+    assert bom["nodes"][0]["children"][0]["name"] == "零件 A"
+
+
+@pytest.mark.asyncio
 async def test_native_evidence_requires_complete_postgresql_storage_and_pages_in_order():
     revision_id = uuid4()
     build_id = uuid4()

@@ -842,6 +842,22 @@ class ComponentBuildService:
     async def _viewer_bom(self, revision, source_format: str, manifest: dict | None = None) -> dict:
         """用途：把数据库中的真实结构实体投影为统一 BOM；无装配数据时保持单零件/空契约。"""
         entities = await self.repository.list_structure_entities(revision.id)
+        # FreeCAD 的 STEP 导入对象可能是单张面、坐标轴或基准面，并非产品实例。
+        # 旧解析结果没有保留装配层级时，只展示文件根节点，不把这些对象计成零件。
+        if (source_format.upper() == "STEP"
+                and not (manifest or {}).get("assembly_hierarchy_preserved")
+                and not any(entity.entity_type in {"assembly", "subassembly", "part"} for entity in entities)):
+            source_root = next((entity for entity in entities if entity.entity_type == "root"), None)
+            root = {
+                "id": str(source_root.id) if source_root else str(revision.id),
+                "entity_type": "root",
+                "label": getattr(revision, "source_file_name", None) or "STEP 文件",
+                "children": [],
+            }
+            bom = build_bom_contract([root], source_format)
+            bom.update(assembly_mode="unavailable", default_visible=False, part_count=0,
+                       hierarchy_status="not_preserved")
+            return bom
         nodes: dict[str, dict] = {}
         roots: list[dict] = []
         for entity in entities:

@@ -450,7 +450,8 @@ declare namespace Api {
         feature_face_mapping_available: boolean;
       };
       bom: {
-        assembly_mode: 'none' | 'single_part' | 'assembly';
+        assembly_mode: 'none' | 'single_part' | 'assembly' | 'unavailable';
+        hierarchy_status?: 'not_preserved';
         default_visible: boolean;
         part_count: number;
         nodes: ViewerBomNode[];
