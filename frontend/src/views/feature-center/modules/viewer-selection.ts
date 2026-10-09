@@ -5,6 +5,7 @@ export type SelectionTargetKind =
   | 'assembly'
   | 'part_instance'
   | 'part'
+  | 'step_import_object'
   | 'body'
   | 'solid'
   | 'native_feature'
@@ -33,7 +34,7 @@ export interface SelectionTarget {
   label?: string;
   instancePath?: string;
   renderObjectUuid?: string;
-  source?: 'canvas' | 'bom' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly' | 'tube' | 'composite';
+  source?: 'canvas' | 'bom' | 'step_import' | 'native_feature' | 'recognized_feature' | 'topology' | 'detail' | 'mbd' | 'assembly' | 'tube' | 'composite';
   raw?: unknown;
 }
 
@@ -142,6 +143,9 @@ export function resolveViewerSelection(target: SelectionTarget, resources: Selec
   const index = resources.selectionIndex;
   const topology = index?.topology;
   if (target.source === 'canvas') push(context.renderObjectUuids, target.renderObjectUuid);
+
+  if (target.kind === 'step_import_object')
+    diagnostics.push('STEP_IMPORT_OBJECT_RENDER_MAPPING_UNAVAILABLE');
 
   if (target.kind === 'assembly' || target.kind === 'part_instance' || target.kind === 'part') {
     const node = findBomNode(resources.bomNodes || [], target.id);

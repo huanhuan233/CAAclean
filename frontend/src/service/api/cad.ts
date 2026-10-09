@@ -40,9 +40,10 @@ export function fetchCadRevisionTree(revisionId: string) {
   });
 }
 
-export function fetchCadStructureTree(revisionId: string) {
+export function fetchCadStructureTree(revisionId: string, options?: ComponentBuildQueryOptions) {
   return request<Api.Cad.TreeNode[]>({
-    url: `/api/cad/revisions/${revisionId}/structure-tree`
+    url: `/api/cad/revisions/${revisionId}/structure-tree`,
+    ...componentBuildQueryConfig(options)
   });
 }
 

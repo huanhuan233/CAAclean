@@ -18,7 +18,7 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchCompositeCoverage, fetchCompositeDetail, recomputeCompositeCoverage, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
+import { fetchCadStructureTree, fetchComponentBuildMbdAnnotationDetail, fetchComponentBuildMbdNodeDetail, fetchComponentBuildNativeEvidence, fetchComponentBuildNativeNodeProperties, fetchComponentBuildRecognizedFeatureDetail, fetchComponentBuildViewer, fetchComponentBuildViewerAsset, fetchCompositeCoverage, fetchCompositeDetail, recomputeCompositeCoverage, fetchGeometrySnapshot, submitGeometryQuery, retryComponentBuild } from '@/service/api';
 import type { MbdAnnotationRecord, MbdNodeRecord, MbdRelationRecord } from '@/service/api/cad';
 import type { AssemblyEvidenceRecord, TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
 import type { CompositeCoverageRecord, CompositeStructureRecord } from '@/service/api/cad';
@@ -32,6 +32,9 @@ import type { DetailGroup } from './modules/detail-panel';
 import CadViewerControls from './modules/CadViewerControls.vue';
 import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
+import StepImportTree from './modules/StepImportTree.vue';
+import { mapStepImportTree, stepImportSelection } from './modules/step-import-tree';
+import type { StepImportNode } from './modules/step-import-tree';
 import RecognizedFeatureExplorer from './modules/RecognizedFeatureExplorer.vue';
 import MbdExplorer from './modules/MbdExplorer.vue';
 import TopologyExplorer from './modules/TopologyExplorer.vue';
@@ -254,6 +257,10 @@ const productPropertyLoading = ref(false);
 const productPropertyError = ref('');
 let productPropertyGeneration = 0;
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
+const stepImportNodes = ref<StepImportNode[]>([]);
+const stepImportLoading = ref(false);
+const stepImportError = ref('');
+let stepImportGeneration = 0;
 const loadingNativeChildren = ref(new Set<string>());
 const failedNativeChildren = ref(new Set<string>());
 let nativeTreeGeneration = 0;
@@ -487,7 +494,7 @@ const selectedTitle = computed(
     if (primary?.kind === 'mbd_annotation') return mbdAnnotationDetail.value ? mbdAnnotationTitle(mbdAnnotationDetail.value) : primary.label || primary.id;
     if (primary && ['mbd_set', 'mbd_view', 'mbd_capture'].includes(primary.kind))
       return mbdNodeDetail.value ? mbdNodeTitle(mbdNodeDetail.value) : primary.label || primary.id;
-    if (primary && ['assembly', 'part_instance', 'part', 'body', 'solid', 'loop', 'coedge', 'edge', 'vertex'].includes(primary.kind)) {
+    if (primary && ['assembly', 'part_instance', 'part', 'body', 'solid', 'loop', 'coedge', 'edge', 'vertex', 'step_import_object'].includes(primary.kind)) {
       return primary.label || primary.id;
     }
     return contract.value?.summary.model_name || '';
@@ -1260,6 +1267,10 @@ async function retryBuild() {
 // 用途：分阶段读取原生 CAA Feature 与 B-Rep Face，避免大型装配同时保留多个完整 ArrayBuffer。
 async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.ViewerContract) {
   nativeTreeGeneration += 1;
+  stepImportGeneration += 1;
+  stepImportNodes.value = [];
+  stepImportError.value = '';
+  stepImportLoading.value = false;
   loadingNativeChildren.value.clear();
   failedNativeChildren.value.clear();
   nativeFeatures.value = [];
@@ -1321,6 +1332,26 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
       ? await loadNativeEvidencePages(buildId, 'topology_coedges') : []).map(raw => adaptNativeTopologyRecord(raw, 'coedge'));
     if (hasStoredEvidence(viewerContract, 'feature_topology_links'))
       mergeNativeFeatureTopologyLinks(await loadNativeEvidencePages(buildId, 'feature_topology_links'));
+  }
+  if (viewerContract.status === 'ready' && viewerContract.source_format === 'STEP')
+    void loadStepImportTree(viewerContract.task_id);
+}
+
+async function loadStepImportTree(revisionId: string) {
+  if (!revisionId || contract.value?.source_format !== 'STEP') return;
+  const generation = ++stepImportGeneration;
+  stepImportLoading.value = true;
+  stepImportError.value = '';
+  try {
+    const result = await fetchCadStructureTree(revisionId, { signal: assetRequestController.signal, silent: true });
+    if (generation !== stepImportGeneration || contract.value?.task_id !== revisionId) return;
+    if (result.error || !result.data) throw result.error || new Error('导入结构读取失败');
+    stepImportNodes.value = mapStepImportTree(result.data);
+  } catch (error) {
+    if (generation === stepImportGeneration && contract.value?.task_id === revisionId)
+      stepImportError.value = error instanceof Error ? error.message : '导入结构读取失败';
+  } finally {
+    if (generation === stepImportGeneration) stepImportLoading.value = false;
   }
 }
 
@@ -2003,6 +2034,11 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
   projectSelectionForExistingTemplate();
   selectionTarget.value = null;
   applyVisualState();
+}
+
+function selectStepImportNode(node: StepImportNode) {
+  selectionTarget.value = null;
+  selectTarget(stepImportSelection(node), 'step_import');
 }
 
 async function loadNativeTreeChildren(node: FeatureTreeNode) {
@@ -2754,7 +2790,7 @@ onBeforeUnmount(() => {
             <div v-show="activeTab === 'recognized'" class="feature-tab-content">
               <div class="feature-source-tabs" :class="{ 'has-tube': tubeAvailable || compositeAvailable }">
                 <button type="button" :class="{ active: featureSubTab === 'native' }" @click="featureSubTab = 'native'">
-                  原生特征
+                  {{ sourceFormat === 'STEP' ? '导入结构' : '原生特征' }}
                 </button>
                 <button type="button" :class="{ active: featureSubTab === 'mbd' }" @click="featureSubTab = 'mbd'">
                   MBD 标注
@@ -2775,7 +2811,11 @@ onBeforeUnmount(() => {
                   </ElDropdownMenu></template>
                 </ElDropdown>
               </div>
-              <NativeFeatureTree
+              <StepImportTree v-if="sourceFormat === 'STEP'" v-show="featureSubTab === 'native'"
+                :nodes="stepImportNodes" :selected-id="primarySelection?.source === 'step_import' ? primarySelection.id : ''"
+                :loading="stepImportLoading" :error="stepImportError" @select="selectStepImportNode"
+                @retry="contract?.task_id && loadStepImportTree(contract.task_id)" />
+              <NativeFeatureTree v-else
                 v-show="featureSubTab === 'native'"
                 :records="nativeFeatures"
                 :source-file-name="contract?.summary.source_file_name || ''"

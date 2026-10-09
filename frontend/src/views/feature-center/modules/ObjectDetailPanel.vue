@@ -134,6 +134,7 @@ const sourceTypeLabel = computed(() => {
 const sourceTagLabel = computed(() => {
   if (isMbdSelection.value) return '原生 MBD';
   if (props.primarySelection?.kind === 'native_feature') return '原生特征';
+  if (props.primarySelection?.kind === 'step_import_object' || props.primarySelection?.source === 'step_import') return 'STEP 导入对象';
   if (props.primarySelection?.kind === 'recognized_feature') return '识别特征';
   if (props.primarySelection?.kind === 'face') return '几何拓扑';
   if (props.primarySelection?.kind) return '模型对象';
@@ -150,7 +151,7 @@ const evidenceRows = computed(() => [
 const featureRows = computed<DetailField[]>(() => {
   if (isMbdSelection.value) return [];
   if (props.primarySelection?.kind === 'face') return props.selectedFace ? faceRows(props.selectedFace) : [];
-  if (['edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || ''))
+  if (['step_import_object', 'edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || ''))
     return detailRowsFromRecord(props.primarySelection?.raw as Record<string, unknown> | null, []);
   if (props.selectedNativeFeature) {
     return nativeFeatureRows(
@@ -174,7 +175,7 @@ const featureRows = computed<DetailField[]>(() => {
 
 const parameterRows = computed<ParameterField[]>(() => {
   if (isMbdSelection.value) return [];
-  if (['face', 'edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
+  if (['step_import_object', 'face', 'edge', 'vertex', 'body', 'solid', 'loop', 'coedge'].includes(props.primarySelection?.kind || '')) return [];
   if (props.primarySelection?.kind === 'native_feature') {
     return props.nativeDetail ? nativeSemanticParameterRows(props.selectedNativeFeature) : [];
   }
