@@ -249,6 +249,26 @@ def test_unified_source_upload_routes_step_from_real_extension(component_client,
     assert cad_service.parses == [cad_service.revision_id]
 
 
+def test_unified_source_upload_routes_dxf_from_real_extension(component_client):
+    client, cad_service, _, _, _ = component_client
+
+    response = client.post(
+        "/api/component-builds",
+        data={
+            "category_code": "aero-general",
+            "part_type_code": "aero-general-part",
+            "component_name": "DXF 零件",
+        },
+        files={"source_file": ("stopoff2.dxf", b"0\nSECTION\n", "application/dxf")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_format"] == "DXF"
+    assert response.json()["processing_route"] == "dxf_cad_parse"
+    assert cad_service.uploads[0][0] == "stopoff2.dxf"
+    assert cad_service.parses == [cad_service.revision_id]
+
+
 def test_unified_source_upload_routes_catpart_case_insensitively(component_client):
     client, cad_service, _, _, _ = component_client
 
