@@ -55,7 +55,7 @@ def measure_entity(record: dict, unit_code: int) -> dict:
             segment_length, segment_area = _segment(vertices[start], vertices[end], vertices[start][4])
             length += segment_length
             signed_area += segment_area
-        if closed and len(vertices) >= 3:
+        if closed and len(vertices) >= 2:
             # Non-adjacent straight segments are checked before publishing an area.
             crossings = any(_intersection(vertices[a], vertices[b], vertices[c], vertices[d])
                             for i, (a, b) in enumerate(pairs) for j, (c, d) in enumerate(pairs)

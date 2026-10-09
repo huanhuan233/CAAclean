@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { polylinePath } from './dxf-path';
 
 interface Entity {
   object_id: string;
@@ -80,9 +81,7 @@ const viewBox = computed(() => {
 });
 function path(item: Entity): string {
   if (item.vertices?.length) {
-    const commands = item.vertices.map((vertex, index) => `${index ? 'L' : 'M'} ${vertex[0]} ${-vertex[1]}`);
-    if (item.closed) commands.push('Z');
-    return commands.join(' ');
+    return polylinePath(item.vertices, Boolean(item.closed));
   }
   if (item.start && item.end) return `M ${item.start[0]} ${-item.start[1]} L ${item.end[0]} ${-item.end[1]}`;
   if (item.center && item.radius) {

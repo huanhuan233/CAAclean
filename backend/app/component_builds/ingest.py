@@ -24,6 +24,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.catia_worker.caa_new_runner import CaaNewRunner, CaaNewRunnerError
 from app.cad.repository import CadRepository
 from app.cad.service import CadService
+from app.cad.parser_runner import FreeCadParserError, run_freecad_job
 from app.component_builds.catia_worker import CatiaWorkerClient, CatiaWorkerError
 from app.component_builds.native_persistence import available_native_assets as _available_native_assets, feature_evidence_streams, publish_native_capture
 from app.core.config import BACKEND_ROOT, REPOSITORY_ROOT, Settings
@@ -235,6 +236,36 @@ async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings:
     document = json.loads(output.read_text(encoding="utf-8"))
     if document["source_sha256"] != revision.source_sha256:
         raise IngestStageError("DXF_SOURCE_CHANGED", "dxf_parsing", "源文件指纹在处理期间变化")
+    await _set_stage(repository, revision_id, "dxf_geometry", 60)
+    try:
+        kernel = await run_freecad_job(
+            BACKEND_ROOT / "freecad_scripts" / "measure_dxf.py",
+            {"document_path": str(output)}, output.parent / "geometry", settings,
+        )
+        measurements = kernel.get("measurements") or {}
+        for entity in document["entities"]:
+            if entity["type"] not in {"LWPOLYLINE", "POLYLINE"} or entity.get("status"):
+                continue
+            validation = measurements.get(entity["object_id"]) or {"status": "missing"}
+            entity["geometry_validation"] = validation
+            candidate = entity.get("single_contour_area")
+            actual = validation.get("face_area")
+            if candidate is not None and (actual is None or abs(candidate - actual) > max(1e-7, candidate * 1e-6)):
+                entity["analytic_area_candidate"] = candidate
+                entity["single_contour_area"] = None
+                entity["area_undefined_reason"] = "kernel_validation_failed"
+                entity["normalized"]["single_contour_area_mm2"] = None
+                document["diagnostics"].append({"code": "dxf_area_validation_failed",
+                                                "object_id": entity["object_id"], "kernel": validation})
+    except FreeCadParserError as exc:
+        document["diagnostics"].append({"code": "dxf_geometry_unavailable", "message": redact_local_paths(str(exc))[:500]})
+        for entity in document["entities"]:
+            if entity.get("single_contour_area") is not None:
+                entity["analytic_area_candidate"] = entity["single_contour_area"]
+                entity["single_contour_area"] = None
+                entity["area_undefined_reason"] = "kernel_unavailable"
+                entity["normalized"]["single_contour_area_mm2"] = None
+    output.write_text(json.dumps(document, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     await _set_stage(repository, revision_id, "dxf_publishing", 85)
     await repository.replace_native_evidence(revision_id, {
         "dxf_document": [{key: value for key, value in document.items() if key not in {"entities", "layers", "diagnostics"}}],

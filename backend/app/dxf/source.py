@@ -101,6 +101,8 @@ def parse_source(path: Path, revision_id: str) -> dict:
                     record["closed"] = bool(entity.closed)
                     record["elevation"] = float(entity.dxf.get("elevation", 0))
                     record["extrusion"] = _point(entity.dxf.get("extrusion", (0, 0, 1)))
+                    record["world_vertices"] = [_point(entity.ocs().to_wcs((v[0], v[1], record["elevation"])))
+                                                for v in record["vertices"]]
                 elif kind == "POLYLINE" and entity.is_2d_polyline:
                     points = list(entity.vertices)
                     vertices_seen += len(points)
@@ -113,6 +115,8 @@ def parse_source(path: Path, revision_id: str) -> dict:
                     record["closed"] = bool(entity.is_closed)
                     record["elevation"] = float(entity.dxf.elevation.z)
                     record["extrusion"] = _point(entity.dxf.get("extrusion", (0, 0, 1)))
+                    record["world_vertices"] = [_point(entity.ocs().to_wcs((v[0], v[1], record["elevation"])))
+                                                for v in record["vertices"]]
                 else:
                     record["status"] = "unsupported"
                     diagnostics.append({"code": "unsupported_entity", "object_id": record["object_id"],
