@@ -15,3 +15,4 @@ openai
 pillow
 PyYAML
 python-dotenv
+ezdxf==1.4.2

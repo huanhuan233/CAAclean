@@ -1,5 +1,5 @@
 export type ViewerTab = 'bom' | 'native' | 'recognized' | 'geometry';
-export type ViewerSourceFormat = 'STEP' | 'CATPART' | 'CATPRODUCT';
+export type ViewerSourceFormat = 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF';
 
 export function isCatiaNativeSource(sourceFormat: string | null | undefined) {
   return sourceFormat === 'CATPART' || sourceFormat === 'CATPRODUCT';
@@ -48,6 +48,8 @@ const STAGE_LABELS: Record<string, string> = {
   lightweighting: '生成轻量化模型',
   publishing_assets: '发布 Viewer 资产',
   running_freecad: 'STEP 几何解析',
+  dxf_parsing: 'DXF 源图元解析',
+  dxf_publishing: '发布 DXF 图纸',
   ready: '解析完成',
   failed: '处理失败'
 };

@@ -77,6 +77,7 @@ class CadService:
             "STEP": {".step", ".stp"},
             "CATPART": {".catpart"},
             "CATPRODUCT": {".catproduct", ".zip"},
+            "DXF": {".dxf"},
         }
         if source_format not in allowed or ext not in allowed[source_format]:
             raise ValueError("source format does not match file extension")

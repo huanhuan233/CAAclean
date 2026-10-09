@@ -339,7 +339,7 @@ function pickFile(role: 'source' | 'drawing', event: Event) {
   if (!valid) {
     window.$message?.error(
       role === 'source'
-        ? '请选择 STEP、STP、CATPart、CATProduct 或依赖 ZIP 文件；不支持 .cart'
+        ? '请选择 DXF、STEP、STP、CATPart、CATProduct 或依赖 ZIP 文件；不支持 .cart'
         : '请选择 PNG、JPG、JPEG 或 WEBP 图纸'
     );
     (event.target as HTMLInputElement).value = '';
@@ -475,18 +475,18 @@ watch(visible, val => {
                 <small>可稍后补充</small>
               </span>
               <label class="file-input">
-                <input accept=".step,.stp,.CATPart,.CATProduct,.zip" type="file" @change="pickFile('source', $event)" />
+                <input accept=".dxf,.step,.stp,.CATPart,.CATProduct,.zip" type="file" @change="pickFile('source', $event)" />
                 <span>
                   {{
                     sourceFile?.name ||
                     (editingBuild?.cad_revision_id
                       ? '已有关联源模型；选择新文件可替换'
-                      : '选择 STEP / STP / CATPart / CATProduct / ZIP 文件')
+                      : '选择 DXF / STEP / STP / CATPart / CATProduct / ZIP 文件')
                   }}
                 </span>
               </label>
               <small class="upload-hint">
-                支持 STEP/STP、CATPart、CATProduct，或包含一个 CATProduct 及其依赖 CATPart 的 ZIP。CATIA 文件将通过
+                支持 DXF、STEP/STP、CATPart、CATProduct，或包含一个 CATProduct 及其依赖 CATPart 的 ZIP。CATIA 文件将通过
                 CATIA 特征中心处理，需要 CATIA Worker 可用。
               </small>
             </div>

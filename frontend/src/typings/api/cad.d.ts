@@ -308,8 +308,8 @@ declare namespace Api {
       status_message?: string | null;
       error_code?: string | null;
       error_message?: string | null;
-      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
-      processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
+      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF' | null;
+      processing_route?: 'step_cad_parse' | 'catia_feature_center' | 'dxf_cad_parse' | null;
       current_stage?: string | null;
       children: TreeNode[];
     }
@@ -334,8 +334,8 @@ declare namespace Api {
       status_message?: string | null;
       error_code?: string | null;
       error_message?: string | null;
-      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
-      processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
+      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF' | null;
+      processing_route?: 'step_cad_parse' | 'catia_feature_center' | 'dxf_cad_parse' | null;
       current_stage?: string | null;
       children?: RawTreeNode[];
     }
@@ -370,8 +370,8 @@ declare namespace Api {
       error_code: string | null;
       error_message: string | null;
       task_id?: string | null;
-      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
-      processing_route?: 'step_cad_parse' | 'catia_feature_center' | null;
+      source_format?: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF' | null;
+      processing_route?: 'step_cad_parse' | 'catia_feature_center' | 'dxf_cad_parse' | null;
       current_stage?: string | null;
       progress?: number | null;
       created_at: string;
@@ -428,8 +428,10 @@ declare namespace Api {
       status: string;
       current_stage: string | null;
       progress?: number | null;
-      source_format: 'STEP' | 'CATPART' | 'CATPRODUCT';
-      processing_route: 'step_cad_parse' | 'catia_feature_center';
+      source_format: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF';
+      processing_route: 'step_cad_parse' | 'catia_feature_center' | 'dxf_cad_parse';
+      viewer_kind?: 'model_3d' | 'drawing_2d';
+      dxf?: Record<string, unknown>;
       summary: {
         model_name: string;
         source_file_name: string | null;
@@ -494,10 +496,11 @@ declare namespace Api {
         diagnostics_url?: string | null;
       };
       viewer_asset: {
-        glb_url: string;
-        scene_manifest_url: string;
-        face_mesh_map_url: string;
-        feature_mesh_map_url: string;
+        glb_url?: string;
+        scene_manifest_url?: string;
+        face_mesh_map_url?: string;
+        feature_mesh_map_url?: string;
+        scene_url?: string;
         curves_url?: string | null;
         selection_index_url?: string | null;
       } | null;
@@ -563,7 +566,7 @@ declare namespace Api {
       material: string;
       node_type: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
       quantity: number;
-      source_format: 'STEP' | 'CATPART' | 'CATPRODUCT';
+      source_format: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF';
       level: number;
       transform: Record<string, unknown> | null;
       mesh_primitive_ids: string[];

@@ -15,7 +15,7 @@ export interface DetailPanelContext {
   assemblyMode: 'none' | 'single_part' | 'assembly' | 'unavailable';
   nodeType?: 'assembly' | 'subassembly' | 'part' | 'body' | 'solid' | 'root' | 'imported_object';
   hasParent?: boolean;
-  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT';
+  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF';
   nativeFeatureAvailable?: boolean;
   featureFaceMappingAvailable?: boolean;
   geometryHasLinkedFeature?: boolean;

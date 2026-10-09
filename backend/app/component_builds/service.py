@@ -377,6 +377,31 @@ class ComponentBuildService:
         viewer = manifest.get("viewer_asset") or {}
         required = ("glb", "scene_manifest", "face_mesh_map", "feature_mesh_map")
         source_format = ingest.get("source_format") or self._source_format_from_extension(revision.source_file_ext)
+        if source_format == "DXF":
+            asset_base = f"/api/component-builds/{build.id}/viewer/assets/"
+            dxf = manifest.get("dxf") or {}
+            ready = revision.status == "completed" and revision.status_message == "ready" and bool(viewer.get("scene"))
+            return {
+                "part_id": str(build.id), "task_id": str(revision.id),
+                "source_format": "DXF", "processing_route": "dxf_cad_parse",
+                "viewer_kind": "drawing_2d", "status": "ready" if ready else revision.status,
+                "current_stage": revision.status_message, "progress": revision.progress,
+                "summary": {"model_name": build.component_name, "source_file_name": revision.source_file_name,
+                            "solid_count": 0, "native_feature_count": 0, "recognized_feature_count": 0},
+                "bom": {"assembly_mode": "none", "default_visible": False, "part_count": 0, "nodes": []},
+                "viewer_geometry": {"displayable": bool((dxf.get("counts") or {}).get("parsed")),
+                                    "primitive_count": (dxf.get("counts") or {}).get("parsed", 0),
+                                    "triangle_count": 0, "solid_count": 0, "empty_reason": None},
+                "viewer_asset": {"scene_url": asset_base + viewer["scene"]} if ready else None,
+                "dxf": dxf,
+                "capabilities": {"source_inspection": True, "drawing_2d": ready,
+                                 "dimension": True, "solid_3d": False, "assembly": False},
+                "feature_center": {"available": False},
+                "native_capture": {"available": False, "has_tree": False, "has_properties": False,
+                                   "has_topology": False, "has_geometry": False, "has_mesh": False},
+                "worker": {"mode": "not_applicable"},
+                "error_code": revision.error_code, "error_message": revision.error_message,
+            }
         bom = await self._viewer_bom(revision, source_format, manifest)
         viewer_summary = manifest.get("viewer_summary") or {}
         viewer_geometry = self._viewer_geometry_contract(source_format, manifest, viewer_summary)
@@ -405,6 +430,7 @@ class ComponentBuildService:
             "part_id": str(build.id),
             "task_id": str(revision.id),
             "source_format": source_format,
+            "viewer_kind": "model_3d",
             "processing_route": ingest.get("processing_route") or "step_cad_parse",
             "summary": summary,
             "bom": bom,
@@ -989,6 +1015,8 @@ class ComponentBuildService:
     @staticmethod
     def _source_format_from_extension(extension: str) -> str:
         normalized = (extension or "").lower()
+        if normalized == ".dxf":
+            return "DXF"
         if normalized == ".catpart":
             return "CATPART"
         if normalized == ".catproduct":

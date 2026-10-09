@@ -504,7 +504,7 @@ async def retry_component_build(
                 status_code=409,
                 detail={"code": "step_source_unavailable", "message": "STEP source is not attached"},
             )
-        if build.get("processing_route") in {"step_cad_parse", "catia_feature_center"}:
+        if build.get("processing_route") in {"step_cad_parse", "catia_feature_center", "dxf_cad_parse"}:
             await cad_service.repository.set_revision_status(
                 UUID(build["cad_revision_id"]),
                 status="queued",

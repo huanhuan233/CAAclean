@@ -30,6 +30,7 @@ import type { CanonicalFeatureRecord, FeatureMeshMap } from './modules/feature-c
 import { buildDetailPanelLayout } from './modules/detail-panel';
 import type { DetailGroup } from './modules/detail-panel';
 import CadViewerControls from './modules/CadViewerControls.vue';
+import DxfWorkspace from './modules/DxfWorkspace.vue';
 import type { SceneMode, ToolMode } from './modules/CadViewerControls.vue';
 import NativeFeatureTree from './modules/NativeFeatureTree.vue';
 import StepImportTree from './modules/StepImportTree.vue';
@@ -98,6 +99,7 @@ import type { ViewerTab } from './modules/viewer-workspace';
 
 defineOptions({ name: 'FeatureCenterViewer' });
 const themeStore = useThemeStore();
+const dxfDocument = ref<any>(null);
 
 // 大型 CATIA 模型的 Feature Center 契约和资产可能需要较长时间生成或传输。
 const FEATURE_CENTER_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1042,6 +1044,7 @@ let progressiveNativeTreeBuildId = '';
 
 async function loadBuildBundle(buildId: string) {
   clearStatusPoll();
+  dxfDocument.value = null;
   assemblySelection.value = null;
   tubeSelection.value = null;
   if (contract.value?.part_id !== buildId) tubeAvailable.value = false;
@@ -1084,6 +1087,24 @@ async function loadBuildBundle(buildId: string) {
       return;
     }
 
+    if (result.data.viewer_kind === 'drawing_2d') {
+      clearStepCurves();
+      if (modelRoot && scene) scene.remove(modelRoot);
+      disposeModel(modelRoot);
+      modelRoot = null;
+      pickableObjects = [];
+      faceMeshMap.value = null;
+      featureMeshMap.value = null;
+      const sceneUrl = result.data.viewer_asset?.scene_url;
+      if (!sceneUrl) throw new Error('DXF 二维场景资产缺失');
+      const buffer = await fetchAsset(sceneUrl);
+      const document = JSON.parse(new TextDecoder('utf-8').decode(buffer));
+      if (document.revision_id !== result.data.task_id || document.source_sha256 !== result.data.dxf?.source_sha256)
+        throw new Error('DXF 场景与当前 Revision 不一致');
+      dxfDocument.value = document;
+      return;
+    }
+
     const viewerAsset = result.data.viewer_asset;
     if (!viewerAsset) {
       canonicalFeatures.value = [];
@@ -1099,7 +1120,7 @@ async function loadBuildBundle(buildId: string) {
     }
     const skipStepViewer = false;
     // 当前按完整 CATProduct 结果加载 STEP/GLB，确保装配模型和原生特征同时可见。
-    const manifestBuffer = await fetchAsset(viewerAsset.scene_manifest_url);
+    const manifestBuffer = await fetchAsset(viewerAsset.scene_manifest_url!);
     const decode = (buffer: ArrayBuffer) => new TextDecoder('utf-8').decode(buffer);
     const manifest = JSON.parse(decode(manifestBuffer)) as BundleManifest;
     if (manifest.schema_version !== 'cad_feature_center_v1') throw new Error('Feature Center Schema 不兼容');
@@ -1108,9 +1129,9 @@ async function loadBuildBundle(buildId: string) {
     let nextFaceMap: FaceMeshMap | null = null;
     let modelBuffer: ArrayBuffer | null = null;
     if (!skipStepViewer) {
-      const nextFaceMapBuffer = await fetchAsset(viewerAsset.face_mesh_map_url);
-      const featureMapBuffer = await fetchAsset(viewerAsset.feature_mesh_map_url);
-      const modelAsset = await fetchAsset(viewerAsset.glb_url);
+      const nextFaceMapBuffer = await fetchAsset(viewerAsset.face_mesh_map_url!);
+      const featureMapBuffer = await fetchAsset(viewerAsset.feature_mesh_map_url!);
+      const modelAsset = await fetchAsset(viewerAsset.glb_url!);
       modelBuffer = modelAsset;
       requiredBuffers.push(
         ['lightweight/face_mesh_map.json', nextFaceMapBuffer],
@@ -2614,8 +2635,8 @@ onBeforeUnmount(() => {
         <span v-if="contract?.summary.solid_count">{{ contract.summary.solid_count }} 个 Solid</span>
         <span v-if="isCatiaNativeSource(sourceFormat)">{{ contract?.summary.native_feature_count ?? 0 }} 条树记录</span>
         <span v-if="contract?.summary.native_definition_count != null">{{ contract.summary.native_definition_count }} 个原生定义，{{ contract.summary.native_typed_count ?? 0 }} 个专用解码</span>
-        <span v-if="contract">{{ contract.summary.recognized_feature_count }} 个识别特征</span>
-        <span v-if="contract" :class="mappingAvailable ? 'available' : 'muted'">
+        <span v-if="contract && sourceFormat !== 'DXF'">{{ contract.summary.recognized_feature_count }} 个识别特征</span>
+        <span v-if="contract && sourceFormat !== 'DXF'" :class="mappingAvailable ? 'available' : 'muted'">
           Feature–Face {{ mappingAvailable ? '映射可用' : '映射不可用' }}
         </span>
         <span v-if="contract?.native_capture?.exact_brep_body_count != null && contract?.native_capture?.incomplete_brep_body_count != null &&
@@ -2630,7 +2651,7 @@ onBeforeUnmount(() => {
           {{ workerStageLabel(contract.current_stage) }}
         </span>
       </div>
-      <div class="summary-actions">
+      <div v-if="sourceFormat !== 'DXF'" class="summary-actions">
         <button type="button" class="process-trigger" :disabled="!contract" @click="openProcessPanel">
           工艺生成
         </button>
@@ -2733,7 +2754,9 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
+    <DxfWorkspace v-if="sourceFormat === 'DXF' && dxfDocument" :document="dxfDocument" />
     <main
+      v-else-if="sourceFormat !== 'DXF'"
       v-loading="loading"
       class="workspace"
       :class="{ 'bom-collapsed': !bomVisible, 'details-collapsed': !detailsOpen }"

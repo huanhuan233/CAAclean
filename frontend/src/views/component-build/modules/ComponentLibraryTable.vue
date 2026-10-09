@@ -28,7 +28,7 @@ interface BuildRow {
   cadRevisionId: string | null;
   drawingTaskId: string | null;
   hasStep: boolean;
-  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT' | null;
+  sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT' | 'DXF' | null;
   hasDrawing: boolean;
   paramFields: { dn: string | null; pn: string | null };
 }

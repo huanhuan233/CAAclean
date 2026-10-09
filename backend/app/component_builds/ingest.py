@@ -95,6 +95,8 @@ def identify_source(file_name: str) -> IngestSource:
     extension = Path(Path(file_name).name).suffix.lower()
     if extension in {".step", ".stp"}:
         return IngestSource("STEP", "step_cad_parse", extension)
+    if extension == ".dxf":
+        return IngestSource("DXF", "dxf_cad_parse", extension)
     if extension == ".catpart":
         return IngestSource("CATPART", "catia_feature_center", extension)
     if extension == ".catproduct":
@@ -103,7 +105,7 @@ def identify_source(file_name: str) -> IngestSource:
         return IngestSource("CATPRODUCT", "catia_feature_center", extension)
     raise IngestSourceError(
         "UNSUPPORTED_SOURCE_FORMAT",
-        "仅支持 STEP、STP、CATPart、CATProduct 或 CATProduct 依赖 ZIP 文件；不支持 .cart",
+        "仅支持 DXF、STEP、STP、CATPart、CATProduct 或 CATProduct 依赖 ZIP 文件；不支持 .cart",
     )
 
 
@@ -162,6 +164,8 @@ async def run_ingest_pipeline(revision_id: UUID, settings: Settings) -> None:
             _prepare_generated_outputs(_cad_work_root(settings) / str(revision_id), route)
             if route == "step_cad_parse":
                 await _run_step_route(repository, revision_id, settings)
+            elif route == "dxf_cad_parse":
+                await _run_dxf_route(repository, revision_id, settings)
             elif route == "catia_feature_center":
                 async with _CATIA_LIMITER:
                     await _run_catpart_route(repository, revision_id, settings)
@@ -214,6 +218,37 @@ async def _run_step_route(repository: CadRepository, revision_id: UUID, settings
     await repository.update_revision_manifest(revision_id, {"ingest": ingest})
     await _set_stage(repository, revision_id, "lightweighting", 80)
     await _build_feature_center(repository, revision_id, settings, _source_file_path(revision.source_file_path), None)
+
+
+async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings: Settings) -> None:
+    revision = await repository.get_revision(revision_id)
+    if revision is None:
+        return
+    source = _source_file_path(revision.source_file_path)
+    output = _cad_work_root(settings) / str(revision_id) / "dxf" / "document.json"
+    await _set_stage(repository, revision_id, "dxf_parsing", 20)
+    await _run_command(
+        [sys.executable, "-m", "app.dxf.worker", str(source), str(output), str(revision_id)],
+        "DXF_PARSE_FAILED", "dxf_parsing", settings.freecad_timeout,
+        {"PYTHONPATH": str(BACKEND_ROOT)},
+    )
+    document = json.loads(output.read_text(encoding="utf-8"))
+    if document["source_sha256"] != revision.source_sha256:
+        raise IngestStageError("DXF_SOURCE_CHANGED", "dxf_parsing", "源文件指纹在处理期间变化")
+    await _set_stage(repository, revision_id, "dxf_publishing", 85)
+    await repository.replace_native_evidence(revision_id, {
+        "dxf_document": [{key: value for key, value in document.items() if key not in {"entities", "layers", "diagnostics"}}],
+        "dxf_layers": document["layers"],
+        "dxf_entities": document["entities"],
+        "dxf_diagnostics": document["diagnostics"],
+    }, replace_all=False)
+    await repository.update_revision_manifest(revision_id, {
+        "dxf": {"schema_version": document["schema_version"], "parser_version": document["parser_version"],
+                "source_sha256": document["source_sha256"], "units": document["units"],
+                "counts": document["counts"], "layouts": document["layouts"]},
+        "viewer_asset": {"bundle_root": "dxf", "scene": "dxf/document.json"},
+    })
+    await repository.set_revision_status(revision_id, status="completed", progress=100, status_message="ready")
 
 
 # 用途：先运行已有 CAA 原生解析，再用 Automation ExportData 导出 STEP，最后调用既有 Sidecar。
@@ -678,6 +713,8 @@ def _read_feature_center_solid_count(path: Path) -> int:
 # 用途：重试时只清理本任务生成物，保留上传源文件和持久化任务记录。
 def _prepare_generated_outputs(task_root: Path, route: str | None) -> None:
     generated = [task_root / "feature-center"]
+    if route == "dxf_cad_parse":
+        generated.append(task_root / "dxf")
     if route == "catia_feature_center":
         generated.extend([
             task_root / "native-caa",
