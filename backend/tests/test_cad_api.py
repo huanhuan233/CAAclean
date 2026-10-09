@@ -1,8 +1,10 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app.cad.router import get_cad_service
+from app.cad.service import CadService
 from app.main import app
 
 
@@ -254,6 +256,23 @@ def test_structure_tree_excludes_brep_leaf_entities():
     payload = response.json()
     assert payload[0]["label"] == "source.step"
     assert payload[0]["children"][0]["children"][0]["entity_type"] == "solid"
+
+
+def test_structure_tree_preserves_import_order_for_step_explorer():
+    root_id, child_id = uuid4(), uuid4()
+
+    def entity(entity_id, parent_id, order):
+        return SimpleNamespace(
+            id=entity_id, parent_entity_id=parent_id, entity_type="imported_object",
+            label="FACE001", name="FACE001", source_ref="Face001",
+            sort_order=order, geometry_type=None, placement=None, volume=None,
+            bounding_box=None, metadata_json=None,
+        )
+
+    tree = CadService._build_tree(None, [entity(root_id, None, 0), entity(child_id, root_id, 12)])
+
+    assert tree[0]["sort_order"] == 0
+    assert tree[0]["children"][0]["sort_order"] == 12
 
 
 def test_revision_entities_supports_face_query():

@@ -37,6 +37,7 @@ declare namespace Api {
 
     interface TreeNode {
       id: string;
+      sort_order?: number | null;
       parent_entity_id: string | null;
       entity_type: string;
       label: string;

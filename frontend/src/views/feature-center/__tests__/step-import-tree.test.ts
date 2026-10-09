@@ -34,3 +34,14 @@ test('STEP 搜索保留原始 ID 和祖先，不按筛选结果重新编号', ()
   assert.equal(filtered[0].children[0].children[0].id, 'solid-id');
   assert.equal(stepImportSelection(filtered[0].children[0].children[0]).kind, 'solid');
 });
+
+test('STEP 同级对象按原始导入序号排列，不按文本树路径排列', () => {
+  const tree = mapStepImportTree([{
+    ...imported[0],
+    children: [
+      { ...imported[0].children[1], sort_order: 10 },
+      { ...imported[0].children[0], sort_order: 2 }
+    ]
+  }]);
+  assert.deepEqual(tree[0].children.map(node => node.id), ['face-object-id', 'axis-object-id']);
+});

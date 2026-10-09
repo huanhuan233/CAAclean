@@ -19,7 +19,9 @@ export function mapStepImportTree(records: Api.Cad.TreeNode[]): StepImportNode[]
     entityType: record.entity_type,
     geometryType: record.geometry_type,
     sourceRef: record.source_ref,
-    children: record.children.map(visit)
+    children: [...record.children]
+      .sort((left, right) => (left.sort_order ?? Number.MAX_SAFE_INTEGER) - (right.sort_order ?? Number.MAX_SAFE_INTEGER))
+      .map(visit)
   });
   return records.map(visit);
 }

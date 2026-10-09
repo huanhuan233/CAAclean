@@ -64,6 +64,7 @@ class CadTreeNode(BaseModel):
     entity_type: str
     label: str
     source_ref: str | None = None
+    sort_order: int | None = None
     geometry_type: str | None = None
     children: list["CadTreeNode"] = []
 

@@ -2811,11 +2811,12 @@ onBeforeUnmount(() => {
                   </ElDropdownMenu></template>
                 </ElDropdown>
               </div>
-              <StepImportTree v-if="sourceFormat === 'STEP'" v-show="featureSubTab === 'native'"
+              <StepImportTree v-if="sourceFormat === 'STEP' && activeTab === 'recognized'" v-show="featureSubTab === 'native'"
+                :key="contract?.task_id"
                 :nodes="stepImportNodes" :selected-id="primarySelection?.source === 'step_import' ? primarySelection.id : ''"
                 :loading="stepImportLoading" :error="stepImportError" @select="selectStepImportNode"
                 @retry="contract?.task_id && loadStepImportTree(contract.task_id)" />
-              <NativeFeatureTree v-else
+              <NativeFeatureTree v-if="sourceFormat !== 'STEP'"
                 v-show="featureSubTab === 'native'"
                 :records="nativeFeatures"
                 :source-file-name="contract?.summary.source_file_name || ''"

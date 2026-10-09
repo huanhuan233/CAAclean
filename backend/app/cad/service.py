@@ -362,6 +362,7 @@ class CadService:
                 "entity_type": entity.entity_type,
                 "label": label,
                 "source_ref": entity.source_ref,
+                "sort_order": entity.sort_order,
                 "geometry_type": entity.geometry_type,
                 "placement": entity.placement,
                 "volume": entity.volume,

@@ -27,7 +27,7 @@ function collectParents(nodes: StepImportNode[]): string[] {
 function iconFor(node: StepImportNode) {
   return {
     root: 'lucide:file-box', imported_object: 'lucide:box',
-    body: 'lucide:package-open', solid: 'lucide:box-3d'
+    body: 'lucide:package-open', solid: 'lucide:box'
   }[node.entityType] || 'lucide:component';
 }
 </script>
