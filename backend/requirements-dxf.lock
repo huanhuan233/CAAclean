@@ -1,0 +1,6 @@
+# Host Python 3.12 DXF parser dependency set. Install with requirements.txt.
+ezdxf==1.4.2
+fonttools==4.66.1
+numpy==2.5.3
+pyparsing==3.3.3
+typing_extensions==4.16.0

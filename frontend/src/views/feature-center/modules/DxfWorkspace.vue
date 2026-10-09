@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { polylinePath } from './dxf-path';
+import { fetchComponentBuildDxfRecords } from '@/service/api/cad';
 
 interface Entity {
   object_id: string;
   source_handle: string;
+  derived?: boolean;
+  definition_handle?: string;
+  occurrence_path?: string[];
   layout: string;
   layer: string;
   type: string;
@@ -21,6 +25,16 @@ interface Entity {
   length?: number | null;
   single_contour_area?: number | null;
   source_attributes?: Record<string, string>;
+  display_text?: string;
+  raw_text?: string;
+  text_height?: number;
+  insert?: number[];
+  display_points?: number[][];
+  boundary_paths?: Array<{ type: string; closed: boolean; vertices: number[][] }>;
+  solid_fill?: boolean;
+  measurement?: number | null;
+  block_name?: string;
+  attribs?: Array<{ tag: string; text: string }>;
 }
 interface Document {
   revision_id: string;
@@ -29,10 +43,34 @@ interface Document {
   layouts: Array<{ name: string }>;
   layers: Array<{ name: string; color: number; visible: boolean; source_defined: boolean }>;
   entities: Entity[];
+  occurrences?: Entity[];
   diagnostics: Array<Record<string, unknown>>;
   counts: Record<string, number>;
 }
-const props = defineProps<{ document: Document }>();
+const props = defineProps<{ document: Document; buildId: string }>();
+const databaseEntities = ref<Entity[]>([]);
+const databaseError = ref('');
+watch(() => [props.buildId, props.document.revision_id], async (_, __, onCleanup) => {
+  let active = true;
+  onCleanup(() => { active = false; });
+  databaseEntities.value = [];
+  databaseError.value = '';
+  for (const kind of ['dxf_entities', 'dxf_occurrences']) {
+    let offset = 0;
+    while (active) {
+      const response = await fetchComponentBuildDxfRecords<Entity & Record<string, unknown>>(props.buildId, kind, offset, 200,
+        { silent: true });
+      if (!active) return;
+      if (response.error || !response.data || response.data.revision_id !== props.document.revision_id) {
+        databaseError.value = '数据库图元列表不可用或版本不匹配';
+        return;
+      }
+      databaseEntities.value = [...databaseEntities.value, ...response.data.records];
+      offset += response.data.records.length;
+      if (!response.data.has_more) break;
+    }
+  }
+}, { immediate: true });
 const query = ref('');
 const typeFilter = ref('全部');
 const layout = ref('Model');
@@ -41,24 +79,27 @@ const selectedId = ref('');
 const zoom = ref(1);
 const pan = ref<[number, number]>([0, 0]);
 const drag = ref<[number, number] | null>(null);
+const allEntities = computed(() => [...props.document.entities, ...(props.document.occurrences || [])]);
 watch(() => props.document.revision_id, () => {
   selectedId.value = '';
   hidden.value = [];
   zoom.value = 1;
   pan.value = [0, 0];
 });
-const entityTypes = computed(() => ['全部', ...new Set(props.document.entities.map(item => item.type))]);
-const listed = computed(() => props.document.entities.filter(item => item.layout === layout.value &&
+const entityTypes = computed(() => ['全部', ...new Set(allEntities.value.map(item => item.type))]);
+const listed = computed(() => databaseEntities.value.filter(item => item.layout === layout.value &&
   (typeFilter.value === '全部' || item.type === typeFilter.value) &&
   (!query.value || `${item.source_handle} ${item.type} ${item.layer}`.toLowerCase().includes(query.value.toLowerCase()))));
-const visible = computed(() => props.document.entities.filter(item => item.layout === layout.value &&
+const visible = computed(() => allEntities.value.filter(item => item.layout === layout.value &&
   !hidden.value.includes(item.layer) && !item.status));
-const selected = computed(() => props.document.entities.find(item => item.object_id === selectedId.value) || null);
+const selected = computed(() => allEntities.value.find(item => item.object_id === selectedId.value) || null);
 const points = computed(() => visible.value.flatMap(item => {
   if (item.vertices) return item.vertices.map(vertex => vertex.slice(0, 2));
+  if (item.display_points) return item.display_points.map(vertex => vertex.slice(0, 2));
+  if (item.boundary_paths) return item.boundary_paths.flatMap(boundary => boundary.vertices?.map(vertex => vertex.slice(0, 2)) || []);
   if (item.center && item.radius) return [[item.center[0] - item.radius, item.center[1] - item.radius],
     [item.center[0] + item.radius, item.center[1] + item.radius]];
-  return [item.start, item.end, item.point].filter((value): value is number[] => Boolean(value));
+  return [item.start, item.end, item.point, item.insert].filter((value): value is number[] => Boolean(value));
 }));
 const bounds = computed(() => {
   const values = points.value;
@@ -83,6 +124,9 @@ function path(item: Entity): string {
   if (item.vertices?.length) {
     return polylinePath(item.vertices, Boolean(item.closed));
   }
+  if (item.display_points?.length) return polylinePath(item.display_points, false);
+  if (item.boundary_paths?.length === 1 && item.boundary_paths[0].type === 'polyline')
+    return polylinePath(item.boundary_paths[0].vertices, item.boundary_paths[0].closed);
   if (item.start && item.end) return `M ${item.start[0]} ${-item.start[1]} L ${item.end[0]} ${-item.end[1]}`;
   if (item.center && item.radius) {
     if (item.type === 'CIRCLE') {
@@ -113,26 +157,34 @@ function move(event: PointerEvent) {
   drag.value = [event.clientX, event.clientY];
 }
 const unitLabel = computed(() => ({ 1: '英寸', 4: '毫米', 5: '厘米', 6: '米' } as Record<number, string>)[props.document.units.code] || '图纸单位');
+const aciColors: Record<number, string> = { 1: '#ef4444', 2: '#eab308', 3: '#22c55e', 4: '#06b6d4',
+  5: '#3b82f6', 6: '#d946ef', 7: '#e5e7eb' };
+function sourceColor(item: Entity): string {
+  const layer = props.document.layers.find(value => value.name === item.layer);
+  return aciColors[Math.abs(layer?.color || 7)] || '#e5e7eb';
+}
 </script>
 
 <template>
   <div class="dxf-workspace">
     <aside class="dxf-browser">
       <header><strong>图纸对象</strong><small>{{ document.counts.source_entities }} 个源图元</small></header>
+      <small v-if="document.diagnostics.length">部分内容存在解析或几何诊断：{{ document.diagnostics.length }} 条</small>
       <div class="dxf-tools">
         <select v-model="layout"><option v-for="item in document.layouts" :key="item.name">{{ item.name }}</option></select>
         <input v-model="query" placeholder="搜索 handle、类型、图层" />
         <select v-model="typeFilter"><option v-for="item in entityTypes" :key="item">{{ item }}</option></select>
       </div>
       <div class="dxf-layers"><strong>图层</strong>
-        <label v-for="item in document.layers.filter(layer => layer.source_defined)" :key="item.name">
+        <label v-for="item in document.layers.filter(layer => layer.source_defined !== false)" :key="item.name">
           <input type="checkbox" :checked="!hidden.includes(item.name)" @change="toggleLayer(item.name)" />
-          <span>{{ item.name }}</span><small>{{ document.entities.filter(entity => entity.layer === item.name).length }}</small>
+          <span>{{ item.name }}</span><small>{{ allEntities.filter(entity => entity.layer === item.name).length }}</small>
         </label>
       </div>
       <div class="dxf-list">
+        <p v-if="databaseError">{{ databaseError }}</p>
         <button v-for="item in listed" :key="item.object_id" type="button" :class="{ selected: selectedId === item.object_id }"
-          @click="selectedId = item.object_id">{{ item.type }} · {{ item.source_handle }} <small>{{ item.layer }}</small></button>
+          @click="selectedId = item.object_id">{{ item.type }} · {{ item.source_handle || item.occurrence_path?.join('/') }} <small>{{ item.layer }}</small></button>
       </div>
     </aside>
     <div class="dxf-canvas"><div class="dxf-toolbar"><strong>{{ layout }}</strong><span>{{ unitLabel }}</span>
@@ -140,17 +192,26 @@ const unitLabel = computed(() => ({ 1: '英寸', 4: '毫米', 5: '厘米', 6: '�
       <svg :viewBox="viewBox" preserveAspectRatio="xMidYMid meet" @wheel.prevent="wheel"
         @pointerdown="drag = [$event.clientX, $event.clientY]" @pointermove="move" @pointerup="drag = null" @pointerleave="drag = null">
         <g v-for="item in visible" :key="item.object_id" @click.stop="selectedId = item.object_id">
-          <path v-if="path(item)" :d="path(item)" fill="none" :stroke="selectedId === item.object_id ? '#f59e0b' : '#38bdf8'"
+          <path v-if="path(item)" :d="path(item)"
+            :fill="item.type === 'HATCH' && item.solid_fill && item.boundary_paths?.length === 1 ? `${sourceColor(item)}55` : 'none'"
+            :stroke="selectedId === item.object_id ? '#f59e0b' : sourceColor(item)"
             :stroke-width="selectedId === item.object_id ? 2 : 1" vector-effect="non-scaling-stroke" />
           <path v-if="path(item)" :d="path(item)" fill="none" stroke="transparent" stroke-width="14"
             vector-effect="non-scaling-stroke" style="cursor:pointer" />
           <circle v-if="item.point" :cx="item.point[0]" :cy="-item.point[1]" r="3" fill="#38bdf8" vector-effect="non-scaling-stroke" />
+          <text v-if="item.display_text && item.insert" :x="item.insert[0]" :y="item.insert[1]"
+            :font-size="item.text_height || 2" :fill="sourceColor(item)" transform="scale(1,-1)"
+            style="cursor:pointer">{{ item.display_text }}</text>
         </g>
       </svg>
     </div>
     <aside class="dxf-detail"><strong>对象详情</strong>
-      <template v-if="selected"><h3>{{ selected.type }} · {{ selected.source_handle }}</h3>
+      <template v-if="selected"><h3>{{ selected.type }} · {{ selected.source_handle || selected.occurrence_path?.join('/') }}</h3>
         <dl><dt>来源</dt><dd>DXF · {{ selected.layout }}</dd><dt>图层</dt><dd>{{ selected.layer }}</dd>
+          <template v-if="selected.derived"><dt>实例路径</dt><dd>{{ selected.occurrence_path?.join('/') }}</dd><dt>定义 handle</dt><dd>{{ selected.definition_handle }}</dd></template>
+          <template v-if="selected.block_name"><dt>块名</dt><dd>{{ selected.block_name }}</dd><dt>属性</dt><dd>{{ selected.attribs }}</dd></template>
+          <template v-if="selected.raw_text != null"><dt>原文</dt><dd>{{ selected.raw_text }}</dd><dt>显示文本</dt><dd>{{ selected.display_text }}</dd></template>
+          <template v-if="selected.measurement != null"><dt>标注测量值</dt><dd>{{ selected.measurement }}</dd></template>
           <dt>闭合</dt><dd>{{ selected.closed == null ? '不适用' : selected.closed ? '是' : '否' }}</dd>
           <dt>顶点数</dt><dd>{{ selected.vertices?.length ?? '不适用' }}</dd>
           <dt>长度</dt><dd>{{ selected.length == null ? '未计算' : `${selected.length.toFixed(4)} ${unitLabel}` }}</dd>

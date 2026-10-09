@@ -2754,7 +2754,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <DxfWorkspace v-if="sourceFormat === 'DXF' && dxfDocument" :document="dxfDocument" />
+    <DxfWorkspace v-if="sourceFormat === 'DXF' && dxfDocument && contract" :document="dxfDocument" :build-id="contract.part_id" />
     <main
       v-else-if="sourceFormat !== 'DXF'"
       v-loading="loading"

@@ -243,7 +243,7 @@ async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings:
             {"document_path": str(output)}, output.parent / "geometry", settings,
         )
         measurements = kernel.get("measurements") or {}
-        for entity in document["entities"]:
+        for entity in [*document["entities"], *document.get("occurrences", [])]:
             if entity["type"] not in {"LWPOLYLINE", "POLYLINE"} or entity.get("status"):
                 continue
             validation = measurements.get(entity["object_id"]) or {"status": "missing"}
@@ -259,24 +259,30 @@ async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings:
                                                 "object_id": entity["object_id"], "kernel": validation})
     except FreeCadParserError as exc:
         document["diagnostics"].append({"code": "dxf_geometry_unavailable", "message": redact_local_paths(str(exc))[:500]})
-        for entity in document["entities"]:
+        for entity in [*document["entities"], *document.get("occurrences", [])]:
             if entity.get("single_contour_area") is not None:
                 entity["analytic_area_candidate"] = entity["single_contour_area"]
                 entity["single_contour_area"] = None
                 entity["area_undefined_reason"] = "kernel_unavailable"
                 entity["normalized"]["single_contour_area_mm2"] = None
     output.write_text(json.dumps(document, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+    partial = bool(document["counts"]["unsupported"] or document["counts"]["failed"] or
+                   document["counts"].get("unprocessed") or document["diagnostics"])
     await _set_stage(repository, revision_id, "dxf_publishing", 85)
-    await repository.replace_native_evidence(revision_id, {
-        "dxf_document": [{key: value for key, value in document.items() if key not in {"entities", "layers", "diagnostics"}}],
+    dxf_counts = await repository.replace_native_evidence(revision_id, {
+        "dxf_document": [{key: value for key, value in document.items() if key not in {"entities", "occurrences", "layers", "diagnostics", "blocks"}}],
         "dxf_layers": document["layers"],
+        "dxf_blocks": document["blocks"],
         "dxf_entities": document["entities"],
+        "dxf_occurrences": document["occurrences"],
         "dxf_diagnostics": document["diagnostics"],
     }, replace_all=False)
     await repository.update_revision_manifest(revision_id, {
+        "dxf_storage": {"backend": "postgresql", "complete": True, "counts": dxf_counts},
         "dxf": {"schema_version": document["schema_version"], "parser_version": document["parser_version"],
                 "source_sha256": document["source_sha256"], "units": document["units"],
-                "counts": document["counts"], "layouts": document["layouts"]},
+                "counts": document["counts"], "layouts": document["layouts"],
+                "completeness": "partial" if partial else "complete"},
         "viewer_asset": {"bundle_root": "dxf", "scene": "dxf/document.json"},
     })
     await repository.set_revision_status(revision_id, status="completed", progress=100, status_message="ready")

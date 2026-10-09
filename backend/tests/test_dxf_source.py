@@ -41,3 +41,13 @@ def test_renamed_dwg_is_rejected(tmp_path: Path):
     path.write_bytes(b"AC1032 DWG data")
     with pytest.raises(ValueError, match="DXF_HEADER_INVALID"):
         parse_source(path, "revision-a")
+
+
+def test_binary_dxf_is_parsed_without_claiming_ascii_layer_scan(tmp_path: Path):
+    drawing = ezdxf.new("R2000")
+    drawing.modelspace().add_line((0, 0), (1, 1))
+    path = tmp_path / "binary.dxf"
+    drawing.saveas(path, fmt="bin")
+    result = parse_source(path, "revision-b")
+    assert result["counts"]["source_entities"] == 1
+    assert result["layers"][0]["source_defined"] is None

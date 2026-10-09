@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import islice
 from pathlib import Path
 
 import ezdxf
+from ezdxf import path as dxf_path
 
 from app.dxf.geometry import measure_entity
 
@@ -13,6 +15,8 @@ PARSER_VERSION = "dxf-source-v1"
 SUPPORTED = {"POINT", "LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE"}
 MAX_ENTITIES = 200_000
 MAX_VERTICES = 2_000_000
+MAX_OCCURRENCES = 50_000
+MAX_BLOCK_DEPTH = 8
 
 
 def _point(value) -> list[float]:
@@ -50,6 +54,82 @@ def _attributes(entity) -> dict:
             if key not in {"handle", "owner"}}
 
 
+def _virtual_record(entity, revision_id: str, layout: str, layer: str, occurrence_path: list[str],
+                    definition_handle: str | None) -> dict:
+    kind = entity.dxftype()
+    record = {"object_id": f"{revision_id}:{layout}:{'/'.join(occurrence_path)}",
+              "source_handle": None, "derived": True, "definition_handle": definition_handle,
+              "occurrence_path": occurrence_path, "layout": layout,
+              "layer": entity.dxf.get("layer", layer), "type": kind,
+              "source_attributes": _attributes(entity)}
+    if kind == "LINE":
+        record.update(start=_point(entity.dxf.start), end=_point(entity.dxf.end))
+    elif kind in {"CIRCLE", "ARC"}:
+        record.update(center=_point(entity.ocs().to_wcs(entity.dxf.center)), radius=float(entity.dxf.radius))
+        if kind == "ARC":
+            record.update(start_angle=float(entity.dxf.start_angle), end_angle=float(entity.dxf.end_angle))
+    elif kind == "LWPOLYLINE":
+        record["vertices"] = [[float(x), float(y), float(sw), float(ew), float(b)]
+                              for x, y, sw, ew, b in entity.get_points("xyseb")]
+        record["closed"] = bool(entity.closed)
+        record["elevation"] = float(entity.dxf.get("elevation", 0))
+        record["extrusion"] = _point(entity.dxf.get("extrusion", (0, 0, 1)))
+        record["world_vertices"] = [_point(entity.ocs().to_wcs((v[0], v[1], record["elevation"])))
+                                    for v in record["vertices"]]
+    elif kind == "TEXT":
+        record.update(raw_text=entity.dxf.text, display_text=entity.dxf.text,
+                      insert=_point(entity.dxf.insert), text_height=float(entity.dxf.height))
+    else:
+        record["status"] = "unsupported"
+    return record
+
+
+def _expand_insert(entity, drawing, revision_id: str, layout: str, path: list[str],
+                   active_blocks: set[str], out: list[dict], diagnostics: list[dict]) -> None:
+    name = entity.dxf.name
+    if name in active_blocks or len(path) > MAX_BLOCK_DEPTH:
+        diagnostics.append({"code": "block_cycle_or_depth", "occurrence_path": path, "block": name})
+        return
+    if name not in drawing.blocks:
+        diagnostics.append({"code": "block_missing", "occurrence_path": path, "block": name})
+        return
+    if len(out) >= MAX_OCCURRENCES:
+        diagnostics.append({"code": "occurrence_budget", "occurrence_path": path})
+        return
+    definition = list(drawing.blocks[name])
+    try:
+        instances = list(islice(entity.multi_insert(), MAX_OCCURRENCES - len(out) + 1)) if entity.mcount > 1 else [entity]
+    except (AttributeError, ValueError):
+        instances = [entity]
+    for instance_index, instance in enumerate(instances):
+        if len(out) >= MAX_OCCURRENCES:
+            diagnostics.append({"code": "occurrence_budget", "occurrence_path": path})
+            return
+        instance_path = [*path, str(instance_index)] if len(instances) > 1 else path
+        try:
+            virtuals = list(instance.virtual_entities())
+        except (ezdxf.DXFError, ValueError) as exc:
+            diagnostics.append({"code": "block_transform_failed", "occurrence_path": instance_path,
+                                "message": str(exc)})
+            continue
+        for child_index, virtual in enumerate(virtuals):
+            if len(out) >= MAX_OCCURRENCES:
+                diagnostics.append({"code": "occurrence_budget", "occurrence_path": instance_path})
+                return
+            child_path = [*instance_path, str(child_index)]
+            if virtual.dxftype() == "INSERT":
+                _expand_insert(virtual, drawing, revision_id, layout, child_path,
+                               active_blocks | {name}, out, diagnostics)
+                continue
+            definition_handle = definition[child_index].dxf.get("handle") if child_index < len(definition) else None
+            try:
+                out.append(_virtual_record(virtual, revision_id, layout,
+                                           instance.dxf.get("layer", "0"), child_path, definition_handle))
+            except (ezdxf.DXFError, ValueError, AttributeError) as exc:
+                diagnostics.append({"code": "block_entity_failed", "occurrence_path": child_path,
+                                    "message": str(exc)})
+
+
 def parse_source(path: Path, revision_id: str) -> dict:
     """Reject malformed input and preserve unsupported entities as explicit diagnostics."""
     source = path.read_bytes()
@@ -61,6 +141,7 @@ def parse_source(path: Path, revision_id: str) -> dict:
     except (ezdxf.DXFError, UnicodeError, OSError) as exc:
         raise ValueError(f"DXF_PARSE_INVALID: {exc}") from exc
     entities = []
+    occurrences = []
     diagnostics = []
     vertices_seen = 0
     for layout in drawing.layouts:
@@ -117,6 +198,65 @@ def parse_source(path: Path, revision_id: str) -> dict:
                     record["extrusion"] = _point(entity.dxf.get("extrusion", (0, 0, 1)))
                     record["world_vertices"] = [_point(entity.ocs().to_wcs((v[0], v[1], record["elevation"])))
                                                 for v in record["vertices"]]
+                elif kind == "INSERT":
+                    record.update(block_name=entity.dxf.name, insert=_point(entity.dxf.insert),
+                                  rotation=float(entity.dxf.get("rotation", 0)),
+                                  scale=[float(entity.dxf.get("xscale", 1)), float(entity.dxf.get("yscale", 1)),
+                                         float(entity.dxf.get("zscale", 1))],
+                                  attribs=[{"tag": item.dxf.tag, "text": item.dxf.text}
+                                           for item in entity.attribs])
+                    _expand_insert(entity, drawing, revision_id, layout.name, [str(handle)],
+                                   set(), occurrences, diagnostics)
+                elif kind == "TEXT":
+                    style = entity.dxf.get("style", "Standard")
+                    font = drawing.styles.get(style)
+                    record.update(raw_text=entity.dxf.text, display_text=entity.dxf.text,
+                                  insert=_point(entity.dxf.insert), text_height=float(entity.dxf.height),
+                                  style=style, font_ref=font.dxf.get("font") if font else None,
+                                  rotation=float(entity.dxf.get("rotation", 0)))
+                elif kind == "MTEXT":
+                    style = entity.dxf.get("style", "Standard")
+                    font = drawing.styles.get(style)
+                    record.update(raw_text=entity.text, display_text=entity.plain_text(),
+                                  insert=_point(entity.dxf.insert), text_height=float(entity.dxf.char_height),
+                                  style=style, font_ref=font.dxf.get("font") if font else None)
+                elif kind == "DIMENSION":
+                    raw_text = entity.dxf.get("text", "")
+                    measured = entity.get_measurement()
+                    measured = float(measured) if measured is not None else None
+                    record.update(dimension_type=int(entity.dimtype),
+                                  raw_text=raw_text,
+                                  display_text="" if raw_text == " " else
+                                  str(measured) if raw_text in {"", "<>"} and measured is not None else raw_text,
+                                  measurement=measured,
+                                  dimstyle=entity.dxf.get("dimstyle", "Standard"),
+                                  geometry_block=entity.dxf.get("geometry"),
+                                  style_overrides=dict(entity.get_acad_dstyle(
+                                      drawing.dimstyles.get(entity.dxf.get("dimstyle", "Standard")))))
+                elif kind == "HATCH":
+                    boundaries = []
+                    for boundary in entity.paths.paths:
+                        if hasattr(boundary, "vertices"):
+                            boundaries.append({"type": "polyline", "closed": bool(boundary.is_closed),
+                                               "vertices": [[float(x), float(y), 0.0, 0.0, float(b)]
+                                                            for x, y, b in boundary.vertices]})
+                        else:
+                            boundaries.append({"type": "edge", "edge_count": len(boundary.edges)})
+                    record.update(solid_fill=bool(entity.dxf.solid_fill),
+                                  pattern_name=entity.dxf.get("pattern_name"),
+                                  boundary_path_count=len(boundaries), boundary_paths=boundaries,
+                                  hatch_style=int(entity.dxf.get("hatch_style", 0)),
+                                  pattern_scale=float(entity.dxf.get("pattern_scale", 1)),
+                                  pattern_angle=float(entity.dxf.get("pattern_angle", 0)))
+                elif kind in {"ELLIPSE", "SPLINE"}:
+                    curve = dxf_path.make_path(entity)
+                    record["display_points"] = [_point(point) for point in curve.flattening(distance=0.05, segments=8)]
+                    record["display_tolerance"] = 0.05
+                    if kind == "SPLINE":
+                        record.update(degree=int(entity.dxf.degree),
+                                      knots=[float(v) for v in entity.knots],
+                                      weights=[float(v) for v in entity.weights],
+                                      control_points=[_point(v) for v in entity.control_points])
                 else:
                     record["status"] = "unsupported"
                     diagnostics.append({"code": "unsupported_entity", "object_id": record["object_id"],
@@ -128,6 +268,7 @@ def parse_source(path: Path, revision_id: str) -> dict:
             entities.append(record)
     units_code = int(drawing.header.get("$INSUNITS", 0))
     entities = [measure_entity(record, units_code) for record in entities]
+    occurrences = [measure_entity(record, units_code) for record in occurrences]
     source_layers = _source_layer_names(source)
     return {
         "schema_version": "dxf_document_v1", "parser_version": PARSER_VERSION,
@@ -135,14 +276,24 @@ def parse_source(path: Path, revision_id: str) -> dict:
         "dxf_version": drawing.dxfversion, "encoding": drawing.encoding,
         "units": {"code": units_code, "source": "$INSUNITS" if units_code else "drawing_unit"},
         "layouts": [{"name": layout.name, "is_model": layout.name == "Model"} for layout in drawing.layouts],
-        "layers": [{"name": layer.dxf.name, "source_defined": source_layers is None or layer.dxf.name in source_layers,
+        "blocks": [{"name": block.name, "base_point": _point(block.base_point),
+                    "entity_handles": [entity.dxf.get("handle") for entity in block]}
+                   for block in drawing.blocks if not block.name.startswith("*")],
+        "layers": [{"name": layer.dxf.name, "source_defined": None if source_layers is None else layer.dxf.name in source_layers,
                     "color": int(layer.dxf.color),
                     "linetype": layer.dxf.linetype, "visible": not layer.is_off() and not layer.is_frozen()}
                    for layer in drawing.layers],
-        "entities": entities, "diagnostics": diagnostics,
+        "entities": entities, "occurrences": occurrences, "diagnostics": diagnostics,
         "counts": {"source_entities": len(entities),
                    "parsed": sum(record.get("status") is None for record in entities),
                    "unsupported": sum(record.get("status") == "unsupported" for record in entities),
                    "failed": sum(record.get("status") == "failed" for record in entities),
-                   "vertices": vertices_seen},
+                   "vertices": vertices_seen,
+                   "occurrences": len(occurrences),
+                   "displayable": sum(item.get("status") is None and item["type"] in
+                                      {"POINT", "LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE", "TEXT", "MTEXT", "ELLIPSE", "SPLINE"}
+                                      for item in [*entities, *occurrences]),
+                   "measurable": sum(item.get("length") is not None for item in [*entities, *occurrences]),
+                   "unprocessed": sum(item.get("code") in {"occurrence_budget", "block_cycle_or_depth"}
+                                      for item in diagnostics)},
     }

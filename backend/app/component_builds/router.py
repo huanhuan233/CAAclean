@@ -276,6 +276,23 @@ async def component_build_native_topology(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TOPOLOGY_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@router.get("/{build_id}/viewer/dxf/{kind}")
+async def component_build_dxf_records(
+    build_id: UUID,
+    kind: str,
+    offset: int = Query(0, ge=0),
+    page_size: int = Query(200, ge=1, le=1000),
+    object_id: str | None = None,
+    service: ComponentBuildService = Depends(get_component_build_service),
+) -> dict:
+    try:
+        if object_id:
+            return await service.get_dxf_record(build_id, kind, object_id)
+        return await service.get_dxf_records(build_id, kind, offset, page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"code": "DXF_RECORD_NOT_FOUND", "message": str(exc)}) from exc
+
+
 @router.get("/{build_id}/viewer/native/evidence/{kind}")
 async def component_build_native_evidence(
     build_id: UUID,

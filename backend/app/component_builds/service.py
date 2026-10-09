@@ -389,8 +389,8 @@ class ComponentBuildService:
                 "summary": {"model_name": build.component_name, "source_file_name": revision.source_file_name,
                             "solid_count": 0, "native_feature_count": 0, "recognized_feature_count": 0},
                 "bom": {"assembly_mode": "none", "default_visible": False, "part_count": 0, "nodes": []},
-                "viewer_geometry": {"displayable": bool((dxf.get("counts") or {}).get("parsed")),
-                                    "primitive_count": (dxf.get("counts") or {}).get("parsed", 0),
+                "viewer_geometry": {"displayable": bool((dxf.get("counts") or {}).get("displayable")),
+                                    "primitive_count": (dxf.get("counts") or {}).get("displayable", 0),
                                     "triangle_count": 0, "solid_count": 0, "empty_reason": None},
                 "viewer_asset": {"scene_url": asset_base + viewer["scene"]} if ready else None,
                 "dxf": dxf,
@@ -608,6 +608,35 @@ class ComponentBuildService:
             if page["has_more"]:
                 raise ValueError(f"native topology {kind} exceeds single-response limit")
             result[kind] = page["records"]
+        return result
+
+    async def get_dxf_records(self, build_id: UUID, kind: str, offset: int, limit: int) -> dict:
+        if kind not in {"dxf_document", "dxf_layers", "dxf_blocks", "dxf_entities",
+                        "dxf_occurrences", "dxf_diagnostics"}:
+            raise ValueError("unknown DXF record kind")
+        build = await self._require_build(build_id)
+        if build.cad_revision_id is None:
+            raise ValueError("DXF source is not attached")
+        revision = await self.repository.get_raw_revision(build.cad_revision_id)
+        if revision is None:
+            raise ValueError("DXF revision is missing")
+        manifest = revision.parse_manifest or {}
+        if (manifest.get("ingest") or {}).get("source_format") != "DXF":
+            raise ValueError("revision is not DXF")
+        storage = manifest.get("dxf_storage") or {}
+        if storage.get("backend") != "postgresql" or not storage.get("complete"):
+            raise ValueError("DXF records are not published")
+        total = int((storage.get("counts") or {}).get(kind, 0))
+        rows = await self.repository.list_native_evidence(revision.id, kind, offset, limit)
+        return {"revision_id": str(revision.id), "kind": kind, "offset": offset,
+                "total": total, "records": rows, "has_more": offset + len(rows) < total}
+
+    async def get_dxf_record(self, build_id: UUID, kind: str, object_id: str) -> dict:
+        await self.get_dxf_records(build_id, kind, 0, 1)
+        build = await self._require_build(build_id)
+        result = await self.repository.get_native_evidence_object(build.cad_revision_id, kind, object_id)
+        if result is None:
+            raise ValueError("DXF object not found")
         return result
 
     async def get_native_evidence(self, build_id: UUID, kind: str, offset: int, limit: int) -> dict:

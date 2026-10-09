@@ -388,6 +388,17 @@ export function fetchComponentBuildNativeEvidence<T extends Record<string, unkno
   });
 }
 
+/** DXF source records are served from the revision's PostgreSQL evidence rows. */
+export function fetchComponentBuildDxfRecords<T extends Record<string, unknown>>(
+  buildId: string, kind: string, offset: number, pageSize = 200, options?: ComponentBuildQueryOptions
+) {
+  return request<{ revision_id: string; kind: string; records: T[]; total: number; has_more: boolean }>({
+    url: `/api/component-builds/${buildId}/viewer/dxf/${encodeURIComponent(kind)}`,
+    params: { offset, page_size: pageSize },
+    ...componentBuildQueryConfig(options)
+  });
+}
+
 export interface CompositeField {
   raw_value: unknown;
   raw_unit: string;

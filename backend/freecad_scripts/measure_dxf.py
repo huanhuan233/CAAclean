@@ -52,7 +52,7 @@ def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     document = json.loads(Path(job["document_path"]).read_text(encoding="utf-8"))
     measurements = {}
-    for record in document["entities"]:
+    for record in [*document["entities"], *document.get("occurrences", [])]:
         if record.get("status") or record["type"] not in {"LWPOLYLINE", "POLYLINE"}:
             continue
         try:
