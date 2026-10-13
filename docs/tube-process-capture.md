@@ -1,5 +1,57 @@
 # 导管工程信息采集
 
+## 圆截面弯管扩展（2026-10-13）
+
+本节更新下文 P7B/P7C 历史记录中的“弯管暂不支持”限制。当前算法为
+`tube.geometry.circular.v3`，复用既有 FreeCAD 作业、几何快照、导管 API 和发布事务。
+本次没有修改 CATIA 采集器，无需更换 CAA EXE。
+
+### 支持范围与尺寸定义
+
+- 有效闭合的单 Solid，圆柱直段与圆环弯段相切连接，内外壁圆截面一致，两端为完整环形平口。
+- 支持沿圆周分裂的壁面及共面分裂端面；保留各段内外壁的 Solid 内 B-Rep 面索引，不将其冒充显示面 ID。
+- 外径、内径、几何壁厚分别保存；中心线弯曲半径为独立字段，壁厚定义为同心内外壁半径差。
+- 同时核验完整壁面覆盖、内外壁配对、共享边连通、端面材料方向、路径相切、每段三个法向截面、径向材料侧和整体体积。
+- 旋转后的圆环截线可能由内核表示为样条。仅在解析壁面已证明圆截面的前提下，对有限截线另做 33 点残差与周长校验；这不是通用自由曲面拟合。
+- 安装间隙复用已核验外壁及两个环形端面，见证点投影到有限直线/圆弧路径。多个不同站位同样接近时返回 `s_mm=null`、`station_status=ambiguous`。
+
+这是当前理想 CAD 几何的核验，不证明制造后实物的壁厚减薄、增厚或椭圆化。
+变截面、偏心内壁、椭圆截面、自由曲面、斜口、扩缩口、分叉、闭环、非相切连接和不能唯一配对的分裂区间仍不支持；返回具体未满足条件，不输出确认尺寸。
+单任务最多 32 个 Solid、每体 256 面、48 段；每段三处截面，沿用进程超时，记录实际加载次数和耗时。
+
+### 数据、查询与补算
+
+沿用 `CadNativeEvidence` 的 `tube_records` 通道。其 `payload.section` 保存
+`outer_diameter_mm`、`inner_diameter_mm`、`wall_thickness_mm`、`unit`、
+`wall_thickness_min_mm`、`wall_thickness_max_mm`、`tolerance_mm`、`samples` 与核验方法。
+`payload.path.segments` 保存有限分段及独立的 `radius_mm`、`bend_deg`、累计站位和面角色。
+这些值是版本化几何测量 JSON 字段，没有新增一套数据库或用它们覆盖原生设计值。
+
+`GET /api/component-builds/{build_id}/tube/paths/step` 读取已发布尺寸；原生路径继续使用
+`GET /api/component-builds/{build_id}/tube/paths/native`。发布前校验尺寸、单位、采样、身份和算法版本，
+结果绑定 Revision、快照及资产摘要；计算或校验失败保留上一可用结果和其他证据通道。
+
+已有可信世界坐标 Solid 快照时，后端加载新版代码后在“特征 → 导管 → 几何导管”执行“分析 / 重算”即可，
+无需重新采集 CATPart。缺少快照时先恢复几何产物；本次补算不能生成旧原生包没有的设计参数。
+右侧分别显示外径、内径、壁厚、容差及截面明细，选中单段后明细仅显示该段的三处站位。
+
+### 验收记录
+
+- 独立构造标准件：外径 8 mm、内径 6 mm、壁厚 1 mm、中心线弯曲半径 30 mm；覆盖纯弯、直弯组合、分裂面、刚体变换和已知 2 mm 间隙。实心杆、闭环、缺口及偏心内壁不确认。
+- 真实历史样件 `M-D3232K01436-202.CATPart` 的已保存实体：54 面，13 段（7 直、6 弯）；外径 6 mm、内径 5 mm、壁厚 0.5 mm，39 处截面通过，总长约 1091.490292 mm，弯曲半径 18 mm。一次加载，计算约 3.56 秒；尺寸与先前独立采集的同心圆设计截面对照一致。
+- 已对该样件补算并写入真实 PostgreSQL；运行中 API 的读取接口可查到当前版本结果。没有覆盖原始模型及原生路径证据。
+- FreeCAD、尺寸契约、直管回归和真实 PostgreSQL 事务测试通过；数据库测试覆盖重算失败后保留先前结果及其他通道。
+- 前端相关测试 6 项、类型检查及生产构建通过。真实浏览器验证几何导管列表、整管尺寸、R18 弯段参数和该段三处截面明细。当前窄视口的模型显示较小，截图未足以确认弯段叠加的视觉定位效果，该项不记为通过。
+- 部署限制：本次自动审批拒绝停止并重启现有 API 进程，未提供更具体原因。已入库结果可查看，但现有常驻进程需重启后，页面“分析 / 重算”才会使用新版服务。浏览器触发重算验收因此为 `not_run`。
+
+复核命令（仓库根目录，配置现有 FreeCAD 和测试数据库）：
+
+```powershell
+$env:P7_LIVE_FREECAD='1'
+$env:P7_LIVE_DB='1'
+python -m pytest backend/tests/test_bent_tube_freecad_live.py backend/tests/test_tube_result_contract.py backend/tests/test_tube_section.py backend/tests/test_p7b_freecad_live.py backend/tests/test_p7c_freecad_live.py backend/tests/test_p7c_postgres_live.py -q
+```
+
 ## 模块边界
 
 `CaaEngineeringCapture::Extract` 封装 CATIA 接口查询、对象身份解析、公式输入输出、几何引用、中心线展开和失败隔离。调用方只提交当前采集包。关联 CATPart 的采集在文档句柄关闭前完成；输出继续使用 PropertyFact、FeatureDependency 和 SemanticFacet，保持原有数据库路径。

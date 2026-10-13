@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import tempfile
 from pathlib import Path
 from uuid import UUID
@@ -20,7 +21,38 @@ from app.measurement.geometry_snapshot import GeometryReferenceError, GeometrySn
 from app.measurement.repository import MeasurementRepository
 
 
-ALGORITHM_VERSION = "tube.geometry.p7c.v2"
+ALGORITHM_VERSION = "tube.geometry.circular.v3"
+CONFIRMED_TUBE_STATUSES = {"confirmed_straight_hollow_tube", "confirmed_bent_hollow_tube"}
+
+
+def validate_tube_dimensions(record: dict) -> None:
+    """A confirmed classification must carry usable, consistent measurements."""
+    if record.get("status") not in CONFIRMED_TUBE_STATUSES:
+        return
+    section, path = record.get("section"), record.get("path")
+    if not isinstance(section, dict) or not isinstance(path, dict):
+        raise AssemblyContextError("geometry_result_invalid: confirmed tube dimensions missing")
+    def positive(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+    outer, inner, wall = (section.get(key) for key in ("outer_diameter_mm", "inner_diameter_mm", "wall_thickness_mm"))
+    tolerance = section.get("tolerance_mm")
+    samples, segments = section.get("samples"), path.get("segments")
+    if (not all(positive(v) for v in (outer, inner, wall, tolerance, path.get("length_mm"))) or
+            tolerance > 0.1 or outer <= inner or abs((outer - inner) / 2 - wall) > tolerance or
+            section.get("unit") != "mm" or section.get("uniformity_status") != "verified_analytic_constant_section" or
+            not isinstance(segments, list) or not segments or
+            any(not isinstance(item, dict) or item.get("kind") not in {"line", "arc"} for item in segments) or
+            not isinstance(samples, list) or len(samples) != 3 * len(segments)):
+        raise AssemblyContextError("geometry_result_invalid: inconsistent confirmed tube section")
+    for sample in samples:
+        if not isinstance(sample, dict) or sample.get("status") != "verified" or any(
+            not positive(sample.get(key)) or abs(sample[key] - expected) > 2 * tolerance
+            for key, expected in (("outer_diameter_mm", outer), ("inner_diameter_mm", inner), ("wall_thickness_mm", wall))
+        ):
+            raise AssemblyContextError("geometry_result_invalid: tube section sample invalid")
+    if record["status"] == "confirmed_bent_hollow_tube" and not any(item.get("kind") == "arc" for item in segments):
+        raise AssemblyContextError("geometry_result_invalid: bent tube has no bend")
 
 
 def validate_tube_result_scope(result: dict, solids: list, tube_solid_id: str) -> tuple[dict[str, dict], list[dict]]:
@@ -33,6 +65,8 @@ def validate_tube_result_scope(result: dict, solids: list, tube_solid_id: str) -
     identities = [row.get("solid_id") for row in records if isinstance(row, dict)]
     if len(identities) != len(records) or len(identities) != len(expected) or set(identities) != expected:
         raise AssemblyContextError("geometry_result_invalid: duplicate, missing or extra solid record")
+    for record in records:
+        validate_tube_dimensions(record)
     targets = expected - {tube_solid_id}
     pairs = [(row.get("tube_solid_id"), row.get("target_solid_id"))
              for row in clearances if isinstance(row, dict)]
@@ -122,7 +156,7 @@ class TubeAnalysisService:
         unknown = sum(row.get("status") == "evaluated" and row.get("intersection_status") in
                       {"boolean_failed", "indeterminate_zero_distance", "numerically_uncertain_volume"}
                       for row in clearances)
-        own_status = "complete" if records_by_solid[tube_solids[0].solid_id].get("status") == "confirmed_straight_hollow_tube" else "partial"
+        own_status = "complete" if records_by_solid[tube_solids[0].solid_id].get("status") in CONFIRMED_TUBE_STATUSES else "partial"
         clearance_status = "not_requested" if not target_instance_ids else "complete" if not failed and not unknown else "partial"
         run = {**common, "config": config, "status": "complete" if own_status == "complete" and clearance_status in {"complete", "not_requested"} else "partial",
                "self_analysis_status": own_status, "installation_clearance_status": clearance_status,
@@ -136,7 +170,7 @@ class TubeAnalysisService:
             await self.cad.replace_native_evidence(revision.id,
                                                    {"tube_run": [run], "tube_records": stored_records,
                                                     "tube_clearances": stored_clearances}, replace_all=False)
-        return {"run": run, "tube_count": sum(item["status"] == "confirmed_straight_hollow_tube"
+        return {"run": run, "tube_count": sum(item["status"] in CONFIRMED_TUBE_STATUSES
                                                for item in stored_records), "clearance_count": len(stored_clearances)}
 
     async def _published_run(self, build_id: UUID, settings: Settings):

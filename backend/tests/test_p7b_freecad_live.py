@@ -68,4 +68,4 @@ Path(job['result_json_path']).write_text('{"status":"success"}', encoding='utf-8
                                  tmp_path / "solo-job", settings)
     assert solo["status"] == "success"
     assert solo["clearances"] == []
-    assert solo["algorithm_version"] == "tube.geometry.p7c.v2"
+    assert solo["algorithm_version"] == "tube.geometry.circular.v3"

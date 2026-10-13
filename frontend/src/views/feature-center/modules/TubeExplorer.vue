@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { analyzeTube, fetchTubeCandidates, fetchTubeClearances, fetchTubeNativePaths, fetchTubeStepPaths } from '@/service/api';
 import type { TubeClearanceRecord, TubePathRecord } from '@/service/api/cad';
+import { tubeGeometryTitle } from './tube-section-view';
 
 type Group = 'native' | 'step' | 'clearance';
 type Row = TubePathRecord | TubeClearanceRecord;
@@ -91,7 +92,7 @@ function mm(value: unknown): string { return typeof value === 'number' && Number
 function title(record: Row): string {
   if (isClearance(record)) return '安装间隙';
   if (record.source === 'native_sweep_path') return '原生扫掠路径';
-  return record.status === 'confirmed_straight_hollow_tube' ? '直管（空心）' : '几何候选';
+  return tubeGeometryTitle(record.status);
 }
 function subtitle(record: Row): string {
   if (isClearance(record)) return `${record.tube_instance_id} · ${record.target_instance_id}`;

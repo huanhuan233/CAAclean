@@ -565,7 +565,7 @@ export interface TubeClearanceRecord extends Record<string, unknown> {
   target_instance_id: string;
   distance_mm?: number | null;
   status: string;
-  witnesses?: Array<{ tube: number[]; target: number[]; s_mm: number }>;
+  witnesses?: Array<{ tube: number[]; target: number[]; s_mm: number | null; station_status?: 'unique' | 'ambiguous' }>;
 }
 
 export function fetchTubeNativePaths(buildId: string, offset = 0, limit = 50, options?: ComponentBuildQueryOptions) {

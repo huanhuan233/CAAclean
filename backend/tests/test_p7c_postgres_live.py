@@ -16,10 +16,12 @@ from app.cad.parser_runner import run_freecad_job
 from app.core.config import Settings
 from app.db.models import CadModel, CadModelRevision, CadNativeEvidence, ComponentBuild
 from app.tube.service import TubeAnalysisService
+from app.assembly.context import AssemblyContextError
 
 
 @pytest.mark.asyncio
-async def test_tube_run_persists_scoped_clearance_without_touching_other_channels(tmp_path: Path):
+@pytest.mark.parametrize('mode', ['straight', 'bent'])
+async def test_tube_run_persists_scoped_clearance_without_touching_other_channels(tmp_path: Path, mode, monkeypatch):
     if os.environ.get("P7_LIVE_DB") != "1" or os.environ.get("P7_LIVE_FREECAD") != "1":
         pytest.skip("set P7_LIVE_DB=1 and P7_LIVE_FREECAD=1")
     settings = Settings(cad_work_dir=tmp_path)
@@ -29,16 +31,21 @@ async def test_tube_run_persists_scoped_clearance_without_touching_other_channel
     geometry.mkdir(parents=True)
     fixture = tmp_path / "solids.py"
     fixture.write_text("""
-import json, sys
+import json, sys, math
 from pathlib import Path
 import FreeCAD, Part
 job=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 root=Path(job['directory'])
-Part.makeCylinder(8,80).cut(Part.makeCylinder(6,80)).exportBrep(str(root/'T.brep'))
-Part.makeBox(2,2,20,FreeCAD.Vector(10,-1,30)).exportBrep(str(root/'N.brep'))
+if job['mode'] == 'bent':
+    Part.makeTorus(30,4,FreeCAD.Vector(),FreeCAD.Vector(0,0,1),-180,180,90).cut(
+        Part.makeTorus(30,3,FreeCAD.Vector(),FreeCAD.Vector(0,0,1),-180,180,90)).exportBrep(str(root/'T.brep'))
+    Part.makeSphere(1,FreeCAD.Vector(37/math.sqrt(2),37/math.sqrt(2),0)).exportBrep(str(root/'N.brep'))
+else:
+    Part.makeCylinder(8,80).cut(Part.makeCylinder(6,80)).exportBrep(str(root/'T.brep'))
+    Part.makeBox(2,2,20,FreeCAD.Vector(10,-1,30)).exportBrep(str(root/'N.brep'))
 Path(job['result_json_path']).write_text('{"status":"success"}',encoding='utf-8')
 """, encoding="utf-8")
-    await run_freecad_job(fixture, {"directory": str(geometry)}, tmp_path / "fixture-job", settings)
+    await run_freecad_job(fixture, {"directory": str(geometry), 'mode': mode}, tmp_path / "fixture-job", settings)
     assets = {}
     for solid_id, object_id in (("T", "TUBE"), ("N", "NEIGHBOR")):
         path = geometry / f"{solid_id}.brep"
@@ -63,6 +70,9 @@ Path(job['result_json_path']).write_text('{"status":"success"}',encoding='utf-8'
             session.add(ComponentBuild(id=build_id, component_id="P7C-SMOKE", component_name="P7C smoke",
                                        component_type="test", cad_model_id=model_id, cad_revision_id=revision_id))
             await session.commit()
+            session.add(CadNativeEvidence(revision_id=revision_id, kind='native_sentinel', ordinal=0,
+                                          payload={'source': 'native_design', 'value': 123}))
+            await session.commit()
             service = TubeAnalysisService(session)
             candidates = await service.list_candidates(build_id, settings)
             assert {item["instance_id"] for item in candidates["candidates"]} == {"TUBE", "NEIGHBOR"}
@@ -73,7 +83,11 @@ Path(job['result_json_path']).write_text('{"status":"success"}',encoding='utf-8'
                 {"solid_id": "LEGACY", "code": "unscoped_identity_unavailable"}]
             paths = await service.list_results(build_id, settings, kind="tube_records", offset=0, limit=10)
             assert paths["run"]["current_snapshot_status"] == "current"
-            assert any(row["status"] == "confirmed_straight_hollow_tube" for row in paths["records"])
+            expected_status = 'confirmed_bent_hollow_tube' if mode == 'bent' else 'confirmed_straight_hollow_tube'
+            tube = next(row for row in paths['records'] if row['status'] == expected_status)
+            assert tube['section']['outer_diameter_mm'] == (8 if mode == 'bent' else 16)
+            assert tube['section']['wall_thickness_mm'] == (1 if mode == 'bent' else 2)
+            assert tube['section']['unit'] == 'mm'
             gaps = await service.list_results(build_id, settings, kind="tube_clearances", offset=0, limit=10)
             assert gaps["total"] == 1
             assert gaps["records"][0]["distance_mm"] == pytest.approx(2)
@@ -83,6 +97,16 @@ Path(job['result_json_path']).write_text('{"status":"success"}',encoding='utf-8'
             assert solo["run"]["installation_clearance_status"] == "not_requested"
             solo_gaps = await service.list_results(build_id, settings, kind="tube_clearances", offset=0, limit=10)
             assert solo_gaps["total"] == 0
+            previous_version = solo['run']['result_version']
+            async def failed_job(*args, **kwargs):
+                return {'status': 'failed', 'diagnostic': 'intentional isolated test failure'}
+            monkeypatch.setattr('app.tube.service.run_freecad_job', failed_job)
+            with pytest.raises(AssemblyContextError, match='failed'):
+                await service.analyze(build_id, settings, tube_instance_id='TUBE')
+            preserved = await service.list_results(build_id, settings, kind='tube_records', offset=0, limit=10)
+            assert preserved['run']['result_version'] == previous_version
+            sentinel = await session.get(CadNativeEvidence, (revision_id, 'native_sentinel', 0))
+            assert sentinel.payload == {'source': 'native_design', 'value': 123}
     finally:
         async with sessions() as cleanup:
             await cleanup.execute(delete(CadNativeEvidence).where(CadNativeEvidence.revision_id == revision_id))
