@@ -153,7 +153,7 @@ class CadService:
             await service.parse_revision(revision_id)
 
     # 更新运行状态，在并发限制内调用解析器并持久化结果；失败记录明确错误。
-    async def parse_revision(self, revision_id: UUID) -> None:
+    async def parse_revision(self, revision_id: UUID, *, brep_dir: Path | None = None) -> None:
         revision = await self.repository.get_revision(revision_id)
         if revision is None:
             return
@@ -170,6 +170,7 @@ class CadService:
                     revision_id,
                     Path(self.settings.cad_work_dir) / str(revision_id),
                     self.settings,
+                    brep_dir,
                 )
             result = validate_parser_result(result_data)
             await self.repository.persist_parser_result(revision_id, result)

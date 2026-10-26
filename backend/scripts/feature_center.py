@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.cad.parser_runner import run_freecad_parser
+from app.cad.result_validator import validate_parser_result
 from app.component_builds.caa_new_bundle import CaaNewBundleReader
 from app.core.config import Settings
 from app.feature_center.bundle import FeatureCenterBundleWriter, validate_bundle
@@ -206,12 +207,23 @@ async def _build(args: argparse.Namespace) -> int:
         step_info = inspect_step_input(args.step)
         settings = Settings()
         output = Path(args.output).resolve()
+        parser_result_path = getattr(args, "parser_result", None)
+        existing_brep_dir = getattr(args, "brep_dir", None)
+        if bool(parser_result_path) != bool(existing_brep_dir):
+            raise ValueError("FC_PARSE_ARTIFACTS_INCOMPLETE: parser result and B-Rep directory must be supplied together")
         with tempfile.TemporaryDirectory(prefix="feature-center-work-", dir=output.parent) as work:
-            brep_dir = Path(work) / "brep"
-            parser_result = await run_freecad_parser(
-                Path(args.step).resolve(), _revision_id(step_info.sha256), Path(work), settings,
-                brep_dir,
-            )
+            if parser_result_path:
+                brep_dir = Path(existing_brep_dir).resolve()
+                if not brep_dir.is_dir():
+                    raise ValueError("FC_BREP_DIR_MISSING: first-pass B-Rep directory is unavailable")
+                parser_result = json.loads(Path(parser_result_path).read_text(encoding="utf-8"))
+                validate_parser_result(parser_result)
+            else:
+                brep_dir = Path(work) / "brep"
+                parser_result = await run_freecad_parser(
+                    Path(args.step).resolve(), _revision_id(step_info.sha256), Path(work), settings,
+                    brep_dir,
+                )
             native_features = None
             if args.native_bundle:
                 native_features = list(CaaNewBundleReader(Path(args.native_bundle).resolve()).iter_canonical_native_features())
@@ -273,6 +285,8 @@ def _parser() -> argparse.ArgumentParser:
     build = commands.add_parser("build", help="从 STEP 和可选 CAA Bundle 构建结果")
     build.add_argument("--step", required=True)
     build.add_argument("--native-bundle")
+    build.add_argument("--parser-result")
+    build.add_argument("--brep-dir")
     build.add_argument("--output", required=True)
     build.add_argument("--visual-review-mode", default="disabled", choices=["disabled"])
     build.add_argument("--tolerance-profile", default="scale_aware_v1")

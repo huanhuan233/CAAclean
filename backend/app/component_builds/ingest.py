@@ -216,18 +216,26 @@ async def run_ingest_pipeline(revision_id: UUID, settings: Settings) -> None:
 async def _run_step_route(repository: CadRepository, revision_id: UUID, settings: Settings) -> None:
     before = await repository.get_revision(revision_id)
     ingest = dict((before.parse_manifest or {}).get("ingest", {})) if before else {}
+    task_root = _cad_work_root(settings) / str(revision_id)
+    brep_dir = task_root / "feature-center-brep"
     service = CadService(repository, settings)
-    await service.parse_revision(revision_id)
-    revision = await repository.get_revision(revision_id)
-    if revision is None or revision.status != "completed":
-        raise IngestStageError(
-            revision.error_code or "STEP_PARSE_FAILED",
-            "parsing",
-            revision.error_message or "STEP 解析失败",
+    try:
+        await service.parse_revision(revision_id, brep_dir=brep_dir)
+        revision = await repository.get_revision(revision_id)
+        if revision is None or revision.status != "completed":
+            raise IngestStageError(
+                revision.error_code or "STEP_PARSE_FAILED",
+                "parsing",
+                revision.error_message or "STEP 解析失败",
+            )
+        await repository.update_revision_manifest(revision_id, {"ingest": ingest})
+        await _set_stage(repository, revision_id, "lightweighting", 80)
+        await _build_feature_center(
+            repository, revision_id, settings, _source_file_path(revision.source_file_path), None,
+            parser_result_path=task_root / "result.json", brep_dir=brep_dir,
         )
-    await repository.update_revision_manifest(revision_id, {"ingest": ingest})
-    await _set_stage(repository, revision_id, "lightweighting", 80)
-    await _build_feature_center(repository, revision_id, settings, _source_file_path(revision.source_file_path), None)
+    finally:
+        shutil.rmtree(brep_dir, ignore_errors=True)
 
 
 # 解析 DXF 并核对源摘要，再用内核验证面积；无法验证的面积撤为未知，保留候选和诊断。
@@ -549,6 +557,9 @@ async def _build_feature_center(
     settings: Settings,
     step_path: Path,
     native_bundle: Path | None,
+    *,
+    parser_result_path: Path | None = None,
+    brep_dir: Path | None = None,
 ) -> None:
     task_root = _cad_work_root(settings) / str(revision_id)
     bundle = task_root / "feature-center"
@@ -560,6 +571,10 @@ async def _build_feature_center(
     ]
     if native_bundle is not None:
         command.extend(["--native-bundle", str(native_bundle)])
+    if (parser_result_path is None) != (brep_dir is None):
+        raise ValueError("Feature Center requires parser result and B-Rep directory together")
+    if parser_result_path is not None:
+        command.extend(["--parser-result", str(parser_result_path), "--brep-dir", str(brep_dir)])
     await _run_command(command, "FEATURE_CENTER_FAILED", "feature_center_processing", settings.freecad_timeout)
     required = (
         "manifest.json",
@@ -769,6 +784,8 @@ def _read_feature_center_solid_count(path: Path) -> int:
 # 用途：重试时只清理本任务生成物，保留上传源文件和持久化任务记录。
 def _prepare_generated_outputs(task_root: Path, route: str | None) -> None:
     generated = [task_root / "feature-center"]
+    if route == "step_cad_parse":
+        generated.extend([task_root / "result.json", task_root / "feature-center-brep"])
     if route == "dxf_cad_parse":
         generated.append(task_root / "dxf")
     if route == "catia_feature_center":

@@ -185,6 +185,8 @@ async def test_feature_center_success_marks_revision_ready(tmp_path, monkeypatch
             status_updates.append(fields)
 
     async def fake_run_command(command, *_args, **_kwargs):
+        assert command[command.index("--parser-result") + 1] == str(tmp_path / "result.json")
+        assert command[command.index("--brep-dir") + 1] == str(tmp_path / "brep")
         output = Path(command[command.index("--output") + 1])
         (output / "lightweight").mkdir(parents=True)
         (output / "manifest.json").write_text("{}", encoding="utf-8")
@@ -201,7 +203,10 @@ async def test_feature_center_success_marks_revision_ready(tmp_path, monkeypatch
         cad_work_dir=tmp_path,
     )
 
-    await _build_feature_center(Repository(), revision_id, settings, tmp_path / "part.stp", None)
+    await _build_feature_center(
+        Repository(), revision_id, settings, tmp_path / "part.stp", None,
+        parser_result_path=tmp_path / "result.json", brep_dir=tmp_path / "brep",
+    )
 
     assert status_updates[-1] == {
         "status": "completed",
@@ -210,6 +215,57 @@ async def test_feature_center_success_marks_revision_ready(tmp_path, monkeypatch
         "error_code": None,
         "error_message": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_step_ingest_hands_first_parse_artifacts_to_feature_center(tmp_path, monkeypatch):
+    revision_id = uuid4()
+    source = tmp_path / str(revision_id) / "source.step"
+    source.parent.mkdir()
+    source.write_text("STEP fixture", encoding="utf-8")
+    revision = SimpleNamespace(
+        id=revision_id, source_file_path=str(source), status="queued",
+        parse_manifest={"ingest": {"processing_route": "step_cad_parse"}},
+        error_code=None, error_message=None,
+    )
+    stages = []
+
+    class Repository:
+        async def get_revision(self, requested_id):
+            assert requested_id == revision_id
+            return revision
+
+        async def update_revision_manifest(self, requested_id, values):
+            assert requested_id == revision_id
+            assert values == {"ingest": {"processing_route": "step_cad_parse"}}
+
+        async def set_revision_status(self, requested_id, **values):
+            assert requested_id == revision_id
+            stages.append(values)
+
+    async def fake_parse_revision(_self, requested_id, *, brep_dir=None):
+        assert requested_id == revision_id
+        assert brep_dir == source.parent / "feature-center-brep"
+        brep_dir.mkdir()
+        (source.parent / "result.json").write_text("{}", encoding="utf-8")
+        revision.status = "completed"
+
+    async def fake_build(_repository, requested_id, _settings, step_path, native_bundle,
+                         *, parser_result_path=None, brep_dir=None):
+        assert requested_id == revision_id
+        assert step_path == source
+        assert native_bundle is None
+        assert parser_result_path == source.parent / "result.json"
+        assert brep_dir == source.parent / "feature-center-brep"
+
+    monkeypatch.setattr(ingest_module.CadService, "parse_revision", fake_parse_revision)
+    monkeypatch.setattr(ingest_module, "_build_feature_center", fake_build)
+    settings = Settings(database_url_value="postgresql+asyncpg://postgres@localhost/test", cad_work_dir=tmp_path)
+
+    await ingest_module._run_step_route(Repository(), revision_id, settings)
+
+    assert stages[-1]["status_message"] == "lightweighting"
+    assert not (source.parent / "feature-center-brep").exists()
 
 
 def test_feature_evidence_hash_mismatch_blocks_database_publication(tmp_path):
