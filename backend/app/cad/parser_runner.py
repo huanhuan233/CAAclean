@@ -1,3 +1,4 @@
+# 隔离运行 FreeCAD 任务，统一任务文件、运行环境、超时、取消和结果校验。
 from __future__ import annotations
 
 import asyncio
@@ -18,10 +19,12 @@ from app.core.config import Settings
 MAX_CAPTURE_CHARS = 12000
 
 
+# 表示解析进程或输出协议失败，由上层记录为解析任务错误。
 class FreeCadParserError(RuntimeError):
     pass
 
 
+# 容错解码进程输出并截取尾部，避免把无界日志写入异常信息。
 def _truncate(value: bytes) -> str:
     text = value.decode("utf-8", errors="replace")
     if len(text) <= MAX_CAPTURE_CHARS:
@@ -29,6 +32,7 @@ def _truncate(value: bytes) -> str:
     return text[-MAX_CAPTURE_CHARS:]
 
 
+# 组装 STEP 解析任务及网格离散参数，复用通用进程执行器和结果模型校验。
 async def run_freecad_parser(
     source_file: Path,
     revision_id: UUID,
@@ -52,6 +56,7 @@ async def run_freecad_parser(
     return await run_freecad_job(script_path, job, work_dir, settings, validate_parser_result)
 
 
+# 建立一次任务的输入输出路径与 FreeCAD 环境，再在线程中等待外部进程。
 async def run_freecad_job(
     script_path: Path,
     job: dict,
@@ -135,6 +140,7 @@ async def run_freecad_job(
         raise
 
 
+# 轮询超时和取消，检查退出码及结果文件；只有结果合法才交给调用方。
 def _run_parser_process(
     command: list[str],
     process_kwargs: dict[str, object],
@@ -190,6 +196,7 @@ def _run_parser_process(
         raise FreeCadParserError(f"invalid parser result JSON: {exc}") from exc
 
 
+# 终止本次任务进程；POSIX 使用进程组，Windows 此处使用进程 terminate。
 def _terminate_process(process) -> None:
     try:
         if os.name != "nt" and process.pid:

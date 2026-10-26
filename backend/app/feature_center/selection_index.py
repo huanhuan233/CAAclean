@@ -1,3 +1,4 @@
+# 索引已有面、网格图元和识别特征之间的确定映射；该映射不推断原生特征作者或跨修订身份。
 """Deterministic viewer selection index construction.
 
 This module only indexes IDs that are already present in Feature Center output.
@@ -13,6 +14,7 @@ from typing import Any
 SELECTION_INDEX_SCHEMA_VERSION = "cad_viewer_selection_v1"
 
 
+# 从当前包内既有面图元映射建立双向选择索引；exact 仅描述本次网格生成的面映射。
 def build_selection_index(
     *,
     shape_hash: str,
@@ -80,6 +82,7 @@ def build_selection_index(
         "render_face_to_recognized_features": render_face_to_recognized_features,
         "recognized_feature_to_render_faces": recognized_feature_to_faces,
         "recognized_feature_to_primitives": recognized_feature_to_primitives,
+        # 当前数据没有原生面归属依据，保留空映射，不把识别特征映射冒充建模历史。
         "native_feature_to_native_faces": {},
         "native_face_to_body": {},
         "render_face_crosswalk": crosswalk,
@@ -88,6 +91,7 @@ def build_selection_index(
     }
 
 
+# 按实体类别别名组织拓扑节点，并把已知端点的关系同时挂到起点和终点供查看。
 def _index_topology(
     topology_entities: list[dict[str, Any]],
     topology_relations: list[dict[str, Any]],

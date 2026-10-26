@@ -1,3 +1,4 @@
+/* 汇总关联文档链接和定义的解析状态并输出诊断。 */
 #include "caa/CaaLinkedDocumentResolver.h"
 #include "model/CaptureEvidenceSummary.h"
 

@@ -1,3 +1,4 @@
+# 上传来源先绑定持久化 Revision，再按格式派发处理；原生采集和几何轻量化分别记录可用性。
 """统一零件上传的格式识别、后台编排和受控资产定位。"""
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from app.core.config import BACKEND_ROOT, REPOSITORY_ROOT, Settings
 from app.db.session import SessionLocal
 
 
+# 保存经文件扩展名识别的来源格式、服务器处理路线与扩展名。
 @dataclass(frozen=True)
 class IngestSource:
     source_format: str
@@ -38,13 +40,17 @@ class IngestSource:
     extension: str
 
 
+# 携带输入或资产路径错误码，供 HTTP 层返回稳定的失败类别。
 class IngestSourceError(ValueError):
+    # 保存来源校验错误的业务代码及原始消息。
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
 
 
+# 携带后台处理失败的业务代码和阶段，供 Revision 保留失败原因。
 class IngestStageError(RuntimeError):
+    # 保存外部处理失败阶段与错误码，避免上层仅得到无来源的异常文本。
     def __init__(self, code: str, stage: str, message: str):
         super().__init__(message)
         self.code = code
@@ -75,6 +81,7 @@ class _IngestRuntimeSettings(BaseSettings):
 
 
 # 用途：只根据已校验文件名识别真实格式，绝不接受客户端指定处理路线。
+# 将相对 CAD 工作目录锚定到 backend，绝对配置路径直接使用。
 def _cad_work_root(settings: Settings) -> Path:
     work_dir = Path(settings.cad_work_dir)
     if work_dir.is_absolute():
@@ -82,6 +89,7 @@ def _cad_work_root(settings: Settings) -> Path:
     return BACKEND_ROOT / work_dir
 
 
+# 解析已有源文件路径，相对路径优先查 backend，再兼容仓库根目录。
 def _source_file_path(source_file_path: str) -> Path:
     path = Path(source_file_path)
     if path.is_absolute():
@@ -92,6 +100,7 @@ def _source_file_path(source_file_path: str) -> Path:
     return REPOSITORY_ROOT / path
 
 
+# 仅由文件名扩展名选择服务器处理路线，ZIP 进入 CATProduct 依赖包路线。
 def identify_source(file_name: str) -> IngestSource:
     extension = Path(Path(file_name).name).suffix.lower()
     if extension in {".step", ".stp"}:
@@ -221,6 +230,7 @@ async def _run_step_route(repository: CadRepository, revision_id: UUID, settings
     await _build_feature_center(repository, revision_id, settings, _source_file_path(revision.source_file_path), None)
 
 
+# 解析 DXF 并核对源摘要，再用内核验证面积；无法验证的面积撤为未知，保留候选和诊断。
 async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings: Settings) -> None:
     revision = await repository.get_revision(revision_id)
     if revision is None:
@@ -234,6 +244,7 @@ async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings:
         {"PYTHONPATH": str(BACKEND_ROOT)},
     )
     document = json.loads(output.read_text(encoding="utf-8"))
+    # 防止读取期间源文件被替换，解析结果必须属于创建 Revision 时绑定的文件。
     if document["source_sha256"] != revision.source_sha256:
         raise IngestStageError("DXF_SOURCE_CHANGED", "dxf_parsing", "源文件指纹在处理期间变化")
     await _set_stage(repository, revision_id, "dxf_geometry", 60)
@@ -251,6 +262,7 @@ async def _run_dxf_route(repository: CadRepository, revision_id: UUID, settings:
             candidate = entity.get("single_contour_area")
             actual = validation.get("face_area")
             if candidate is not None and (actual is None or abs(candidate - actual) > max(1e-7, candidate * 1e-6)):
+                # 解析层候选面积保留用于诊断，只有内核验证一致的面积才可作为正式值。
                 entity["analytic_area_candidate"] = candidate
                 entity["single_contour_area"] = None
                 entity["area_undefined_reason"] = "kernel_validation_failed"
@@ -360,6 +372,7 @@ async def _run_catpart_route(repository: CadRepository, revision_id: UUID, setti
             }
         },
     )
+    # 先独立发布原生证据，后续 STEP 导出或轻量化失败仍可查看已采集树与属性。
     await _publish_native_progress(repository, revision_id, native_bundle)
     try:
         await _set_stage(repository, revision_id, "exporting_step", 45)
@@ -403,6 +416,7 @@ async def _run_remote_catpart_worker(
         job_timeout_seconds=settings.catia_worker_job_timeout,
     )
 
+    # 把 Worker 阶段和作业编号写回当前 Revision，并将远端进度限制在采集阶段区间。
     async def report_stage(payload: dict) -> None:
         stage = str(payload.get("stage") or "queued_caa")
         progress = max(8, min(65, int(payload.get("progress") or 10)))
@@ -458,6 +472,7 @@ def _extract_worker_archive(archive_path: Path, output_dir: Path) -> None:
 
 
 # 用途：调用仓库已有 Sidecar CLI 生成并校验 Bundle，不在 Web 层复制任何几何算法。
+# 解压 CATIA 依赖 ZIP 后优先寻找 CATProduct，再回退 CATPart，选择入口文件。
 def _prepare_catia_source(source_path: Path, task_root: Path) -> Path:
     if source_path.suffix.lower() != ".zip":
         return source_path
@@ -498,6 +513,7 @@ def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path
     )
 
 
+# 扫描候选文件字节中的 UTF-8 与 UTF-16 名称线索，辅助判别被引用的子装配。
 def _find_referenced_catproducts(candidates: list[Path]) -> set[Path]:
     referenced: set[Path] = set()
     names = {path.name.casefold(): path.resolve() for path in candidates}
@@ -520,11 +536,13 @@ def _find_referenced_catproducts(candidates: list[Path]) -> set[Path]:
     return referenced
 
 
+# 用文件名中的根或装配关键词提供入口排序线索，不作为正式装配语义。
 def _looks_like_root_product(path: Path) -> bool:
     normalized = path.stem.casefold()
     return any(token in normalized for token in ("root", "assembly", "product", "总装", "装配"))
 
 
+# 调用 Sidecar 生成轻量化包，验证必需资产与证据摘要后发布数据库记录及 Viewer 清单。
 async def _build_feature_center(
     repository: CadRepository,
     revision_id: UUID,
@@ -627,6 +645,7 @@ async def _build_feature_center(
     )
 
 
+# 轻量化失败时保留原生采集能力，将网格与识别能力明确标记不可用后完成任务。
 async def _publish_native_only(
     repository: CadRepository,
     revision_id: UUID,
@@ -834,6 +853,7 @@ def _run_command_sync(
     return process.returncode, stdout, stderr
 
 
+# 依次尝试 UTF-8、本机编码及替换解码，确保外部工具失败信息可返回。
 def _decode_process_output(content: bytes) -> str:
     if not content:
         return ""

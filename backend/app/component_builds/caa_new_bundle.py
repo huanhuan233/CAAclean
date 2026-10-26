@@ -1,3 +1,4 @@
+# 统一读取新旧 CAA 采集包，区分定义身份、树出现位置和证据通道，并在发布前验证 MBD 关联。
 from __future__ import annotations
 
 import json
@@ -39,13 +40,16 @@ _TOPOLOGY_KINDS = frozenset({"body", "solid", "volume", "face", "edge", "vertex"
 _TOPOLOGY_ALIASES = {"lump": "solid", "oriented_edge": "coedge"}
 
 
+# 标识采集包缺失、身份冲突或结构不符合契约的错误。
 class CaaNewBundleError(ValueError):
     pass
 
 
+# 将原始采集文件投影为树、属性和语义响应，集中兼容两个受支持的包版本。
 class CaaNewBundleReader:
     """Read CAA_NEW normalized reconstruction packages and expose web DTOs."""
 
+    # 要求 manifest 存在且 schema 受支持，并初始化语义冲突诊断集合。
     def __init__(self, bundle_dir: Path):
         self.bundle_dir = bundle_dir
         if not (bundle_dir / "manifest.json").is_file():
@@ -57,6 +61,7 @@ class CaaNewBundleReader:
         self.schema = schema
         self.diagnostics: list[dict[str, str]] = []
 
+    # 把新旧特征记录统一到定义级 object_id，补文档与实例来源，并拒绝重复定义。
     def iter_canonical_native_features(self):
         """Return definition-level native semantics, hiding capture projections and legacy field names."""
         objects = {}
@@ -139,6 +144,7 @@ class CaaNewBundleReader:
                 summary["unavailable_count"] += 1
         return summary
 
+    # 只暴露实际存在且校验通过的采集通道；识别结果由独立 Feature Center 发布。
     def native_evidence_streams(self):
         """Expose only present capture channels; typed semantics have one canonical projection."""
         self._validate_mbd_channels()
@@ -176,10 +182,12 @@ class CaaNewBundleReader:
             }]
         return streams
 
+    # 检查对象、树出现位置和属性三类复材来源文件是否齐全。
     def has_composite_source(self) -> bool:
         return all((self.bundle_dir / name).is_file() for name in
                    ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl"))
 
+    # 三类来源齐全后才关联复材定义，缺失任一文件即拒绝投影。
     def composite_structure(self) -> list[dict[str, Any]]:
         if not self.has_composite_source():
             raise CaaNewBundleError("composite source records are incomplete")
@@ -187,6 +195,7 @@ class CaaNewBundleReader:
         names = ("object_entities.jsonl", "tree_occurrences.jsonl", "property_facts.jsonl")
         return build_composite_structure(*(self._read_jsonl(name) for name in names))
 
+    # 从原语义载荷补出查询展示字段，同时保留原始语义内容。
     def iter_fta_semantics(self):
         """Expose typed display/search fields without changing the raw CAA semantic payload."""
         for row in self._iter_jsonl_required("fta_semantics.jsonl"):
@@ -200,6 +209,7 @@ class CaaNewBundleReader:
                     normalized[key] = payload[key]
             yield normalized
 
+    # 在替换快照前校验声明文件、摘要、数量、唯一身份及 PMI 关系端点。
     def _validate_mbd_channels(self) -> None:
         """Reject broken PMI identity and declared checksums before replacing a revision snapshot."""
         files = ("pmi_entities.jsonl", "pmi_associations.jsonl", "fta_semantics.jsonl", "fta_sets.jsonl")
@@ -248,6 +258,7 @@ class CaaNewBundleReader:
             if files[0] in present and not set_ids.issubset(nodes):
                 raise CaaNewBundleError("fta_sets.jsonl: unknown PMI set identity")
 
+    # 逐条收集指定身份字段，空身份或重复身份使整个通道验证失败。
     def _mbd_ids(self, filename: str, field: str) -> set[str]:
         result: set[str] = set()
         for record in self._iter_jsonl_required(filename):
@@ -257,16 +268,19 @@ class CaaNewBundleReader:
             result.add(value)
         return result
 
+    # 流式输出统一拓扑类型的实体记录，同时保留采集原始类型词。
     def iter_topology_entities(self):
         """Normalize native topology kinds without erasing the capture-side type."""
         for row in self._iter_jsonl_required("topology_entities.jsonl"):
             yield self._normalize_topology_kind(row)
 
+    # 对拓扑单元应用与实体相同的类型归一化规则。
     def iter_topology_cells(self):
         """Return cell records with the same stable kind contract as topology entities."""
         for row in self._iter_jsonl_required("native_topology_cells.jsonl"):
             yield self._normalize_topology_kind(row)
 
+    # 仅将已知别名映射到规范类型；未知词保留原文并标记 unknown。
     @staticmethod
     def _normalize_topology_kind(row: dict[str, Any]) -> dict[str, Any]:
         """Keep unknown source terms visible while refusing to classify them as a known CAD type."""
@@ -274,6 +288,7 @@ class CaaNewBundleReader:
         canonical = _TOPOLOGY_ALIASES.get(raw_kind.lower(), raw_kind.lower())
         return {**row, "kind": canonical if canonical in _TOPOLOGY_KINDS else "unknown", "raw_topology_kind": raw_kind}
 
+    # 严格读取必需 JSONL；文件缺失、坏行或非对象记录均带文件和行号报错。
     def _iter_jsonl_required(self, relative_path: str):
         path = self.bundle_dir / relative_path
         if not path.is_file():
@@ -290,6 +305,7 @@ class CaaNewBundleReader:
                     raise CaaNewBundleError(f"{relative_path}:{line_number}: expected object")
                 yield record
 
+    # 用出现位置身份连接产品树与特征树，按需要排除补充节点并稳定排列子节点。
     def build_tree(self, *, include_supplemental: bool = False) -> dict[str, Any]:
         objects = {str(item.get("object_id")): item for item in self._read_jsonl("object_entities.jsonl")}
         property_counts = self._property_counts()
@@ -312,6 +328,7 @@ class CaaNewBundleReader:
         tree_by_id = {str(record.get("occurrence_id") or ""): record for record in tree_records}
         visible_cache: dict[str, bool] = {}
 
+        # 沿父链检查可见性并缓存结果；祖先不可见或出现循环时隐藏该节点。
         def visible_in_primary_tree(record: dict[str, Any], ancestors: set[str] | None = None) -> bool:
             node_id = str(record.get("occurrence_id") or "")
             if node_id in visible_cache:
@@ -361,12 +378,14 @@ class CaaNewBundleReader:
             "roots": roots,
         }
 
+    # 从主展示树的扁平索引取节点，不存在时报告原生树节点缺失。
     def get_node(self, node_id: str) -> dict[str, Any]:
         flat = self._flat_nodes()
         if node_id not in flat:
             raise CaaNewBundleError(f"native tree node not found: {node_id}")
         return flat[node_id]
 
+    # 按节点关联主体收集属性事实，按显示次序组合页签、分组及字段。
     def get_properties(self, node_id: str) -> dict[str, Any]:
         node = self.get_node(node_id)
         subject_ids = self._property_subject_ids(node)
@@ -419,6 +438,7 @@ class CaaNewBundleReader:
             "tabs": result_tabs,
         }
 
+    # 读取采集包的拓扑实体、关系和几何通道，缺失通道保持空列表。
     def get_topology(self) -> dict[str, Any]:
         return {
             "topology_entities": self._read_jsonl("topology_entities.jsonl"),
@@ -426,6 +446,7 @@ class CaaNewBundleReader:
             "geometry_entities": self._read_jsonl("geometry_entities.jsonl"),
         }
 
+    # 按定义对象关联依赖候选，并依据此读取器支持的映射状态标记可选择性。
     def get_selection(self, node_id: str) -> dict[str, Any]:
         node = self.get_node(node_id)
         authoritative = {"confirmed", "runtime_matched", "runtime_current_revision", "survives_to_final", "exact", "authoritative"}
@@ -447,9 +468,11 @@ class CaaNewBundleReader:
                 if text:
                     yield json.loads(text)
 
+    # 遍历主展示树建立节点 ID 索引，详情记录不携带嵌套 children。
     def _flat_nodes(self) -> dict[str, dict[str, Any]]:
         flat: dict[str, dict[str, Any]] = {}
 
+        # 递归登记当前树节点并展开子节点，保留节点本身的全部非 children 字段。
         def visit(node: dict[str, Any]) -> None:
             flat[str(node["node_id"])] = {key: value for key, value in node.items() if key != "children"}
             for child in node.get("children") or []:
@@ -459,6 +482,7 @@ class CaaNewBundleReader:
             visit(root)
         return flat
 
+    # 把产品出现位置投影为树节点，保留实例、引用和文档身份及其属性计数。
     def _product_node(self, record: dict[str, Any], property_counts: dict[str, int]) -> dict[str, Any]:
         node_id = str(record.get("occurrence_id") or "")
         document_id = str(record.get("referenced_document_id") or "")
@@ -492,6 +516,7 @@ class CaaNewBundleReader:
             "children": [],
         }
 
+    # 合并出现位置与对象定义，保留几何和拓扑 ID，不根据名称推测几何关联。
     def _tree_node(self, record: dict[str, Any], obj: dict[str, Any], property_counts: dict[str, int]) -> dict[str, Any]:
         node_id = str(record.get("occurrence_id") or "")
         object_id = str(record.get("object_id") or "")
@@ -529,6 +554,7 @@ class CaaNewBundleReader:
             "children": [],
         }
 
+    # 按属性主体累计记录数，为树节点提供属性存在性与数量提示。
     def _property_counts(self) -> dict[str, int]:
         counts: dict[str, int] = defaultdict(int)
         for fact in self._read_jsonl("property_facts.jsonl"):
@@ -537,6 +563,7 @@ class CaaNewBundleReader:
                 counts[subject] += 1
         return dict(counts)
 
+    # 收集节点、对象、产品实例、引用及文档身份，以查询其关联属性。
     @staticmethod
     def _property_subject_ids(node: dict[str, Any]) -> set[str]:
         return {
@@ -553,6 +580,7 @@ class CaaNewBundleReader:
             if value
         }
 
+    # 将原生属性转为详情字段，并脱敏原值与显示值中的本地路径。
     def _property_field(self, fact: dict[str, Any]) -> dict[str, Any]:
         display_value = self._redact_value(fact.get("display_value"))
         raw_value = self._redact_value(fact.get("raw_value"))
@@ -572,10 +600,12 @@ class CaaNewBundleReader:
             "read_only": bool(fact.get("read_only")),
         }
 
+    # 读取可选 JSON 对象文件，不存在时返回空对象。
     def _read_json(self, relative_path: str) -> dict[str, Any]:
         path = self.bundle_dir / relative_path
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
+    # 读取可选 JSONL 的所有非空行，不存在时返回空列表。
     def _read_jsonl(self, relative_path: str) -> list[dict[str, Any]]:
         path = self.bundle_dir / relative_path
         if not path.is_file():
@@ -588,6 +618,7 @@ class CaaNewBundleReader:
                     records.append(json.loads(text))
         return records
 
+    # 将单值或列表统一为字符串列表，过滤空值标识。
     @staticmethod
     def _string_list(value: Any) -> list[str]:
         if isinstance(value, list):
@@ -596,6 +627,7 @@ class CaaNewBundleReader:
             return []
         return [str(value)]
 
+    # 完整 Windows 路径仅显示文件名，混合文本中的路径交给脱敏函数处理。
     @classmethod
     def _clean_display_name(cls, value: Any) -> str:
         text = str(value or "")
@@ -603,16 +635,19 @@ class CaaNewBundleReader:
             return Path(text).name
         return cls._redact_value(text)
 
+    # 仅处理字符串里的 Windows 路径，保留非字符串属性值的类型。
     @staticmethod
     def _redact_value(value: Any) -> Any:
         if not isinstance(value, str):
             return value
 
+        # 将单个匹配路径替换为本地路径占位符和末级文件名。
         def replace(match: re.Match[str]) -> str:
             return f"<local_path>\\{Path(match.group(0)).name}"
 
         return _WINDOWS_PATH_RE.sub(replace, value)
 
+    # 按深度、来源序号与节点 ID 递归排序，并据实际子节点刷新 has_children。
     def _sort_children(self, nodes: list[dict[str, Any]], order: dict[str, tuple[int, int, str]]) -> None:
         nodes.sort(key=lambda node: order.get(str(node.get("node_id")), (0, 0, str(node.get("node_id")))))
         for node in nodes:

@@ -1,3 +1,4 @@
+# 主 API 入口：挂载业务路由、跨域配置和启动恢复；CATIA Worker 使用独立入口。
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from app.tube.router import router as tube_router
 settings = get_settings()
 
 
+# 按配置初始化数据库并收口中断的解析任务，然后交出应用运行期控制权。
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if settings.init_database_on_startup:

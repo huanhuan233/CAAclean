@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_ENGINE_CAPTUREOUTCOME_H
+﻿// 声明采集结果汇总与严格策略门禁，决定部分采集包是否允许提交。
+#ifndef CADCAPTURE_ENGINE_CAPTUREOUTCOME_H
 #define CADCAPTURE_ENGINE_CAPTUREOUTCOME_H
 
 #include "engine/CapturePolicy.h"

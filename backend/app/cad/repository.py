@@ -1,3 +1,4 @@
+# CAD 数据仓库：封装版本、拓扑、网格及原生证据的查询与事务写入。
 from __future__ import annotations
 
 import uuid
@@ -12,11 +13,14 @@ from app.db.models import CadEntity, CadMesh, CadModel, CadModelRevision, CadNat
 from app.component_builds.native_tree_store import NATIVE_SOURCE_PREFIX, order_native_tree_rows
 
 
+# 以带时区 UTC 时间记录任务状态变化。
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# 在传入会话上执行数据操作，原生分阶段写入可共享一次发布事务。
 class CadRepository:
+    # 保存会话及发布事务标志；不在构造时访问数据库。
     def __init__(self, session: AsyncSession):
         self.session = session
         self._native_publish_active = False
@@ -43,6 +47,7 @@ class CadRepository:
         else:
             await self.session.commit()
 
+    # 创建模型和排队版本，设置当前版本指针并提交上传记录。
     async def create_upload_revision(
         self,
         *,
@@ -76,12 +81,15 @@ class CadRepository:
         await self.session.refresh(revision)
         return model, revision
 
+    # 按版本主键读取记录，缺失时由上层决定返回方式。
     async def get_revision(self, revision_id: uuid.UUID) -> CadModelRevision | None:
         return await self.session.get(CadModelRevision, revision_id)
 
+    # 按实体主键读取；所属版本校验由具体业务调用方负责。
     async def get_entity(self, entity_id: uuid.UUID) -> CadEntity | None:
         return await self.session.get(CadEntity, entity_id)
 
+    # 更新进度、错误和开始结束时间，并提交任务状态。
     async def set_revision_status(
         self,
         revision_id: uuid.UUID,
@@ -245,6 +253,7 @@ class CadRepository:
         ).order_by(CadNativeEvidence.ordinal).offset(offset).limit(limit))
         return [row.payload for row in rows]
 
+    # 在版本和证据种类内查询唯一 object_id，重复身份显式报错。
     async def get_native_evidence_object(self, revision_id: uuid.UUID, kind: str, object_id: str) -> dict | None:
         """Resolve a definition in PostgreSQL without rereading its capture bundle."""
         rows = await self.session.scalars(select(CadNativeEvidence).where(
@@ -257,6 +266,7 @@ class CadRepository:
             raise ValueError(f"duplicate native evidence object: {kind}/{object_id}")
         return matches[0].payload if matches else None
 
+    # 在事务内替换目标版本的实体、关系和网格，成功后更新解析摘要。
     async def persist_parser_result(self, revision_id: uuid.UUID, result: Any) -> None:
         try:
             async with self.session.begin():
@@ -351,6 +361,7 @@ class CadRepository:
             await self._mark_revision_failed_after_persist_error(revision_id, exc)
             raise
 
+    # 先回滚失败写入，再单独保存失败状态，避免留下半套解析结果。
     async def _mark_revision_failed_after_persist_error(self, revision_id: uuid.UUID, exc: Exception) -> None:
         rollback = getattr(self.session, "rollback", None)
         if rollback:
@@ -366,6 +377,7 @@ class CadRepository:
         revision.finished_at = now_utc()
         await self.session.commit()
 
+    # 仅收口超过截止时间仍处于排队或执行中的版本，不把新任务误判为中断。
     async def fail_interrupted_revisions(self, stale_job_minutes: int, error_code: str) -> int:
         cutoff = now_utc() - timedelta(minutes=stale_job_minutes)
         result = await self.session.execute(
@@ -386,6 +398,7 @@ class CadRepository:
         await self.session.commit()
         return int(result.rowcount or 0)
 
+    # 分页读取模型与当前版本，可要求其已关联业务构建；另查完整总数。
     async def list_models(self, page: int, page_size: int, has_build: bool = False) -> tuple[list[CadModel], int]:
         filters = []
         if has_build:
@@ -402,12 +415,14 @@ class CadRepository:
         )
         return list(result.all()), int(total or 0)
 
+    # 按树路径与排序字段返回当前版本的全部实体。
     async def list_entities(self, revision_id: uuid.UUID) -> list[CadEntity]:
         result = await self.session.execute(
             select(CadEntity).where(CadEntity.revision_id == revision_id).order_by(CadEntity.tree_path, CadEntity.sort_order)
         )
         return list(result.scalars().all())
 
+    # 在同一版本内组合父级、类别和关键词条件，数据库分页而非内存截断。
     async def list_entities_filtered(
         self,
         revision_id: uuid.UUID,
@@ -440,6 +455,7 @@ class CadRepository:
         )
         return list(result.scalars().all()), int(total or 0)
 
+    # 查询指定父实体的直接子对象，可附加实体类别条件。
     async def list_child_entities(
         self,
         revision_id: uuid.UUID,
@@ -454,6 +470,7 @@ class CadRepository:
         )
         return list(result.scalars().all())
 
+    # 按版本及实体或父级范围分页读取显示网格，同时返回匹配总数。
     async def list_meshes_filtered(
         self,
         revision_id: uuid.UUID,
@@ -479,6 +496,7 @@ class CadRepository:
         )
         return list(result.scalars().all()), int(total or 0)
 
+    # 沿指定关系从源实体读取目标对象，关系方向不反转。
     async def get_related_entities(
         self,
         revision_id: uuid.UUID,
@@ -497,6 +515,7 @@ class CadRepository:
         )
         return list(result.scalars().all())
 
+    # 反向查询指向目标实体的来源对象，用于边到所属面的拓扑查询。
     async def get_source_entities_for_target(
         self,
         revision_id: uuid.UUID,

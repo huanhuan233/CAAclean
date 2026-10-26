@@ -1,3 +1,6 @@
+# 导管 FreeCAD 作业入口：一次加载所有请求实体，调用解析壁面核验并按需计算安装间隙。
+# 测量绑定当前 B-Rep，不能反推唯一 CATIA 命令或制造工序；失败通过任务结果协议返回。
+
 """Analytic straight/bent hollow tube recognition in one loaded B-Rep task.
 
 Circular inner/outer walls, finite topology, material and sections must agree.
@@ -26,6 +29,8 @@ MAX_SOLIDS = 32
 MAX_FACES = 256
 
 
+# 校验毫米容差、世界坐标约定和 Solid 身份；限制实体与面数量，复用一个内核上下文。
+# 导管被确认后才用全部已核验外壁及环形端面求间隙，内壁不冒充安装外表面。
 def run(job):
     items = job.get("solids") or []
     tolerance = float(job.get("tolerance_mm", 0.01))
@@ -56,6 +61,7 @@ def run(job):
         target_index = matches[0]
         tube = context.shapes[target_index]
         record = records[target_index]
+        # exterior_face_indices 是此处加载的 Solid 的局部面序号，访问 Python 列表时转成从零起算。
         exterior = Part.makeCompound([tube.Faces[i - 1] for i in record["exterior_face_indices"]])
         path = record["path"]
         for index, item in enumerate(items):
@@ -74,6 +80,7 @@ def run(job):
                                    "station_status": station_status})
                 status = "evaluated" if pair.get("status") == "evaluated" else "partial"
                 if distance > tolerance and pair.get("distance_mm", 0) <= tolerance:
+                    # 整体实体距离与外表面距离不一致，可能涉及内腔，保留部分结果而不宣称完整安装核验。
                     status = "partial"
                 clearances.append({"tube_solid_id": target_id, "target_solid_id": item["solid_id"],
                                    "status": status, "distance_mm": float(distance),
@@ -96,6 +103,7 @@ def run(job):
             "freecad_version": ".".join(str(value) for value in FreeCAD.Version()[:3])}
 
 
+# 读取作业，捕获输入/内核错误并写结果 JSON；禁止 NaN 写入，避免产生不可查询的数值。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     try:

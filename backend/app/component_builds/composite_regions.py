@@ -1,3 +1,4 @@
+# 由原生有序边采样构造平面轮廓；面积属于轮廓平面，不能当作曲面铺层面积。
 """Conservative planar contour derivation from ordered native edge uses.
 
 The area belongs to the contour plane. It is not a curved ply surface area.
@@ -12,6 +13,7 @@ from typing import Any
 Point = tuple[float, float, float]
 
 
+# 将三元坐标转为有限浮点向量，不完整或非有限坐标返回空值。
 def _point(value: Any) -> Point | None:
     if not isinstance(value, (list, tuple)) or len(value) != 3:
         return None
@@ -22,27 +24,33 @@ def _point(value: Any) -> Point | None:
     return result if all(math.isfinite(number) for number in result) else None  # type: ignore[return-value]
 
 
+# 计算两点位移，用于建立局部平面基和检验共面性。
 def _sub(a: Point, b: Point) -> Point:
     return a[0] - b[0], a[1] - b[1], a[2] - b[2]
 
 
+# 计算三维点积，用于平面投影及向量长度。
 def _dot(a: Point, b: Point) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
+# 计算三维叉积，用于确定轮廓法向和第二平面轴。
 def _cross(a: Point, b: Point) -> Point:
     return a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]
 
 
+# 归一化向量，退化向量返回空值以阻止虚构平面方向。
 def _unit(a: Point) -> Point | None:
     length = math.sqrt(_dot(a, a))
     return tuple(x/length for x in a) if length > 1e-12 else None  # type: ignore[return-value]
 
 
+# 计算三维欧氏距离，作为边连接与端点一致性判断依据。
 def _distance(a: Point, b: Point) -> float:
     return math.dist(a, b)
 
 
+# 仅采样直线和可验证圆弧；圆弧按弦高限制分段并核对原生端点。
 def _edge_points(edge: dict[str, Any], sagitta_mm: float) -> tuple[list[Point], float] | None:
     kind = edge.get("curve_type")
     if kind == "line":
@@ -81,6 +89,7 @@ def _edge_points(edge: dict[str, Any], sagitta_mm: float) -> tuple[list[Point], 
     return points, sagitta_mm
 
 
+# 保持采集边顺序，仅尝试反转边方向，要求所有连接及首尾闭合满足容差。
 def _assemble_loop(edges: list[dict[str, Any]], tolerance_mm: float, sagitta_mm: float) -> tuple[list[Point], float] | None:
     sampled = [_edge_points(edge, sagitta_mm) for edge in edges]
     if any(item is None for item in sampled):
@@ -103,17 +112,21 @@ def _assemble_loop(edges: list[dict[str, Any]], tolerance_mm: float, sagitta_mm:
     return None
 
 
+# 按鞋带公式计算二维环有向面积，供内外环面积累计。
 def _signed_area(points: list[tuple[float, float]]) -> float:
     return sum(x1*y2-x2*y1 for (x1,y1),(x2,y2) in zip(points, points[1:]+points[:1])) / 2
 
 
+# 用四个方向叉积检测严格交叉，容差用于排除数值噪声。
 def _segment_intersects(a, b, c, d, tolerance: float) -> bool:
+    # 计算二维转向量，判断第三点位于有向线段的哪一侧。
     def orient(p, q, r):
         return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
     o1, o2, o3, o4 = orient(a,b,c), orient(a,b,d), orient(c,d,a), orient(c,d,b)
     return (o1*o2 < -tolerance*tolerance and o3*o4 < -tolerance*tolerance)
 
 
+# 检查环中非相邻线段的严格相交，跳过首尾相邻边。
 def _self_intersects(points: list[tuple[float, float]], tolerance: float) -> bool:
     size = len(points)
     for i in range(size):
@@ -125,6 +138,7 @@ def _self_intersects(points: list[tuple[float, float]], tolerance: float) -> boo
     return False
 
 
+# 射线法判断点在环内外；落在容差边界上返回空值，交给上层拒绝歧义。
 def _inside(point: tuple[float, float], polygon: list[tuple[float, float]], tolerance: float) -> bool | None:
     x, y = point
     inside = False
@@ -140,6 +154,7 @@ def _inside(point: tuple[float, float], polygon: list[tuple[float, float]], tole
     return inside
 
 
+# 验证无重复边、闭合、共面及无交叉，再按嵌套奇偶确定孔洞并估计采样面积误差。
 def derive_planar_regions(payload: Any, *, tolerance_mm: float = 1e-4,
                           sagitta_mm: float = 0.05) -> dict[str, Any]:
     result: dict[str, Any] = {"status": "unsupported", "source": "derived_from_native_ordered_contour",
@@ -155,6 +170,7 @@ def derive_planar_regions(payload: Any, *, tolerance_mm: float = 1e-4,
     if not native_loops or len(native_loops) > 128:
         result["diagnostics"].append("loop_count_out_of_range")
         return result
+    # 接缝或共享边会重复出现；此算法要求每条边恰好出现一次，拒绝自行修补拓扑。
     indices = [edge.get("edge_index") for loop in native_loops for edge in loop.get("edges", [])
                if isinstance(edge, dict)]
     if (not all(isinstance(index, int) and index > 0 for index in indices) or
@@ -228,6 +244,7 @@ def derive_planar_regions(payload: Any, *, tolerance_mm: float = 1e-4,
             result["diagnostics"].append("native_role_conflict")
             return result
         area_total += -areas[index] if role == "inner" else areas[index]
+        # 用边长与最大弦高给出面积误差界，避免把采样多边形面积当成精确曲线积分。
         area_error += length * error + math.pi * error * error
         if role == "inner":
             result["hole_count"] += 1

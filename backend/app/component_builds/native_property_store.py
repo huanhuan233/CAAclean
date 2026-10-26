@@ -1,3 +1,4 @@
+# 属性行身份包含版本、属性 ID 和原始序号，避免不同版本或重复属性记录互相覆盖。
 """CAA 原生属性事实的 PostgreSQL 投影与响应组装。"""
 
 from __future__ import annotations
@@ -12,10 +13,12 @@ from uuid import UUID, uuid5
 _WINDOWS_PATH_RE = re.compile(r"(?i)\b[a-z]:\\[^<>:\"|?*\r\n]+")
 
 
+# 收集流式属性投影结果，供需要完整列表的调用方使用。
 def native_property_rows(revision_id: UUID, facts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(iter_native_property_rows(revision_id, facts))
 
 
+# 跳过无主体事实，为每条属性生成版本内稳定 UUID，并脱敏原值与显示值。
 def iter_native_property_rows(revision_id: UUID, facts: Iterable[dict[str, Any]]):
     for index, fact in enumerate(facts):
         subject_id = str(fact.get("subject_id") or "")
@@ -35,6 +38,7 @@ def iter_native_property_rows(revision_id: UUID, facts: Iterable[dict[str, Any]]
         }
 
 
+# 只收集当前节点及关联对象、实例、文档的属性，按页签和分组组织响应。
 def build_database_properties(node_id: str, node: dict[str, Any], facts: Iterable[Any]) -> dict[str, Any]:
     subject_ids = native_property_subject_ids(node_id, node)
     groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -52,6 +56,7 @@ def build_database_properties(node_id: str, node: dict[str, Any], facts: Iterabl
     return _grouped_property_response(node_id, groups)
 
 
+# 汇总节点关联的多种主体身份，让实例属性和定义属性都能在详情中呈现。
 def native_property_subject_ids(node_id: str, node: dict[str, Any]) -> set[str]:
     return {
         str(value)
@@ -81,6 +86,7 @@ def native_parameter_values(facts: Iterable[Any]) -> dict[str, str]:
     return values
 
 
+# 按属性显示顺序排列字段、分组和页签，并计算实际返回属性数。
 def _grouped_property_response(node_id: str, groups: dict[tuple[str, str, str, str], list[dict[str, Any]]]):
     tabs: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for (tab_id, tab_label, group_id, group_label), fields in groups.items():
@@ -105,6 +111,7 @@ def _grouped_property_response(node_id: str, groups: dict[tuple[str, str, str, s
     }
 
 
+# 输出属性原值、显示文本、单位、读取状态和来源 API，保留归一化可用性。
 def _property_field(fact: dict[str, Any]) -> dict[str, Any]:
     return {
         "property_id": str(fact.get("property_id") or ""),
@@ -126,6 +133,7 @@ def _property_field(fact: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# 字符串中的 Windows 本地路径替换为占位前缀，保留文件名便于识别。
 def _redact_value(value: Any) -> Any:
     if not isinstance(value, str):
         return value

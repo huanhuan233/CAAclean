@@ -1,3 +1,4 @@
+# 基于同一实体的薄壁测量及连接关系提出筋、腹板、翼缘角色；局部厚度与结构用途分开标记。
 """Structural-role proposals over exact same-Solid thin-wall measurements."""
 
 from __future__ import annotations
@@ -8,16 +9,19 @@ from .contracts import CanonicalFeature
 from .eaag import EaagGraph
 
 
+# 计算方向点积，比较薄壁对的法向是否平行或垂直。
 def _dot(a: list[float], b: list[float]) -> float:
     return sum(x*y for x, y in zip(a, b))
 
 
+# 提取面边界中直线边长度并降序排列，供有限长宽与厚度比例判断。
 def _edge_lengths(graph: EaagGraph, face_id: str) -> list[float]:
     return sorted((float(graph.entities[edge_id].get("length") or 0)
                    for edge_id in graph.face_edge_ids(face_id)
                    if graph.entities[edge_id].get("geometry_type") == "line"), reverse=True)
 
 
+# 在同实体薄壁对中识别带状连接与细长凸台几何，输出翼缘、筋或腹板用途候选及局部测量证据。
 def structural_proposals(graph: EaagGraph, solid_id: str, face_ids: list[str],
                          thin_pairs: list[dict[str, Any]],
                          existing: list[CanonicalFeature], tolerance: float) -> list[dict[str, Any]]:
@@ -85,6 +89,7 @@ def structural_proposals(graph: EaagGraph, solid_id: str, face_ids: list[str],
             continue
         seen.add(key)
         thickness = float(pair["thickness_mm"])
+        # 该分支只接受指定的裁剪平面投影加实体线段精确求交方法，排除仅由平面间距推测的厚度。
         if thickness <= tolerance or pair.get("method") != "trimmed_plane_projection_and_exact_solid_segment_intersection_v2":
             continue
         parent = next((feature for feature in rectangular_bosses

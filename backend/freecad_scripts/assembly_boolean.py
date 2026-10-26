@@ -1,3 +1,6 @@
+# 装配派生布尔计算：在 FreeCAD 子进程中对两个有效闭合单实体执行并、交、差。
+# 输入几何复制后参与计算；输出为新的辅助 B-Rep 资产，不修改源模型或原生建模历史。
+
 """Explicit two-operand derived B-Rep; inputs are copied and never overwritten."""
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import FreeCAD
 import Part
 
 
+# 校验操作与两个实体，构造派生结果并返回体积、面积、范围及文件 SHA-256；空交集单独返回 empty。
 def run(job):
     operation = job["operation"]
     if operation not in {"union", "intersection", "difference"}:
@@ -45,6 +49,7 @@ def run(job):
             "freecad_version": ".".join(str(value) for value in FreeCAD.Version()[:3])}
 
 
+# 读取作业 JSON，将可解释失败写入结果文件；内核异常不会伪装成有效的空实体。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     try:

@@ -1,3 +1,4 @@
+/* 依据实际三角形载荷汇总网格证据的可用状态。 */
 #include "caa/CaaTessellationExtractor.h"
 #include "model/CaptureEvidenceSummary.h"
 

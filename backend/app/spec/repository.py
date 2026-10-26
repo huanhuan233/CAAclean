@@ -1,3 +1,4 @@
+# 事务化保存规格字段绑定及独立证据行，保留旧字段的 superseded 状态。
 from __future__ import annotations
 
 import uuid
@@ -9,10 +10,13 @@ from app.db.models import CadSpecField, CadSpecFieldEvidence
 from app.spec.bindings import SpecFieldBinding
 
 
+# 将绑定计算结果映射为规格字段及图纸、测量两类证据记录。
 class SpecFieldRepository:
+    # 保存用于替换字段和证据的异步数据库会话。
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    # 先淘汰当前字段，再刷新新字段主键并插入证据；任一步失败均回滚事务。
     async def replace_bindings(self, task_id: uuid.UUID, bindings: list[SpecFieldBinding]) -> None:
         try:
             await self.session.execute(
@@ -22,6 +26,7 @@ class SpecFieldRepository:
             )
             field_rows = [self._field_row(binding) for binding in bindings]
             self.session.add_all(field_rows)
+            # 先确保字段主键可用，再将两类证据分别关联到相应字段，和字段一起提交。
             await self.session.flush()
             evidence_rows = []
             for field, binding in zip(field_rows, bindings, strict=True):
@@ -32,6 +37,7 @@ class SpecFieldRepository:
             await self.session.rollback()
             raise
 
+    # 复制绑定的值、状态和来源信息，未提供 ID 时按任务、字段及符号生成 UUID。
     def _field_row(self, binding: SpecFieldBinding) -> CadSpecField:
         return CadSpecField(
             id=binding.id or uuid.uuid5(uuid.NAMESPACE_URL, f"{binding.task_id}:{binding.field_name}:{binding.symbol}"),
@@ -62,6 +68,7 @@ class SpecFieldRepository:
             status="current",
         )
 
+    # 仅在证据 ID 存在时分别建立图纸事实和测量证据，保留各自值与置信度。
     def _evidence_rows(self, field_id: uuid.UUID, binding: SpecFieldBinding) -> list[CadSpecFieldEvidence]:
         rows = []
         if binding.drawing_fact_id:

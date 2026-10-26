@@ -1,3 +1,4 @@
+/* 定义可被多个装配实例共享的产品引用记录。 */
 #ifndef CADCAPTURE_MODEL_PRODUCTSTRUCTURE_H
 #define CADCAPTURE_MODEL_PRODUCTSTRUCTURE_H
 
@@ -6,6 +7,7 @@
 
 namespace cadcapture {
 
+/* 共享产品定义的引用信息；定义状态和目标文档 ID 用于区分已解析与未解析引用。 */
 struct ProductReferenceEntity
 {
   std::string reference_id;

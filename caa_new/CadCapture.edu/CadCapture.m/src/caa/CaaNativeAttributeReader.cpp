@@ -1,4 +1,5 @@
-﻿#include "caa/CaaNativeAttributeReader.h"
+﻿// 读取规格对象的原生存储属性，保留类型、原始表示和逐项读取状态。
+#include "caa/CaaNativeAttributeReader.h"
 #include "caa/CaaPropertyEvidence.h"
 #include "caa/CaaGuards.h"
 #include <CATISpecObject.h>
@@ -7,6 +8,7 @@
 #include <CATLISTV_CATISpecAttrKey.h>
 
 namespace cadcapture {
+// 不支持属性访问接口时返回空集合；枚举失败和单项异常以属性事实记录。
 std::vector<PropertyFact> ReadCaaNativeAttributes(CATISpecObject* spec)
 {
   std::vector<PropertyFact> facts;
@@ -20,6 +22,7 @@ std::vector<PropertyFact> ReadCaaNativeAttributes(CATISpecObject* spec)
     facts.push_back(failed);
     return facts;
   }
+  // CAA 属性键列表从 1 开始；未设置值保留 unset 状态，继续处理后续属性。
   for (int i = 1; i <= keys.Size(); ++i)
   {
     PropertyFact fact = evidence::Failure("unavailable", "CATISpecAttrAccess");

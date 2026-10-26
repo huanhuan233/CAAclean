@@ -1,8 +1,10 @@
-﻿#ifndef CADCAPTURE_ENGINE_CAPTUREPOLICY_H
+﻿// 定义是否允许部分采集及提交前是否执行逻辑校验的策略开关。
+#ifndef CADCAPTURE_ENGINE_CAPTUREPOLICY_H
 #define CADCAPTURE_ENGINE_CAPTUREPOLICY_H
 
 namespace cadcapture {
 
+// 采集容错策略与发布前检查策略分别控制，不等同于几何支持能力。
 struct CapturePolicy
 {
   // 中文：严格模式拒绝必需采集阶段的部分结果；默认保留带诊断的包。

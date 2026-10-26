@@ -1,4 +1,5 @@
-﻿#include "reconstruction/BrepCompleteness.h"
+﻿// 检查每个实体的精确几何、边界、线框和有向边引用是否足以选择精确重建路线。
+#include "reconstruction/BrepCompleteness.h"
 #include <map>
 #include <set>
 
@@ -149,6 +150,7 @@ BrepCompleteness BrepCompletenessEvaluator::Evaluate(const ReconstructionPackage
     coedges[coedge.coedge_id] = &coedge;
     by_wire[coedge.wire_id].push_back(&coedge);
   }
+  // 已报告完整性错误的关系会使相关实体失去精确重建资格。
   for (size_t i = 0; i < package.topology_relations.size(); ++i)
   {
     const TopologyRelation& relation = package.topology_relations[i];
@@ -162,6 +164,7 @@ BrepCompleteness BrepCompletenessEvaluator::Evaluate(const ReconstructionPackage
   for (size_t i = 0; i < package.topology.size(); ++i)
   {
     const TopologyEntity& body = package.topology[i];
+    // 同时覆盖主实体与特征 ResultOUT，部分结果体不能借用其他体的完整性。
     if (body.topology_kind != "body" && body.source_kind != "catishapefeaturebody_resultout") continue;
     BrepBodyStatus status;
     status.body_id = body.topology_id;

@@ -1,3 +1,4 @@
+# 定义机械和航空航天目录，以及目录节点稳定身份与旧类型兼容规则。
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from uuid import UUID, NAMESPACE_URL, uuid5
 CATALOG_NAMESPACE = "https://component-builds.local/catalog/v1"
 
 
+# 叶子类型配置：保存中英文名称、构件编号前缀及独立目录节点 UUID。
 @dataclass(frozen=True)
 class CatalogPart:
     code: str
@@ -17,6 +19,7 @@ class CatalogPart:
     catalog_node_id: UUID
 
 
+# 分类配置：关联所属库与允许选择的零件类型，分类本身不代表构建实例。
 @dataclass(frozen=True)
 class CatalogCategory:
     code: str
@@ -28,6 +31,7 @@ class CatalogCategory:
     library_code: str = "MECHANICAL_COMPONENT_LIBRARY"
 
 
+# 库根配置：组织有序分类，供目录接口和构建树共用。
 @dataclass(frozen=True)
 class CatalogLibrary:
     code: str
@@ -38,14 +42,17 @@ class CatalogLibrary:
     categories: tuple[CatalogCategory, ...]
 
 
+# 用固定命名空间和业务代码生成 UUID5，使目录身份跨进程与重启保持一致。
 def _node_id(code: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"{CATALOG_NAMESPACE}/{code}")
 
 
+# 为零件类型补上 part 命名空间的稳定节点身份。
 def _part(code: str, label: str, label_en: str, id_prefix: str, sort_order: int) -> CatalogPart:
     return CatalogPart(code, label, label_en, id_prefix, sort_order, _node_id(f"part/{code}"))
 
 
+# 为分类补上 category 命名空间身份，并记录所属图元库。
 def _category(
     code: str,
     label: str,
@@ -170,14 +177,17 @@ ALL_CATEGORIES: tuple[CatalogCategory, ...] = tuple(
 )
 
 
+# 标识分类或零件类型选择无效，供接口输出稳定错误码。
 class CatalogValidationError(ValueError):
     code = "invalid_catalog_selection"
 
 
+# 在全部图元库的分类中按业务代码查找，缺失时返回空值。
 def get_category(category_code: str) -> CatalogCategory | None:
     return next((category for category in ALL_CATEGORIES if category.code == category_code), None)
 
 
+# 校验分类存在且零件类型属于该分类，防止跨分类组合写入构建。
 def resolve_part(category_code: str, part_type_code: str) -> tuple[CatalogCategory, CatalogPart]:
     category = get_category(category_code)
     if category is None:
@@ -188,6 +198,7 @@ def resolve_part(category_code: str, part_type_code: str) -> tuple[CatalogCatego
     return category, part
 
 
+# 按稳定目录 UUID 恢复分类与零件类型；空身份表示无法解析。
 def find_part_by_node_id(catalog_node_id: UUID | None) -> tuple[CatalogCategory, CatalogPart] | None:
     if catalog_node_id is None:
         return None
@@ -198,6 +209,7 @@ def find_part_by_node_id(catalog_node_id: UUID | None) -> tuple[CatalogCategory,
     return None
 
 
+# 用历史类型代码、中英文名称及斜杠别名兼容旧构建的目录归属。
 def find_part_by_legacy_type(component_type: str | None) -> tuple[CatalogCategory, CatalogPart] | None:
     normalized = _normalize_catalog_term(component_type)
     for category in ALL_CATEGORIES:
@@ -214,10 +226,12 @@ def find_part_by_legacy_type(component_type: str | None) -> tuple[CatalogCategor
     return None
 
 
+# 统一大小写、空格、下划线及全角斜杠，作为旧类型匹配键。
 def _normalize_catalog_term(value: str | None) -> str:
     return (value or "").strip().lower().replace("_", "-").replace(" ", "-").replace("／", "/")
 
 
+# 输出库与分类的层级结构，同时保留兼容旧客户端的扁平分类列表。
 def catalog_payload() -> dict:
     categories = [
             {

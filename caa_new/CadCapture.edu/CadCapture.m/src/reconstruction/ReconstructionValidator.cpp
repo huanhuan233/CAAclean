@@ -1,3 +1,4 @@
+/* 检查采集包的唯一身份、父子环路、实例变换及各类记录引用，拒绝结构不一致的输出。 */
 #include "reconstruction/ReconstructionValidator.h"
 #include <float.h>
 #include <map>
@@ -6,11 +7,13 @@
 
 namespace cadcapture {
 
+/* 只查询身份是否已登记，不向索引插入缺失键。 */
 static bool HasKey(const std::map<std::string, bool>& values, const std::string& key)
 {
   return values.find(key) != values.end();
 }
 
+/* 沿父链使用访问集合检测循环；缺失父节点由外层引用检查处理。 */
 static bool ParentChainHasCycle(const std::string& start_id,
                                 const std::map<std::string, std::string>& parent_by_occurrence)
 {
@@ -29,11 +32,13 @@ static bool ParentChainHasCycle(const std::string& start_id,
   return false;
 }
 
+/* 使用 VS2008 可用的有限数判断，拒绝 NaN 与无穷。 */
 static bool IsFiniteDouble(double value)
 {
   return _finite(value) != 0;
 }
 
+/* 检查矩阵长度、有限分量和状态来源；这里不检查旋转正交性或变换乘法约定。 */
 static bool ValidateTransform(const ProductOccurrence& occurrence, std::string& error)
 {
   if (occurrence.transform_4x4.size() != 16)
@@ -64,6 +69,7 @@ static bool ValidateTransform(const ProductOccurrence& occurrence, std::string& 
   return true;
 }
 
+/* 先建立各类身份集合，再核对层级、归属和关联端点；不修改待验证的包。 */
 bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std::string& error) const
 {
   size_t i;
@@ -89,6 +95,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     document_ids[document_id] = true;
   }
 
+  /* 定义对象与树出现位置分开建索引，同一对象可以有多个合法 occurrence。 */
   std::map<std::string, bool> object_ids;
   for (i = 0; i < package.objects.size(); ++i)
   {
@@ -205,6 +212,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
   }
 
+  /* 产品实例与对象节点共用 occurrence 身份空间，跨类别重复也必须拒绝。 */
   std::map<std::string, bool> product_paths;
   int product_root_count = 0;
   for (i = 0; i < package.product_occurrences.size(); ++i)
@@ -325,6 +333,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
   }
 
+  /* 属性必须归属已登记文档、对象、实例或产品引用，不能悬挂在不存在的主体上。 */
   std::map<std::string, bool> property_ids;
   for (i = 0; i < package.properties.size(); ++i)
   {
@@ -355,6 +364,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     property_ids[fact.property_id] = true;
   }
 
+  /* 专用语义需有明确解码与载荷状态；字段齐全并不自动意味着 typed 或成功。 */
   std::map<std::string, bool> semantic_facet_ids;
   for (i = 0; i < package.semantic_facets.size(); ++i)
   {
@@ -390,6 +400,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     semantic_facet_ids[facet.facet_id] = true;
   }
 
+  /* 先校验拓扑自身身份，再检查父拓扑，避免把父体 ID 当作每个子单元的身份。 */
   std::map<std::string, bool> topology_ids;
   for (i = 0; i < package.topology.size(); ++i)
   {
@@ -430,6 +441,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
   }
 
+  /* 几何记录同时保留主体与拓扑引用，任一已声明引用均需能回到包内记录。 */
   std::map<std::string, bool> geometry_ids;
   for (i = 0; i < package.geometry.size(); ++i)
   {
@@ -472,6 +484,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     geometry_ids[entity.geometry_id] = true;
   }
 
+  /* 标注实体先检查身份和读取证据，再检查父标注与语义关联。 */
   std::map<std::string, bool> pmi_ids;
   for (i = 0; i < package.pmi.size(); ++i)
   {
@@ -527,6 +540,7 @@ bool ReconstructionValidator::Validate(const ReconstructionPackage& package, std
     }
   }
 
+  /* 依赖关系的目标允许引用拓扑，但来源仍需是已登记的语义主体。 */
   for (i = 0; i < package.feature_dependencies.size(); ++i)
   {
     const FeatureDependency& dependency = package.feature_dependencies[i];

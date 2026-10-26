@@ -1,4 +1,5 @@
-﻿#include "platform/WindowsDirectoryAlias.h"
+﻿// 创建和回收指向模型原目录的临时接合点以适配旧版路径接口。
+#include "platform/WindowsDirectoryAlias.h"
 #include "platform/WindowsPathCodec.h"
 #include <windows.h>
 #include <winioctl.h>
@@ -74,8 +75,10 @@ bool SetJunction(const std::wstring& alias, const std::wstring& target)
 
 }
 
+// 构造时不创建资源，别名目录字符串保持为空。
 WindowsDirectoryAlias::WindowsDirectoryAlias() {}
 
+// 离开作用域时调用同一关闭入口，仅回收接合点自身。
 WindowsDirectoryAlias::~WindowsDirectoryAlias() { Close(); }
 
 // 中文：别名指向原模型所在目录，CATProduct 的相对关联文件因此仍按原有目录解析。

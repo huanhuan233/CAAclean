@@ -1,4 +1,5 @@
-﻿#include "caa/CaaCompositeGeometry.h"
+﻿// 从铺层已有几何读取边界环、曲线、顶点及曲面惯量证据并标记部分结果。
+#include "caa/CaaCompositeGeometry.h"
 #include "caa/CaaPropertyEvidence.h"
 #include "caa/CaaGuards.h"
 #include <CATICciPly.h>
@@ -29,11 +30,13 @@
 
 namespace cadcapture {
 namespace {
+// 在返回事实集合中设置业务键；主体和属性 ID 留给上层采集器补齐。
 void Add(std::vector<PropertyFact>& facts, const char* key, PropertyFact fact)
 {
   fact.key = key;
   facts.push_back(fact);
 }
+// 将数值及明确单位包装为属性事实，不进行单位换算。
 PropertyFact Numeric(double value, const char* unit, const char* api)
 {
   PropertyFact fact = evidence::Text(evidence::Number(value), api);
@@ -42,6 +45,8 @@ PropertyFact Numeric(double value, const char* unit, const char* api)
   return fact;
 }
 
+// 对无法直接识别的曲线以弧长界及三个采样点检验近直线条件，记录残差与误差界。
+// 阈值使用毫米；通过检验仅支持此处的线段表示，不证明源曲线类型就是原生直线。
 bool WriteVerifiedStraightEdge(std::ostringstream& json, CATEdge* edge, CATCurve* curve)
 {
   if (!edge || !curve) return false;
@@ -89,6 +94,7 @@ bool WriteVerifiedStraightEdge(std::ostringstream& json, CATEdge* edge, CATCurve
   return true;
 }
 
+// 优先识别圆和直线的原生表示，再尝试近直线检验；其他精确曲线保持未序列化和 partial。
 void WriteCurveGeometry(std::ostringstream& json, CATEdge* edge, bool& partial)
 {
   CATGeometry* geometry = edge ? edge->GetGeometry() : 0;
@@ -138,6 +144,8 @@ void WriteCurveGeometry(std::ostringstream& json, CATEdge* edge, bool& partial)
   if (curve) curve->Release();
 }
 
+// 有面时按原生边界迭代器分环，无面时读取一维域；比较访问边集合以发现不完整边界。
+// CATBody 及其拓扑单元为借用对象，边界迭代器则在使用完毕后通过 CATRemove 释放。
 PropertyFact NativeBoundaryLoops(CATBody* body, const char* api)
 {
   PropertyFact result = evidence::Failure("unavailable", api);
@@ -331,6 +339,7 @@ PropertyFact NativeBoundaryLoops(CATBody* body, const char* api)
 }
 }
 
+// 分别采集已保存轮廓、结果曲面边界和曲面惯量；各通道独立保留 unavailable、failed 或 exception。
 std::vector<PropertyFact> ReadCompositeGeometry(CATICciPly* ply)
 {
   std::vector<PropertyFact> facts;
@@ -370,6 +379,7 @@ std::vector<PropertyFact> ReadCompositeGeometry(CATICciPly* ply)
         Add(facts, "composite_contour_vertex_order", evidence::Text("native_cell_enumeration_not_loop_order", contour_api));
         CATLISTP(CATCell) edges;
         body->GetAllCells(edges, 1);
+        // 长度为轮廓体全部枚举边的长度之和，包含孔环等内部边，不等同于单一外环周长。
         double length = 0;
         for (int j = 1; j <= edges.Size(); ++j) length += static_cast<CATEdge*>(edges[j])->CalcLength();
         perimeter = Numeric(length, "mm", "CATICciPly.GetGeometry/CATEdge.CalcLength");
@@ -401,6 +411,7 @@ std::vector<PropertyFact> ReadCompositeGeometry(CATICciPly* ply)
   catch (...) { surface_boundaries = evidence::Failure("exception", "CATICciCompositesGeometry.GetResult/CATFace.CreateBoundaryIterator"); }
   Add(facts, "composite_surface_native_boundary_loops", surface_boundaries);
 
+  // 惯量通道使用 SI 面积和重心坐标，与上方拓扑几何的毫米坐标分别标记单位。
   const char* surface_api = "CATICciPly.GetCompositesGeometry/CATIInertia.GetInertia";
   PropertyFact area = evidence::Failure("unavailable", surface_api);
   try

@@ -1,3 +1,6 @@
+# 精确几何查询内核：在隔离的 FreeCAD 进程中读取后端已验证的 B-Rep 快照资产。
+# 交互测量和批量识别共用求值逻辑；毫米容差与显示网格弦差分开处理。
+
 """Exact B-Rep queries run only in the isolated FreeCAD interpreter.
 
 Input paths are prepared by the backend from a published geometry snapshot. This
@@ -16,14 +19,17 @@ import FreeCAD
 import Part
 
 
+# 将内核向量转为可写入 JSON 的三个浮点数，不做显示精度截断。
 def xyz(vector):
     return [float(vector.x), float(vector.y), float(vector.z)]
 
 
+# 将坐标序列转换为内核向量；面向用户的输入须先经过 finite_point 校验。
 def vector(values):
     return FreeCAD.Vector(*[float(value) for value in values])
 
 
+# 读取 B-Rep 并要求恰有一个指定类别的子形状；类别或数量不符按引用失效处理。
 def shape_at(path, kind):
     shape = Part.Shape()
     shape.read(str(path))
@@ -37,6 +43,7 @@ def shape_at(path, kind):
     return selected[0]
 
 
+# 拒绝 null、布尔值、非三维坐标、NaN 和无穷，返回可安全求值的点向量。
 def finite_point(values):
     if not isinstance(values, list) or len(values) != 3 or any(
         isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) for x in values
@@ -45,11 +52,14 @@ def finite_point(values):
     return vector(values)
 
 
+# 读取当前有限几何的轴对齐包围盒，用于详情和计算范围估计。
 def bbox(shape):
     b = shape.BoundBox
     return {"min": [b.XMin, b.YMin, b.ZMin], "max": [b.XMax, b.YMax, b.ZMax]}
 
 
+# 精确点和显示命中种子必须二选一，并仅向当前有限边/面求最近点。
+# 精确点使用计算容差，网格种子另有受限弦差余量；返回输入、实际投影点与残差，多个解明确拒绝。
 def evaluated_point(shape, exact=None, seed=None, tolerance=0.0001, display_deflection=0.1):
     if (exact is None) == (seed is None):
         raise ValueError("invalid_input: one exact point or display seed required")
@@ -72,6 +82,7 @@ def evaluated_point(shape, exact=None, seed=None, tolerance=0.0001, display_defl
                        "solution_count": len(pairs)}
 
 
+# 复用统一点位核验后求有向面法向；零法向视为不支持，不返回虚构方向。
 def face_normal(face, exact=None, seed=None, tolerance=0.0001, display_deflection=0.1):
     point, location = evaluated_point(face, exact, seed, tolerance, display_deflection)
     u, v = face.Surface.parameter(point)
@@ -82,6 +93,7 @@ def face_normal(face, exact=None, seed=None, tolerance=0.0001, display_deflectio
     return normal, location
 
 
+# 按顶点、边、面、实体读取各自的精确几何量；仅在提供求值位置时返回面局部法向。
 def detail(shape, params):
     kind = shape.ShapeType.lower()
     result = {"kind": kind, "bounding_box": bbox(shape)}
@@ -122,6 +134,7 @@ def detail(shape, params):
     return {"status": "success", "values": result, "unit": "mm"}
 
 
+# 返回内核最近点对和距离；within_tolerance 不代表相交，交互距离接口不执行布尔相交判定。
 def distance(a, b, tolerance):
     value, point_pairs, _ = a.distToShape(b)
     if not point_pairs:
@@ -134,6 +147,7 @@ def distance(a, b, tolerance):
             "unit": "mm"}
 
 
+# 直线/平面可直接给方向，曲边/曲面必须有核验点；曲边还检查有限修剪参数区间。
 def direction(shape, exact, seed, tolerance, display_deflection):
     kind = shape.ShapeType.lower()
     if kind == "edge":
@@ -167,11 +181,13 @@ def direction(shape, exact, seed, tolerance, display_deflection):
     raise ValueError("unsupported: angle object type")
 
 
+# 基于两侧实际切向/法向计算无向角或向量夹角，保留求值位置及定义，不推断材料内外角。
 def angle(a, b, params, tolerance):
     deflection = params.get("display_deflection_mm", 0.1)
     left, left_kind, left_location = direction(a, params.get("point_a"), params.get("seed_point_a"), tolerance, deflection)
     right, right_kind, right_location = direction(b, params.get("point_b"), params.get("seed_point_b"), tolerance, deflection)
     cosine = max(-1.0, min(1.0, left.dot(right)))
+    # acos 的输入先夹紧，避免浮点点积略超 [-1, 1]；无向角忽略方向正负。
     if params.get("orientation") == "unoriented":
         cosine = abs(cosine)
     elif params.get("orientation") != "directed":
@@ -187,6 +203,8 @@ def angle(a, b, params, tolerance):
             "evaluation_a": left_location, "evaluation_b": right_location}, "unit": "deg"}
 
 
+# 以给定原点和法向构造足够大的有限平面，与实体求交得到区域和截线。
+# 相切单列 contact_only；显示点截断时标记 display_complete=false，不影响内核测量值。
 def section(solid, params, tolerance):
     if solid.ShapeType != "Solid":
         raise ValueError("unsupported: section requires closed solid")
@@ -218,6 +236,7 @@ def section(solid, params, tolerance):
         "curves": curves, "region_count": len(regions), "display_deflection_mm": 0.1}, "unit": "mm"}
 
 
+# 在核验点两侧探测材料方向，沿内法向求连续材料段；这里只证明单点局部法向厚度。
 def local_thickness(face, solid, params, tolerance):
     if face.ShapeType != "Face" or solid.ShapeType != "Solid" or not solid.isClosed():
         raise ValueError("unsupported: thickness requires face and closed solid")
@@ -228,6 +247,7 @@ def local_thickness(face, solid, params, tolerance):
     inside_plus = solid.isInside(point + normal * epsilon, tolerance, False)
     inside_minus = solid.isInside(point - normal * epsilon, tolerance, False)
     if inside_plus == inside_minus:
+        # 两侧都在材料内或都在外，无法唯一决定内法向；不能靠面朝向直接猜厚度方向。
         raise ValueError("unsupported: material side ambiguous")
     inward = normal if inside_plus else -normal
     span = max(1.0, solid.BoundBox.DiagonalLength * 2.0)
@@ -251,6 +271,7 @@ def local_thickness(face, solid, params, tolerance):
             "evaluation_location": location}, "unit": "mm"}
 
 
+# 集中分派详情、距离、夹角、截面和局部厚度，共享任务给定的计算容差与显示弦差。
 def execute_query(operation, shapes, params, tolerance, display_deflection=0.1):
     params = dict(params or {})
     params["tolerance_mm"] = tolerance
@@ -270,9 +291,11 @@ def execute_query(operation, shapes, params, tolerance, display_deflection=0.1):
     return result
 
 
+# 单任务几何上下文：按资产路径及类别缓存内核形状，统计加载次数、耗时和查询次数。
 class GeometryKernelContext:
     """One isolated task loads each B-Rep once and reuses exact kernel operations."""
 
+    # 限制资产数量及文件总大小，同一资产/类别只读取一次；缓存随本次子进程任务结束释放。
     def __init__(self, paths, kinds, tolerance, display_deflection=0.1):
         if len(paths) != len(kinds) or len(paths) > 256:
             raise ValueError("invalid_input: geometry asset count exceeds task limit")
@@ -282,6 +305,7 @@ class GeometryKernelContext:
         self.display_deflection = display_deflection
         self.shapes = []
         loaded = {}
+        # 这是当前任务内的缓存，不是跨请求常驻 FreeCAD 服务。
         started = time.perf_counter()
         for path, kind in zip(paths, kinds):
             key = (path, kind)
@@ -292,6 +316,7 @@ class GeometryKernelContext:
         self.load_ms = (time.perf_counter() - started) * 1000.0
         self.query_count = 0
 
+    # 校验批量查询的资产下标后调用同一计算入口，不为每张面另启进程。
     def query(self, operation, indices, params):
         if not isinstance(indices, list) or not indices or len(indices) > 2 or any(
             not isinstance(index, int) or index < 0 or index >= len(self.shapes) for index in indices
@@ -302,6 +327,7 @@ class GeometryKernelContext:
                              self.tolerance, self.display_deflection)
 
 
+# 创建一次上下文，执行单项或最多 500 条批量查询；批量中的可解释错误按项返回。
 def run(job):
     tolerance = float(job.get("tolerance_mm", 0.01))
     if not math.isfinite(tolerance) or tolerance <= 0:
@@ -336,6 +362,7 @@ def run(job):
     return result
 
 
+# 处理任务文件协议，捕获业务与内核异常并输出明确状态，避免失败被包装成正常空结果。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     try:

@@ -1,3 +1,4 @@
+/* 汇总上游对象身份采集情况并说明会话身份的适用范围。 */
 #include "caa/CaaIdentityResolver.h"
 #include "model/CaptureEvidenceSummary.h"
 

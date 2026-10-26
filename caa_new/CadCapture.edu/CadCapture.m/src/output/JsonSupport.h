@@ -1,3 +1,4 @@
+/* 提供 JSON 字符串转义和加引号的公共辅助函数。 */
 #ifndef CADCAPTURE_OUTPUT_JSONSUPPORT_H
 #define CADCAPTURE_OUTPUT_JSONSUPPORT_H
 
@@ -6,6 +7,7 @@
 
 namespace cadcapture {
 
+/* 转义 JSON 特殊字符和控制字节，其他字节原样保留；调用方负责提供有效文本编码。 */
 static std::string JsonEscape(const std::string& value)
 {
   std::ostringstream out;
@@ -38,6 +40,7 @@ static std::string JsonEscape(const std::string& value)
   return out.str();
 }
 
+/* 在转义结果两侧补双引号，返回可直接写入的 JSON 字符串值。 */
 static std::string JsonQuote(const std::string& value)
 {
   return std::string("\"") + JsonEscape(value) + "\"";

@@ -1,3 +1,4 @@
+# 入库前检查 FreeCAD JSON 结果的数据形状与网格计数；此处不做几何类别核验。
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+# 实体记录契约包含自身、父实体、源引用与几何摘要，拒绝额外未知字段。
 class ParserEntity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -31,6 +33,7 @@ class ParserEntity(BaseModel):
     fingerprint: str | None = None
 
 
+# 有向拓扑关系的输入契约，两个端点分别保留真实实体 ID。
 class ParserRelation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,6 +45,7 @@ class ParserRelation(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+# 显示网格契约，坐标、三角形索引和声明计数需满足结构约束。
 class ParserMesh(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,6 +62,7 @@ class ParserMesh(BaseModel):
     vertex_count: int
     triangle_count: int
 
+    # 每个顶点必须恰有三个坐标分量。
     @field_validator("positions")
     @classmethod
     def positions_are_xyz(cls, value: list[list[float]]) -> list[list[float]]:
@@ -65,6 +70,7 @@ class ParserMesh(BaseModel):
             raise ValueError("positions must contain [x, y, z] points")
         return value
 
+    # 每个索引记录必须恰有三个顶点索引；此处只检查三元组长度。
     @field_validator("indices")
     @classmethod
     def indices_are_triangles(cls, value: list[list[int]]) -> list[list[int]]:
@@ -72,6 +78,7 @@ class ParserMesh(BaseModel):
             raise ValueError("indices must contain triangle index triplets")
         return value
 
+    # 拒绝负三角形计数。
     @field_validator("triangle_count")
     @classmethod
     def triangle_count_is_non_negative(cls, value: int) -> int:
@@ -79,6 +86,7 @@ class ParserMesh(BaseModel):
             raise ValueError("triangle_count must be non-negative")
         return value
 
+    # 拒绝负顶点计数。
     @field_validator("vertex_count")
     @classmethod
     def vertex_count_is_non_negative(cls, value: int) -> int:
@@ -86,6 +94,7 @@ class ParserMesh(BaseModel):
             raise ValueError("vertex_count must be non-negative")
         return value
 
+    # 核对声明数量与实际数组长度，防止不完整网格伪装成完整输出。
     def model_post_init(self, __context: Any) -> None:
         if self.vertex_count != len(self.positions):
             raise ValueError("vertex_count must match positions length")
@@ -93,6 +102,7 @@ class ParserMesh(BaseModel):
             raise ValueError("triangle_count must match indices length")
 
 
+# 一次解析的完整载荷，分别记录应用与几何内核版本并附带实体、关系和显示数据。
 class ParserResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -115,5 +125,6 @@ class ParserResult(BaseModel):
     cylinder_end_boundaries: list[dict[str, Any]] = Field(default_factory=list)
 
 
+# 将原始字典交给统一 Pydantic 契约校验，供进程入口与持久化复用。
 def validate_parser_result(data: dict[str, Any]) -> ParserResult:
     return ParserResult.model_validate(data)

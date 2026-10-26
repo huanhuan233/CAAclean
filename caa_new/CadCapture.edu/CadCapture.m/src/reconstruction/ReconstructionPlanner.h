@@ -1,16 +1,20 @@
-﻿#ifndef CADCAPTURE_RECONSTRUCTION_RECONSTRUCTIONPLANNER_H
+﻿// 声明包级重建路线规划及精确几何、网格和树属性的能力摘要。
+#ifndef CADCAPTURE_RECONSTRUCTION_RECONSTRUCTIONPLANNER_H
 #define CADCAPTURE_RECONSTRUCTION_RECONSTRUCTIONPLANNER_H
 
 #include "model/ReconstructionPackage.h"
 
 namespace cadcapture {
 
+// 只选择已有证据允许的重建路线，不在这里创建 CAD 实体。
 class ReconstructionPlanner
 {
 public:
+  // 将路线和逐实体统计写回包，保留不完整几何的诊断。
   bool Plan(ReconstructionPackage& package);
 };
 
+// 包级能力摘要同时保留逐体完整性和真实网格可用性。
 struct ReconstructionCompleteness
 {
   size_t body_count;
@@ -27,6 +31,7 @@ struct ReconstructionCompleteness
   bool SupportsTessellation() const;
 };
 
+// 汇总 B-Rep 与显示证据，供规划器统一判断能力。
 class ReconstructionCompletenessEvaluator
 {
 public:

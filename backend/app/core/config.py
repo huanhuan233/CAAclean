@@ -1,3 +1,4 @@
+# 集中读取后端配置；此处定义默认值和环境变量契约，不负责启动外部工具。
 from __future__ import annotations
 
 from functools import lru_cache
@@ -13,6 +14,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = REPOSITORY_ROOT / "backend"
 
 
+# 配置模型覆盖数据库、CAD 运行时和文档服务；环境文件位置由 model_config 明确指定。
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # 后端只读取 backend/.env，避免根目录配置在后加载时覆盖本机服务配置。
@@ -91,6 +93,7 @@ class Settings(BaseSettings):
     ai_request_timeout: int = 600
     ai_max_retries: int = 2
 
+    # 优先使用完整连接串，否则用 URL.create 编码各连接字段，避免密码特殊字符破坏 URL。
     @property
     def database_url(self) -> str:
         if self.database_url_value:
@@ -107,11 +110,13 @@ class Settings(BaseSettings):
         )
         return url.render_as_string(hide_password=False)
 
+    # 把逗号分隔的跨域来源转为非空列表，不在此推断额外可信域。
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
+# 缓存当前进程的配置实例，避免每次请求重复读取环境文件。
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

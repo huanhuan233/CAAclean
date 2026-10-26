@@ -1,3 +1,4 @@
+# 把构建身份、图纸事实和模型测量融合为规范草稿，并逐字段报告来源、保留决定和待复核项。
 from __future__ import annotations
 
 from copy import deepcopy
@@ -6,10 +7,12 @@ import re
 from typing import Any
 
 
+# 表示没有可供融合的图纸、测量、特征或模型版本数据。
 class FusionSourceUnavailable(ValueError):
     pass
 
 
+# 保存同一构建关联的图纸事实、测量、识别特征和版本元数据。
 @dataclass(frozen=True)
 class FusionSources:
     drawing_facts: list[dict]
@@ -17,11 +20,13 @@ class FusionSources:
     features: list[dict]
     revision: dict | None = None
 
+    # 任一来源非空即可启动融合；不要求每条来源通道均成功。
     @property
     def available(self) -> bool:
         return bool(self.drawing_facts or self.measurements or self.features or self.revision)
 
 
+# 返回融合后的草稿、字段决策统计、来源明细及无法确定的业务警告。
 @dataclass(frozen=True)
 class FusionResult:
     data: dict
@@ -47,6 +52,7 @@ FLANGE_SYMBOL_MAP = {
 }
 
 
+# 深拷贝现有草稿并补身份与来源；法兰按目标 DN 行回填，默认保留已填写值。
 def fuse_component_spec(
     *,
     build: dict,
@@ -58,6 +64,7 @@ def fuse_component_spec(
     fields: list[dict] = []
     warnings: list[str] = []
 
+    # 对点分路径执行补空或覆盖，并记录来源、置信度和待复核标记。
     def assign(
         path: str,
         value: Any,
@@ -69,6 +76,7 @@ def fuse_component_spec(
         if value is None:
             return
         existing = _get_path(data, path)
+        # 默认补空策略保留用户已有值；字段报告仍记录本次候选的来源与保留决定。
         if not overwrite and not _is_empty(existing):
             _record(fields, path, existing, source, confidence, "preserved", needs_review)
             return
@@ -134,6 +142,7 @@ def fuse_component_spec(
     return FusionResult(data=data, summary=summary, fields=fields, warnings=warnings)
 
 
+# 从模型版本回填实体数量与参考 STEP 信息，记录文件摘要及长度单位。
 def _fuse_revision_metadata(assign, revision: dict | None) -> None:
     if not revision:
         return
@@ -179,6 +188,7 @@ def _fuse_revision_metadata(assign, revision: dict | None) -> None:
     )
 
 
+# 按目标 DN 选择图纸尺寸行，生成法兰参数与预设；推导内孔须有模型测量佐证。
 def _fuse_flange(
     *,
     data: dict,
@@ -246,6 +256,7 @@ def _fuse_flange(
     wall = _numeric_fact(row.get("S"))
     if pipe_od is not None and wall is not None:
         bore = round(pipe_od - 2 * wall, 6)
+        # 外径减两倍壁厚仅是推导候选，必须在模型直径测量中得到佐证才回填。
         if _measurement_confirms(sources.measurements, bore):
             _upsert_parameter(
                 data,
@@ -288,6 +299,7 @@ def _fuse_flange(
             )
 
 
+# 按参数名创建或更新规格定义，再依据覆盖开关写默认值和字段报告。
 def _upsert_parameter(
     data: dict,
     fields: list[dict],
@@ -353,6 +365,7 @@ def _upsert_parameter(
     )
 
 
+# 按预设名补建待复核规格组合，并记录其标准来源。
 def _upsert_preset(data: dict, fields: list[dict], name: str, source_ref: str | None, *, overwrite: bool) -> None:
     presets = data.setdefault("presets", [])
     preset = next(
@@ -379,6 +392,7 @@ def _upsert_preset(data: dict, fields: list[dict], name: str, source_ref: str | 
     )
 
 
+# 按参数业务名称检索字典条目，忽略不合法的列表成员。
 def _get_parameter(data: dict, name: str) -> dict | None:
     return next(
         (
@@ -390,6 +404,7 @@ def _get_parameter(data: dict, name: str) -> dict | None:
     )
 
 
+# 统一处理单字段补空、覆盖和保留决策，并允许指定独立报告路径。
 def _assign_simple(
     root: dict,
     fields: list[dict],
@@ -414,6 +429,7 @@ def _assign_simple(
     _record(fields, report_path or path, value, source, confidence, decision, needs_review)
 
 
+# 优先取草稿 DN 默认值，其次解析构件名称，最后使用构建默认 DN。
 def _resolve_target_dn(data: dict, build: dict) -> int | None:
     existing = next(
         (
@@ -432,11 +448,13 @@ def _resolve_target_dn(data: dict, build: dict) -> int | None:
     return int(default_dn) if isinstance(default_dn, (int, float)) else None
 
 
+# 读取图纸事实元数据中的行公称尺寸，只接受数值类型。
 def _row_dn(fact: dict) -> int | None:
     value = (fact.get("metadata") or {}).get("row_dn")
     return int(value) if isinstance(value, (int, float)) else None
 
 
+# 仅用圆或圆柱直径测量验证推导值，允许 0.1 的绝对偏差。
 def _measurement_confirms(measurements: list[dict], expected: float) -> bool:
     for measurement in measurements:
         if measurement.get("measurement_type") not in {"circle_diameter", "cylinder_diameter"}:
@@ -449,6 +467,7 @@ def _measurement_confirms(measurements: list[dict], expected: float) -> bool:
     return False
 
 
+# 提取支持的密封面代号并转大写，不认识的文本返回空值。
 def _normalize_facing(value: Any) -> str | None:
     if not value:
         return None
@@ -456,25 +475,30 @@ def _normalize_facing(value: Any) -> str | None:
     return match.group(1).upper() if match else None
 
 
+# 从标准编号中提取独立的四位年份，作为版次候选。
 def _standard_edition(value: Any) -> str | None:
     match = re.search(r"(?<!\d)((?:19|20)\d{2})(?!\d)", str(value or ""))
     return match.group(0) if match else None
 
 
+# 提取文本中首个非负整数或小数，供压力等级解析。
 def _parse_number(value: Any) -> float | None:
     match = re.search(r"\d+(?:\.\d+)?", str(value or ""))
     return float(match.group(0)) if match else None
 
 
+# 读取已归一化事实中的数值，非数值事实返回空值。
 def _numeric_fact(fact: dict | None) -> float | None:
     value = _fact_value(fact)
     return float(value) if isinstance(value, (int, float)) else None
 
 
+# 取事实归一化值；未找到事实时返回空值以跳过回填。
 def _fact_value(fact: dict | None) -> Any:
     return fact.get("normalized_value") if fact else None
 
 
+# 保存字段值、来源、四位置信度、决策与复核状态，供融合报告展示。
 def _record(fields, path, value, source, confidence, decision, needs_review):
     fields.append(
         {
@@ -488,10 +512,12 @@ def _record(fields, path, value, source, confidence, decision, needs_review):
     )
 
 
+# 仅把空值、空文本及空容器视为可补空，保留零和 False。
 def _is_empty(value: Any) -> bool:
     return value is None or value == "" or value == [] or value == {}
 
 
+# 沿点分键路径读取嵌套字典，中途不是字典时返回空值。
 def _get_path(root: dict, path: str) -> Any:
     current: Any = root
     for part in path.split("."):
@@ -501,6 +527,7 @@ def _get_path(root: dict, path: str) -> Any:
     return current
 
 
+# 沿点分路径补建字典并写入末级值，用于规范字段回填。
 def _set_path(root: dict, path: str, value: Any) -> None:
     parts = path.split(".")
     current = root

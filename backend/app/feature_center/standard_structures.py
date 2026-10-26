@@ -1,3 +1,4 @@
+# 用同一实体内的有限共享边验证直壁凸台、矩形腔体与开槽，支撑面仅作为几何证据。
 """Bounded planar structure proposals from one Solid's existing topology graph.
 
 Only finite shared edges establish membership. The large support plane is
@@ -12,18 +13,22 @@ from typing import Any
 from .eaag import EaagGraph
 
 
+# 计算点积，供平行/垂直判断与尺寸投影使用。
 def _dot(a: list[float], b: list[float]) -> float:
     return sum(x*y for x, y in zip(a, b))
 
 
+# 计算两点位移，供有向高度和边方向分析使用。
 def _sub(a: list[float], b: list[float]) -> list[float]:
     return [x-y for x, y in zip(a, b)]
 
 
+# 计算三维向量长度。
 def _norm(a: list[float]) -> float:
     return math.sqrt(_dot(a, a))
 
 
+# 从首个内核法向采样提取单位方向，保留实体表面的朝向用于区分凸起与凹腔。
 def _oriented_normal(face: dict[str, Any]) -> list[float] | None:
     samples = (face.get("geometry") or {}).get("normal_samples") or []
     try:
@@ -34,17 +39,20 @@ def _oriented_normal(face: dict[str, Any]) -> list[float] | None:
     return [value/length for value in normal] if length > 1e-8 else None
 
 
+# 读取有限边的两个三维端点，缺少端点时返回空值而非使用无限延长线。
 def _line_points(edge: dict[str, Any]) -> list[list[float]] | None:
     geometry = edge.get("geometry") or {}
     points = [geometry.get("start_point"), geometry.get("end_point")]
     return points if all(isinstance(point, list) and len(point) == 3 for point in points) else None
 
 
+# 归一化非退化方向，长度过小时返回空值以终止该候选。
 def _unit(vector: list[float]) -> list[float] | None:
     length = _norm(vector)
     return [value/length for value in vector] if length > 1e-8 else None
 
 
+# 将面边界端点投影到给定轴，取有界投影跨度。
 def _face_span(graph: EaagGraph, face_id: str, axis: list[float]) -> float | None:
     projections = []
     for edge_id in graph.face_edge_ids(face_id):
@@ -54,6 +62,7 @@ def _face_span(graph: EaagGraph, face_id: str, axis: list[float]) -> float | Non
     return max(projections)-min(projections) if projections else None
 
 
+# 要求四条有效直边分属两条正交方向，以较长跨度为局部主轴，并标记近正方形轴选择歧义。
 def _cap_axes(graph: EaagGraph, cap_id: str, tolerance: float):
     edges = [graph.entities[edge_id] for edge_id in graph.face_edge_ids(cap_id)]
     lines = [(_line_points(edge), edge) for edge in edges if edge.get("geometry_type") == "line"]
@@ -84,6 +93,7 @@ def _cap_axes(graph: EaagGraph, cap_id: str, tolerance: float):
     return first, second, spans, abs(spans[0]-spans[1]) <= tolerance
 
 
+# 查找小端面经直壁连接到大支撑面的结构，以有向高度区分凸台与腔体，并检查开放槽外侧边界。
 def planar_structures(graph: EaagGraph, solid_id: str, face_ids: list[str],
                       tolerance: float) -> list[dict[str, Any]]:
     """Find four straight walls bridging a smaller cap to a larger support."""
@@ -99,6 +109,7 @@ def planar_structures(graph: EaagGraph, solid_id: str, face_ids: list[str],
         axes = _cap_axes(graph, cap_id, tolerance)
         if axes is None:
             continue
+        # 外轮廓为矩形仍可能含内孔；端面面积必须与有限矩形面积相符才作为闭合端面。
         if abs(float(cap.get("area") or 0)-axes[2][0]*axes[2][1]) > max(tolerance, float(cap.get("area") or 0)*1e-4):
             # A four-edge outer rectangle may still have an inner circular
             # opening; it is not a closed rectangular cap or cavity floor.
@@ -150,6 +161,7 @@ def planar_structures(graph: EaagGraph, solid_id: str, face_ids: list[str],
             if min(spans) <= tolerance:
                 continue
             family = "boss" if signed_height > 0 else ("pocket" if len(walls) == 4 else "slot")
+            # 三壁开槽还需外侧参考面触及所属实体包围盒边界；不对开放边界给出闭腔体积。
             if family == "slot":
                 # An open side must lie on the containing Solid's exterior box.
                 solid_box = graph.entities[solid_id].get("bounding_box") or {}
@@ -198,6 +210,7 @@ def planar_structures(graph: EaagGraph, solid_id: str, face_ids: list[str],
         for other in proposals)]
 
 
+# 要求整周外圆柱壁、圆盘端面与大支撑平面之间有真实共享圆边，且轴向高度吻合后确认圆凸台。
 def circular_bosses(graph: EaagGraph, solid_id: str, face_ids: list[str],
                     tolerance: float) -> list[dict[str, Any]]:
     """Confirm a full outer cylindrical wall between a disk and host plane."""

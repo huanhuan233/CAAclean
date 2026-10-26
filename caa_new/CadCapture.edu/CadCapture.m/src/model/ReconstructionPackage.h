@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_MODEL_RECONSTRUCTIONPACKAGE_H
+﻿// 汇集文档、对象、几何和语义证据以及采集期间的原生绑定。
+#ifndef CADCAPTURE_MODEL_RECONSTRUCTIONPACKAGE_H
 #define CADCAPTURE_MODEL_RECONSTRUCTIONPACKAGE_H
 
 #include "model/DocumentGraph.h"
@@ -16,6 +17,7 @@
 
 namespace cadcapture {
 
+// 仅在原生对象有效期间把包内 ID 关联到会话指针；本结构不执行引用计数或释放。
 struct NativeObjectBinding
 {
   std::string object_id;
@@ -25,6 +27,7 @@ struct NativeObjectBinding
 };
 
 // Session-only identity. Never serialize a CATDocument pointer as a stable ID.
+// 文档指针只用于当前会话内的身份匹配，不能序列化为跨会话稳定 ID。
 struct NativeDocumentBinding
 {
   std::string document_id;
@@ -32,6 +35,7 @@ struct NativeDocumentBinding
   NativeDocumentBinding() : native_document(0) {}
 };
 
+// 各采集阶段共同填充的证据包，实体之间以 ID 连接，原生绑定仅供采集期间使用。
 struct ReconstructionPackage
 {
   DocumentGraph document_graph;

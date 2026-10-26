@@ -1,3 +1,4 @@
+# 按明确的客户树结构规则提取连接语义；命名规则只能形成语义候选，不能替代装配几何核验。
 """Customer R/DM connection facts from captured native objects and tree membership.
 
 This module never infers a connection from display names or B-Rep appearance.
@@ -22,6 +23,7 @@ SEAL_BOND_KEYS = {*(f"K{i:03d}" for i in range(1, 8)),
                   *(f"K{i:03d}" for i in range(10, 17)), "F017"}
 
 
+# 按原生 subject_id 和属性键归集全部事实，保留同键多值供歧义检查。
 def _facts_by_object(facts: list[dict]) -> dict[str, dict[str, list[dict]]]:
     grouped: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for fact in facts:
@@ -32,12 +34,14 @@ def _facts_by_object(facts: list[dict]) -> dict[str, dict[str, list[dict]]]:
     return grouped
 
 
+# 仅采用可用且值唯一的属性，多值冲突不随意挑第一项。
 def _value(facts: dict[str, list[dict]], key: str) -> str:
     rows = [row for row in facts.get(key, []) if row.get("read_status") == "available"]
     values = {str(row.get("raw_value") or "") for row in rows}
     return next(iter(values)) if len(values) == 1 else ""
 
 
+# 保留参数原值、单位和源接口；无法形成唯一读数时不伪造值。
 def _parameter(facts: dict[str, list[dict]], occurrence: dict) -> dict | None:
     name = _value(facts, "catia_parameter_name")
     values = facts.get("catia_parameter_value_text", [])
@@ -52,6 +56,7 @@ def _parameter(facts: dict[str, list[dict]], occurrence: dict) -> dict | None:
             "occurrence_id": occurrence.get("occurrence_id")}
 
 
+# 解析分隔编号并返回空项、重复项诊断，原始命名不等于有效连接关系。
 def _split_numbers(raw: str) -> tuple[list[str], list[str]]:
     if not raw:
         return [], ["number_alias_missing"]
@@ -65,16 +70,19 @@ def _split_numbers(raw: str) -> tuple[list[str], list[str]]:
     return pieces, diagnostics
 
 
+# 只去除约定的正整数实例后缀，避免任意裁剪业务名称。
 def _base_alias(alias: str) -> str:
     """Remove only CATIA's numeric `.N` suffix, retaining the raw Alias separately."""
     match = re.fullmatch(r"(.+)\.([1-9][0-9]*)", alias)
     return match.group(1) if match else alias
 
 
+# 用明确别名表识别规则入口，不通过任意包含关系猜连接类型。
 def _root_kind(alias: str) -> str | None:
     return ROOT_ALIASES.get(_base_alias(alias))
 
 
+# 在产品范围内沿原生 occurrence 关系组织连接候选，坐标仅在来源明确时转换。
 def build_connection_semantics(objects: list[dict], occurrences: list[dict],
                                facts: list[dict], products: list[dict]) -> list[dict]:
     """Emit one record per native set occurrence, retaining exact hierarchy and source IDs."""
@@ -86,16 +94,20 @@ def build_connection_semantics(objects: list[dict], occurrences: list[dict],
     for occurrence_id, row in by_id.items():
         children[str(row.get("parent_occurrence_id") or "")].append(occurrence_id)
 
+    # 按树节点对应的原生对象 ID 获取属性事实。
     def facts_for(row: dict) -> dict[str, list[dict]]:
         return properties.get(str(row.get("object_id") or ""), {})
 
+    # 读取当前节点的名称事实，供客户规则匹配。
     def alias_for(row: dict) -> str:
         return _value(facts_for(row), "native_alias")
 
+    # 读取对象类别集合，辅助区分几何集和点对象。
     def classes_for(row: dict) -> set[str]:
         return {str(item.get("raw_value")) for item in facts_for(row).get("native_object_class", [])
                 if item.get("read_status") == "available"}
 
+    # 在同一产品范围沿父链遍历，并用已访问集合防止循环。
     def ancestors(row: dict, stop_id: str) -> list[dict]:
         chain = []
         seen = set()

@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_SEMANTIC_PROPERTY_EXTRACTOR_H
+﻿// 声明在文档存活期间读取知识参数、复材语义和坐标系属性的入口。
+#ifndef CADCAPTURE_CAA_SEMANTIC_PROPERTY_EXTRACTOR_H
 #define CADCAPTURE_CAA_SEMANTIC_PROPERTY_EXTRACTOR_H
 
 #include "model/CaptureIdRegistry.h"
@@ -14,6 +15,7 @@ class CaaSemanticPropertyExtractor
 {
 public:
   // 中文：读取本对象的可复用语义属性，引用身份由当前文档的绑定索引解析。
+  // spec 与 bindings 均为借用对象，其有效期须覆盖整个调用。
   void Extract(CATISpecObject* spec, const std::string& subject,
                CaptureIdRegistry& ids, ReconstructionPackage& package,
                CaaNativeBindingIndex& bindings);

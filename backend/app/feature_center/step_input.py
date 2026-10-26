@@ -1,3 +1,4 @@
+# 在调用几何内核前检查 STEP 文件头、模式与受支持长度单位，并保存文件哈希及显式缩放关系。
 """STEP 输入的只读检查、单位确认和坐标变换契约。"""
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ def inspect_step_input(path: Path | str) -> StepInputInfo:
     )
     if not schema_match:
         raise StepInputError("STEP_SCHEMA_UNKNOWN：FILE_SCHEMA 不可用")
+    # 只接受明文中当前支持的毫米、米和英寸声明，无法确认单位时停止而非猜测模型尺度。
     source_unit, scale = _read_length_unit(text)
     return StepInputInfo(
         file_name=source.name,

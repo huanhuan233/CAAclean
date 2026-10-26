@@ -1,3 +1,4 @@
+# 按配置规则把图纸尺寸事实映射为部件规格参数，保留图纸来源和未确认字段。
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -7,6 +8,7 @@ from app.spec.schemas import ComponentProfile, FieldMapping
 from app.spec.templates import sanitize_template_structure
 
 
+# 选择部件配置，生成参数并应用模板结构，同时记录配置版本和规则算法来源。
 def build_component_spec(
     facts: list[dict[str, Any] | Any],
     *,
@@ -37,6 +39,7 @@ def build_component_spec(
     }
 
 
+# 只处理具有符号的尺寸事实，已知符号用配置映射，其余保留通用参数。
 def _build_parameters_from_facts(facts: list[dict[str, Any]], profile: ComponentProfile) -> list[dict[str, Any]]:
     parameters = []
     for fact in facts:
@@ -53,6 +56,7 @@ def _build_parameters_from_facts(facts: list[dict[str, Any]], profile: Component
     return parameters
 
 
+# 生成配置定义的字段名，保留图纸值与证据，按配置决定语义复核标记。
 def _mapped_parameter(fact: dict[str, Any], mapping: FieldMapping) -> dict[str, Any]:
     return {
         "name": mapping.target_field,
@@ -74,6 +78,7 @@ def _mapped_parameter(fact: dict[str, Any], mapping: FieldMapping) -> dict[str, 
     }
 
 
+# 保留未知符号的原始事实并附加歧义候选，始终标记待复核。
 def _generic_parameter(fact: dict[str, Any], *, ambiguity_candidates: list[dict[str, Any]]) -> dict[str, Any]:
     symbol = str(fact.get("symbol") or "unknown").strip() or "unknown"
     return {
@@ -96,9 +101,11 @@ def _generic_parameter(fact: dict[str, Any], *, ambiguity_candidates: list[dict[
     }
 
 
+# 骨架模式直接返回生成参数；字段模板仅按模板名称和顺序选取参数，空缺标待复核。
 def _apply_template(parameters: list[dict[str, Any]], *, template: dict[str, Any] | None, template_mode: str) -> list[dict[str, Any]]:
     if template_mode == "skeleton" or not template:
         return parameters
+    # 只读取模板字段结构，模板预填值不会覆盖本次图纸事实。
     structure = sanitize_template_structure(template, mode="structure_only")
     by_name = {parameter["name"]: parameter for parameter in parameters}
     result = []
@@ -110,6 +117,7 @@ def _apply_template(parameters: list[dict[str, Any]], *, template: dict[str, Any
     return result
 
 
+# 将字典或模型转为事实字典；普通对象只抽取此处列出的尺寸属性。
 def _fact_dict(fact) -> dict[str, Any]:
     if isinstance(fact, dict):
         return fact

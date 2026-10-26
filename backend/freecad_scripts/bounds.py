@@ -1,3 +1,6 @@
+# 包围盒公共工具：可在普通 Python 测试中运行，不依赖 FreeCAD。
+# 过滤内核的无限范围哨兵值，避免基准轴或基准面使 Viewer 自动缩放失效。
+
 """FreeCAD 解析脚本与后端测试共用的包围盒校验。"""
 
 from __future__ import annotations

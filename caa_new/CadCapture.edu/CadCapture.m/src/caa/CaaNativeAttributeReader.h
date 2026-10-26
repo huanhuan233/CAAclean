@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_NATIVE_ATTRIBUTE_READER_H
+﻿// 声明原生存储属性读取接口，保持属性原名和未知单位信息。
+#ifndef CADCAPTURE_CAA_NATIVE_ATTRIBUTE_READER_H
 #define CADCAPTURE_CAA_NATIVE_ATTRIBUTE_READER_H
 #include "model/PropertyFacts.h"
 #include <vector>

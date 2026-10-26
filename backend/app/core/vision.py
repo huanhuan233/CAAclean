@@ -1,3 +1,4 @@
+# 将应用配置转换为图纸视觉提取客户端，提取后的事实仍由业务层校验。
 from __future__ import annotations
 
 import json
@@ -6,6 +7,7 @@ from app.core.config import Settings
 from app.drawing.extraction_client import VisionJsonClient
 
 
+# 合并额外请求参数和思考开关，再传入模型、超时与重试配置。
 def build_vision_client(settings: Settings) -> VisionJsonClient:
     extra_body = {}
     if settings.vision_extra_body:

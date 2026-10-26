@@ -1,3 +1,4 @@
+/* 封装 CATIA 会话名称及打开状态，管理会话生命周期。 */
 #ifndef CADCAPTURE_CAA_CAARUNTIME_H
 #define CADCAPTURE_CAA_CAARUNTIME_H
 

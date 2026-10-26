@@ -1,3 +1,4 @@
+# 从已识别面角色推导圆角路径、内底圆角候选及凸台到筋的限定范围距离，保留输入面与适用范围。
 """Derive bounded relations from already recognized features and their roles."""
 
 from __future__ import annotations
@@ -9,31 +10,38 @@ from .contracts import Measurement, stable_id
 from .eaag import EaagGraph
 
 
+# 计算向量点积，用于平行关系与局部坐标投影。
 def _dot(a, b):
     return sum(x*y for x, y in zip(a, b))
 
 
+# 逐分量计算两点位移或向量差。
 def _sub(a, b):
     return [x-y for x, y in zip(a, b)]
 
 
+# 计算向量欧氏长度，供候选空间距离排序使用。
 def _norm(a):
     return math.sqrt(_dot(a, a))
 
 
+# 逐分量相加，用于构造限定范围内的见证点。
 def _add(a, b):
     return [x+y for x, y in zip(a, b)]
 
 
+# 将向量按标量缩放，构造轴向或径向偏移。
 def _scale(a, factor):
     return [x*factor for x in a]
 
 
+# 读取首个三维法向采样作为定向依据；缺少合法列表时不继续推断面角色。
 def _normal(face: dict[str, Any]):
     samples = (face.get("geometry") or {}).get("normal_samples") or []
     return samples[0] if samples and isinstance(samples[0], list) and len(samples[0]) == 3 else None
 
 
+# 对凹圆角支撑面寻找更大的同向平行开口面，形成内底圆角候选；没有独立闭合腔体证据。
 def _inner_fillet_role(feature, graph: EaagGraph, solid_faces: set[str], tolerance: float):
     payload = feature.typed_payload.get("geometry_recognition") or {}
     if feature.family != "fillet" or payload.get("convexity") != "concave":
@@ -77,6 +85,7 @@ def _inner_fillet_role(feature, graph: EaagGraph, solid_faces: set[str], toleran
     feature.diagnostics.append("CAVITY_REGION_NOT_INDEPENDENTLY_CLOSED")
 
 
+# 对单面直线等半径圆角读取有界轴向区间长度，单独记录为中心路径，区别于支撑边长。
 def _center_path(feature, graph: EaagGraph, tolerance: float, result):
     payload = feature.typed_payload.get("geometry_recognition") or {}
     if feature.family != "fillet" or feature.subtype != "constant_radius_straight_edge":
@@ -103,6 +112,7 @@ def _center_path(feature, graph: EaagGraph, tolerance: float, result):
         input_face_ids=face_ids, validity="valid"))
 
 
+# 在同实体、同支撑面且高度重叠时计算圆柱凸台与有限矩形筋体的代理间距，范围排除根部与圆角。
 def _boss_rib_distance(boss, rib, graph: EaagGraph, tolerance: float):
     boss_payload = boss.typed_payload.get("geometry_recognition") or {}
     rib_payload = rib.typed_payload.get("geometry_recognition") or {}
@@ -137,6 +147,7 @@ def _boss_rib_distance(boss, rib, graph: EaagGraph, tolerance: float):
     radius = float(boss_payload["diameter_mm"])/2
     signed_clearance = radial-radius
     scope = "circular_boss_wall_to_rectangular_rib_body_excluding_root_and_fillets"
+    # 代理圆与矩形重叠只给出待复核零距离，不能据此声称真实 B-Rep 相交。
     if signed_clearance < 0:
         return {"status": "proxy_overlap_unverified", "distance_mm": 0.0,
                 "within_tolerance": True, "intersection_status": "not_evaluated",
@@ -156,6 +167,7 @@ def _boss_rib_distance(boss, rib, graph: EaagGraph, tolerance: float):
             "method": "analytic_circle_to_finite_rectangle_with_overlapping_height"}
 
 
+# 为已有特征补限定测量，每根筋最多评估按中心距离排序的 128 个凸台，并记录遗漏和失败数量。
 def apply_combined_measurements(result, graph: EaagGraph, tolerance: float) -> None:
     """Consume current features only; all outputs retain their own input IDs."""
     solid_faces = {}

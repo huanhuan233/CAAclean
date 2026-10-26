@@ -1,3 +1,4 @@
+# 数据库持久化模型：分开保存源版本、解析几何、原生证据、测量和图纸规格结果。
 from __future__ import annotations
 
 import uuid
@@ -10,10 +11,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 
+# 生成带 UTC 时区的时间，供记录创建与更新时间使用。
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# 源模型身份与当前版本指针；具体文件和解析状态归属于 Revision。
 class CadModel(Base):
     __tablename__ = "cad_models"
 
@@ -27,6 +30,7 @@ class CadModel(Base):
     revisions: Mapped[list["CadModelRevision"]] = relationship(back_populates="model", cascade="all, delete-orphan")
 
 
+# 一次源文件版本及其解析状态、摘要和产物清单，是几何和证据的共同范围。
 class CadModelRevision(Base):
     __tablename__ = "cad_model_revisions"
 
@@ -63,6 +67,7 @@ class CadModelRevision(Base):
     model: Mapped[CadModel] = relationship(back_populates="revisions")
 
 
+# 业务零件记录，关联 CAD 版本、图纸任务和构建状态。
 class ComponentBuild(Base):
     __tablename__ = "component_builds"
 
@@ -88,6 +93,7 @@ class ComponentBuild(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+# 按构建保存可编辑规格草稿，并保留对应 schema 版本。
 class ComponentSpecDraft(Base):
     __tablename__ = "component_spec_drafts"
 
@@ -102,6 +108,7 @@ class ComponentSpecDraft(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+# 版本内的实体身份、父子结构与几何摘要；名称和显示序号不替代实体 ID。
 class CadEntity(Base):
     __tablename__ = "cad_entities"
 
@@ -128,6 +135,7 @@ class CadEntity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+# 原生属性事实按 subject_id 归属对象，payload 保留字段来源与读取结果。
 class CadNativePropertyFact(Base):
     __tablename__ = "cad_native_property_facts"
 
@@ -155,6 +163,7 @@ class CadNativeEvidence(Base):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
+# 保存两个实体间的有向关系，关系类别定义边的工程含义。
 class CadRelation(Base):
     __tablename__ = "cad_relations"
 
@@ -167,6 +176,7 @@ class CadRelation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+# 保存显示用离散网格及离散精度，不作为精确 B-Rep 测量值的替代。
 class CadMesh(Base):
     __tablename__ = "cad_meshes"
 
@@ -185,6 +195,7 @@ class CadMesh(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+# 保存特征候选、参与实体和算法版本；候选状态与置信度分别保留。
 class CadFeatureCandidate(Base):
     __tablename__ = "cad_feature_candidates"
 
@@ -205,6 +216,7 @@ class CadFeatureCandidate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+# 记录原始值、规范化值、单位和方法，可关联候选特征而不覆盖其设计参数。
 class CadMeasurement(Base):
     __tablename__ = "cad_measurements"
 
@@ -226,6 +238,7 @@ class CadMeasurement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+# 图纸与几何融合任务的状态、提取结果及校验报告。
 class CadSpecTask(Base):
     __tablename__ = "cad_spec_tasks"
 
@@ -250,6 +263,7 @@ class CadSpecTask(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+# 记录任务输入文件、校验和与来源元数据，用于追溯证据。
 class CadSpecSource(Base):
     __tablename__ = "cad_spec_sources"
 
@@ -266,6 +280,7 @@ class CadSpecSource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+# 保存原图区域、裁剪范围和提供方原始结果，支持区域级提取定位。
 class CadDrawingRegion(Base):
     __tablename__ = "cad_drawing_regions"
 
@@ -293,6 +308,7 @@ class CadDrawingRegion(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+# 图纸提取事实保留原值、规范值、定位精度及复核状态，按生成轮次追踪。
 class CadDrawingFact(Base):
     __tablename__ = "cad_drawing_facts"
 
@@ -323,6 +339,7 @@ class CadDrawingFact(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+# 将图纸值、实测值和最终采用值分开，映射成功不自动等于尺寸符合要求。
 class CadSpecField(Base):
     __tablename__ = "cad_spec_fields"
 
@@ -356,6 +373,7 @@ class CadSpecField(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+# 关联规格字段与图纸、测量或实体证据，保留每条证据的值和置信度。
 class CadSpecFieldEvidence(Base):
     __tablename__ = "cad_spec_field_evidence"
 

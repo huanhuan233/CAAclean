@@ -1,4 +1,5 @@
-﻿#include "engine/ModelCaptureEngine.h"
+﻿// 编排文档打开、原生采集、关联件定义投影、完整性检查和产物提交。
+#include "engine/ModelCaptureEngine.h"
 #include "caa/CaaCapabilityBroker.h"
 #include "caa/CaaDocumentScanner.h"
 #include "caa/CaaFtaExtractor.h"
@@ -24,6 +25,7 @@
 
 namespace cadcapture {
 
+// 从当前包汇总记录数；对象定义数与树出现位置数使用不同口径。
 static void UpdateReportCounts(const ReconstructionPackage& package, CaptureReport& report)
 {
   report.document_count = static_cast<int>(package.document_graph.documents.size());
@@ -37,11 +39,13 @@ static void UpdateReportCounts(const ReconstructionPackage& package, CaptureRepo
   report.pmi_count = static_cast<int>(package.pmi.size());
 }
 
+// 将包内诊断同步给执行报告，避免报告遗漏采集阶段错误。
 static void SyncReportDiagnostics(const ReconstructionPackage& package, CaptureReport& report)
 {
   report.diagnostics = package.diagnostics;
 }
 
+// 仅为显式自检构造最小纯数据包，不证明真实 CATIA 文档或接口采集成功。
 static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& report)
 {
   DocumentEntity document;
@@ -106,6 +110,7 @@ static void BuildSelfTestPackage(ReconstructionPackage& package, CaptureReport& 
   SyncReportDiagnostics(package, report);
 }
 
+// 按真实 reference_id 查询产品定义引用，缺失时返回空指针。
 static ProductReferenceEntity* FindProductReference(ReconstructionPackage& package,
                                                     const std::string& reference_id)
 {
@@ -156,6 +161,7 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
     PartDefinition definition;
     definition.document_id = reference.referenced_document_id;
     std::string capture_error;
+    // 记住绑定起点，使关联件文档关闭前能清除本次增加的原生指针。
     const size_t binding_count_before = package.native_object_bindings.size();
     if (!part_enumerator.CaptureDefinition(linked_handle, ids, definition, package, capture_error, true))
     {
@@ -178,6 +184,7 @@ static bool ProjectLinkedCatPartDefinitions(CaaPartEnumerator& part_enumerator,
     definitions_by_document[reference.referenced_document_id] = definition;
   }
 
+  // 同一文档定义只采集一次，再为各装配实例分别创建树出现位置。
   for (i = 0; i < package.product_occurrences.size(); ++i)
   {
     ProductOccurrence& occurrence = package.product_occurrences[i];
@@ -240,6 +247,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     return true;
   }
 
+  // 运行时探测只验证会话开启与关闭，不读取样件，也不证明各专用接口可用。
   if (request.probe_runtime)
   {
     CaaRuntime runtime;
@@ -273,6 +281,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
     return false;
   }
 
+  // 文档句柄在运行时对象之后构造，退出时先释放文档，再结束会话。
   CaaDocumentHandle document_handle;
   CaptureIdRegistry ids;
   CaaDocumentScanner scanner;
@@ -363,6 +372,7 @@ bool ModelCaptureEngine::Capture(const CaptureRequest& request,
   report.stage = "complete";
   report.message = "native tree capture completed";
   SyncReportDiagnostics(package, report);
+  // 只有文件事务提交成功才保留成功报告；逻辑校验通过并不代表产物已经发布。
   if (!repository.Commit(package, report, request.output_dir, request.pretty, error))
   {
     report.success = false;

@@ -1,3 +1,4 @@
+# 使用原生孔参数约束圆柱壁与邻接底面的定位，记录残差和缺失证据，区分定位确认与待复核。
 """使用 Native Hole 参数和 eAAG 精确几何定位真实 B-Rep 面。"""
 
 from __future__ import annotations
@@ -59,6 +60,7 @@ def _axis_distance(origin: list[float], cylinder_center: list[float], axis: list
 
 # 用途：把 Face 包围盒八角投影到孔轴，得到相对于设计原点的真实轴向覆盖区间。
 def _axial_interval(face: dict[str, Any], origin: list[float], direction: list[float]) -> tuple[float, float]:
+    # 此覆盖区间由轴对齐包围盒角点投影获得，倾斜曲面时不等同于真实边界的精确轴向范围。
     box = face.get("bounding_box") or {}
     minimum = box.get("min", face.get("center", origin))
     maximum = box.get("max", face.get("center", origin))

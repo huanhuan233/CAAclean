@@ -1,3 +1,4 @@
+# 在每个实体内部依据解析几何、有限共享边和材料证据识别特征；几何确认不代表恢复原生设计历史。
 """Conservative, history-independent recognition from one parsed Solid snapshot."""
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from .combined_measurements import apply_combined_measurements
 RULE_VERSION = "geometry_p3_p4_boundary_and_pair_correctness.v5"
 
 
+# 收集独立几何规则产生的观察、特征、面角色、测量与诊断，供后续编排合并。
 @dataclass
 class RecognitionResult:
     observations: list[Observation] = field(default_factory=list)
@@ -25,24 +27,29 @@ class RecognitionResult:
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
 
+# 计算向量点积，用于轴对齐、平面距离和轴向参数。
 def _dot(a: list[float], b: list[float]) -> float:
     return sum(x*y for x, y in zip(a, b))
 
 
+# 逐分量计算位置差或向量差。
 def _sub(a: list[float], b: list[float]) -> list[float]:
     return [x-y for x, y in zip(a, b)]
 
 
+# 计算欧氏长度，用于方向归一化和残差阈值检查。
 def _norm(a: list[float]) -> float:
     return math.sqrt(_dot(a, a))
 
 
+# 取两轴原点差垂直于第一条单位轴的分量长度，调用方另外校验轴平行性。
 def _line_distance(first: dict[str, Any], second: dict[str, Any]) -> float:
     axis = first["axis"]
     delta = _sub(second["origin"], first["origin"])
     return _norm(_sub(delta, [component*_dot(delta, axis) for component in axis]))
 
 
+# 将世界空间径向采样重投影到共同基底的 36 个角区间，避免不同面的 UV 零角度不可比。
 def _common_angular_bins(group: list[dict[str, Any]], axis: list[float]) -> set[int] | None:
     """Rebin world-space directions; face UV bins have unrelated zero angles."""
     reference_axis = [1.0, 0.0, 0.0] if abs(axis[0]) < 0.9 else [0.0, 1.0, 0.0]
@@ -72,6 +79,7 @@ def _common_angular_bins(group: list[dict[str, Any]], axis: list[float]) -> set[
     return bins
 
 
+# 读取已评估圆柱证据并统一轴方向；轴翻转时同步反转轴向区间及两端边界/材料记录。
 def _normalized_wall(face: dict[str, Any]) -> dict[str, Any] | None:
     geometry = face.get("geometry") or {}
     evidence = geometry.get("recognition_evidence") or {}
@@ -108,6 +116,7 @@ def _normalized_wall(face: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
+# 仅按当前圆柱有限端环共享面的证据判断开口或封闭，平面轴点归属和锥顶位置决定端部角色。
 def _hole_end_boundary(items: list[dict[str, Any]], wall: dict[str, Any],
                        scalar: float, start: bool, tolerance: float,
                        mouth_chamfer_faces: set[str]) -> dict[str, Any]:
@@ -145,6 +154,7 @@ def _hole_end_boundary(items: list[dict[str, Any]], wall: dict[str, Any],
             "references": closures+openings}
 
 
+# 只通过实体发出的 has_face 关系分组，限制几何匹配在同一实体内部。
 def _solid_faces(graph: EaagGraph) -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
     for relation in graph.relations:
@@ -153,6 +163,7 @@ def _solid_faces(graph: EaagGraph) -> dict[str, list[str]]:
     return {key: sorted(value) for key, value in result.items()}
 
 
+# 读取解析平面位置并归一化法向，缺少参数或退化方向时返回空值。
 def _plane(face: dict[str, Any]) -> tuple[list[float], list[float]] | None:
     geometry = face.get("geometry") or {}
     if face.get("geometry_type") != "plane":
@@ -166,22 +177,26 @@ def _plane(face: dict[str, Any]) -> tuple[list[float], list[float]] | None:
         return None
 
 
+# 在两面真实共享边中筛选直线边，作为有界过渡几何的连接证据。
 def _shared_lines(graph: EaagGraph, left: str, right: str) -> list[dict[str, Any]]:
     return [graph.entities[edge_id] for edge_id in graph.shared_edge_ids(left, right)
             if graph.entities.get(edge_id, {}).get("geometry_type") == "line"]
 
 
+# 在两面真实共享边中筛选圆边，供孔口圆锥过渡验证。
 def _shared_circles(graph: EaagGraph, left: str, right: str) -> list[dict[str, Any]]:
     return [graph.entities[edge_id] for edge_id in graph.shared_edge_ids(left, right)
             if graph.entities.get(edge_id, {}).get("geometry_type") == "circle"]
 
 
+# 提取边的有限三维端点，缺失时返回空列表以跳过依赖边界的验证。
 def _line_points(edge: dict[str, Any]) -> list[list[float]]:
     geometry = edge.get("geometry") or {}
     points = [geometry.get("start_point"), geometry.get("end_point")]
     return points if all(isinstance(point, list) and len(point) == 3 for point in points) else []
 
 
+# 用共享有限边、解析切触残差与支撑面关系验证直线圆角、平面倒角和孔口锥面倒角。
 def _recognize_transitions(result: RecognitionResult, part_id: str, graph: EaagGraph,
                            solid_id: str, face_ids: list[str], tolerance: float,
                            shape_hash: str) -> None:
@@ -353,6 +368,7 @@ def _recognize_transitions(result: RecognitionResult, part_id: str, graph: EaagG
                 break
 
 
+# 按同轴、不同直径、相接且两端为空域的已确认孔段建立连通分量，合成为阶梯孔几何记录。
 def _combine_step_segments(result: RecognitionResult, part_id: str, graph: EaagGraph,
                            solid_id: str, tolerance: float, shape_hash: str) -> None:
     holes = [feature for feature in result.canonical_features if feature.family == "hole"
@@ -360,6 +376,7 @@ def _combine_step_segments(result: RecognitionResult, part_id: str, graph: EaagG
              and feature.geometry_refs.solid_ids == [solid_id]]
     parents = list(range(len(holes)))
 
+    # 沿父索引查找孔段分量代表并压缩路径，避免重复遍历长链。
     def root(index: int) -> int:
         while parents[index] != index:
             parents[index] = parents[parents[index]]
@@ -415,6 +432,7 @@ def _combine_step_segments(result: RecognitionResult, part_id: str, graph: EaagG
                 "confirmed", [], [], tolerance)
 
 
+# 写出特征到真实面的显式角色关联，编号由特征、面和角色共同决定。
 def _link(result: RecognitionResult, feature_id: str, face_id: str, role: str) -> None:
     result.feature_geometry_links.append({
         "link_id": stable_id("FGL", feature_id, face_id, role),
@@ -423,6 +441,7 @@ def _link(result: RecognitionResult, feature_id: str, face_id: str, role: str) -
     })
 
 
+# 统一写出几何观察与特征；分类确认和测量已验证分别决定审查状态与尺寸有效性。
 def _record(result: RecognitionResult, part_id: str, shape_hash: str, solid_id: str,
             family: str, subtype: str, face_roles: dict[str, list[str]], payload: dict[str, Any],
             status: str, diagnostics: list[str], measures: list[tuple[str, float, str, str]],
@@ -463,11 +482,13 @@ def _record(result: RecognitionResult, part_id: str, shape_hash: str, solid_id: 
     return feature
 
 
+# 按实体执行过渡面、孔壁分组、标准结构和薄壁角色识别，最后计算已有特征之间的限定测量。
 def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_hash: str,
                        thin_wall_pairs: list[dict[str, Any]] | None = None) -> RecognitionResult:
     """Classify bounded inner cylindrical wall groups; never rely on native features."""
     result = RecognitionResult()
     for solid_id, face_ids in _solid_faces(graph).items():
+        # 超出候选预算时整个实体标记为未评估，缺少特征输出不能解释为不存在对应结构。
         if len(face_ids) > 5000 or sum(graph.entities[face_id].get("geometry_type") == "cylinder"
                                        for face_id in face_ids) > 256:
             result.diagnostics.append({"code": "GEOMETRY_RECOGNITION_CANDIDATE_LIMIT",
@@ -497,6 +518,7 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
         walls.sort(key=lambda wall: wall["face"]["entity_id"])
         parents = list(range(len(walls)))
 
+        # 查找并压缩圆柱壁分片的连通分量父链。
         def root(index: int) -> int:
             while parents[index] != index:
                 parents[index] = parents[parents[index]]
@@ -540,6 +562,7 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
             verified_states = ["material" if item["status"] == "closed" else
                                "void" if item["status"] == "open" else "unverified"
                                for item in end_boundaries]
+            # 整周确认同时要求覆盖角接近一整圈且共同角分箱全部覆盖，避免重叠分片虚增总角度。
             full = (coverage >= 2*math.pi-0.05 and coverage <= 2*math.pi+0.05
                     and bins is not None and len(bins) == 36)
             diagnostics = []
@@ -559,6 +582,7 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
             if any(scan.get("method") != "exact_centerline_solid_intersection_local_end_v3"
                    for wall in group for scan in wall["end_scan"]):
                 diagnostics.append("END_INTERVALS_NOT_EXACTLY_VERIFIED")
+            # 材料端态、有限端环、角覆盖或精确求交有任一冲突，就保留候选和诊断。
             status = "confirmed" if not diagnostics else "candidate"
             if status != "confirmed":
                 subtype = "cylindrical_void_candidate"
@@ -615,6 +639,7 @@ def recognize_geometry(part_id: str, graph: EaagGraph, tolerance: float, shape_h
                               proposal["family"], proposal["subtype"], proposal["roles"],
                               proposal["payload"], "confirmed", [], proposal["measures"], tolerance)
             feature.coordinate_frame = proposal["frame"]
+        # 薄壁几何测量可已验证，但筋/腹板等工程用途仍为候选，两个状态不互相替代。
         for proposal in structural_proposals(graph, solid_id, face_ids, thin_wall_pairs or [],
                                              result.canonical_features, tolerance):
             feature = _record(result, part_id, shape_hash, solid_id,

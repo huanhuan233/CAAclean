@@ -1,4 +1,5 @@
-﻿#include "model/TubePath.h"
+﻿// 校验并排序直线圆弧管路，计算展开长度、弯角和转角。
+#include "model/TubePath.h"
 #include <cmath>
 #include <limits>
 #include <algorithm>
@@ -70,6 +71,7 @@ TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double t
     if(s.kind=="arc"&&s.radius_mm<=tolerance) return Failure("invalid_radius");
     ends.push_back(s.start);ends.push_back(s.end);
   }
+  // 每条线段对应两个端点；每个端点最多匹配另一条线段的一个端点，歧义视为分叉。
   std::vector<int> mate(2*n,-1); std::vector<int> terminals;
   for(size_t i=0;i<ends.size();++i) {
     for(size_t j=0;j<ends.size();++j) if(i/2!=j/2&&Norm(Sub(ends[i],ends[j]))<=tolerance) {
@@ -83,6 +85,7 @@ TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double t
   TubePathResult result; std::set<int> visited; TubeVector previous_out, previous_normal;
   result.terminal_a=ends[cursor];result.terminal_b=ends[cursor==terminals[0]?terminals[1]:terminals[0]];
   result.reverse_direction=reverse_direction;
+  // 直段长度累计到下一弯；首弯仅建立基准平面，后续弯才有平面转角。
   bool have_previous=false, have_bend=false; double straight=0;
   while(cursor>=0) {
     int index=cursor/2;
@@ -114,8 +117,10 @@ TubePathResult AnalyzeTubePath(const std::vector<TubeSegment>& segments,double t
     result.developed_length_mm+=step.segment.length_mm;result.steps.push_back(step);
     cursor=mate[cursor^1];
   }
+  // 两个端点并不足以排除独立闭环，还需确认遍历覆盖所有输入段。
   if(visited.size()!=n) return Failure("disconnected_path");
   result.trailing_straight_mm=straight;
+  // 几何合并只改变展示分组，不丢弃原步骤和来源标识。
   for(size_t i=0;i<result.steps.size();++i) {
     const TubeStep& step=result.steps[i];
     bool merge=false;

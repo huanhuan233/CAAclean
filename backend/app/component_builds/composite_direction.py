@@ -1,3 +1,4 @@
+# 由已验证平面和罗赛特基向量推导名义方向，结果仅适用于该平面参考。
 """Nominal local direction from verified rosette and planar reference evidence."""
 
 from __future__ import annotations
@@ -6,19 +7,23 @@ import math
 from typing import Any
 
 
+# 计算向量点积，用于长度、正交性及切平面投影检查。
 def _dot(a, b):
     return sum(x*y for x, y in zip(a, b))
 
 
+# 计算三维叉积，建立参考法向对应的切向旋转基。
 def _cross(a, b):
     return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
 
 
+# 将非退化向量归一化，长度过小时返回未知方向。
 def _unit(value):
     length = math.sqrt(_dot(value, value))
     return [x/length for x in value] if length > 1e-9 else None
 
 
+# 只解析成功采集且有限的原始数值，缺失或读取失败均返回空值。
 def _field_number(fields: dict[str, Any], key: str) -> float | None:
     field = fields.get(key) or {}
     if field.get("read_status") != "available":
@@ -30,6 +35,7 @@ def _field_number(fields: dict[str, Any], key: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+# 校验罗赛特正交基及平面法向，再按名义角旋转投影基；退化时保留诊断。
 def derive_nominal_planar_direction(row: dict[str, Any]) -> dict[str, Any]:
     result = {"status": "unavailable", "source": "derived_nominal_rosette_projection",
               "vector": None, "angle_deg": None, "normal": None,

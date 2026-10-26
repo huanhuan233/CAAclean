@@ -1,3 +1,4 @@
+/* 声明输入文档扫描入口，将打开的文档登记到重建包。 */
 #ifndef CADCAPTURE_CAA_CAADOCUMENTSCANNER_H
 #define CADCAPTURE_CAA_CAADOCUMENTSCANNER_H
 

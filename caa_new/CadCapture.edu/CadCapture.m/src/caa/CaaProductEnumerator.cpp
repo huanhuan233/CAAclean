@@ -1,3 +1,4 @@
+/* 枚举装配引用与实例，采集绝对变换、关联文档及产品和知识属性。 */
 #include "caa/CaaProductEnumerator.h"
 #include "caa/CaaParameterReader.h"
 #include "caa/CaaPropertyEvidence.h"
@@ -66,6 +67,7 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
+/* 每个产品字段都生成事实；接口不支持、读取失败和异常保留各自状态。 */
 static void AppendProductField(ReconstructionPackage& package, CaptureIdRegistry& ids,
                                const std::string& subject, const char* group,
                                const char* key, const char* label,
@@ -86,6 +88,7 @@ static void AppendProductField(ReconstructionPackage& package, CaptureIdRegistry
   evidence::Append(ids, package, subject, group, key, label, fact);
 }
 
+/* 引用侧采集零件号等定义属性及自定义参数，实例侧采集实例名称和描述。 */
 static void CaptureProductProperties(CATBaseUnknown* product, const std::string& subject,
                                      bool reference, CaptureIdRegistry& ids,
                                      ReconstructionPackage& package)
@@ -172,6 +175,7 @@ static void CaptureProductProperties(CATBaseUnknown* product, const std::string&
   }
 }
 
+/* 从根对象的参数发布接口读取全部知识参数，以参数路径和内部角色保留来源。 */
 static void CapturePartKnowledgeParameters(CATBaseUnknown* part_root,
                                            const std::string& document_id,
                                            CaptureIdRegistry& ids,
@@ -246,6 +250,7 @@ static std::string DocumentKindFromName(const std::string& name)
   return "unknown";
 }
 
+/* 根实例使用单位变换；其余实例读取绝对位置并拒绝含非有限数的系数。 */
 static bool ReadAbsTransform(CATIProduct* product, ProductOccurrence& occurrence,
                              ReconstructionPackage& package)
 {
@@ -300,6 +305,7 @@ static bool ReadAbsTransform(CATIProduct* product, ProductOccurrence& occurrence
       return false;
     }
   }
+  /* 将 SDK 的三个基向量和平移列重排为按行存储的 4×4 齐次矩阵。 */
   occurrence.transform_4x4.clear();
   occurrence.transform_4x4.push_back(coeff[0]);
   occurrence.transform_4x4.push_back(coeff[3]);
@@ -322,6 +328,7 @@ static bool ReadAbsTransform(CATIProduct* product, ProductOccurrence& occurrence
   return true;
 }
 
+/* 引用实体按会话对象去重，装配位置各生成实例；活动引用集合仅用于阻止递归环。 */
 class ProductCrawler
 {
 public:
@@ -331,6 +338,7 @@ public:
   {
   }
 
+  /* 读取当前实例和引用关系后递归子产品；引用缺失时保留本地产品身份及诊断。 */
   bool Visit(CATIProduct* product,
              const std::string& parent_occurrence_id,
              const std::string& parent_tree_path,
@@ -465,6 +473,7 @@ private:
     return 0;
   }
 
+  /* 用文档指针与引用产品指针建立会话键，相同零件号本身不作为去重依据。 */
   ProductReferenceEntity* ReferenceEntity(CATIProduct* reference_product, const std::string& part_number)
   {
     CATDocument* reference_document = ReferenceDocument(reference_product);
@@ -516,6 +525,7 @@ private:
     return stored;
   }
 
+  /* 登记 CATILinkableObject 已提供的文档和链接；定义内容留给后续采集流程解析。 */
   std::string EnsureLinkedDocument(CATDocument* document,
                                    const std::string& document_name,
                                    const std::string& reference_id)
@@ -574,6 +584,7 @@ private:
   std::set<std::string> _active_references;
 };
 
+/* 使用文档的第一个根对象；CATPart 只采集产品/知识属性，CATProduct 递归枚举 BOM。 */
 bool CaaProductEnumerator::Enumerate(CaaDocumentHandle& document_handle,
                                      CaptureIdRegistry& ids,
                                      ReconstructionPackage& package,

@@ -1,3 +1,4 @@
+# 定义 CadCapture 可执行模块的编译选项和链接库，沿用 R21/VS2008 构建机制。
 BUILT_OBJECT_TYPE=LOAD MODULE
 
 OS = COMMON

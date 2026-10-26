@@ -1,3 +1,4 @@
+# 计算有限平面实体的长度和单轮廓面积，原始量保留图纸单位，已知单位另给毫米换算。
 """Finite planar curve measurements; all values remain in drawing units."""
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ UNIT_TO_MM = {1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0,
               11: 1.0e-7, 12: 1.0e-6, 13: 0.001, 14: 100.0}
 
 
+# 结合弦长和 bulge 计算线段或圆弧段长度及有向面积贡献。
 def _segment(a: list[float], b: list[float], bulge: float) -> tuple[float, float]:
     chord = math.hypot(b[0] - a[0], b[1] - a[1])
     cross = (a[0] * b[1] - b[0] * a[1]) / 2
@@ -19,7 +21,9 @@ def _segment(a: list[float], b: list[float], bulge: float) -> tuple[float, float
     return abs(angle) * radius, cross + radius * radius * (angle - math.sin(angle)) / 2
 
 
+# 用方向叉积检测两条直线段的严格交叉，不覆盖共线、端点接触或圆弧相交。
 def _intersection(a, b, c, d) -> bool:
+    # 计算三点二维方向叉积，符号用于判断点处在线段哪侧。
     def orient(p, q, r):
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
     x1, x2 = orient(a, b, c), orient(a, b, d)
@@ -27,6 +31,7 @@ def _intersection(a, b, c, d) -> bool:
     return x1 * x2 < -1e-12 and y1 * y2 < -1e-12
 
 
+# 复制实体并补充可测长度和面积；失败或不支持的记录直接保留原状态。
 def measure_entity(record: dict, unit_code: int) -> dict:
     """Return a new JSON-safe record; undefined area has an explicit reason."""
     result = dict(record)
@@ -57,6 +62,7 @@ def measure_entity(record: dict, unit_code: int) -> dict:
             signed_area += segment_area
         if closed and len(vertices) >= 2:
             # Non-adjacent straight segments are checked before publishing an area.
+            # 自交检测使用顶点间直线段；bulge 圆弧之间的相交并未在这里完整判定。
             crossings = any(_intersection(vertices[a], vertices[b], vertices[c], vertices[d])
                             for i, (a, b) in enumerate(pairs) for j, (c, d) in enumerate(pairs)
                             if j > i + 1 and not (i == 0 and j == len(pairs) - 1))
@@ -72,6 +78,7 @@ def measure_entity(record: dict, unit_code: int) -> dict:
     result["length"] = length
     result["single_contour_area"] = area
     result["area_undefined_reason"] = reason
+    # 未知或未指定单位不猜测毫米：保留图纸量，归一化值为空并标 drawing_unit。
     scale = UNIT_TO_MM.get(unit_code)
     result["normalized"] = {"length_mm": length * scale if length is not None and scale else None,
                             "single_contour_area_mm2": area * scale * scale if area is not None and scale else None,

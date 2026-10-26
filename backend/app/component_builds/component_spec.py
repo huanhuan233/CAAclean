@@ -1,3 +1,4 @@
+# 从带注释的 YAML 模板推导表单结构，保持扩展字段并生成带说明的规范草稿。
 from __future__ import annotations
 
 from copy import deepcopy
@@ -41,6 +42,7 @@ SECTION_NUMBERS = {
 }
 
 
+# 读取模板键对应的行尾注释，缺失注释时返回空文本。
 def _comment_for(mapping: CommentedMap, key: str) -> str:
     parts = mapping.ca.items.get(key)
     if not parts or not parts[2]:
@@ -48,6 +50,7 @@ def _comment_for(mapping: CommentedMap, key: str) -> str:
     return parts[2].value.lstrip("#").strip()
 
 
+# 从模板注释提取必填、系统固定、来源与显示标签，作为表单元数据。
 def _annotation(comment: str, fallback: str) -> dict:
     required = "【必填】" in comment
     read_only = "（系统固定）" in comment
@@ -64,6 +67,7 @@ def _annotation(comment: str, fallback: str) -> dict:
     }
 
 
+# 按首个非空样例推断标量类型；先判断布尔值，避免被当作数字。
 def _value_type(values: list[Any]) -> str:
     value = next((item for item in values if item is not None), None)
     if isinstance(value, bool):
@@ -73,6 +77,7 @@ def _value_type(values: list[Any]) -> str:
     return "text"
 
 
+# 合并多个模板对象的键并保留首次出现顺序，为数组对象统一字段结构。
 def _mapping_fields(mappings: list[CommentedMap], parent_path: str) -> list[dict]:
     keys: list[str] = []
     for mapping in mappings:
@@ -90,6 +95,7 @@ def _mapping_fields(mappings: list[CommentedMap], parent_path: str) -> list[dict
     return fields
 
 
+# 递归区分对象、对象数组、标量数组和标量，并保存只读字段固定值。
 def _field_schema(key: str, values: list[Any], path: str, comment: str) -> dict:
     field = {
         "key": key,
@@ -129,6 +135,7 @@ def _field_schema(key: str, values: list[Any], path: str, comment: str) -> dict:
     return field
 
 
+# 生成空白表单值：保留系统固定值，对象递归展开，对象数组预置一行。
 def _blank_value(field: dict) -> Any:
     if field["read_only"]:
         return deepcopy(field.get("fixed_value"))
@@ -141,6 +148,7 @@ def _blank_value(field: dict) -> Any:
     return None
 
 
+# 按模板补齐对象字段并保留未知扩展键；已提交的只读值也予以保留。
 def _normalize_value(field: dict, value: Any) -> Any:
     if field["read_only"]:
         return deepcopy(value if value is not None else field.get("fixed_value"))
@@ -169,6 +177,7 @@ def _normalize_value(field: dict, value: Any) -> Any:
     return value
 
 
+# 将字符串及列表里的字符串转为双引号 YAML 标量，避免类型被隐式解释。
 def _quoted(value: Any) -> Any:
     if isinstance(value, str):
         return DoubleQuotedScalarString(value)
@@ -177,6 +186,7 @@ def _quoted(value: Any) -> Any:
     return value
 
 
+# 按字段结构递归生成带注释容器，标量数组统一处理字符串引号。
 def _render_field(field: dict, value: Any) -> Any:
     if field["kind"] == "object":
         return _render_mapping(field["children"], value if isinstance(value, dict) else {})
@@ -190,6 +200,7 @@ def _render_field(field: dict, value: Any) -> Any:
     return _quoted(value)
 
 
+# 按模板顺序输出键及行尾说明，再追加数据中的扩展键。
 def _render_mapping(fields: list[dict], data: dict) -> CommentedMap:
     mapping = CommentedMap()
     for field in fields:
@@ -203,7 +214,9 @@ def _render_mapping(fields: list[dict], data: dict) -> CommentedMap:
     return mapping
 
 
+# 维护由模板推导的版本 1.2 表单结构，以及空值、规范化和 YAML 导出能力。
 class ComponentSpecTemplate:
+    # 加载保留注释的模板并分节；派生参数与输入参数放在同一表单章节。
     def __init__(self, template_path: Path = TEMPLATE_PATH):
         yaml = YAML(typ="rt")
         yaml.preserve_quotes = True
@@ -239,6 +252,7 @@ class ComponentSpecTemplate:
             )
         self.schema = {"schema_version": "1.2", "sections": sections}
 
+    # 遍历各节字段生成独立的空白草稿，避免共享可变模板值。
     def blank_data(self) -> dict:
         return {
             field["key"]: _blank_value(field)
@@ -246,6 +260,7 @@ class ComponentSpecTemplate:
             for field in section["fields"]
         }
 
+    # 补齐顶层模板字段，同时原样深拷贝未在模板中定义的扩展数据。
     def normalize(self, data: dict) -> dict:
         source = data if isinstance(data, dict) else {}
         normalized = {
@@ -256,6 +271,7 @@ class ComponentSpecTemplate:
         normalized.update({key: deepcopy(value) for key, value in source.items() if key not in normalized})
         return normalized
 
+    # 先规范化数据，再恢复字段说明和章节标题，输出可编辑的 YAML 文本。
     def render_yaml(self, data: dict) -> str:
         normalized = self.normalize(data)
         root = CommentedMap()

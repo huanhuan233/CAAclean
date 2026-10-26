@@ -1,3 +1,4 @@
+/* 提供 Windows 命令行入口，解析 Unicode 路径并调用采集引擎输出执行报告。 */
 #include "engine/CapturePolicy.h"
 #include "engine/CaptureRequest.h"
 #include "engine/ModelCaptureEngine.h"
@@ -16,6 +17,7 @@ using cadcapture::CaptureRequest;
 using cadcapture::ModelCaptureEngine;
 using cadcapture::ReconstructionPackage;
 
+/* 打印支持的三种命令模式，实际互斥和必需参数由引擎进一步校验。 */
 static void PrintUsage()
 {
   std::cout << "CadCapture --self-test\n";
@@ -46,6 +48,7 @@ static bool ParseArgs(const std::vector<std::string>& args, CaptureRequest& requ
   return true;
 }
 
+/* 从宽字符命令行取得参数，调用统一采集入口，并把真实报告退出码返回调用方。 */
 int main(int argc, char** argv)
 {
   // 中文：不使用受控制台代码页影响的 argv；GetCommandLineW 对两种目标位数行为相同。

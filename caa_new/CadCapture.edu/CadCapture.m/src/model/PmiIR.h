@@ -1,3 +1,4 @@
+/* 定义 PMI 实体、关联关系及 FTA 原始语义字段。 */
 #ifndef CADCAPTURE_MODEL_PMIIR_H
 #define CADCAPTURE_MODEL_PMIIR_H
 
@@ -6,6 +7,7 @@
 
 namespace cadcapture {
 
+/* 保存标注或标注集的来源、归属和坐标框架证据，各项可用性需分别判断。 */
 struct PmiEntity
 {
   std::string pmi_id;
@@ -40,6 +42,7 @@ struct PmiEntity
   }
 };
 
+/* 描述 PMI 到目标实体的关联及其读取状态。 */
 struct PmiAssociation
 {
   std::string pmi_id;
@@ -50,6 +53,7 @@ struct PmiAssociation
   PmiAssociation() : read_status("unavailable") {}
 };
 
+/* 保留 FTA 原始字段、原始单位和来源接口，不在此模型层换算单位。 */
 struct FtaRawField
 {
   std::string key;
@@ -61,6 +65,7 @@ struct FtaRawField
   FtaRawField() : read_status("unavailable") {}
 };
 
+/* 保存标注组件的接口证据、文本与语义检查结果，并单独记录拓扑映射状态。 */
 struct FtaSemanticEntity
 {
   std::string fta_semantic_id;

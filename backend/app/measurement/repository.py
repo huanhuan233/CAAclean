@@ -1,3 +1,4 @@
+# 封装测量实体读取、候选与尺寸结果持久化，以及按修订和算法版本隔离的结果查询。
 from __future__ import annotations
 
 import uuid
@@ -10,10 +11,13 @@ from app.db.models import CadEntity, CadFeatureCandidate, CadMeasurement, Compon
 from app.measurement.schemas import EntityFact, FeatureCandidateFact, MeasurementFact, stable_uuid
 
 
+# 围绕一个异步会话读写尺寸与候选记录，重算结果按算法版本替换。
 class MeasurementRepository:
+    # 保存调用方提供的数据库会话，使同次服务调用复用事务上下文。
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    # 解析构建所指修订及首个根实体；缺少构建或修订时返回空上下文。
     async def get_build_context(self, build_id: uuid.UUID):
         build = await self.session.get(ComponentBuild, build_id)
         if build is None or build.cad_revision_id is None:
@@ -27,6 +31,7 @@ class MeasurementRepository:
         )
         return build, revision, root
 
+    # 按稳定编号幂等保存交互结果；并发唯一键冲突后回滚并读取已落库记录。
     async def save_interactive_result(self, fact: MeasurementFact) -> CadMeasurement:
         row = self._measurement_row(fact)
         existing = await self.session.get(CadMeasurement, row.id)
@@ -46,6 +51,7 @@ class MeasurementRepository:
             await self.session.rollback()
             raise
 
+    # 只查询两个受支持交互算法版本，按创建时间倒序返回指定数量。
     async def list_interactive_results(self, revision_id: uuid.UUID, limit: int = 50) -> list[CadMeasurement]:
         result = await self.session.execute(
             select(CadMeasurement).where(CadMeasurement.revision_id == revision_id,
@@ -54,6 +60,7 @@ class MeasurementRepository:
         )
         return list(result.scalars().all())
 
+    # 按树路径读取当前修订拓扑，并转换为批量算法使用的纯数据记录。
     async def list_entity_facts(self, revision_id: uuid.UUID) -> list[EntityFact]:
         result = await self.session.execute(select(CadEntity).where(CadEntity.revision_id == revision_id).order_by(CadEntity.tree_path))
         return [
@@ -73,6 +80,7 @@ class MeasurementRepository:
             for entity in result.scalars().all()
         ]
 
+    # 在一次事务中删除指定修订与算法版本的旧结果后插入新结果，失败即回滚。
     async def replace_results(
         self,
         revision_id: uuid.UUID,
@@ -101,6 +109,7 @@ class MeasurementRepository:
             await self.session.rollback()
             raise
 
+    # 按类型、作用域和最低置信度分页读取尺寸，同时返回相同筛选条件下的总数。
     async def list_measurements(
         self,
         revision_id: uuid.UUID,
@@ -128,9 +137,11 @@ class MeasurementRepository:
         )
         return list(result.scalars().all()), int(total or 0)
 
+    # 按尺寸主键读取单条记录，所属构建和版本约束由服务或接口继续检查。
     async def get_measurement(self, measurement_id: uuid.UUID) -> CadMeasurement | None:
         return await self.session.get(CadMeasurement, measurement_id)
 
+    # 按特征类型、作用域和置信度分页读取候选，状态仍由记录自身表达。
     async def list_features(
         self,
         revision_id: uuid.UUID,
@@ -158,9 +169,11 @@ class MeasurementRepository:
         )
         return list(result.scalars().all()), int(total or 0)
 
+    # 按主键读取候选记录，缺失时返回空值。
     async def get_feature(self, feature_id: uuid.UUID) -> CadFeatureCandidate | None:
         return await self.session.get(CadFeatureCandidate, feature_id)
 
+    # 保留已有候选编号，否则按语义生成编号，并将 UUID 来源列表转换为数据库 JSON 可存形式。
     def _feature_row(self, feature: FeatureCandidateFact) -> CadFeatureCandidate:
         feature_id = feature.id or stable_uuid(
             feature.revision_id,
@@ -189,6 +202,7 @@ class MeasurementRepository:
             metadata_json=feature.metadata,
         )
 
+    # 将原始值、规范值和方法映射到数据库行，缺少编号时按尺寸内容生成稳定身份。
     def _measurement_row(self, measurement: MeasurementFact) -> CadMeasurement:
         measurement_id = measurement.id or stable_uuid(
             measurement.revision_id,

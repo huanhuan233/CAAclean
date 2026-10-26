@@ -1,3 +1,7 @@
+# 圆截面空心直管/弯管的解析几何核验，不依赖原生 Hole 或扫掠节点。
+# 长度和半径使用毫米；输出面索引仅指当前 Solid 的 B-Rep Faces（从 1 起），不是 Viewer 面 ID。
+# 流程：分裂壁归组 → 内外壁配对 → 有序中心线 → 端口/体积/截面材料侧核验。
+
 """Finite analytic pipe walls, topology, material and section verification.
 
 All indices refer to the loaded Solid's B-Rep Faces (one based), never a viewer
@@ -13,27 +17,34 @@ import Part
 from measure_geometry import xyz
 
 MAX_SEGMENTS = 48
+# 避开段端的接缝/端口；三个站位分别检查该解析段的前部、中部和后部。
 SAMPLE_FRACTIONS = (0.2, 0.5, 0.8)
+# 使用单位切向点积的残差，不是毫米距离容差。
 TANGENT_RESIDUAL_MAX = 1e-7
 
 
+# 表示几何不在当前可证明范围内；分类入口将其转换为 unsupported_geometry 及具体原因。
 class TubeUnsupported(ValueError):
     pass
 
 
+# 统一检查几何必要条件，失败时保留可追踪的机器诊断码。
 def require(condition, reason):
     if not condition:
         raise TubeUnsupported(reason)
 
 
+# 以三维欧氏距离判断两个点是否在毫米容差内，不依赖逐坐标四舍五入。
 def close(a, b, tol):
     return (a - b).Length <= tol
 
 
+# 归一化非零向量；调用方须保证方向存在，不能把零向量当有效轴线。
 def unit(v):
     return v / v.Length
 
 
+# 用内核拓扑身份去重共享边，不以坐标接近合并不同实体边。
 def unique_edges(faces):
     edges = []
     for face in faces:
@@ -43,6 +54,7 @@ def unique_edges(faces):
     return edges
 
 
+# 沿真实共享边扩展连通面组，确认分裂壁不是空间靠近但互不连接的几块面。
 def connected_faces(faces):
     reached = {0}
     while True:
@@ -53,10 +65,12 @@ def connected_faces(faces):
         reached.update(following)
 
 
+# 检查两个面组是否共享至少一条真实拓扑边，作为壁段及端面连接证据。
 def shares_edge(first, second):
     return any(a.isSame(b) for f in first for g in second for a in f.Edges for b in g.Edges)
 
 
+# 将共享边且共面的端面碎片归组，保持所有原始面索引，不修改源实体。
 def cap_groups(caps, tol):
     groups = []
     remaining = list(caps)
@@ -77,12 +91,15 @@ def cap_groups(caps, tol):
     return groups
 
 
+# 比较类型、有限端点和中点；允许方向相反，避免同一段因轴向符号不同被拆成两个对象。
 def centerline_matches(a, b, tol):
     return (a['kind'] == b['kind'] and close(a['mid'], b['mid'], tol) and
             ((close(a['a'], b['a'], tol) and close(a['b'], b['b'], tol)) or
              (close(a['a'], b['b'], tol) and close(a['b'], b['a'], tol))))
 
 
+# 从圆柱/圆环面的两个实际圆形端边恢复有限中心线，记录壁半径及原始面。
+# 圆环大半径对应中心线弯曲半径，小半径对应管壁所在圆截面半径，两者不能混用。
 def wall_fragment(face, index, tol):
     surface = face.Surface
     kind = type(surface).__name__
@@ -124,6 +141,7 @@ def wall_fragment(face, index, tol):
                 edge=edge, radius=radius, faces=[face], indices=[index])
 
 
+# 遍历单实体并归组同半径同路径的壁片；用面积和端部整周周长核验完整覆盖。
 def walls(solid, tol):
     groups, caps = [], []
     for index, face in enumerate(solid.Faces, 1):
@@ -154,6 +172,7 @@ def walls(solid, tol):
     return groups, caps
 
 
+# 每段必须有唯一同路径内外壁配对，壁厚大于容差，所有段截面半径在容差内一致。
 def pair_walls(groups, tol):
     used, pairs = set(), []
     for i, group in enumerate(groups):
@@ -174,6 +193,8 @@ def pair_walls(groups, tol):
     return pairs, ro, ri
 
 
+# 按端点构建不分叉开放路径，从确定性起点排序并核验相切与内外壁共享边。
+# 累计站位 s0/s1 是沿中心线的弧长；排序方向是几何约定，不表示机床进料方向。
 def ordered_segments(pairs, tol):
     nodes, incidences = [], []
     for i, pair in enumerate(pairs):
@@ -224,6 +245,7 @@ def ordered_segments(pairs, tol):
     return segments
 
 
+# 把两个端面组匹配到有序路径 A/B 端，核验内外圆周、环形面积、壁连接及外法向。
 def verify_ends(caps, segments, ro, ri, tol, coordinates):
     result = []
     for role, (item, edge, pair), end_name in (('A', segments[0], 'start_mm'), ('B', segments[-1], 'end_mm')):
@@ -231,6 +253,7 @@ def verify_ends(caps, segments, ro, ri, tol, coordinates):
         matches = []
         for indices, faces in caps:
             face = faces[0]
+            # 同一端面组内部共享的分割边不能计入内外圆周，否则会把半环分割缝当端口。
             # Internal split seams occur on two cap fragments, not the annulus boundary.
             edges = [e for e in unique_edges(faces) if sum(any(e.isSame(x) for x in f.Edges) for f in faces) == 1]
             if not all(type(e.Curve).__name__ == 'Circle' and close(e.Curve.Center, center, tol) for e in edges):
@@ -255,6 +278,8 @@ def verify_ends(caps, segments, ro, ri, tol, coordinates):
     return result
 
 
+# 每段在 20%、50%、80% 站位作法向截面，核验内外圆周及八个径向材料探针。
+# 采样用于验证解析支撑及内核截线的一致性，不是实物减薄/椭圆化测量。
 def verify_sections(solid, segments, ro, ri, tol, coordinates):
     samples = []
     for item, edge, pair in segments:
@@ -310,6 +335,7 @@ def verify_sections(solid, segments, ro, ri, tol, coordinates):
     return samples
 
 
+# 组合全部几何必要条件，通过后输出尺寸、路径、端口和证据；不支持时不输出确认截面。
 def classify_analytic_tube(solid, tolerance, coordinate_system='step_world'):
     try:
         require(solid.ShapeType == 'Solid' and solid.isValid() and solid.isClosed(), 'valid_closed_single_solid_required')
@@ -319,6 +345,7 @@ def classify_analytic_tube(solid, tolerance, coordinate_system='step_world'):
         ends = verify_ends(caps, segments, ro, ri, tolerance, coordinate_system)
         length = sum(edge.Length for _, edge, _ in segments)
         area = math.pi * (ro * ro - ri * ri)
+        # 等截面扫掠的理论体积为环形截面积乘中心线长度；与实际体积交叉检查可排除多余材料或缺损。
         residual = abs(solid.Volume - area * length) / (area * length)
         require(residual <= 1e-6, 'analytic_sweep_volume_mismatch')
         samples = verify_sections(solid, segments, ro, ri, tolerance, coordinate_system)
@@ -349,6 +376,7 @@ def classify_analytic_tube(solid, tolerance, coordinate_system='step_world'):
         return dict(status='unsupported_geometry', source='derived_geometry', unmet_conditions=[str(exc)])
 
 
+# 把见证点投影到有限中心线段；圆弧同时考虑端点，近等距但站位不同则返回 ambiguous。
 def centerline_station(path, point, tolerance):
     """Project onto finite centerline edges; tied distant stations stay explicit."""
     candidates = []
@@ -370,5 +398,6 @@ def centerline_station(path, point, tolerance):
                     foot = center + unit(projected) * item['radius_mm']
                     candidates.append(((point - foot).Length, item['s0_mm'] + angle * item['radius_mm']))
     minimum = min(d for d, _ in candidates)
+    # 几何距离几乎相同不表示路径站位唯一，例如紧邻的回折段；此时不随意取列表第一项。
     stations = sorted(s for d, s in candidates if d <= minimum + tolerance)
     return (stations[0], 'unique') if stations[-1] - stations[0] <= tolerance else (None, 'ambiguous')

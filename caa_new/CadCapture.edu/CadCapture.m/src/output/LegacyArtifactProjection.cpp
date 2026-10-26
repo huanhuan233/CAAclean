@@ -1,4 +1,5 @@
-﻿#include "output/LegacyArtifactProjection.h"
+﻿// 将采集证据写为旧版特征、拓扑、网格和 FTA 产物。
+#include "output/LegacyArtifactProjection.h"
 #include "output/JsonSupport.h"
 #include "platform/WindowsPathCodec.h"
 #include <fstream>
@@ -7,12 +8,14 @@
 
 namespace cadcapture {
 
+// 返回已启用的树投影模式；此处不根据记录数推断完整采集能力。
 std::string LegacyArtifactProjection::ProjectionStatus(const ReconstructionPackage& package) const
 {
   (void)package;
   return "tree_projection_enabled";
 }
 
+// 以宽字符路径写出兼容摘要或空占位文件，打开失败报告错误。
 static bool WriteLegacyText(const std::string& path, const std::string& text, std::string& error)
 {
   std::ofstream out(WindowsPathCodec::Decode(path).c_str(), std::ios::out | std::ios::binary);
@@ -25,6 +28,7 @@ static bool WriteLegacyText(const std::string& path, const std::string& text, st
   return true;
 }
 
+// 按对象 ID 查找定义，返回借用指针供树位置投影读取名称与类型。
 static const ObjectEntity* FindObject(const ReconstructionPackage& package, const std::string& object_id)
 {
   size_t i;
@@ -36,6 +40,7 @@ static const ObjectEntity* FindObject(const ReconstructionPackage& package, cons
   return 0;
 }
 
+// 在进入下一个产物前刷新并关闭当前流，捕获延迟写入失败。
 static bool FinishLegacyStream(std::ofstream& out, const std::string& path, std::string& error)
 {
   out.flush();
@@ -53,16 +58,19 @@ static bool FinishLegacyStream(std::ofstream& out, const std::string& path, std:
   return true;
 }
 
+// 原样嵌入上游 JSON 参数片段，空值输出空对象。
 static const char* LegacyRawJsonOrObject(const std::string& json)
 {
   return json.empty() ? "{}" : json.c_str();
 }
 
+// 原样嵌入可选 JSON 片段，缺失值输出 null。
 static const char* LegacyRawJsonOrNull(const std::string& json)
 {
   return json.empty() ? "null" : json.c_str();
 }
 
+// 将字符串集合转义为 JSON 数组，供拓扑引用和语义接口列表复用。
 static void LegacyWriteStringArray(std::ofstream& out, const std::vector<std::string>& values)
 {
   out << "[";
@@ -76,6 +84,7 @@ static void LegacyWriteStringArray(std::ofstream& out, const std::vector<std::st
   out << "]";
 }
 
+// 投影体或单元的共享字段，保留原拓扑 ID、测量可用性和几何证据。
 static bool WriteTopologyEntityJson(std::ofstream& out,
                                     const TopologyEntity& entity,
                                     const char* id_key,
@@ -130,6 +139,7 @@ static bool WriteTopologyEntityJson(std::ofstream& out,
   return true;
 }
 
+// 以关系类型和序号生成兼容记录 ID，保留有向拓扑端点。
 static bool WriteTopologyRelationJson(std::ofstream& out,
                                       const TopologyRelation& relation,
                                       const char* id_key,
@@ -159,6 +169,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
                                      const std::string& output_dir,
                                      std::string& error) const
 {
+  // 兼容特征的主键采用 occurrence_id；source_object_id 才指向可共享的对象定义。
   const std::string features_path = output_dir + "\\features.jsonl";
   std::ofstream features(WindowsPathCodec::Decode(features_path).c_str(), std::ios::out | std::ios::binary);
   if (!features)
@@ -277,6 +288,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(relations, relations_path, error))
     return false;
 
+  // 参数继续关联原对象 subject_id，单位与规范值直接保留采集事实，不在输出时换算。
   const std::string parameters_path = output_dir + "\\parameters.jsonl";
   std::ofstream parameters(WindowsPathCodec::Decode(parameters_path).c_str(), std::ios::out | std::ios::binary);
   if (!parameters)
@@ -544,6 +556,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(native_mesh, native_mesh_path, error))
     return false;
 
+  // 真实三角形单独输出，顶点使用毫米坐标；未采集的法向写 null。
   const std::string native_mesh_triangles_path = output_dir + "\\native_mesh_triangles.jsonl";
   std::ofstream native_mesh_triangles(WindowsPathCodec::Decode(native_mesh_triangles_path).c_str(), std::ios::out | std::ios::binary);
   if (!native_mesh_triangles)
@@ -619,6 +632,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(fta_sets, fta_sets_path, error))
     return false;
 
+  // 仅将 ResultOUT 来源的拓扑记录投影为特征结果，其他依赖不计作结果体。
   const std::string feature_results_path = output_dir + "\\native_feature_results.jsonl";
   std::ofstream feature_results(WindowsPathCodec::Decode(feature_results_path).c_str(), std::ios::out | std::ios::binary);
   if (!feature_results)
@@ -812,6 +826,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   if (!FinishLegacyStream(fta_semantics, fta_semantics_path, error))
     return false;
 
+  // 尚未形成的 FTA 拓扑关联输出空文件，不能从语义存在推断几何映射成功。
   if (!WriteLegacyText(output_dir + "\\fta_topology_links.jsonl", "", error))
     return false;
 
@@ -882,6 +897,7 @@ bool LegacyArtifactProjection::Write(const ReconstructionPackage& package,
   return true;
 }
 
+// 兼容 features 使用位置 ID，校验树关系时必须覆盖产品实例和对象树位置两类端点。
 bool LegacyArtifactProjection::ValidateRelationEndpoints(const ReconstructionPackage& package,
                                                          std::string& error) const
 {

@@ -1,3 +1,6 @@
+# DXF 几何辅助核验：接收宿主解析器输出的中性文档，对折线构造真实内核边和面。
+# 对象坐标系 OCS 的弓高点转换到世界坐标 WCS 后再构造圆弧，保持挤出方向与标高。
+
 """FreeCAD background validation of neutral DXF wires and planar faces."""
 
 from __future__ import annotations
@@ -11,10 +14,13 @@ import FreeCAD as App
 import Part
 
 
+# 把已解析的三维坐标转换为 FreeCAD 向量，保持输入文档使用的坐标单位。
 def vector(values):
     return App.Vector(float(values[0]), float(values[1]), float(values[2]))
 
 
+# 按折线的闭合标志连接顶点；bulge 为零构造直线，否则利用弓高构造有限圆弧。
+# 零长度段直接失败，避免生成无效 Wire；圆弧中点使用与宿主解析器一致的 OCS 基底。
 def edges_for(record):
     vertices = record["world_vertices"]
     source = record["vertices"]
@@ -48,6 +54,7 @@ def edges_for(record):
     return edges
 
 
+# 逐对象核验折线长度，闭合且有效时才计算平面面积；单个对象失败保留其错误而不阻断其余对象。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     document = json.loads(Path(job["document_path"]).read_text(encoding="utf-8"))

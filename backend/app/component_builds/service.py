@@ -1,3 +1,4 @@
+# 围绕构建身份聚合规范、来源状态及 Viewer 能力，所有证据查询限定到构建当前 CAD 版本。
 from __future__ import annotations
 
 import json
@@ -46,18 +47,23 @@ PUBLISH_VALIDATION_LABEL = "\u53d1\u5e03\u6821\u9a8c"
 FUTURE_STATUS_LABEL = "\u540e\u7eed\u80fd\u529b"
 
 
+# 从模型版本与图纸任务读取真实状态，为构建聚合状态提供来源数据。
 class SqlAlchemySourceStatusReader:
+    # 保存请求会话，供模型与图纸状态查询共享。
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    # 读取模型 Revision 状态，记录不存在时明确返回 missing。
     async def get_step_status(self, revision_id: UUID) -> dict:
         revision = await self.session.get(CadModelRevision, revision_id)
         return self._source_status(revision) if revision else {"status": "missing"}
 
+    # 读取图纸任务状态，记录不存在时明确返回 missing。
     async def get_drawing_status(self, task_id: UUID) -> dict:
         task = await self.session.get(CadSpecTask, task_id)
         return self._source_status(task) if task else {"status": "missing"}
 
+    # 合并进度、错误与持久化 ingest 元数据，同时返回 Viewer 和特征能力清单。
     @staticmethod
     def _source_status(source) -> dict:
         payload = {
@@ -74,12 +80,15 @@ class SqlAlchemySourceStatusReader:
         return payload
 
 
+# 组织构建业务流程，将仓储记录、来源状态和计算证据投影为接口契约。
 class ComponentBuildService:
+    # 注入仓储、状态读取器和可选融合来源读取器，便于隔离业务与存储实现。
     def __init__(self, repository, *, source_status_reader, fusion_source_reader=None):
         self.repository = repository
         self.source_status_reader = source_status_reader
         self.fusion_source_reader = fusion_source_reader
 
+    # 按目录归类构建，无法识别的历史类型归入未分类节点，保留所有构建入口。
     async def get_tree(self) -> list[dict]:
         builds = await self.repository.list_builds()
         grouped: dict[str, dict[str, list[ComponentBuild]]] = {}
@@ -98,10 +107,12 @@ class ComponentBuildService:
             tree[0]["count"] = self._count_build_nodes(tree[0]["children"])
         return tree
 
+    # 创建构建记录并转换为基础接口载荷。
     async def create_build(self, **fields) -> dict:
         build = await self.repository.create_build(**fields)
         return self._build_payload(build)
 
+    # 兼容旧裸数据和新文档封装；新封装优先保留原始 YAML，未保存时生成空白模板。
     async def get_component_spec(self, build_id: UUID) -> dict:
         draft = await self.repository.get_component_spec(build_id)
         document = (
@@ -127,6 +138,7 @@ class ComponentBuildService:
             "updated_at": draft.updated_at.isoformat() if draft else None,
         }
 
+    # 无原始文本时按模板规范化，有原始文本时验证内容等价，再成对保存数据与 YAML。
     async def save_component_spec(
         self,
         build_id: UUID,
@@ -155,6 +167,7 @@ class ComponentBuildService:
             "updated_at": draft.updated_at.isoformat(),
         }
 
+    # 验证构建存在并生成规范预览；传入 YAML 时只验证一致性并原样返回。
     async def preview_component_spec(self, build_id: UUID, data: dict, *, yaml_text: str | None = None) -> str:
         await self.repository.get_build(build_id) or self._raise_missing_build(build_id)
         if yaml_text is not None:
@@ -162,6 +175,7 @@ class ComponentBuildService:
             return yaml_text
         return component_spec_template.render_yaml(data)
 
+    # 读取当前关联来源和草稿，执行融合后保存规范化文档及重新渲染的 YAML。
     async def fuse_component_spec(self, build_id: UUID, *, overwrite: bool = False) -> dict:
         build = await self._require_build(build_id)
         if self.fusion_source_reader is None:
@@ -196,6 +210,7 @@ class ComponentBuildService:
             "component_spec": normalized,
         }
 
+    # 验证目录关系并分配业务构件编号，创建选定目录节点下的初始版本记录。
     async def create_catalog_build(
         self,
         *,
@@ -222,10 +237,12 @@ class ComponentBuildService:
             status=status,
         )
 
+    # 通过仓储校验并关联模型与版本，返回更新后的构建身份信息。
     async def attach_step(self, build_id: UUID, *, model_id: UUID, revision_id: UUID) -> dict:
         build = await self.repository.attach_step(build_id, model_id=model_id, revision_id=revision_id)
         return self._build_payload(build)
 
+    # 更新目录、名称与业务版本字段，保持既有 component_id 不变。
     async def update_catalog_build(
         self,
         build_id: UUID,
@@ -249,10 +266,12 @@ class ComponentBuildService:
         )
         return self._build_payload(build)
 
+    # 通过仓储将图纸任务绑定到构建当前模型版本。
     async def attach_drawing(self, build_id: UUID, *, task_id: UUID) -> dict:
         build = await self.repository.attach_drawing(build_id, task_id=task_id)
         return self._build_payload(build)
 
+    # 写入构建状态后重新读取来源状态，返回一致的聚合结果。
     async def set_status(
         self,
         build_id: UUID,
@@ -271,6 +290,7 @@ class ComponentBuildService:
         )
         return await self.get_build(build_id)
 
+    # 清理图纸、当前模型版本文件及构建；模型记录只在没有其他构建引用时删除。
     async def delete_build(self, build_id: UUID, *, settings: Settings) -> dict:
         """Delete a component build and all associated resources.
 
@@ -340,12 +360,14 @@ class ComponentBuildService:
         deleted = await self.repository.delete_build(build_id)
         return {"id": str(deleted.id), "deleted": True}
 
+    # 读取构建及两类来源状态，返回包含真实阶段和错误的聚合详情。
     async def get_build(self, build_id: UUID) -> dict:
         build = await self._require_build(build_id)
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
         return self._projected_build_payload(build, step, drawing)
 
+    # 输出轻量状态视图，同时保留模型与图纸两个来源各自的状态。
     async def get_status(self, build_id: UUID) -> dict:
         build = await self._require_build(build_id)
         step = await self._step_source(build)
@@ -542,6 +564,7 @@ class ComponentBuildService:
             page["node_count"] = sum(1 + len(root["children"]) for root in page["roots"])
         return page
 
+    # 为数据库树页关联已采集参数显示值，不读取任务目录中的 JSONL。
     async def _database_tree_page(self, revision_id: UUID, entities: list, total: int) -> dict:
         page = build_database_tree(entities, total_node_count=total)
         subject_ids: set[str] = set()
@@ -557,6 +580,7 @@ class ComponentBuildService:
                     break
         return page
 
+    # 仅在当前 Revision 内定位原生树节点，并转换为单节点详情。
     async def get_native_node(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
         del settings
         build = await self._require_build(build_id)
@@ -567,6 +591,7 @@ class ComponentBuildService:
             raise ValueError(f"native tree node not found: {node_id}")
         return build_database_tree([entity], total_node_count=1)["roots"][0]
 
+    # 验证属性完整入库标记，聚合节点相关主体属性，并按证据通道状态补原生语义。
     async def get_native_node_properties(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
         del settings
         build = await self._require_build(build_id)
@@ -600,6 +625,7 @@ class ComponentBuildService:
             detail["native_feature_status"] = "not_imported"
         return detail
 
+    # 读取三个拓扑相关通道；任一通道超过单响应上限时拒绝不完整返回。
     async def get_native_topology(self, build_id: UUID, settings: Settings) -> dict:
         del settings
         result = {}
@@ -610,6 +636,7 @@ class ComponentBuildService:
             result[kind] = page["records"]
         return result
 
+    # 检查当前版本确为 DXF 且证据发布完成，再按通道分页返回记录与总数。
     async def get_dxf_records(self, build_id: UUID, kind: str, offset: int, limit: int) -> dict:
         if kind not in {"dxf_document", "dxf_layers", "dxf_blocks", "dxf_entities",
                         "dxf_occurrences", "dxf_diagnostics"}:
@@ -631,6 +658,7 @@ class ComponentBuildService:
         return {"revision_id": str(revision.id), "kind": kind, "offset": offset,
                 "total": total, "records": rows, "has_more": offset + len(rows) < total}
 
+    # 先执行 DXF 发布门槛检查，再按当前版本及对象 ID 精确查找。
     async def get_dxf_record(self, build_id: UUID, kind: str, object_id: str) -> dict:
         await self.get_dxf_records(build_id, kind, 0, 1)
         build = await self._require_build(build_id)
@@ -649,6 +677,7 @@ class ComponentBuildService:
         revision = await self.repository.get_raw_revision(build.cad_revision_id)
         if revision is None:
             raise ValueError("native capture revision is missing")
+        # 原生采集、识别测量与复材覆盖分开发布，各自完整性门槛不可相互替代。
         storage_key = ("composite_coverage_storage" if kind == "composite_coverage" else
                        "feature_evidence_storage" if kind in FEATURE_EVIDENCE_KINDS else "native_evidence_storage")
         storage = dict((revision.parse_manifest or {}).get(storage_key) or {})
@@ -669,6 +698,7 @@ class ComponentBuildService:
         return {"kind": kind, "records": records[:limit], "total": total,
                 "has_more": has_more, "next_offset": offset + limit if has_more else None}
 
+    # 验证对象身份与复材通道发布状态，再读取当前版本的定义级详情。
     async def get_composite_ply_detail(self, build_id: UUID, object_id: str) -> dict:
         if not object_id or len(object_id) > 128:
             raise ValueError("invalid composite object id")
@@ -681,6 +711,7 @@ class ComponentBuildService:
             raise ValueError(f"composite object not found: {object_id}")
         return row
 
+    # 验证覆盖通道已发布，且结果携带的 revision_id 等于构建当前版本。
     async def get_composite_coverage(self, build_id: UUID, group_id: str) -> dict:
         if not group_id or len(group_id) > 128:
             raise ValueError("invalid composite group id")
@@ -692,11 +723,13 @@ class ComponentBuildService:
             raise ValueError("composite coverage result is unavailable or stale")
         return row
 
+    # 读取通过版本校验的覆盖结果，再在已发布区域中查询毫米坐标。
     async def get_composite_coverage_at(self, build_id: UUID, group_id: str,
                                         point_mm: tuple[float, float, float]) -> dict:
         result = await self.get_composite_coverage(build_id, group_id)
         return coverage_at_point(result, point_mm)
 
+    # 读取完整复材定义并独立计算，发布时复核来源清单未变，保留其他组的覆盖结果。
     async def recompute_composite_coverage(self, build_id: UUID, group_id: str,
                                            thickness_basis: str, settings: Settings) -> dict:
         if not group_id or len(group_id) > 128 or not all(ch.isalnum() or ch in "_-" for ch in group_id):
@@ -708,8 +741,10 @@ class ComponentBuildService:
         revision = await self.repository.get_raw_revision(build.cad_revision_id)
         if revision is None:
             raise ValueError("composite source revision is missing")
+        # 记录计算开始时的发布清单，事务内再次比较以检测计算期间的来源更新。
         source_storage = dict((revision.parse_manifest or {}).get("native_evidence_storage") or {})
         work_dir = Path(settings.cad_work_dir) / str(revision.id) / "composite-coverage" / str(uuid4())
+        # 计算在替换旧覆盖之前完成；计算失败不会把上一份可查询结果删掉。
         result = await compute_planar_coverage(page["records"], group_id, thickness_basis,
                                                 str(revision.id), None, settings, work_dir)
         writer = CadRepository(self.repository.session)
@@ -718,6 +753,7 @@ class ComponentBuildService:
             if (revision.parse_manifest or {}).get("native_evidence_storage") != source_storage:
                 raise ValueError("composite source changed during coverage computation")
             previous = await writer.list_native_evidence(revision.id, "composite_coverage", 0, 5000)
+            # 单组重算仅替换该组身份对应的记录，其他铺层组结果继续保留。
             retained = [item for item in previous if item.get("object_id") != group_id]
             counts = await writer.replace_native_evidence(
                 revision.id, {"composite_coverage": [*retained, result]}, replace_all=False)
@@ -727,6 +763,7 @@ class ComponentBuildService:
                     "algorithm": result["algorithm"], "status": "current"}})
         return result
 
+    # 验证特征和测量通道，要求恰好一个识别特征，再附加同身份测量。
     async def get_recognized_feature_detail(self, build_id: UUID, feature_center_id: str) -> dict:
         if not feature_center_id or len(feature_center_id) > 128:
             raise ValueError("invalid feature center id")
@@ -743,6 +780,7 @@ class ComponentBuildService:
             build.cad_revision_id, "measurements", feature_center_id)
         return {"feature": features[0], "measurements": measurements}
 
+    # 先验证 FTA 通道发布，再按筛选条件查询标注并生成分页游标。
     async def list_mbd_annotations(self, build_id: UUID, *, offset: int, limit: int,
                                    annotation_kind: str | None = None, set_id: str | None = None,
                                    view_id: str | None = None,
@@ -757,6 +795,7 @@ class ComponentBuildService:
         return {"records": records, "total": total, "has_more": offset + len(records) < total,
                 "next_offset": offset + len(records) if offset + len(records) < total else None}
 
+    # 要求标注身份唯一；只有已验证且绑定几何快照的渲染关系才声明 mapped。
     async def get_mbd_annotation_detail(self, build_id: UUID, annotation_id: str) -> dict:
         if not annotation_id or len(annotation_id) > 128:
             raise ValueError("invalid annotation id")
@@ -771,6 +810,7 @@ class ComponentBuildService:
         render_relations = [relation for relation in relations
                             if relation.get("association_kind") == "annotation_render_geometry"]
         render_mapping_status = "unmapped"
+        # 原生几何关联和渲染关联属于不同证据，渲染映射还必须绑定明确几何快照。
         if any(relation.get("read_status") == "verified" and relation.get("geometry_snapshot_id")
                for relation in render_relations):
             render_mapping_status = "mapped"
@@ -782,6 +822,7 @@ class ComponentBuildService:
                                            "unresolved"),
                 "render_mapping_status": render_mapping_status}
 
+    # 验证 PMI 通道与节点唯一性，再返回关联端点关系。
     async def get_mbd_node_detail(self, build_id: UUID, pmi_id: str) -> dict:
         if not pmi_id or len(pmi_id) > 128:
             raise ValueError("invalid PMI id")
@@ -794,6 +835,7 @@ class ComponentBuildService:
             raise ValueError("PMI node missing or duplicated")
         return {"node": records[0], "relations": await self.repository.list_mbd_relations(build.cad_revision_id, pmi_id)}
 
+    # 读取原生对象依赖候选；未验证原生到渲染面的映射时始终禁止直接选择。
     async def get_native_node_selection(self, build_id: UUID, node_id: str, settings: Settings) -> dict:
         del settings
         node = await self.get_native_node(build_id, node_id, None)
@@ -810,6 +852,7 @@ class ComponentBuildService:
                                    "selection_reason": "native_to_render_face_crosswalk_unverified"})
         return {"node_id": node_id, "candidates": candidates}
 
+    # 仅为清单中存在的受控原生资产生成 URL，缺失资产保持空值。
     @staticmethod
     def _native_semantics_contract(asset_base: str, native: dict) -> dict:
         payload = {"available": bool(native.get("available"))}
@@ -855,6 +898,7 @@ class ComponentBuildService:
             payload[f"{key}_url"] = asset_base + native[key] if native.get(key) else None
         return payload
 
+    # 整合采集状态、版本、引擎和通道可用性，兼容旧清单字段。
     @classmethod
     def _native_capture_contract(cls, asset_base: str, manifest: dict) -> dict:
         native = manifest.get("native_capture") or {}
@@ -949,6 +993,7 @@ class ComponentBuildService:
             }]
         return build_bom_contract(roots, source_format)
 
+    # 按实际网格 primitive 与三角形数量声明可显示性，并给出空几何原因。
     @staticmethod
     def _viewer_geometry_contract(source_format: str, manifest: dict, viewer_summary: dict) -> dict:
         feature_manifest = manifest.get("feature_center_manifest") or {}
@@ -972,6 +1017,7 @@ class ComponentBuildService:
             "empty_reason": empty_reason,
         }
 
+    # 数据库无结构根时，从受控相对路径读取原生产生的实例记录，重建实例父子与变换。
     @staticmethod
     def _native_product_instances_bom_roots(revision, manifest: dict) -> list[dict]:
         native = manifest.get("native_semantics") or {}
@@ -1041,6 +1087,7 @@ class ComponentBuildService:
                 parent["children"].append(node)
         return roots
 
+    # 从版本扩展名恢复 DXF 或 CATIA 格式，其他扩展名按旧 STEP 来源兼容。
     @staticmethod
     def _source_format_from_extension(extension: str) -> str:
         normalized = (extension or "").lower()
@@ -1052,24 +1099,28 @@ class ComponentBuildService:
             return "CATPRODUCT"
         return "STEP"
 
+    # 统一校验构建存在，失败时携带构建 ID 报错。
     async def _require_build(self, build_id: UUID) -> ComponentBuild:
         build = await self.repository.get_build(build_id)
         if build is None:
             raise ValueError(f"component build not found: {build_id}")
         return build
 
+    # 将构建关联版本与真实处理状态组合；未关联时返回等待模型状态。
     async def _step_source(self, build: ComponentBuild) -> dict:
         if build.cad_revision_id is None:
             return {"id": None, "status": "waiting_for_step"}
         source = await self.source_status_reader.get_step_status(build.cad_revision_id)
         return {"id": str(build.cad_revision_id), **source}
 
+    # 将关联图纸任务与真实处理状态组合；没有图纸时返回 missing。
     async def _drawing_source(self, build: ComponentBuild) -> dict:
         if build.drawing_task_id is None:
             return {"id": None, "status": "missing"}
         source = await self.source_status_reader.get_drawing_status(build.drawing_task_id)
         return {"id": str(build.drawing_task_id), **source}
 
+    # 优先暴露来源失败和人工布局需求，再根据两类来源完成情况推导整体状态。
     @staticmethod
     def _project_status(build: ComponentBuild, step_status: str, drawing_status: str) -> str:
         if build.status == "source_failed":
@@ -1088,6 +1139,7 @@ class ComponentBuildService:
             return "parsing_sources"
         return build.status
 
+    # 序列化构建身份、业务版本和来源关联 ID，同时补目录路径。
     def _build_payload(self, build: ComponentBuild) -> dict:
         catalog = self._catalog_for_build(build)
         return {
@@ -1114,6 +1166,7 @@ class ComponentBuildService:
             "updated_at": build.updated_at,
         }
 
+    # 合并来源状态与构建字段，图纸失败优先于已就绪的模型状态。
     def _projected_build_payload(self, build: ComponentBuild, step: dict, drawing: dict) -> dict:
         payload = self._build_payload(build)
         step_ready = step.get("status") == "completed" and step.get("status_message") == "ready"
@@ -1140,6 +1193,7 @@ class ComponentBuildService:
             payload["error_message"] = step.get("error_message")
         return payload
 
+    # 组装分类下全部零件类型节点，并统计后代构建版本数量。
     async def _category_node(self, category: CatalogCategory, part_builds: dict[str, list[ComponentBuild]]) -> dict:
         children = [
             await self._part_node(category, part, part_builds.get(part.code, []))
@@ -1185,6 +1239,7 @@ class ComponentBuildService:
             for node in nodes
         )
 
+    # 将同一零件类型的构建归入业务构件节点，附上目录身份及数量。
     async def _part_node(self, category: CatalogCategory, part: CatalogPart, builds: list[ComponentBuild]) -> dict:
         children = await self._component_nodes(builds)
         return {
@@ -1201,6 +1256,7 @@ class ComponentBuildService:
             "children": children,
         }
 
+    # 为无法映射到目录的历史构建生成固定的未分类入口。
     async def _uncategorized_node(self, builds: list[ComponentBuild]) -> dict:
         component_children = await self._component_nodes(builds)
         type_node = {
@@ -1228,6 +1284,7 @@ class ComponentBuildService:
             "children": [type_node],
         }
 
+    # 按 component_id 聚合同一业务构件的多个构建版本，并按编号稳定排列。
     async def _component_nodes(self, builds: list[ComponentBuild]) -> list[dict]:
         grouped: dict[str, list[ComponentBuild]] = {}
         for build in builds:
@@ -1245,6 +1302,7 @@ class ComponentBuildService:
             for component_id, component_builds in sorted(grouped.items())
         ]
 
+    # 为一个构建版本生成来源、融合及规范草稿入口，依据关联来源控制可用状态。
     async def _tree_node(self, build: ComponentBuild) -> dict:
         step = await self._step_source(build)
         drawing = await self._drawing_source(build)
@@ -1305,6 +1363,7 @@ class ComponentBuildService:
             ],
         }
 
+    # 把已解析目录转换为中文路径，无法解析时使用未分类路径。
     @staticmethod
     def _catalog_path(catalog: tuple[CatalogCategory, CatalogPart] | None) -> str:
         if catalog is None:
@@ -1312,14 +1371,17 @@ class ComponentBuildService:
         category, part = catalog
         return f"/{category.label}/{part.label}"
 
+    # 优先使用稳定目录节点 ID，旧记录再按历史类型别名恢复归属。
     @staticmethod
     def _catalog_for_build(build: ComponentBuild) -> tuple[CatalogCategory, CatalogPart] | None:
         return find_part_by_node_id(build.catalog_node_id) or find_part_by_legacy_type(build.component_type)
 
+    # 为预览等表达式调用统一抛出构建不存在异常。
     @staticmethod
     def _raise_missing_build(build_id: UUID):
         raise ValueError(f"component build not found: {build_id}")
 
+    # 生成模型或图纸来源节点，只有存在关联身份时才提供跳转目标。
     @staticmethod
     def _source_node(build: ComponentBuild, role: str, source: dict) -> dict:
         labels = {"reference_step": "\u53c2\u8003 STEP", "drawing": "\u4e8c\u7ef4\u56fe\u7eb8"}

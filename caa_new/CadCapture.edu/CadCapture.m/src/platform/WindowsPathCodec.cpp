@@ -1,4 +1,5 @@
-﻿#include "platform/WindowsPathCodec.h"
+﻿// 严格转换 UTF-8 和 UTF-16 并封装宽字符 Win32 文件操作。
+#include "platform/WindowsPathCodec.h"
 #include <windows.h>
 
 namespace cadcapture {

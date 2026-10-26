@@ -1,3 +1,4 @@
+/* 探测 FTA 组件的公共接口并逐字段保存尺寸、公差、文本和 TTRS 原始证据。 */
 #include "caa/CaaFtaTypedReader.h"
 #include "caa/CaaGuards.h"
 
@@ -29,6 +30,7 @@
 
 namespace cadcapture {
 
+/* 把借用的宽字符文本复制为 UTF-8，不接管输入缓冲区。 */
 static std::string Utf8(const wchar_t* value)
 {
   if (!value) return "";
@@ -41,6 +43,7 @@ static std::string Utf8(const wchar_t* value)
   return std::string(&buffer[0], count);
 }
 
+/* 以 17 位有效数字保存接口数值文本，不在此执行单位换算。 */
 static std::string Number(double value)
 {
   std::ostringstream out;
@@ -49,6 +52,7 @@ static std::string Number(double value)
   return out.str();
 }
 
+/* 每个字段独立携带原值、单位、来源和读取状态，失败字段也保留记录。 */
 static void Field(FtaSemanticEntity& entity, const std::string& key,
                   const std::string& value, const std::string& unit,
                   const std::string& status, const std::string& api)
@@ -62,6 +66,7 @@ static void Field(FtaSemanticEntity& entity, const std::string& key,
   entity.raw_fields.push_back(field);
 }
 
+/* 协调多个接口给出的组件类别；不兼容类别保留冲突事实并标为待复核。 */
 static void AssignKind(FtaSemanticEntity& entity, const char* kind)
 {
   const std::string previous = entity.component_kind;
@@ -77,6 +82,7 @@ static void AssignKind(FtaSemanticEntity& entity, const char* kind)
   }
 }
 
+/* 保存文本及 failed/empty/available 状态，然后释放接口返回的宽字符数组。 */
 static void TextField(FtaSemanticEntity& entity, const std::string& key,
                       wchar_t* value, HRESULT result, const std::string& api)
 {
@@ -85,6 +91,7 @@ static void TextField(FtaSemanticEntity& entity, const std::string& key,
   delete [] value;
 }
 
+/* 接口查询失败或异常仅表示本次未取得接口；成功引用由传入守卫释放。 */
 template<class T> static bool Probe(CATITPSComponent* component, const IID& iid,
                                     const char* name, FtaSemanticEntity& entity,
                                     CaaInterfaceGuard<T>& guard)
@@ -99,6 +106,7 @@ template<class T> static bool Probe(CATITPSComponent* component, const IID& iid,
   catch (...) { return false; }
 }
 
+/* 逐通道探测并追加原始字段；某些 getter 异常由外层采集器隔离，已追加证据仍保留。 */
 void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
 {
   if (!component) return;
@@ -114,6 +122,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
                                         "CATITPSLinearDimension", entity, linear);
     // R21 documents limits in millimetres, but angular and unclassified
     // dimensions need subtype-specific evidence before unit normalization.
+    /* 仅确定为线性且非角度尺寸时标记 mm；其余尺寸数值的单位保持 unknown。 */
     const std::string value_unit = linear_dimension && !angular_dimension ? "mm" : "unknown";
     if (linear_dimension)
     {
@@ -214,6 +223,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
     }
   }
 
+  /* 粗糙度九个字段按接口原文保存，不从文本推断数值单位或标准符号语义。 */
   CaaInterfaceGuard<CATITPSRoughness> roughness;
   if (Probe(component, IID_CATITPSRoughness, "CATITPSRoughness", entity, roughness))
   {
@@ -304,6 +314,7 @@ void ReadFtaTypedFields(CATITPSComponent* component, FtaSemanticEntity& entity)
     AssignKind(entity, "text");
   }
 
+  /* TTRS 仅采集数量、性质、类别和成员数，最多读取 1000 项；成员尚未解析为模型对象引用。 */
   CaaInterfaceGuard<CATITPS> tps;
   if (Probe(component, IID_CATITPS, "CATITPS", entity, tps))
   {

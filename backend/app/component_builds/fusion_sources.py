@@ -1,3 +1,4 @@
+# 仅读取当前构建关联版本和图纸任务的数据，给纯融合逻辑提供可追溯来源快照。
 from __future__ import annotations
 
 from sqlalchemy import select
@@ -7,10 +8,13 @@ from app.component_builds.fusion import FusionSources
 from app.db.models import CadDrawingFact, CadFeatureCandidate, CadMeasurement, CadModelRevision, ComponentBuild
 
 
+# 从数据库汇集融合来源，隔离 ORM 查询与规范回填规则。
 class SqlAlchemyFusionSourceReader:
+    # 复用请求注入的异步会话，不自行创建跨请求连接。
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    # 图纸只选 current 事实，测量和特征按 cad_revision_id 查询并稳定排序。
     async def read(self, build: ComponentBuild) -> FusionSources:
         drawing_facts = []
         measurements = []
@@ -54,6 +58,7 @@ class SqlAlchemyFusionSourceReader:
             revision=revision_data,
         )
 
+    # 投影文件摘要、解析器版本、单位和几何统计，保留模型版本身份。
     @staticmethod
     def _revision(row: CadModelRevision) -> dict:
         return {
@@ -72,6 +77,7 @@ class SqlAlchemyFusionSourceReader:
             "summary": row.summary or {},
         }
 
+    # 保留图纸事实身份、原值、归一值、运算符、置信度和行元数据。
     @staticmethod
     def _drawing_fact(row: CadDrawingFact) -> dict:
         return {
@@ -90,6 +96,7 @@ class SqlAlchemyFusionSourceReader:
             "metadata": row.metadata_json or {},
         }
 
+    # 投影测量类型、归一值及证据元数据，供推导参数交叉验证。
     @staticmethod
     def _measurement(row: CadMeasurement) -> dict:
         return {
@@ -101,6 +108,7 @@ class SqlAlchemyFusionSourceReader:
             "metadata": row.metadata_json or {},
         }
 
+    # 投影识别特征的参数、轴心、状态和置信度，供融合策略消费。
     @staticmethod
     def _feature(row: CadFeatureCandidate) -> dict:
         return {

@@ -1,3 +1,4 @@
+/* 打开输入文档并登记根文档元数据、原生句柄绑定和诊断。 */
 #include "caa/CaaDocumentScanner.h"
 #include <algorithm>
 #include <cctype>
@@ -23,6 +24,7 @@ static std::string CaptureExtension(const std::string& path)
   return ext;
 }
 
+/* 仅在文档成功打开后建立根文档记录，原生绑定随文档句柄的生命周期有效。 */
 bool CaaDocumentScanner::Scan(const std::string& input_path,
                               CaaDocumentHandle& document_handle,
                               CaptureIdRegistry& ids,

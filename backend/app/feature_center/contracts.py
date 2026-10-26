@@ -1,3 +1,4 @@
+# 定义来源观察、融合特征、测量与输出包的数据边界；语义确认、几何定位和测量可信度分别保存。
 """Feature Center 的纯数据契约与稳定编号工具。"""
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ FEATURE_CENTER_ALGORITHM_VERSION = "1.0.0"
 def stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256()
     digest.update(FEATURE_CENTER_ALGORITHM_VERSION.encode("utf-8"))
+    # 每段先写入字节长度，避免不同语义分段拼接后产生同一输入字节序列。
     for part in parts:
         encoded = str(part).encode("utf-8")
         digest.update(len(encoded).to_bytes(8, "big"))

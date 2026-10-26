@@ -1,3 +1,4 @@
+# 将特征中心各集合、轻量网格和精确几何资产写入同级暂存目录，引用校验成功后发布。
 """Feature Center Bundle 的确定性、事务式文件写出实现。"""
 
 from __future__ import annotations
@@ -127,6 +128,7 @@ class FeatureCenterBundleWriter:
             with (staging / "manifest.json").open("w", encoding="utf-8", newline="\n") as output:
                 output.write(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2,
                                         allow_nan=False) + "\n")
+            # 暂存目录的文件哈希与跨文件引用均通过后才发布，校验失败由异常路径清理暂存结果。
             validation_errors = validate_bundle(staging)
             if validation_errors:
                 raise ValueError(

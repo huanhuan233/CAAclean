@@ -1,8 +1,10 @@
+# 由圆柱或圆曲线生成低置信度孔候选，未执行内外壁、开口或材料连通性的确认。
 from __future__ import annotations
 
 from app.measurement.schemas import EntityFact, FeatureCandidateFact
 
 
+# 为有半径和轴的圆柱/圆生成候选；圆柱再按包围盒长宽比例附加贯穿或盲孔猜测。
 def detect_hole_candidates(entities: list[EntityFact]) -> list[FeatureCandidateFact]:
     features: list[FeatureCandidateFact] = []
     for entity in entities:
@@ -45,6 +47,7 @@ def detect_hole_candidates(entities: list[EntityFact]) -> list[FeatureCandidateF
     return features
 
 
+# 实际仅判断自身包围盒最长跨度是否大于最短跨度两倍；未检测实体边界两端是否开放。
 def _touches_two_bbox_sides(entity: EntityFact) -> bool:
     bbox = entity.bounding_box
     if not bbox:

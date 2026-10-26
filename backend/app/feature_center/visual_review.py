@@ -1,3 +1,4 @@
+# 为缺证据、原生状态陈旧和未验证特征生成离线审查决策，远程视觉调用计数始终保持零。
 """视觉审查路由和离线交换协议；本模块不会发起远程调用。"""
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ def route_visual_review(
         return VisualReviewDecision(
             request_id, "blocked_by_missing_evidence", "缺少可回链的真实 Face", cache_key
         )
+    # 原生状态陈旧优先转人工复核，即使几何规则已验证也不能消除设计与导出状态的冲突。
     if stale:
         return VisualReviewDecision(
             request_id, "human_review_only", "原生设计状态陈旧，必须保留语义与导出几何冲突", cache_key

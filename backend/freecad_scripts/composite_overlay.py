@@ -1,3 +1,6 @@
+# 复材平面覆盖计算：对已验证共面的铺层采样轮廓进行分区，保留每个物理单层 ID。
+# 轮廓是带采样误差的输入，输出面积不是任意弯曲铺层的真实曲面面积，也不推断参考面。
+
 """Partition already validated, coplanar native ply contours in one FreeCAD task.
 
 Input polygons are display samples with an explicit sampling error. This job
@@ -21,6 +24,7 @@ MAX_VERTICES = 4096
 AREA_TOLERANCE = 1e-6
 
 
+# 验证三维有限坐标及点数预算，闭合采样多边形以构造平面边界。
 def _wire(points):
     if not isinstance(points, list) or not 3 <= len(points) <= MAX_VERTICES:
         raise ValueError("invalid_input: invalid contour point count")
@@ -35,6 +39,7 @@ def _wire(points):
     return Part.makePolygon(vectors)
 
 
+# 将外轮廓组成区域并扣除内孔；检查区域有效性，禁止把损坏轮廓当成零面积铺层。
 def _ply_shape(ply):
     loops = ply.get("loops")
     if not isinstance(loops, list) or not loops or len(loops) > 128:
@@ -56,10 +61,12 @@ def _ply_shape(ply):
     return shape
 
 
+# 仅保留大于面积容差的面，用于去除布尔分割产生的微小区域。
 def _faces(shape):
     return [face for face in shape.Faces if face.Area > AREA_TOLERANCE]
 
 
+# 将一个覆盖分区写成面积、所属单层 ID 和受限显示网格；网格只负责展示。
 def _cell(face, ids):
     vertices, triangles = face.tessellate(0.05)
     if len(triangles) > 10000:
@@ -72,6 +79,7 @@ def _cell(face, ids):
     }
 
 
+# 在端点共线的边界中求有限重叠区间，用于标记覆盖分区间的直线过渡边。
 def _shared_straight_segments(face_a, face_b):
     for edge_a in face_a.Edges:
         va = edge_a.Vertexes
@@ -97,6 +105,7 @@ def _shared_straight_segments(face_a, face_b):
                        hi - lo)
 
 
+# 逐层用交集和差集细分覆盖区域，同时累积该区域的单层身份；控制单层数和分区数预算。
 def run(job):
     plies = job.get("plies")
     if not isinstance(plies, list) or not 1 <= len(plies) <= MAX_PLIES:
@@ -145,6 +154,7 @@ def run(job):
     }
 
 
+# 读取复材作业并输出分区或明确失败状态；失败时的空 cells 不代表成功计算出零覆盖。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     try:

@@ -1,3 +1,4 @@
+# BOM 同时保留当前节点及后代实体、网格 ID，供树选择、定位与批量显隐使用。
 """把现有 CAD 结构树投影为 STEP/CATPart 共用的只读 BOM 契约。"""
 
 from __future__ import annotations
@@ -70,6 +71,7 @@ def _normalize_node(node: dict, source_format: str, level: int) -> dict:
     }
 
 
+# 过滤空标识并转成字符串去重排序，使聚合后的实体和网格列表稳定。
 def _unique_strings(values: list) -> list[str]:
     return sorted({str(value) for value in values if value})
 

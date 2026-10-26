@@ -1,3 +1,4 @@
+# 编排 CAD 上传、隔离解析和数据库查询，为接口提供树、拓扑与测量 DTO。
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +25,7 @@ STRUCTURE_ENTITY_TYPES = {"root", "assembly", "part", "imported_object", "body",
 _SEMAPHORES: dict[int, asyncio.Semaphore] = {}
 
 
+# 同一进程内按并发上限复用信号量，限制同时运行的解析任务。
 def _semaphore_for(limit: int) -> asyncio.Semaphore:
     safe_limit = max(1, int(limit))
     if safe_limit not in _SEMAPHORES:
@@ -31,7 +33,9 @@ def _semaphore_for(limit: int) -> asyncio.Semaphore:
     return _SEMAPHORES[safe_limit]
 
 
+# 协调文件、解析进程与仓库；具体几何运算在 FreeCAD 或测量模块内完成。
 class CadService:
+    # 注入仓库、配置和后台会话工厂，并取得共享并发限制器。
     def __init__(
         self,
         repository: CadRepository,
@@ -47,6 +51,7 @@ class CadService:
         self.repository_factory = repository_factory
         self.concurrency_limiter = concurrency_limiter or _semaphore_for(settings.cad_max_concurrency)
 
+    # 校验 STEP 上传，建立版本后安排后台解析并立即返回受理信息。
     async def create_model_from_upload(self, file: UploadFile, name: str | None) -> dict:
         filename = Path(file.filename or "").name
         ext = Path(filename).suffix.lower()
@@ -135,6 +140,7 @@ class CadService:
             "source_sha256": sha256,
         }
 
+    # 为后台任务新建数据库会话，避免继续使用已经结束的请求会话。
     async def parse_revision_in_background(self, revision_id: UUID) -> None:
         async with self.session_factory() as session:
             service = CadService(
@@ -146,6 +152,7 @@ class CadService:
             )
             await service.parse_revision(revision_id)
 
+    # 更新运行状态，在并发限制内调用解析器并持久化结果；失败记录明确错误。
     async def parse_revision(self, revision_id: UUID) -> None:
         revision = await self.repository.get_revision(revision_id)
         if revision is None:
@@ -176,6 +183,7 @@ class CadService:
                 error_message=str(exc)[:1000],
             )
 
+    # 返回版本解析进度；版本不存在时交由路由转换为 404。
     async def get_revision_status(self, revision_id: UUID) -> dict:
         revision = await self.repository.get_revision(revision_id)
         if revision is None:
@@ -188,6 +196,7 @@ class CadService:
             "error_message": revision.error_message,
         }
 
+    # 把模型与当前版本组合为分页摘要，保留真实匹配总数。
     async def list_models(self, page: int, page_size: int, has_build: bool = False) -> dict:
         rows, total = await self.repository.list_models(page, page_size, has_build=has_build)
         items = []
@@ -207,14 +216,17 @@ class CadService:
             )
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
+    # 用全部实体的父子 ID 构造完整解析树。
     async def get_revision_tree(self, revision_id: UUID) -> list[dict]:
         entities = await self.repository.list_entities(revision_id)
         return self._build_tree(entities)
 
+    # 仅选择结构层实体构造树，避免把所有细粒度几何都当作装配层级。
     async def get_structure_tree(self, revision_id: UUID) -> list[dict]:
         entities = [entity for entity in await self.repository.list_entities(revision_id) if entity.entity_type in STRUCTURE_ENTITY_TYPES]
         return self._build_tree(entities)
 
+    # 传递查询条件并序列化当前页实体，不在浏览时重新解析源文件。
     async def list_revision_entities(
         self,
         revision_id: UUID,
@@ -242,12 +254,14 @@ class CadService:
             "page_size": page_size,
         }
 
+    # 读取详情前核对实体所属版本，防止跨版本 ID 串用。
     async def get_revision_entity(self, revision_id: UUID, entity_id: UUID) -> dict:
         entity = await self.repository.get_entity(entity_id)
         if entity is None or entity.revision_id != revision_id:
             raise LookupError("entity not found")
         return self._entity_to_dict(entity)
 
+    # 按需读取已有显示网格，返回当前页与总数。
     async def list_revision_meshes(
         self,
         revision_id: UUID,
@@ -271,6 +285,7 @@ class CadService:
             "page_size": page_size,
         }
 
+    # 优先使用面边界与邻接关系，缺少边界关系时兼容直接子边记录。
     async def get_face_topology(self, revision_id: UUID, face_id: UUID) -> dict:
         edges = await self.repository.get_related_entities(revision_id, face_id, "bounded_by_edge")
         adjacent_faces = await self.repository.get_related_entities(revision_id, face_id, "adjacent_to")
@@ -281,6 +296,7 @@ class CadService:
             "adjacent_faces": [self._entity_to_dict(entity) for entity in adjacent_faces],
         }
 
+    # 组合端点和所属面关系，兼容旧产物中的父子拓扑表达。
     async def get_edge_topology(self, revision_id: UUID, edge_id: UUID) -> dict:
         vertices = await self.repository.get_related_entities(revision_id, edge_id, "has_vertex")
         faces = await self.repository.get_source_entities_for_target(revision_id, edge_id, "bounded_by_edge")
@@ -297,6 +313,7 @@ class CadService:
             "faces": [self._entity_to_dict(entity) for entity in faces],
         }
 
+    # 通过测量仓库按版本、范围及类别筛选已保存测量。
     async def list_revision_measurements(
         self,
         revision_id: UUID,
@@ -317,12 +334,14 @@ class CadService:
         )
         return {"items": [self._measurement_to_dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
 
+    # 在当前版本中读取一条测量并保留其方法、单位和来源。
     async def get_revision_measurement(self, revision_id: UUID, measurement_id: UUID) -> dict:
         measurement = await MeasurementRepository(self.repository.session).get_measurement(measurement_id)
         if measurement is None or measurement.revision_id != revision_id:
             raise LookupError("measurement not found")
         return self._measurement_to_dict(measurement)
 
+    # 分页读取特征候选，类别和置信度过滤不改变原有确认状态。
     async def list_revision_features(
         self,
         revision_id: UUID,
@@ -343,15 +362,18 @@ class CadService:
         )
         return {"items": [self._feature_to_dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
 
+    # 读取版本内单个候选，保留算法版本及参与实体。
     async def get_revision_feature(self, revision_id: UUID, feature_id: UUID) -> dict:
         feature = await MeasurementRepository(self.repository.session).get_feature(feature_id)
         if feature is None or feature.revision_id != revision_id:
             raise LookupError("feature not found")
         return self._feature_to_dict(feature)
 
+    # 交由测量服务重算现有几何结果，不在这里重复实现测量算法。
     async def recompute_revision_measurements(self, revision_id: UUID) -> dict:
         return await MeasurementService(MeasurementRepository(self.repository.session)).recompute_revision(revision_id)
 
+    # 按真实 parent_entity_id 组树；找不到父节点的记录保留为根节点。
     def _build_tree(self, entities) -> list[dict]:
         nodes: dict[UUID, dict] = {}
         roots: list[dict] = []
@@ -379,6 +401,7 @@ class CadService:
                 roots.append(node)
         return roots
 
+    # 将 ORM 实体转换为接口字段，metadata 与源身份原样保留。
     def _entity_to_dict(self, entity) -> dict:
         return {
             "id": entity.id,
@@ -402,6 +425,7 @@ class CadService:
             "metadata": entity.metadata_json,
         }
 
+    # 序列化离散网格和精度参数，供 Viewer 消费。
     def _mesh_to_dict(self, mesh) -> dict:
         return {
             "id": mesh.id,
@@ -418,6 +442,7 @@ class CadService:
             "triangle_count": mesh.triangle_count,
         }
 
+    # 分别传递原值、规范化值、单位与计算依据。
     def _measurement_to_dict(self, measurement) -> dict:
         return {
             "id": measurement.id,
@@ -436,6 +461,7 @@ class CadService:
             "created_at": measurement.created_at.isoformat(),
         }
 
+    # 传递候选参数、状态和算法来源，不在展示适配时提升置信等级。
     def _feature_to_dict(self, feature) -> dict:
         return {
             "id": feature.id,
@@ -455,6 +481,7 @@ class CadService:
             "updated_at": feature.updated_at.isoformat(),
         }
 
+    # 仅删除解析工作根目录内已校验的版本目录，拒绝越界路径。
     async def delete_model_files(self, revision_id: UUID) -> None:
         revision_dir = (Path(self.settings.cad_work_dir) / str(revision_id)).resolve()
         work_dir = Path(self.settings.cad_work_dir).resolve()
@@ -464,6 +491,7 @@ class CadService:
             shutil.rmtree(revision_dir)
 
 
+# 启动时用独立会话收口过期未完成任务，截止时间由配置决定。
 async def recover_interrupted_revisions(
     settings: Settings,
     *,

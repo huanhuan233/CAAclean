@@ -1,3 +1,4 @@
+# 验证交互请求与 B-Rep 快照引用的完整性，并提供仅允许刚体变换的点、向量和法向转换。
 """Immutable B-Rep references and rigid coordinate conversion for interactive queries."""
 
 from __future__ import annotations
@@ -10,10 +11,12 @@ from pathlib import Path
 from typing import Any
 
 
+# 表示缺失、越界或已过期的快照/资产引用，供接口区分几何可用性错误。
 class GeometryReferenceError(ValueError):
     pass
 
 
+# 按一兆字节分块计算 SHA-256，避免为资产完整性校验一次读取全部文件。
 def _file_digest(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -22,6 +25,7 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+# 校验辅助 B-Rep 来源策略、操作引用数、参数白名单及有限三维坐标，并区分精确点与显示种子点。
 def validate_query(operation: str, references: list[dict], parameters: dict, source_policy: str) -> str:
     if source_policy == "native_only":
         raise ValueError("unsupported: native P1 geometry kernel is unavailable")
@@ -59,6 +63,7 @@ def validate_query(operation: str, references: list[dict], parameters: dict, sou
     return operation
 
 
+# 保存特定修订的快照编号、资产映射及显示离散误差，引用解析时逐项检查内容指纹。
 @dataclass(frozen=True)
 class GeometrySnapshot:
     root: Path
@@ -67,6 +72,7 @@ class GeometrySnapshot:
     assets: dict[str, dict[str, Any]]
     mesh_deflection_mm: float = 0.1
 
+    # 先验证发布清单中的索引哈希，再载入资产映射与有效网格离散误差。
     @classmethod
     def from_bundle(cls, root: Path, revision_id: str) -> "GeometrySnapshot":
         index_path = root / "geometry" / "index.json"
@@ -85,6 +91,7 @@ class GeometrySnapshot:
             raise GeometryReferenceError("geometry_unavailable: invalid mesh deflection")
         return cls(root, revision_id, str(index["geometry_snapshot_id"]), index["assets"], deflection)
 
+    # 要求修订与快照一致，限制资产路径在包目录内，并核对请求指纹及实际文件哈希。
     def resolve(self, reference: dict[str, Any]) -> Path:
         if reference.get("revision_id") != self.revision_id or reference.get("geometry_snapshot_id") != self.snapshot_id:
             raise GeometryReferenceError("stale_reference: revision or snapshot differs")
@@ -110,6 +117,7 @@ class GeometrySnapshot:
         return path
 
 
+# 验证右手正交齐次矩阵后转换局部坐标；仅点加平移，法向额外归一化，缩放和反射会被拒绝。
 def transform_geometry(value: list[float], matrix: list[list[float]], kind: str) -> list[float]:
     """Apply an orthonormal, right-handed local-to-world transform to a point/direction."""
     if kind not in {"point", "vector", "normal"}:

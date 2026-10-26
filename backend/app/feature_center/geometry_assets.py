@@ -1,3 +1,4 @@
+# 将同一次 STEP 导入导出的 B-Rep 子形状绑定到稳定拓扑编号，并生成可校验的几何快照索引。
 """Bind exact B-Rep subshapes exported during the same STEP import to stable topology IDs."""
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from .contracts import FeatureCenterBundle
 from .topology import StableTopology
 
 
+# 分块计算导出 B-Rep 文件的 SHA-256，供发布后交互引用检查内容完整性。
 def _file_digest(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -18,6 +20,7 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+# 只绑定实际存在且有稳定编号的实体/面/边/顶点资产，并将形状、内核版本和资产哈希纳入快照身份。
 def attach_geometry_assets(
     bundle: FeatureCenterBundle,
     topology: StableTopology,
@@ -40,6 +43,7 @@ def attach_geometry_assets(
             "path": f"geometry/{stable_id}.brep",
             "sha256": _file_digest(path),
         }
+        # 这里记录 STEP 已放置的场景坐标；source_object_id 只是导入对象标识，不是原生装配实例历史。
         if kind == "solid":
             # STEP importer geometry is already placed in its exported scene.
             # The parent is an imported object, not a CATProduct occurrence.

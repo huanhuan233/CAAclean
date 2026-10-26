@@ -1,3 +1,4 @@
+# 从全页及区域图提取可见产品信息、完整参数表和符号，构造带图像证据的事实。
 from __future__ import annotations
 
 import uuid
@@ -16,16 +17,20 @@ from app.drawing.extraction_schemas import (
 from app.drawing.extraction_utils import local_bbox_to_original, parse_operator_and_value
 
 
+# 协调视觉调用、阶段状态和事实入库，不在此处作 STEP 合规判断。
 class DrawingExtractionService:
+    # 注入裁剪包仓库与视觉客户端，便于切换存储和模型实现。
     def __init__(self, repository, *, vision_client):
         self.repository = repository
         self.vision_client = vision_client
 
+    # 依次提取产品、整表和符号并替换事实；当前实现不使用目标行或 force 参数过滤。
     async def extract(self, task_id, *, target_code: str | None, target_dn: int | None, force: bool) -> DrawingExtractionResult:
         package = await self.repository.get_crop_package(task_id)
         await self.repository.set_status(task_id, "extracting_product_info", 15, "extracting_product_info")
         await self.vision_client.health_check()
 
+        # 产品、整表和符号分开提取；提示词限制只读可见内容，模型输出仍需人工核实。
         product = ProductInfoResult.model_validate(
             await self.vision_client.complete_json(
                 task_name="product_information",
@@ -88,6 +93,7 @@ class DrawingExtractionService:
             product_info=product,
             table=table,
             symbols=symbols,
+            # 当前流程始终保留完整表格；目标行筛选在事实查询层进行。
             target_row=TargetRowResult(),
             facts=_build_facts(package, product, table),
             model_name=getattr(self.vision_client, "model", "fake-vision"),
@@ -99,6 +105,7 @@ class DrawingExtractionService:
         return result
 
 
+# 组合全页推理图与指定类型的首个裁剪图，为模型提供全局上下文及局部细节。
 def _paths_for(package: dict, region_type: str) -> list[Path]:
     paths = []
     inference = package.get("inference_image", {}).get("file_path")
@@ -110,10 +117,12 @@ def _paths_for(package: dict, region_type: str) -> list[Path]:
     return paths
 
 
+# 取指定类型的第一个区域；同类后续区域不会由此函数返回。
 def _region(package: dict, region_type: str):
     return next((region for region in package.get("regions", []) if region["region_type"] == region_type), None)
 
 
+# 把选定产品属性及全部表格行转为事实，附加行身份、单位和来源框。
 def _build_facts(package: dict, product: ProductInfoResult, table: TableExtractionResult) -> list[DrawingFact]:
     facts: list[DrawingFact] = []
     product_region = _region(package, "product_information")
@@ -145,6 +154,7 @@ def _build_facts(package: dict, product: ProductInfoResult, table: TableExtracti
         )
 
     rows = _table_rows(table)
+    # 多行表必须把行身份纳入事实键，避免不同 DN 的同名尺寸混淆。
     multi_row = len(rows) > 1
     headers = _leaf_headers(table)
     for row_index, row in enumerate(rows):
@@ -163,6 +173,7 @@ def _build_facts(package: dict, product: ProductInfoResult, table: TableExtracti
             bbox_normalized = None
             precision = "region"
             needs_review = True
+            # 有行框时证据精度提升为 row；该标记只表示可定位，并非数值已经人工确认。
             if row_bbox and table_region:
                 mapped = local_bbox_to_original(
                     row_bbox,
@@ -186,11 +197,13 @@ def _build_facts(package: dict, product: ProductInfoResult, table: TableExtracti
                     raw_value=raw_for_parse,
                     normalized_value=normalized,
                     value_type=value_type,
+                    # 当前实现对数值尺寸默认使用毫米，尚未消费 table.units 做换算。
                     unit="mm" if value_type == "number" else None,
                     source_region_id=uuid.UUID(str(table_region["id"])) if table_region else None,
                     source_bbox_original=bbox_original or (table_region.get("padded_bbox_pixels") if table_region else None),
                     source_bbox_normalized=bbox_normalized or (table_region.get("bbox_normalized") if table_region else None),
                     source_bbox_precision=precision,
+                    # 这里使用固定置信度，并非该单元格的模型概率或统计校准结果。
                     confidence=0.85,
                     needs_review=needs_review,
                     metadata={"row_index": row_index, "row_code": row_code, "row_dn": row_dn},
@@ -199,6 +212,7 @@ def _build_facts(package: dict, product: ProductInfoResult, table: TableExtracti
     return facts
 
 
+# 在正式属性缺失时使用模型额外键的别名，材料列表仅保留首项。
 def _product_values(product: ProductInfoResult) -> dict[str, Any]:
     values = product.model_dump()
     extras = product.model_extra or {}
@@ -223,6 +237,7 @@ def _product_values(product: ProductInfoResult) -> dict[str, Any]:
     return values
 
 
+# 保留字典行或可序列化模型行，跳过其他表格行形态。
 def _table_rows(table: TableExtractionResult) -> list[dict]:
     rows = []
     for row in table.rows:
@@ -233,11 +248,13 @@ def _table_rows(table: TableExtractionResult) -> list[dict]:
     return rows
 
 
+# 优先取表头层级的最后一层，否则使用平面表头，并去掉空文本。
 def _leaf_headers(table: TableExtractionResult) -> list[str]:
     candidates = table.header_hierarchy[-1] if table.header_hierarchy else table.headers
     return [str(item).strip() for item in candidates if str(item).strip()]
 
 
+# 兼容字典或列表单元格；列表按表头数量匹配，无法对齐时以索引作为键。
 def _row_cells(row: dict, headers: list[str]) -> dict:
     raw_cells = row.get("cells")
     if isinstance(raw_cells, dict):
@@ -252,6 +269,7 @@ def _row_cells(row: dict, headers: list[str]) -> dict:
     return {str(index): value for index, value in enumerate(cell_values)}
 
 
+# 从行标识和单元格的已知别名提取型号与 DN，字符串行标识按 DN 尝试解析。
 def _row_identity(row: dict) -> tuple[str | None, int | None]:
     row_identifier = row.get("row_identifier") if isinstance(row.get("row_identifier"), dict) else {}
     cells = row.get("cells") if isinstance(row.get("cells"), dict) else {}
@@ -264,6 +282,7 @@ def _row_identity(row: dict) -> tuple[str | None, int | None]:
     return code, dn
 
 
+# 按别名优先级返回首个非空文本值。
 def _first_text(values: dict, keys: list[str]) -> str | None:
     for key in keys:
         value = values.get(key)
@@ -272,6 +291,7 @@ def _first_text(values: dict, keys: list[str]) -> str | None:
     return None
 
 
+# 移除 DN 前缀后尝试转整数，无法解析时返回空值。
 def _parse_dn(value) -> int | None:
     if value is None:
         return None
@@ -282,11 +302,13 @@ def _parse_dn(value) -> int | None:
         return None
 
 
+# 识别型号和公称尺寸列，避免把行身份重复当作尺寸事实。
 def _is_identifier_symbol(symbol) -> bool:
     text = str(symbol).strip().lower()
     return text in {"code", "component_code", "model", "model_code", "dn", "公称尺寸", "代码", "型号"}
 
 
+# 把表头末尾的比较符移到值前，统一交给数值比较符解析器。
 def _normalize_symbol_value(symbol: str, raw) -> tuple[str, Any]:
     text = symbol.strip()
     if text.endswith(("≥", ">=")):
@@ -298,6 +320,7 @@ def _normalize_symbol_value(symbol: str, raw) -> tuple[str, Any]:
     return text, raw
 
 
+# 单行使用符号键，多行加入型号或行号与 DN，区分不同行的同名尺寸。
 def _dimension_fact_key(symbol: str, *, row_index: int, row_code: str | None, row_dn: int | None, multi_row: bool) -> str:
     if not multi_row:
         return f"dimension.{symbol}"
@@ -306,6 +329,7 @@ def _dimension_fact_key(symbol: str, *, row_index: int, row_code: str | None, ro
     return f"dimension.{code_part}.{dn_part}.{symbol}"
 
 
+# 仅保留字母、数字、下划线和连字符，构造事实键中的型号片段。
 def _key_part(value: str | None) -> str | None:
     if not value:
         return None

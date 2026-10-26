@@ -1,3 +1,4 @@
+# 对同文档、同参考面的已验证平面铺层计算覆盖；名义厚度与来源指纹独立于几何采集保存。
 """Same-reference planar ply coverage and nominal thickness.
 
 Only native ply identity/order and previously verified contour regions enter this
@@ -21,11 +22,13 @@ ALGORITHM = "composite_planar_coverage_v1"
 MAX_PLIES = 64
 
 
+# 仅返回采集状态为 available 的原始属性值，其他状态不能作为参考面证据。
 def _field_value(row: dict[str, Any], key: str) -> Any:
     field = row.get("fields", {}).get(key) or {}
     return field.get("raw_value") if field.get("read_status") == "available" else None
 
 
+# 验证铺层定义身份、共同参考面与共面轮廓，组装内核输入；排序不完整时不发布层序。
 def prepare_planar_coverage(rows: list[dict[str, Any]], group_id: str,
                             thickness_basis: str) -> dict[str, Any]:
     if thickness_basis not in {"cured", "uncured"}:
@@ -36,6 +39,7 @@ def prepare_planar_coverage(rows: list[dict[str, Any]], group_id: str,
     group = by_id.get(group_id)
     if not group or group.get("kind") != "group":
         raise ValueError("composite group not found")
+    # 身份排序只保证结果确定；只有每层原生顺序完整时才对外声明铺层先后关系。
     order_complete = group.get("order_status") == "native_complete"
     sequence_ids = (group.get("ordered_child_object_ids") or []) if order_complete else sorted(
         row["object_id"] for row in rows
@@ -60,6 +64,7 @@ def prepare_planar_coverage(rows: list[dict[str, Any]], group_id: str,
     if not ply_ids or len(ply_ids) > MAX_PLIES or len(set(ply_ids)) != len(ply_ids):
         raise ValueError("ply count or identity invalid")
     plies = [by_id[ply_id] for ply_id in ply_ids]
+    # 不同参考面即使在空间中看似重合，也不能混作同一个铺层覆盖计算。
     reference_ids = {_field_value(ply, "composite_reference_surface_object_id") for ply in plies}
     if len(reference_ids) != 1 or None in reference_ids or "" in reference_ids:
         raise ValueError("common native reference surface not established")
@@ -99,6 +104,7 @@ def prepare_planar_coverage(rows: list[dict[str, Any]], group_id: str,
     }
 
 
+# 核对内核区域身份与面积守恒，再累计可用厚度并生成含版本和来源字段的指纹。
 def add_nominal_thickness(kernel_result: dict[str, Any], prepared: dict[str, Any],
                           rows: list[dict[str, Any]], revision_id: str,
                           geometry_snapshot_id: str | None = None) -> dict[str, Any]:
@@ -130,6 +136,7 @@ def add_nominal_thickness(kernel_result: dict[str, Any], prepared: dict[str, Any
                 known += value
                 contributions.append({"ply_object_id": ply_id, "thickness_mm": value,
                                       "source_property_id": field.get("property_id"), "status": "available"})
+        # 已知厚度小计可审查；任一铺层缺厚度时，总厚度仍为 None，不能按零补齐。
         cells.append({**cell, "region_id": f"region_{number}", "layer_count": len(ids),
                       "known_thickness_subtotal_mm": known,
                       "nominal_thickness_mm": None if missing else known,
@@ -164,6 +171,7 @@ def add_nominal_thickness(kernel_result: dict[str, Any], prepared: dict[str, Any
             "nominal_direction": by_id[ply_id].get("nominal_direction")}
             for ply_id in prepared["ply_object_ids"]],
     }
+    # 指纹纳入版本、轮廓、材料厚度与方向来源，避免仅凭最终几何相同复用旧结果。
     fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return {"object_id": prepared["group_object_id"], "status": "computed",
             "algorithm": ALGORITHM, "source_fingerprint": fingerprint,
@@ -183,6 +191,7 @@ def add_nominal_thickness(kernel_result: dict[str, Any], prepared: dict[str, Any
             "limits": "verified same-plane contours only; display geometry sampled from native curves"}
 
 
+# 先校验原生轮廓，交给隔离的 FreeCAD 作业做布尔分区，再回填名义厚度。
 async def compute_planar_coverage(rows: list[dict[str, Any]], group_id: str,
                                   thickness_basis: str, revision_id: str,
                                   geometry_snapshot_id: str | None, settings: Settings,
@@ -193,6 +202,7 @@ async def compute_planar_coverage(rows: list[dict[str, Any]], group_id: str,
     return add_nominal_thickness(kernel, prepared, rows, revision_id, geometry_snapshot_id)
 
 
+# 在已发布采样三角形中查询点；区域外和边界歧义均返回未知厚度。
 def coverage_at_point(result: dict[str, Any], point_mm: tuple[float, float, float],
                       tolerance_mm: float = 0.01) -> dict[str, Any]:
     """Query only published sampled planar regions; boundaries remain ambiguous."""
@@ -246,6 +256,7 @@ def coverage_at_point(result: dict[str, Any], point_mm: tuple[float, float, floa
             "revision_id": result.get("revision_id")}
 
 
+# 从三角形中仅出现一次的边提取区域边界，按点到线段距离判断容差命中。
 def _on_cell_boundary(cell: dict[str, Any], point: tuple[float, float, float], tolerance: float) -> bool:
     counts: dict[tuple[int, int], int] = {}
     for a, b, c in cell.get("display_triangles") or []:

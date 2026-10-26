@@ -1,3 +1,4 @@
+# 校验采集到的边界遍历完整性；只在边身份、环角色均可信时发布有效边界长度。
 """Validate captured native face-boundary evidence without repairing source geometry."""
 
 from __future__ import annotations
@@ -7,6 +8,7 @@ from collections import Counter
 from typing import Any
 
 
+# 解析有限浮点数，拒绝无效文本及 NaN、无穷值进入长度累计。
 def _number(value: Any) -> float | None:
     try:
         result = float(value)
@@ -15,6 +17,7 @@ def _number(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+# 核对面环与边访问计数；共享边、接缝或未知环角色保留诊断，不声称面积可用。
 def assess_native_boundaries(payload: Any, read_status: str) -> dict[str, Any]:
     """Return conservative lengths and roles; no polygon fill or projected area claim."""
     result: dict[str, Any] = {
@@ -87,6 +90,7 @@ def assess_native_boundaries(payload: Any, read_status: str) -> dict[str, Any]:
     )) or read_status != "available"
     if hard_failure:
         result["status"] = "partial"
+    # 遍历完整仍不等于边界长度可直接相加：重复边或未知环角色需要人工复核。
     elif repeated or result["unknown_loop_count"]:
         result["status"] = "needs_review"
     else:

@@ -1,3 +1,4 @@
+/* 读取草图局部几何和绝对坐标轴，生成带读取状态的草图展示载荷。 */
 #include "caa/CaaSketchExtractor.h"
 #include "caa/CaaNativeBindingIndex.h"
 #include <CATIACircle2D.h>
@@ -19,6 +20,7 @@
 
 namespace cadcapture {
 
+/* 接管一次接口引用并在离开作用域时 Release，禁止复制守卫。 */
 template <class T> class SketchGuard
 {
 public:
@@ -32,6 +34,7 @@ private:
   T* _ptr;
 };
 
+/* 仅接受支持的数值类型且拒绝非有限数，防止非法数字进入展示 JSON。 */
 static bool SketchNumber(const CATVariant& value, double& output)
 {
   if (value.vt == VT_R8) output = value.dblVal;
@@ -41,6 +44,7 @@ static bool SketchNumber(const CATVariant& value, double& output)
   return _finite(output) != 0;
 }
 
+/* 校验数组至少含指定数量元素，逐项读取后对称解锁；数组仍由调用方销毁。 */
 static bool SketchValues(CATSafeArrayVariant* array, int count, double* output)
 {
   long lower = 0, upper = -1;
@@ -57,6 +61,7 @@ static bool SketchValues(CATSafeArrayVariant* array, int count, double* output)
   return okay;
 }
 
+/* 读取原点、水平轴和垂直轴共九个值，仅接收单位且互相正交的两条基向量。 */
 static bool SketchAxis(CATIASketch* sketch, double axis[9])
 {
   CATSafeArrayVariant* array = SafeArrayCreateVector(VT_VARIANT, 0, 9);
@@ -71,6 +76,7 @@ static bool SketchAxis(CATIASketch* sketch, double axis[9])
   return fabs(h-1) < 1e-5 && fabs(v-1) < 1e-5 && fabs(dot) < 1e-5;
 }
 
+/* kind 选择端点、参数范围或指定参数处的点；临时数组在读取后统一销毁。 */
 static bool CurveValues(CATIACurve2D* curve, int kind, double parameter,
                         int count, double* output)
 {
@@ -85,6 +91,7 @@ static bool CurveValues(CATIACurve2D* curve, int kind, double parameter,
   return okay;
 }
 
+/* 用草图原点及两条基向量把二维毫米坐标映射为三维毫米展示坐标。 */
 static std::string Point3(double x, double y, const double axis[9])
 {
   std::ostringstream out;
@@ -93,6 +100,8 @@ static std::string Point3(double x, double y, const double axis[9])
   return out.str();
 }
 
+/* 支持点、直线和圆弧；未支持类型保留原始类型并置 partial，读取失败由外层跳过该元素。 */
+/* 圆弧展示采样受 256 段上限约束，目标弦误差不构成所有曲线均已满足误差的保证。 */
 static bool SketchElement(CATIAGeometricElement* element, long index,
                           const double axis[9], std::string& output, bool& partial)
 {
@@ -182,6 +191,7 @@ static bool SketchElement(CATIAGeometricElement* element, long index,
   return true;
 }
 
+/* 按文档过滤草图并在有效绑定上读取；关键轴或集合读取失败时不覆盖已有分面。 */
 static void ExtractSketches(CaptureIdRegistry& ids, CaaCapabilityBroker& broker,
                             ReconstructionPackage& package, const std::string& document_id)
 {
@@ -219,6 +229,7 @@ static void ExtractSketches(CaptureIdRegistry& ids, CaaCapabilityBroker& broker,
             << axis[5]*axis[6]-axis[3]*axis[8] << ","
             << axis[3]*axis[7]-axis[4]*axis[6] << "],\"status\":\"verified_orthonormal\"},"
             << "\"element_count\":" << count << ",\"elements\":[";
+    /* 元素缺失、未支持类型或采样截断均可令载荷为 partial；草图连通性未在此验证。 */
     bool partial = false;
     bool first = true;
     CATLONG item;
@@ -259,10 +270,12 @@ static void ExtractSketches(CaptureIdRegistry& ids, CaaCapabilityBroker& broker,
   }
 }
 
+/* 全包入口通过空文档筛选条件复用同一读取流程。 */
 void CaaSketchExtractor::Extract(CaptureIdRegistry& ids, CaaCapabilityBroker& broker,
                                  ReconstructionPackage& package)
 { ExtractSketches(ids, broker, package, ""); }
 
+/* 文档入口应在对应原生绑定失效前调用。 */
 void CaaSketchExtractor::ExtractForDocument(CaptureIdRegistry& ids, CaaCapabilityBroker& broker,
                                             ReconstructionPackage& package, const std::string& document_id)
 { ExtractSketches(ids, broker, package, document_id); }

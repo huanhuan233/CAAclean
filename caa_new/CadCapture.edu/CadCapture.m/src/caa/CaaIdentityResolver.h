@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_CAAIDENTITYRESOLVER_H
+﻿// 声明对象身份覆盖情况的审计入口。
+#ifndef CADCAPTURE_CAA_CAAIDENTITYRESOLVER_H
 #define CADCAPTURE_CAA_CAAIDENTITYRESOLVER_H
 
 #include "model/CaptureIdRegistry.h"

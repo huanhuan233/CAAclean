@@ -1,3 +1,6 @@
+# 几何测量集成测试的样件生成器，仅生成测试输入，不参与业务模型解析。
+# 板厚、孔半径、点间距及圆弧区间由明确构造参数给出，供测量测试独立核对。
+
 """Generate synthetic B-Rep acceptance shapes inside FreeCAD for integration tests."""
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ import FreeCAD
 import Part
 
 
+# 在指定测试目录导出板、带孔板、空腔、顶点、有限边和圆柱面等 B-Rep，并列出样件名。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     output = Path(job["fixture_dir"])

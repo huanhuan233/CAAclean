@@ -1,3 +1,4 @@
+# 从解析曲面与曲线参数提取直径、圆角半径候选和锥角候选；半径存在本身不证明圆角用途。
 from __future__ import annotations
 
 import math
@@ -5,6 +6,7 @@ import math
 from app.measurement.schemas import EntityFact, MeasurementFact
 
 
+# 读取圆柱/圆的半径及锥半角，分别生成直径与候选解释；锥全角由弧度换算为度。
 def build_analytic_measurements(entities: list[EntityFact]) -> list[MeasurementFact]:
     measurements: list[MeasurementFact] = []
     for entity in entities:
@@ -25,6 +27,7 @@ def build_analytic_measurements(entities: list[EntityFact]) -> list[MeasurementF
     return measurements
 
 
+# 统一保留九位小数、来源实体与解析方法，以父实体作为尺寸作用域。
 def _measurement(entity: EntityFact, measurement_type: str, value: float, method: str, unit: str = "mm") -> MeasurementFact:
     normalized = round(float(value), 9)
     return MeasurementFact(

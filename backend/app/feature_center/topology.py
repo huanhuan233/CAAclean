@@ -1,3 +1,4 @@
+# 将解析器当前修订编号映射为形状哈希范围内的稳定编号，并校验拓扑关系端点。
 """把现有 FreeCAD 解析结果转换为稳定 Feature Center 拓扑。"""
 
 from __future__ import annotations
@@ -106,6 +107,7 @@ def build_stable_topology(parser_result: dict[str, Any]) -> StableTopology:
     stable_entities: list[dict[str, Any]] = []
     for (entity_type, signature), occurrences in sorted(grouped.items()):
         # 完全对称实体无法只靠几何区分，最后使用 Kernel 的稳定枚举位置分配 occurrence。
+        # 相同几何的对称实体仍依赖内核枚举决胜，因此此编号不承诺跨导入器或跨版本实体身份。
         occurrences.sort(key=lambda item: (
             -1 if item.get("source_index") is None else int(item["source_index"]),
             str(item.get("source_ref") or ""),

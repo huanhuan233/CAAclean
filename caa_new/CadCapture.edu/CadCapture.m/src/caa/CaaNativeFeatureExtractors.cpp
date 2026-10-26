@@ -1,3 +1,4 @@
+/* 将原生特征类型和受支持接口字段写入语义分面，并保留未解析字段状态。 */
 #include "caa/CaaNativeFeatureExtractors.h"
 #include "caa/CaaNativeBindingIndex.h"
 
@@ -28,6 +29,7 @@
 
 namespace cadcapture {
 
+/* 拥有一次接口引用的局部守卫，析构时 Release；Out 仅供尚未持有接口时接收返回值。 */
 template <class T>
 class CaaInterfaceGuard
 {
@@ -44,6 +46,7 @@ private:
   T* _ptr;
 };
 
+/* 拥有 CAA 返回的字符串，使用 CATFreeString 释放，避免与普通字符数组混用。 */
 class CaaBstrGuard
 {
 public:
@@ -58,6 +61,7 @@ private:
   CATBSTR _value;
 };
 
+/* 转义 JSON 字符串内容；调用方负责外层引号，UTF-8 非控制字节原样保留。 */
 static std::string JsonEscape(const std::string& value)
 {
   std::ostringstream out;
@@ -86,6 +90,7 @@ static std::string JsonEscape(const std::string& value)
   return out.str();
 }
 
+/* 按 BSTR 显式长度转为 UTF-8，转换失败或空输入返回空串。 */
 static std::string BstrToUtf8(const CATBSTR value)
 {
   if (!value) return "";
@@ -99,6 +104,7 @@ static std::string BstrToUtf8(const CATBSTR value)
   return std::string(&buffer[0], static_cast<size_t>(byte_length));
 }
 
+/* 仅将已知启动类型映射到分类族；命中分类不等于对应参数接口已经可用。 */
 static const char* CanonicalFromStartupType(const std::string& startup_type)
 {
   if (startup_type == "Hole") return "hole";
@@ -130,16 +136,19 @@ static const char* CanonicalFromStartupType(const std::string& startup_type)
   return "";
 }
 
+/* 读取 CATIALength 原始数值，由载荷调用方按毫米字段保存；此处不执行单位换算。 */
 static bool ReadLengthValue(CATIALength* length, double& value)
 {
   return length && SUCCEEDED(length->get_Value(value));
 }
 
+/* 读取角度接口原值；单位验证与归一化由各载荷分支单独处理。 */
 static bool ReadAngleValue(CATIAAngle* angle, double& value)
 {
   return angle && SUCCEEDED(angle->get_Value(value));
 }
 
+/* 只接受明确支持的数值 Variant 类型，其他类型返回失败且不进行字符串解析。 */
 static bool VariantToDouble(const CATVariant& value, double& output)
 {
   if (value.vt == VT_R8) { output = value.dblVal; return true; }
@@ -149,6 +158,7 @@ static bool VariantToDouble(const CATVariant& value, double& output)
   return false;
 }
 
+/* 读取调用方创建的三个 Variant 元素；访问成功后对称解锁，不负责销毁数组。 */
 static bool ReadSafeArrayVector3(CATSafeArrayVariant* array, double output[3])
 {
   CATVariant* values = 0;
@@ -165,6 +175,7 @@ static bool ReadSafeArrayVector3(CATSafeArrayVariant* array, double output[3])
   return valid;
 }
 
+/* 为孔原点或方向创建临时数组，接口异常与正常返回路径均释放数组。 */
 static bool ReadHoleVector(CATIAHole* hole, bool origin, double output[3])
 {
   if (!hole)
@@ -187,6 +198,7 @@ static bool ReadHoleVector(CATIAHole* hole, bool origin, double output[3])
   return valid;
 }
 
+/* 读取拉伸方向并释放临时数组；结果是原生方向分量，此处不做归一化。 */
 static bool ReadPrismDirection(CATIAPrism* prism, double output[3])
 {
   if (!prism)
@@ -209,6 +221,7 @@ static bool ReadPrismDirection(CATIAPrism* prism, double output[3])
   return valid;
 }
 
+/* 保留孔类型的已知性，未识别枚举交由载荷另存原始整数。 */
 static std::string HoleTypeName(CatHoleType type, bool& known)
 {
   known = true;
@@ -221,6 +234,7 @@ static std::string HoleTypeName(CatHoleType type, bool& known)
   return "unknown";
 }
 
+/* 翻译已支持的终止方式；未知枚举保持 unknown，不猜测为定长限制。 */
 static std::string LimitModeName(CatLimitMode mode, bool& known)
 {
   known = true;
@@ -234,6 +248,7 @@ static std::string LimitModeName(CatLimitMode mode, bool& known)
   return "unknown";
 }
 
+/* 区分垂直草图与非垂直方向，并显式返回枚举是否已识别。 */
 static std::string PrismDirectionTypeName(CatPrismExtrusionDirection type, bool& known)
 {
   known = true;
@@ -243,6 +258,7 @@ static std::string PrismDirectionTypeName(CatPrismExtrusionDirection type, bool&
   return "unknown";
 }
 
+/* 翻译正向与反向枚举，未识别值不默认视为正向。 */
 static std::string PrismOrientationName(CatPrismOrientation orientation, bool& known)
 {
   known = true;
@@ -252,6 +268,7 @@ static std::string PrismOrientationName(CatPrismOrientation orientation, bool& k
   return "unknown";
 }
 
+/* 不可用数值输出 JSON null，防止初始化零值被当作测量结果。 */
 static std::string OptionalNumberJson(bool available, double value)
 {
   std::ostringstream out;
@@ -262,6 +279,7 @@ static std::string OptionalNumberJson(bool available, double value)
   return out.str();
 }
 
+/* 以可用标志区分缺失字符串与接口成功返回的空字符串。 */
 static std::string OptionalStringJson(bool available, const std::string& value)
 {
   if (!available)
@@ -269,6 +287,8 @@ static std::string OptionalStringJson(bool available, const std::string& value)
   return "\"" + JsonEscape(value) + "\"";
 }
 
+/* 定长模式读取毫米尺寸；其他已知模式仅保存方式并标记限制对象尚未映射到 IR。 */
+/* true 也可能对应未知枚举或无尺寸模式，调用方须保留各输出状态。 */
 static bool ReadLimit(CATIALimit* limit,
                       std::string& mode,
                       int& mode_raw,
@@ -310,6 +330,7 @@ static bool ReadLimit(CATIALimit* limit,
   return true;
 }
 
+/* 按三个分量序列化向量，坐标或方向的含义由外层字段名决定。 */
 static std::string VectorJson(const double value[3])
 {
   std::ostringstream out;
@@ -317,6 +338,7 @@ static std::string VectorJson(const double value[3])
   return out.str();
 }
 
+/* 以孔深度或拉伸尺寸两种字段结构写出限制信息，缺值通过 null 和状态表达。 */
 static std::string LimitJson(const std::string& mode,
                              int mode_raw,
                              bool dimension_available,
@@ -343,6 +365,7 @@ static std::string LimitJson(const std::string& mode,
 
 // R21 CATIAReference exposes a display reference, not a stable object identity.
 // Keep that distinction in the payload until topology evidence resolves it.
+/* 按一基下标读取显示引用；输出 object_id 始终为空，名称不能充当稳定对象身份。 */
 static std::string ReferenceDisplaysJson(CATIAReferences* references, std::string& status)
 {
   status = "unavailable";
@@ -380,6 +403,7 @@ static std::string ReferenceDisplaysJson(CATIAReferences* references, std::strin
   return out.str();
 }
 
+/* 只有常半径接口及半径可读才生成载荷；传播方式和边引用等可选字段各自保留状态。 */
 static bool TryBuildFilletPayload(CATISpecObject* spec,
                                   CaaCapabilityBroker& broker,
                                   ReconstructionPackage& package,
@@ -428,6 +452,7 @@ static bool TryBuildFilletPayload(CATISpecObject* spec,
   return true;
 }
 
+/* 读取双长度或长度角度倒角；角度仅在 ConvertToMKS 成功后转为度，否则保留原值和单位未验证状态。 */
 static bool TryBuildChamferPayload(CATISpecObject* spec,
                                    CaaCapabilityBroker& broker,
                                    ReconstructionPackage& package,
@@ -512,6 +537,8 @@ static bool TryBuildChamferPayload(CATISpecObject* spec,
   return true;
 }
 
+/* 读取孔类型、几何位置、限制及适用的孔头和螺纹参数；必需读取失败时放弃本次类型化载荷。 */
+/* 孔头 angle_deg 当前直接保存 CATIAAngle 原值，状态仅为 typed_caa_angle_value，此处分支未做单位归一化。 */
 static bool TryBuildHolePayload(CATISpecObject* spec,
                                 CaaCapabilityBroker& broker,
                                 ReconstructionPackage& package,
@@ -703,6 +730,7 @@ static bool TryBuildHolePayload(CATISpecObject* spec,
   return true;
 }
 
+/* 先验证 Pad/Pocket 接口，再读取共用 Prism 参数；非定长限制对象保持未解析状态。 */
 static bool TryBuildPrismPayload(CATISpecObject* spec,
                                  CaaCapabilityBroker& broker,
                                  ReconstructionPackage& package,
@@ -824,6 +852,7 @@ static bool ExtractScoped(CaptureIdRegistry& ids,
   size_t i;
   long type_only_count = 0;
   long generic_count = 0;
+  /* 以已有分面的主体 ID 去重；即使已有分面仅为类型分类，也不会在本轮重复解码。 */
   std::set<std::string> completed_subjects;
   for (i = 0; i < package.semantic_facets.size(); ++i)
   {
@@ -891,6 +920,7 @@ static bool ExtractScoped(CaptureIdRegistry& ids,
         facet.payload_extraction_status = "available";
         facet.payload_json_property = payload_json;
       }
+  /* 计数覆盖所有已知分类，包括已升级为 typed 的分面，不是严格的 type_only 数量。 */
       ++type_only_count;
     }
     else

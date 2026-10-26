@@ -1,3 +1,4 @@
+# 将规范数据、原始 YAML 和来源文件名封装保存，并验证两种表达的内容一致。
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,10 +13,12 @@ from ruamel.yaml.error import YAMLError
 DOCUMENT_FORMAT = "component_spec_document_v1"
 
 
+# 表示规范文档结构或 YAML 与结构化数据的一致性校验失败。
 class ComponentSpecDocumentError(ValueError):
     """Raised when a ComponentSpec YAML document cannot be safely persisted."""
 
 
+# 同时携带结构化内容、原始 YAML、来源文件名和是否采用新封装的标记。
 @dataclass(frozen=True)
 class ComponentSpecDocument:
     data: dict[str, Any]
@@ -24,6 +27,7 @@ class ComponentSpecDocument:
     is_envelope: bool
 
 
+# 识别版本封装；旧裸字典直接作为数据读取，新封装必须含映射类型 data。
 def unpack_component_spec_document(stored: dict[str, Any]) -> ComponentSpecDocument:
     if stored.get("__format__") != DOCUMENT_FORMAT:
         return ComponentSpecDocument(
@@ -45,6 +49,7 @@ def unpack_component_spec_document(stored: dict[str, Any]) -> ComponentSpecDocum
     )
 
 
+# 将数据与原始文本绑定在版本化封装中，便于后续保留导入文件格式。
 def pack_component_spec_document(
     data: dict[str, Any],
     yaml_text: str,
@@ -58,6 +63,7 @@ def pack_component_spec_document(
     }
 
 
+# 递归转为 JSON 可存储值，日期转 ISO 文本，保留布尔与数值类型区别。
 def _json_compatible(value: Any) -> Any:
     if isinstance(value, date):
         return value.isoformat()
@@ -76,7 +82,9 @@ def _json_compatible(value: Any) -> Any:
     return value
 
 
+# 递归比较结构与值；允许整数和浮点等值，但禁止布尔值冒充数字。
 def _strictly_equivalent(left: Any, right: Any) -> bool:
+    # Python 中 True == 1，但规范文档必须区分布尔与数值，避免保存时悄悄改语义。
     if isinstance(left, bool) or isinstance(right, bool):
         return isinstance(left, bool) and isinstance(right, bool) and left == right
     if isinstance(left, Real) and isinstance(right, Real):
@@ -94,6 +102,7 @@ def _strictly_equivalent(left: Any, right: Any) -> bool:
     return type(left) is type(right) and left == right
 
 
+# 安全解析 YAML、给出错误行列，并拒绝与提交数据不一致的文本。
 def validate_component_spec_yaml(yaml_text: str, expected_data: dict[str, Any]) -> dict[str, Any]:
     parser = YAML(typ="safe")
     try:

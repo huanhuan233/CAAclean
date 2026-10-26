@@ -1,3 +1,6 @@
+# 薄壁局部测量回归探针：覆盖部分重叠、带孔面、空气夹层和无投影重叠的反例。
+# 交换输入面顺序，检查面配对不因枚举顺序改变有效的局部材料证据。
+
 """B-Rep cases with partial overlap and centroids outside trimmed faces."""
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import Part
 from parse_step import thin_wall_pair_evidence
 
 
+# 按指定高度和法向方向选择水平平面；找不到时直接报错，避免测试误选其他面。
 def horizontal_face(shape, z, direction):
     for face in shape.Faces:
         if type(face.Surface).__name__ != "Plane" or abs(face.CenterOfMass.z-z) > 1e-6:
@@ -23,6 +27,7 @@ def horizontal_face(shape, z, direction):
     raise ValueError("horizontal face unavailable")
 
 
+# 构造已知台阶/带孔/空隙实体，调用薄壁证据函数，返回各案例的配对与预算状态。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     v = FreeCAD.Vector

@@ -1,9 +1,11 @@
-﻿#include "model/GeometryStatusProjector.h"
+﻿// 按证据归属汇总几何状态并更新对象的几何状态属性。
+#include "model/GeometryStatusProjector.h"
 #include <map>
 
 namespace cadcapture {
 namespace {
 
+// 按主体累计拓扑、精确几何、网格及失败证据，供状态优先级规则统一判断。
 struct GeometryEvidence
 {
   bool topology;

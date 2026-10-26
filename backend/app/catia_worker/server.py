@@ -1,3 +1,4 @@
+# 独立 CATIA Worker HTTP 服务：管理本机采集队列、阶段日志和产物下载，不直接写业务数据库。
 """可独立部署在 Windows CATIA 主机上的轻量 Worker HTTP 服务。"""
 
 from __future__ import annotations
@@ -93,6 +94,7 @@ Processor = Callable[[WorkerJob, Path, CatiaWorkerServerSettings], Awaitable[Non
 class WorkerService:
     """用途：管理串行队列、任务状态文件和本任务创建的外部进程。"""
 
+    # 建立工作根目录、任务索引和并发信号量，支持注入处理器。
     def __init__(self, settings: CatiaWorkerServerSettings, processor: Processor | None = None):
         # 用途：任务目录必须在启动时固定为绝对路径；CAA 子进程会切换工作目录，不能再次解释相对路径。
         settings.work_dir = (Path.cwd() / settings.work_dir).resolve()
@@ -181,6 +183,7 @@ class WorkerService:
 class WorkerExecutionError(RuntimeError):
     """用途：保留 CAA/导出阶段错误，不向 HTTP 层暴露完整命令和敏感路径。"""
 
+    # 记录可供任务响应返回的阶段错误信息。
     def __init__(self, code: str, stage: str, message: str):
         super().__init__(message)
         self.code = code
@@ -201,7 +204,7 @@ def _set_stage(service_job: WorkerJob, settings: CatiaWorkerServerSettings, stag
     temporary.replace(job_root / "job.json")
 
 
-# 用途：调用仓库已有 CAA Batch 与 Automation 导出器，不复制任何 CATIA 解析逻辑。
+# 解析单文件或安全展开 ZIP，再选取入口 CATPart/CATProduct；此函数本身不执行采集。
 def _resolve_job_source(job_root: Path) -> Path:
     if (job_root / "source.zip").is_file():
         bundle_root = job_root / "source-bundle"
@@ -240,6 +243,7 @@ def _resolve_job_source(job_root: Path) -> Path:
     raise WorkerExecutionError("catia_source_missing", "queued_caa", "CATIA 源文件不存在")
 
 
+# 拒绝绝对路径和父目录穿越，按约定去除压缩包共同顶层目录。
 def _zip_entry_relative_path(entry_path: PurePosixPath, common_root: str | None) -> Path:
     if entry_path.is_absolute() or any(part in {"", ".", ".."} for part in entry_path.parts):
         raise WorkerExecutionError("catia_source_bundle_invalid", "queued_caa", "CATProduct ZIP 包含越界路径")
@@ -249,6 +253,7 @@ def _zip_entry_relative_path(entry_path: PurePosixPath, common_root: str | None)
     return Path(*parts)
 
 
+# 文件名、被引用情况和目录深度仅用于入口排序，不构成真实装配根的验证结果。
 def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path:
     """选择 ZIP 中的最外层 Product；子 CATProduct 由 CAA 的产品树递归读取。"""
     archive_stem = "".join(character for character in archive_path.stem.casefold() if character.isalnum())
@@ -272,6 +277,7 @@ def _select_entry_catproduct(candidates: list[Path], archive_path: Path) -> Path
     )
 
 
+# 扫描文件字节中的产品名称引用，为入口选择提供辅助线索。
 def _find_referenced_catproducts(candidates: list[Path]) -> set[Path]:
     referenced: set[Path] = set()
     names = {path.name.casefold(): path.resolve() for path in candidates}
@@ -296,11 +302,13 @@ def _find_referenced_catproducts(candidates: list[Path]) -> set[Path]:
     return referenced
 
 
+# 使用约定名称关键词辅助排序，不能单独证明该产品是装配根。
 def _looks_like_root_product(path: Path) -> bool:
     normalized = path.stem.casefold()
     return any(token in normalized for token in ("root", "assembly", "product", "总装", "装配"))
 
 
+# 分阶段执行原生采集及可选 STEP 导出，在暂存目录校验产物后发布。
 async def _process_job(job: WorkerJob, job_root: Path, settings: CatiaWorkerServerSettings) -> None:
     source = _resolve_job_source(job_root)
     staging = job_root / "staging"
@@ -455,6 +463,7 @@ def create_app(
     worker_settings = settings or CatiaWorkerServerSettings()
     service = WorkerService(worker_settings, processor)
 
+    # 服务关闭时取消并等待尚未结束的任务，避免遗留采集子进程。
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
@@ -472,6 +481,7 @@ def create_app(
         if worker_settings.token and authorization != f"Bearer {worker_settings.token}":
             raise HTTPException(401, detail={"code": "unauthorized", "message": "Worker 认证失败"})
 
+    # 报告运行文件与配置可用性；健康响应不等同真实 CATIA 样件或许可证验收。
     @app.get("/health", dependencies=[Depends(authorize)])
     async def health() -> dict:
         runner = CaaNewRunner(
@@ -500,6 +510,7 @@ def create_app(
             "queued_job_count": max(0, running - max(1, worker_settings.max_concurrency)),
         }
 
+    # 在 Worker 启用时受理上传，返回新任务的排队状态。
     @app.post("/v1/jobs", status_code=202, dependencies=[Depends(authorize)])
     async def create_job(source_file: UploadFile = File(...)) -> dict:
         if not worker_settings.enabled:
@@ -507,6 +518,7 @@ def create_app(
         job = await service.create(source_file)
         return {"worker_job_id": job.worker_job_id, "status": job.status, "stage": job.stage}
 
+    # 查询当前服务内存中的任务状态；不存在的任务返回 404。
     @app.get("/v1/jobs/{worker_job_id}", dependencies=[Depends(authorize)])
     async def get_job(worker_job_id: str) -> dict:
         job = service.jobs.get(worker_job_id)
@@ -514,14 +526,17 @@ def create_app(
             raise HTTPException(404, detail={"code": "job_not_found", "message": "Worker 任务不存在"})
         return job.as_dict()
 
+    # 通过受控产物响应返回指定任务清单。
     @app.get("/v1/jobs/{worker_job_id}/manifest", dependencies=[Depends(authorize)])
     async def get_manifest(worker_job_id: str):
         return _artifact_response(service, worker_job_id, "manifest.json")
 
+    # 下载清单允许的产物，不接受任意路径作为文件入口。
     @app.get("/v1/jobs/{worker_job_id}/artifacts/{name}", dependencies=[Depends(authorize)])
     async def get_artifact(worker_job_id: str, name: str):
         return _artifact_response(service, worker_job_id, name)
 
+    # 向尚未结束的任务发出取消信号，由执行通路完成资源清理。
     @app.post("/v1/jobs/{worker_job_id}/cancel", dependencies=[Depends(authorize)])
     async def cancel_job(worker_job_id: str) -> dict:
         job = service.jobs.get(worker_job_id)

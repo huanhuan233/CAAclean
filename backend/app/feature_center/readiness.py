@@ -1,3 +1,4 @@
+# 汇总复杂结构识别所需证据的可用性；探针结果仅说明前置条件，不创建识别特征。
 """复杂结构特征的 eAAG 就绪度探针，不生成生产识别结果。"""
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ def build_readiness_probes(
     faces_with_wires = sum(1 for face in faces if graph.wire_ids(face["entity_id"]))
     adjacent_pairs = sum(len(graph.face_neighbors(face["entity_id"])) for face in faces) // 2
 
+    # 已有邻接、环或曲率样本只构成部分前置证据，各识别器启用和正式特征创建标记仍为 False。
     definitions = [
         (
             "rib_web",

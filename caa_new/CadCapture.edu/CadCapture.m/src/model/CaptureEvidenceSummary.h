@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_MODEL_CAPTUREEVIDENCESUMMARY_H
+﻿// 声明按采集证据判断网格、精确几何、关联文档和身份可用性的汇总接口。
+#ifndef CADCAPTURE_MODEL_CAPTUREEVIDENCESUMMARY_H
 #define CADCAPTURE_MODEL_CAPTUREEVIDENCESUMMARY_H
 
 #include "model/ReconstructionPackage.h"

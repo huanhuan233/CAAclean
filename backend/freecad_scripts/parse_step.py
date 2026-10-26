@@ -1,3 +1,7 @@
+# STEP 导入与几何产物生成：一次导入后提取实体、面、边、顶点、环、壳、关系及显示网格。
+# ID 绑定 Revision 与解析路径；它们不是 CATIA 原生建模历史身份，也不保证跨重新导入编号不变。
+# 可按请求导出精确子形状供后续测量；主流程在 finally 中关闭 FreeCAD 文档。
+
 from __future__ import annotations
 
 import json
@@ -60,15 +64,18 @@ CURVE_2D_CLASS_TYPE_IDS = {
 DEGENERATE_LENGTH_TOLERANCE = 1e-12
 
 
+# 在固定命名空间中用 Revision 和对象路径生成可重复 ID；不同版本的同名对象不会共享身份。
 def stable_uuid(revision_id: str, *parts: object) -> str:
     key = ":".join(str(part) for part in (revision_id, *parts))
     return str(uuid.uuid5(NAMESPACE, key))
 
 
+# 将三维内核向量序列化为 XYZ 数值列表。
 def vec(value) -> list[float]:
     return [float(value.x), float(value.y), float(value.z)]
 
 
+# 兼容二维参数曲线和三维曲线坐标；对象无 z 分量时保留二维数据。
 def coordinates(value) -> list[float]:
     result = [float(value.x), float(value.y)]
     try:
@@ -78,6 +85,7 @@ def coordinates(value) -> list[float]:
     return result
 
 
+# 按优先顺序读取候选属性名，隔离版本差异或内核访问异常；缺失值返回 None。
 def safe_attr(value, *names):
     for name in names:
         try:
@@ -89,6 +97,7 @@ def safe_attr(value, *names):
     return None
 
 
+# 仅调用实际可用的方法，调用失败返回 None，由上层决定缺项如何记录。
 def safe_call(value, name, *args, **kwargs):
     candidate = safe_attr(value, name)
     if not callable(candidate):
@@ -99,10 +108,12 @@ def safe_call(value, name, *args, **kwargs):
         return None
 
 
+# 去掉未读取到的 None 字段，保留有效的零、False 和空集合。
 def compact(data: dict) -> dict:
     return {key: value for key, value in data.items() if value is not None}
 
 
+# 序列化内核包围盒；模型级范围随后通过 union_bbox 过滤无效或无限范围。
 def bbox(shape) -> dict:
     box = shape.BoundBox
     return {
@@ -111,6 +122,7 @@ def bbox(shape) -> dict:
     }
 
 
+# 读取可用的几何质心；质心不保证位于裁剪面内部，不能直接用作有效面内点。
 def center(shape):
     try:
         return vec(shape.CenterOfMass)
@@ -118,6 +130,7 @@ def center(shape):
         return None
 
 
+# 读取可用向量属性并转换为 XYZ，转换失败时保留缺失状态。
 def attr_vec(value, *names):
     candidate = safe_attr(value, *names)
     if candidate is not None:
@@ -128,6 +141,7 @@ def attr_vec(value, *names):
     return None
 
 
+# 读取候选数值属性并转换为浮点数，不为缺失半径等参数补默认值。
 def attr_float(value, *names):
     candidate = safe_attr(value, *names)
     if candidate is not None:
@@ -138,6 +152,7 @@ def attr_float(value, *names):
     return None
 
 
+# 兼容布尔属性及无参布尔方法，例如闭合性/周期性接口。
 def attr_bool(value, *names):
     candidate = safe_attr(value, *names)
     if candidate is None:
@@ -148,6 +163,7 @@ def attr_bool(value, *names):
         return None
 
 
+# 读取整数属性，如曲线次数；接口或类型转换失败时返回 None。
 def attr_int(value, *names):
     candidate = safe_attr(value, *names)
     if candidate is None:
@@ -158,6 +174,7 @@ def attr_int(value, *names):
         return None
 
 
+# 读取内核方法返回的数组，并逐项转换节点、权重或控制点等数据。
 def method_values(value, name, converter=None):
     values = safe_call(value, name)
     if values is None:
@@ -168,6 +185,7 @@ def method_values(value, name, converter=None):
         return None
 
 
+# 优先读取首末参数，再兼容 ParameterRange；结果是曲线参数，不默认解释成毫米长度。
 def parameter_range(value) -> list[float] | None:
     first = attr_float(value, "FirstParameter")
     last = attr_float(value, "LastParameter")
@@ -180,6 +198,7 @@ def parameter_range(value) -> list[float] | None:
     return [first, last]
 
 
+# 在给定数值误差下比较两个参数区间，任何一侧缺失时返回未知而不是相等。
 def ranges_match(left: list[float] | None, right: list[float] | None) -> bool | None:
     if left is None or right is None:
         return None
@@ -189,6 +208,7 @@ def ranges_match(left: list[float] | None, right: list[float] | None) -> bool | 
     )
 
 
+# 在指定曲线参数求值，失败返回 None，不用插值或包围盒替代真实点。
 def point_at(edge, parameter):
     if parameter is None:
         return None
@@ -201,6 +221,7 @@ def point_at(edge, parameter):
         return None
 
 
+# 由两点差得到单位方向；缺失输入或退化零长度时不输出方向。
 def normalized_direction(start, end):
     if start is None or end is None:
         return None
@@ -214,6 +235,7 @@ def normalized_direction(start, end):
         return None
 
 
+# 按明确内核曲线类型提取解析参数或样条定义；偏移曲线的基曲线展开限制为八层。
 def curve_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
     curve_type_id = safe_attr(curve, "TypeId")
     geometry: dict = {"curve_type_id": curve_type_id}
@@ -267,6 +289,7 @@ def curve_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
             )
         )
     elif geometry_type in {"bezier_curve", "bspline_curve"}:
+        # 控制点/权重/节点用于保存曲线定义，不能把控制多边形当真实几何轮廓显示。
         geometry.update(
             compact(
                 {
@@ -308,6 +331,7 @@ def curve_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
     return compact(geometry)
 
 
+# 在支撑曲线参数外补充真实 Edge 的端点与修剪范围，保留闭合及周期信息。
 def common_edge_geometry(edge, curve) -> dict:
     edge_range = parameter_range(edge)
     curve_range = parameter_range(curve)
@@ -327,6 +351,7 @@ def common_edge_geometry(edge, curve) -> dict:
     return geometry
 
 
+# 提供受限数量的显示采样点，采样失败返回 None；这些点不替代精确曲线定义。
 def sample_edge(edge, number: int = 9) -> list[list[float]] | None:
     points = safe_call(edge, "discretize", Number=number)
     if not points:
@@ -337,6 +362,7 @@ def sample_edge(edge, number: int = 9) -> list[list[float]] | None:
         return None
 
 
+# 提取曲面参数域中的二维曲线数据；其坐标不是模型世界坐标。
 def curve_2d_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
     curve_type_id = curve_2d_type_id(curve)
     geometry: dict = {"curve_type_id": curve_type_id}
@@ -425,6 +451,7 @@ def curve_2d_geometry(curve, geometry_type: str, depth: int = 0) -> dict:
     return compact(geometry)
 
 
+# 优先使用 TypeId，旧接口缺失时按 Part.Geom2d 的实际类映射标准类型。
 def curve_2d_type_id(curve):
     curve_type_id = safe_attr(curve, "TypeId")
     if curve_type_id is not None:
@@ -439,6 +466,7 @@ def curve_2d_type_id(curve):
     return None
 
 
+# 保存平移及旋转四元数，供二维曲线所依附曲面的定位使用。
 def placement_geometry(placement) -> dict | None:
     if placement is None:
         return None
@@ -454,6 +482,7 @@ def placement_geometry(placement) -> dict | None:
     return result or None
 
 
+# 枚举边在曲面参数域中的曲线及修剪区间，最多 64 项；单项读取异常留下诊断。
 def edge_pcurves(edge) -> list[dict]:
     result = []
     method = safe_attr(edge, "curveOnSurface")
@@ -486,6 +515,7 @@ def edge_pcurves(edge) -> list[dict]:
     return result
 
 
+# 读取支撑曲面的几何类别及解析参数；这些参数只能生成候选，不能单独证明孔或圆角。
 def face_geometry(face) -> tuple[str, dict]:
     surface = face.Surface
     name = surface.__class__.__name__.lower()
@@ -552,6 +582,8 @@ def face_analysis_geometry(face) -> dict:
     return result
 
 
+# 在同一已加载 Solid 中核验圆柱壁的有限轴向范围、角向覆盖和径向材料侧。
+# 中心轴材料区间通过实体求交获得，端部以紧邻材料判断，避免把远处隔板当成本孔孔底。
 def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
     """Evaluate a bounded cylinder and both sides of its material in the loaded Solid."""
     try:
@@ -590,6 +622,7 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
                 radial_votes.append("inner_wall" if outward else "outer_wall")
                 sampled += 1
         side = radial_votes[0] if radial_votes and len(set(radial_votes)) == 1 else "unknown"
+        # 材料侧票不一致时保留未知；角向采样只描述覆盖证据，不独立给出“孔”的最终分类。
         reference = axis.cross(FreeCAD.Vector(1, 0, 0) if abs(axis.x) < 0.9 else FreeCAD.Vector(0, 1, 0))
         reference.normalize()
         perpendicular = axis.cross(reference)
@@ -652,6 +685,8 @@ def cylinder_recognition_evidence(face, solid, geometry: dict) -> dict:
         return {"status": "evaluation_failed", "reason": str(exc)[:160]}
 
 
+# 在同一实体中筛选相向平面对，投影到真实裁剪范围并核验两点间连续材料。
+# 结果只是代表性局部厚度证据，未证明整个板件等厚，更未确认筋/腹板的结构角色。
 def thin_wall_pair_evidence(solid, faces, max_planes=128, max_pairs=1024):
     """Probe opposing trimmed planes in the already loaded Solid once per task."""
     planes = []
@@ -731,6 +766,7 @@ def thin_wall_pair_evidence(solid, faces, max_planes=128, max_pairs=1024):
                     "unverified_pair_count": unverified, "sample_limit_per_face": 64}
 
 
+# 读取真实边曲线；无三维曲线时区分退化边和读取失败，必要时保留参数曲线及显示采样。
 def edge_geometry(edge) -> tuple[str, dict]:
     try:
         curve = edge.Curve
@@ -771,6 +807,7 @@ def edge_geometry(edge) -> tuple[str, dict]:
     return geometry_type, compact(geometry)
 
 
+# 读取 FreeCAD 应用版本，与 OpenCascade 几何内核版本分开记录。
 def parser_version() -> str:
     version = getattr(FreeCAD, "Version", lambda: ["unknown"])()
     if isinstance(version, (list, tuple)):
@@ -784,19 +821,23 @@ def kernel_version() -> str:
     return str(value) if value is not None else "unknown"
 
 
+# 按形状哈希建立候选桶，再用 isSame 比较拓扑身份；哈希值不作为业务实体 ID。
 class TopologyIndex:
+    # 保留原始拓扑顺序并建立查找桶，用于共享边/顶点统一编号。
     def __init__(self, shapes):
         self.items = list(shapes)
         self.buckets: dict[int, list[tuple[int, object]]] = {}
         for index, shape in enumerate(self.items):
             self.buckets.setdefault(self._hash(shape), []).append((index, shape))
 
+    # 优先使用内核哈希；接口不可用时用 Python 对象标识作本次内存查找的回退。
     def _hash(self, shape) -> int:
         try:
             return int(shape.hashCode())
         except Exception:
             return id(shape)
 
+    # 先查同哈希桶，再全表核对真实身份；只在确实未找到时追加拓扑对象。
     def find(self, candidate):
         for index, shape in self.buckets.get(self._hash(candidate), []):
             try:
@@ -818,6 +859,7 @@ class TopologyIndex:
         return index, candidate
 
 
+# 优先使用 MeshPart 离散，失败后尝试面自身离散；两种方式均失败时返回空网格。
 def tessellate_face(face, deflection: float) -> tuple[list[list[float]], list[list[int]]]:
     try:
         mesh = MeshPart.meshFromShape(Shape=face, LinearDeflection=deflection, AngularDeflection=0.5, Relative=False)
@@ -834,6 +876,7 @@ def tessellate_face(face, deflection: float) -> tuple[list[list[float]], list[li
             return [], []
 
 
+# 排除无限基准面与无效面积，允许没有闭合 Solid 的有限曲面用于显示。
 def bounded_display_face(face) -> bool:
     """Exclude infinite STEP datum planes from surface-only display meshes."""
     bounds = bbox(face)
@@ -846,6 +889,7 @@ def bounded_display_face(face) -> bool:
     )
 
 
+# 建立统一实体记录的可选字段，再写入本对象数据；空值表示未读取，不代表数值零。
 def add_entity(entities: list[dict], **kwargs) -> dict:
     entity = {
         "source_ref": None,
@@ -869,6 +913,7 @@ def add_entity(entities: list[dict], **kwargs) -> dict:
     return entity
 
 
+# 用源、目标和关系类型生成版本内稳定关系 ID，保持实体自身身份与归属关系分离。
 def relation(relations: list[dict], revision_id: str, source_id: str, target_id: str, relation_type: str, metadata=None) -> None:
     relations.append(
         {
@@ -882,6 +927,8 @@ def relation(relations: list[dict], revision_id: str, source_id: str, target_id:
     )
 
 
+# 一次导入 STEP 并按各 Solid 建立拓扑、面网格及局部几何证据；可额外导出精确 B-Rep。
+# 返回产物供后端入库，当前此解析入口明确报告未保留完整装配层级，不冒充原生树。
 def parse(job: dict) -> dict:
     revision_id = job["revision_id"]
     source_path = Path(job["source_file_path"])
@@ -1322,6 +1369,7 @@ def parse(job: dict) -> dict:
         FreeCAD.closeDocument(doc.Name)
 
 
+# 命令行只接受一个作业 JSON 路径，调用解析并写回约定结果文件。
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: parse_step.py <job.json>", file=sys.stderr)

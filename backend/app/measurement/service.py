@@ -1,3 +1,4 @@
+# 协调批量重算及精确 B-Rep 交互查询；查询保留快照、参数、容差、方法和失败状态以便追溯。
 from __future__ import annotations
 
 import uuid
@@ -16,11 +17,14 @@ from app.measurement.repository import MeasurementRepository
 from app.measurement.schemas import ALGORITHM_VERSION
 
 
+# 协调持久化仓库、快照引用校验和 FreeCAD 子进程，统一返回可追溯的测量结果。
 class MeasurementService:
+    # 注入结果仓库和批量重算算法版本，交互查询另用独立版本标识。
     def __init__(self, repository: MeasurementRepository, algorithm_version: str = ALGORITHM_VERSION):
         self.repository = repository
         self.algorithm_version = algorithm_version
 
+    # 根据构建修订加载已发布快照，返回辅助几何来源及当前开放的操作名称。
     async def geometry_context(self, build_id: uuid.UUID, settings: Settings) -> dict:
         context = await self.repository.get_build_context(build_id)
         if context is None:
@@ -32,6 +36,7 @@ class MeasurementService:
                 "source": "auxiliary_brep", "asset_count": len(snapshot.assets),
                 "available_operations": ["detail", "distance", "angle", "section", "local_thickness"]}
 
+    # 校验请求和资产后执行精确查询；除详情外，将成功或内核失败响应均作为交互结果保存。
     async def query_geometry(self, build_id: uuid.UUID, request: dict[str, Any], settings: Settings) -> dict:
         operation = str(request.get("operation") or "")
         references = request.get("references") or []
@@ -56,6 +61,7 @@ class MeasurementService:
             if operation == "local_thickness":
                 if kinds != ["face"]:
                     raise ValueError("unsupported: thickness requires face")
+                # 局部厚度需要所属实体参与材料区间求交，不能仅凭两个显示面之间的距离判定。
                 solid_id = snapshot.assets[references[0]["entity_id"]].get("owning_solid_id")
                 if not solid_id:
                     raise GeometryReferenceError("geometry_unavailable: owning solid unknown")
@@ -80,6 +86,7 @@ class MeasurementService:
         except FreeCadParserError as exc:
             code = "timeout" if "timed out" in str(exc) else "failed"
             result = {"status": code, "values": None, "diagnostic": "FreeCAD query process unavailable"}
+        # 保留原始请求和快照来源；局部厚度结果的适用范围仍由内核返回字段表达，不提升为全局壁厚。
         result.update({"revision_id": str(revision.id), "geometry_snapshot_id": snapshot.snapshot_id,
                        "operation": operation, "references": references, "parameters": parameters,
                        "source": "auxiliary_brep", "tolerance_mm": tolerance,
@@ -106,6 +113,7 @@ class MeasurementService:
             result["result_id"] = str(fact_id)
         return result
 
+    # 读取首个零件的模型容差，读取失败时用配置下限，并夹在配置的最小和最大值之间。
     @staticmethod
     def _effective_tolerance(bundle_root: Path, settings: Settings) -> float:
         path = bundle_root / "parts.jsonl"
@@ -116,6 +124,7 @@ class MeasurementService:
             value = settings.geometry_tolerance_min_mm
         return max(settings.geometry_tolerance_min_mm, min(value, settings.geometry_tolerance_max_mm))
 
+    # 对修订全部实体重算批量事实，应用当前服务版本并清空旧编号后事务替换该版本结果。
     async def recompute_revision(self, revision_id: uuid.UUID) -> dict:
         entities = await self.repository.list_entity_facts(revision_id)
         facts = build_measurement_facts(entities)

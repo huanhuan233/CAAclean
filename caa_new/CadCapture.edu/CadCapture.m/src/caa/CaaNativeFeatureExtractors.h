@@ -1,3 +1,4 @@
+/* 声明按文档采集原生特征分类及可用类型化载荷的入口。 */
 #ifndef CADCAPTURE_CAA_CAANATIVEFEATUREEXTRACTORS_H
 #define CADCAPTURE_CAA_CAANATIVEFEATUREEXTRACTORS_H
 
@@ -8,6 +9,7 @@
 
 namespace cadcapture {
 
+/* 分类可仅达到 type_only；返回 true 不代表每个特征都已取得完整参数。 */
 class CaaNativeFeatureExtractors
 {
 public:

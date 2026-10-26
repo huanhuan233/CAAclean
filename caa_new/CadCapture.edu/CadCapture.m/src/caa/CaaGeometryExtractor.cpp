@@ -1,3 +1,4 @@
+/* 检查上游已采集的精确几何和网格证据并生成可用性诊断。 */
 #include "caa/CaaGeometryExtractor.h"
 #include "model/CaptureEvidenceSummary.h"
 

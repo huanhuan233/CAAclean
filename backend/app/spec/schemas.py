@@ -1,3 +1,4 @@
+# 定义配置映射、部件配置和规范字段目录；匹配容差与单位含义由配置和调用方约定。
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -5,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+# 描述图纸符号到规范字段的映射、允许测量类型、匹配容差和复核要求。
 class FieldMapping(BaseModel):
     symbol: str
     target_field: str
@@ -15,6 +17,7 @@ class FieldMapping(BaseModel):
     match_tolerance: float | None = None
 
 
+# 保存部件配置版本、适用类型、字段映射及未知符号的歧义候选。
 class ComponentProfile(BaseModel):
     profile_id: str
     version: str
@@ -25,6 +28,7 @@ class ComponentProfile(BaseModel):
     ambiguity_candidates: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
 
 
+# 描述规范字段语义、别名、单位、来源和默认复核要求。
 class FieldDefinition(BaseModel):
     name: str
     semantic: str

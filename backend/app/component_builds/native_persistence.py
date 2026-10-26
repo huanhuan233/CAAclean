@@ -1,3 +1,4 @@
+# 数据库发布事务同时替换证据与完整性标记；复材来源重新采集后会清空旧覆盖结果。
 """将 CAA 采集包作为单个数据库快照发布；格式规则只由 Bundle Reader 负责。"""
 
 from __future__ import annotations
@@ -67,6 +68,7 @@ async def publish_native_capture(repository: CadRepository, revision_id: UUID, b
     streams = reader.native_evidence_streams()
     if not has_tree and not has_properties and not streams:
         return {}
+    # 树、属性、证据和 complete 标记共用发布事务；任一步失败由事务保留旧快照。
     async with repository.native_publish_transaction():
         stored_count = None
         if has_tree:
@@ -83,6 +85,7 @@ async def publish_native_capture(repository: CadRepository, revision_id: UUID, b
             )
         # New native material, order or contour facts invalidate every derived
         # coverage result even when the final B-Rep hash remains stable.
+        # 材料、层序或轮廓变化都会使派生覆盖过期，即便最终 B-Rep 摘要没有变化。
         publish_streams = {**streams, **({"composite_coverage": []} if "composite_structure" in streams else {})}
         published_counts = await repository.replace_native_evidence(
             revision_id, publish_streams, replace_all=False,
@@ -188,6 +191,7 @@ async def publish_feature_evidence(
     errors = validate_bundle(bundle)
     if errors:
         raise ValueError("Feature Center bundle invalid: " + "; ".join(errors))
+    # 树、属性、证据和 complete 标记共用发布事务；任一步失败由事务保留旧快照。
     async with repository.native_publish_transaction():
         counts = await repository.replace_native_evidence(
             revision_id, feature_evidence_streams(bundle), replace_all=False,

@@ -1,3 +1,4 @@
+# 把逐面三角网格封装成 GLB，同时生成面到图元与特征到默认显示面的映射。
 """Face 级轻量化 GLB 与双向映射生成。"""
 
 from __future__ import annotations
@@ -164,6 +165,7 @@ def build_lightweight_mesh(
         face_mesh = face_entries.get(face_id)
         if not face_mesh:
             raise ValueError(f"FEATURE_MESH_FACE_MISSING:{feature_id}:{face_id}")
+        # 参考/支撑面仍需有真实网格，但不加入默认特征高亮与反向选择的显示范围。
         if not is_default_render_link(link):
             continue
         entry = feature_entries.setdefault(feature_id, {"face_ids": [], "mesh_primitive_ids": []})

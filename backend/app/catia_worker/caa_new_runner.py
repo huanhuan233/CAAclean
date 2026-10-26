@@ -1,3 +1,4 @@
+# 封装本机 CAA 采集执行与产物校验，保留采集状态和诊断而非仅判断进程退出码。
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,7 @@ from typing import Any
 from app.core.config import REPOSITORY_ROOT
 
 
+# 一次采集的文件路径、状态和能力摘要；参数读取是否成功仍需检查具体字段。
 @dataclass(frozen=True)
 class CaaNewCaptureResult:
     capture_status: str
@@ -29,16 +31,20 @@ class CaaNewCaptureResult:
     incomplete_brep_body_count: int | None = None
 
 
+# 携带采集阶段和错误码，供 Worker 形成可解释失败记录。
 class CaaNewRunnerError(RuntimeError):
+    # 保存错误阶段、代码及可读信息。
     def __init__(self, code: str, stage: str, message: str):
         super().__init__(message)
         self.code = code
         self.stage = stage
 
 
+# 负责匹配目标位数、执行采集桥接脚本并整理采集包。
 class CaaNewRunner:
     # 平台、目标位数和脚本是一组契约；不能因本机缺少 x64 就静默切回 x86。
     _TARGETS = {"intel_a": (32, "run_r21_x86.bat", 0x14C), "win_b64": (64, "run_r21_x64.bat", 0x8664)}
+    # 确定工程目录、运行脚本和目标平台，初始化不代表许可证已可用。
     def __init__(
         self,
         *,
@@ -57,6 +63,7 @@ class CaaNewRunner:
         self.rade_root = rade_root
         self.prereq_root = prereq_root
 
+    # 仅检查目标运行文件是否满足本机条件，不执行真实模型采集。
     def parser_available(self) -> bool:
         try:
             self._validate_target()
@@ -64,6 +71,7 @@ class CaaNewRunner:
         except CaaNewRunnerError:
             return False
 
+    # 核对目标平台及可执行文件 PE 机器类型，避免混用 32 位与 64 位产物。
     def _validate_target(self) -> None:
         target = self._TARGETS.get(self.platform)
         if target is None or target[0] != self.bitness:
@@ -89,6 +97,7 @@ class CaaNewRunner:
         except (OSError, ValueError, struct.error) as exc:
             raise CaaNewRunnerError("caa_new_binary_incompatible", "running_caa", f"CadCapture.exe 不是所配置的 {self.bitness} 位程序") from exc
 
+    # 校验源文件后执行桥接命令，保存日志并读取实际采集清单。
     async def capture(self, source_path: Path, output_dir: Path, *, timeout_seconds: int) -> CaaNewCaptureResult:
         self._validate_target()
         if not source_path.is_file():
@@ -121,6 +130,7 @@ class CaaNewRunner:
             raise CaaNewRunnerError("caa_parse_failed", "running_caa", f"CAA_NEW 退出码 {return_code}")
         return self.inspect(output_dir)
 
+    # 检查清单 schema 和必需产物，汇总已有状态及拓扑数量。
     def inspect(self, output_dir: Path) -> CaaNewCaptureResult:
         manifest_path = output_dir / "manifest.json"
         if not manifest_path.is_file():
@@ -155,6 +165,7 @@ class CaaNewRunner:
             incomplete_brep_body_count=int(manifest["incomplete_brep_body_count"]) if "incomplete_brep_body_count" in manifest else None,
         )
 
+    # 打包当前采集目录并记录文件大小和哈希，供接收端验证完整性。
     @staticmethod
     def archive_native_bundle(native_dir: Path, archive_path: Path) -> list[dict[str, Any]]:
         archive_path.unlink(missing_ok=True)
@@ -168,6 +179,7 @@ class CaaNewRunner:
             artifacts.append({"name": path.relative_to(native_dir).as_posix(), "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
         return artifacts
 
+    # 异步等待采集命令，超时或取消时清理本次进程树。
     @staticmethod
     async def _run(command: list[str], timeout_seconds: int, environment: dict[str, str]) -> tuple[int, str]:
         process = await asyncio.create_subprocess_exec(
@@ -184,6 +196,7 @@ class CaaNewRunner:
             raise
         return int(process.returncode or 0), output.decode("utf-8", errors="replace")
 
+    # 兼容缺失可选文件和非字典 JSON，保留载荷而不补造业务字段。
     @staticmethod
     def _read_optional_json(path: Path) -> dict[str, Any]:
         if not path.is_file() or path.stat().st_size == 0:
@@ -192,6 +205,7 @@ class CaaNewRunner:
         return value if isinstance(value, dict) else {"items": value}
 
 
+# 终止本次启动的进程树并等待退出，避免后台 CATIA 任务继续占用资源。
 async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return

@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_PLATFORM_WINDOWSPATHCODEC_H
+﻿// 声明内部 UTF-8 路径与 Windows 宽字符文件操作的转换边界。
+#ifndef CADCAPTURE_PLATFORM_WINDOWSPATHCODEC_H
 #define CADCAPTURE_PLATFORM_WINDOWSPATHCODEC_H
 
 #include <string>
@@ -23,9 +24,13 @@ public:
                    std::vector<unsigned long>& attributes);
   // 中文：以下目录事务操作均在 UTF-16 路径上执行，保留 Win32 错误码。
   static bool CreateUtf8Directory(const std::string& utf8);
+  // 移动或重命名路径，目标存在时由 Win32 返回失败。
   static bool Move(const std::string& source, const std::string& target);
+  // 删除单个文件，调用方应先完成目标所有权检查。
   static bool DeleteUtf8File(const std::string& utf8);
+  // 移除目录入口，不递归清空其内容。
   static bool RemoveUtf8Directory(const std::string& utf8);
+  // 将目标设为普通属性，供已核验的事务清理使用。
   static bool SetNormalAttributes(const std::string& utf8);
 };
 

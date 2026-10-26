@@ -1,4 +1,5 @@
-﻿#include "caa/CaaSemanticPropertyExtractor.h"
+﻿// 按独立接口通道采集知识参数、复材材料与层序引用及坐标系属性事实。
+#include "caa/CaaSemanticPropertyExtractor.h"
 #include "caa/CaaParameterReader.h"
 #include "caa/CaaCompositeGeometry.h"
 #include "caa/CaaNativeAttributeReader.h"
@@ -31,6 +32,7 @@ template<class T> bool Acquire(CATBaseUnknown* object, const IID& iid, CaaInterf
   return object && SUCCEEDED(object->QueryInterface(iid, reinterpret_cast<void**>(&guard.Out()))) && guard.Get();
 }
 
+// 将当前主体、ID 分配器和绑定索引组合为局部写入上下文，不持有原生对象所有权。
 class Capture
 {
 public:
@@ -39,11 +41,13 @@ public:
           CaaNativeBindingIndex& bindings)
     : _subject(subject), _ids(ids), _package(package), _bindings(bindings) {}
 
+  // 统一追加主体属性，默认归入 composites 分组，字段状态由调用方提供。
   void Put(const std::string& key, PropertyFact fact, const std::string& group = "composites")
   {
     evidence::Append(_ids, _package, _subject, group, key, key, fact);
   }
 
+  // 分别保存引用显示名与已捕获对象 ID；缺失对象、未采集身份使用不同失败状态。
   void Reference(const std::string& key, const CATISpecObject_var& reference, const std::string& api)
   {
     if (reference == NULL_var) { Put(key, evidence::Failure("unavailable", api)); return; }
@@ -53,6 +57,7 @@ public:
     Put(key + "_object_id", object_id.empty() ? evidence::Failure("not_captured", api) : evidence::Text(object_id, api));
   }
 
+  // 读取 CKE 参数并复用参数读取器的单位和状态；单个 getter 失败不会伪造数值。
   template<class T> void Parameter(T* source, HRESULT (T::*getter)(CATICkeParm_var&),
                                     const char* key, const char* api)
   {
@@ -67,6 +72,7 @@ public:
     Put(key, fact);
   }
 
+  // 逐字段隔离字符串 getter 的失败和异常，成功文本转为 UTF-8。
   template<class T> void String(T* source, HRESULT (T::*getter)(CATUnicodeString&),
                                  const char* key, const char* api)
   {
@@ -80,6 +86,7 @@ public:
     Put(key, fact);
   }
 
+  // 原点以毫米保存，三个方向向量以无量纲分量保存，不在此应用装配实例变换。
   void Axis(const CATMathAxis& axis, const std::string& prefix, const std::string& api)
   {
     CATMathPoint origin;
@@ -97,6 +104,7 @@ public:
     }
   }
 
+  // 保存明确给定单位的数值事实；此函数不负责单位转换。
   void Numeric(const std::string& key, double value, const std::string& unit, const std::string& api)
   {
     PropertyFact fact = evidence::Text(evidence::Number(value), api);
@@ -105,6 +113,7 @@ public:
     Put(key, fact);
   }
 
+  // 沿材料缓存读取厚度、方向限制和密度等参数，再尝试读取关联材料价格。
   void Material(CATICciMaterialCache* material)
   {
     String(material, &CATICciMaterialCache::GetName, "composite_material_name", "CATICciMaterialCache.GetName");
@@ -158,6 +167,7 @@ public:
     Put("composite_cost_unit_status", evidence::Text("unknown_currency_and_mass_unit", api));
   }
 
+  // 读取物理实体的铺层方向、材料缓存和 rosette；各引用仍以原生身份解析。
   void Physical(CATICciPhysicalEntity* physical)
   {
     Parameter(physical, &CATICciPhysicalEntity::GetDirection, "composite_orientation", "CATICciPhysicalEntity.GetDirection");
@@ -184,6 +194,7 @@ public:
     catch (...) { Put("composite_rosette", evidence::Failure("exception", "CATICciPhysicalEntity.GetRosette")); }
   }
 
+  // 保存参考曲面及铺放方向，曲面为空时仍保留引用不可用状态。
   template<class T> void Shell(T* object, const char* api)
   {
     try
@@ -200,6 +211,7 @@ public:
     catch (...) { Put("composite_reference_surface", evidence::Failure("exception", api)); }
   }
 
+  // 保留参数限定名、末级名、类型和读取状态，兼容现有属性键的消费方式。
   void Knowledge(CATICkeParm* parameter)
   {
     PropertyFact value = ReadCaaParameter(parameter);
@@ -218,6 +230,7 @@ public:
     Put(value.read_status == "available" ? "catia_parameter_value_text" : "catia_parameter_value_status", value, "knowledgeware");
   }
 
+  // 按一基原生顺序读取方向参数及 RGB 配色，单项失败保留其位置对应的状态。
   void Palette(CATICciCompositesParameters* parameters)
   {
     int count = 0;
@@ -289,6 +302,7 @@ public:
     else Put("composite_native_ordered_child_count", evidence::Failure(fact.read_status, api));
   }
 
+  // 沿裁片组读取真实成员顺序；未捕获的引用写 null，并将整体结果标记 partial。
   void CutPieces(CATICciPly* ply)
   {
     const char* api = "CATICciPly.GetCutPiecesGroup/CATICciCutPiecesGroup.GetCutPieces";

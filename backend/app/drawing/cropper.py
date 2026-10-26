@@ -1,3 +1,4 @@
+# 按原图像素区域生成带留白的 PNG 裁剪图，并记录尺寸和摘要供证据追溯。
 from __future__ import annotations
 
 import uuid
@@ -18,6 +19,7 @@ PADDING_BY_REGION_TYPE = {
 }
 
 
+# 保存裁剪文件及其原始区域、扩边坐标、像素尺寸和内容摘要。
 @dataclass
 class CropResult:
     region: LayoutRegion
@@ -30,6 +32,7 @@ class CropResult:
     mime_type: str = "image/png"
 
 
+# 校验原图区域后按类型扩边裁剪；图像读写失败统一转换为 crop_failed。
 def crop_regions(
     image_path: Path,
     regions: list[LayoutRegion],
@@ -49,6 +52,7 @@ def crop_regions(
             for region in regions:
                 validate_bbox_pixels(region.bbox_pixels, width=width, height=height)
                 counters[region.region_type] = counters.get(region.region_type, 0) + 1
+                # 扩边比例作用于该区域自身的宽高；证据同时保留原框和扩边框。
                 padded = region.padded_bbox(width=width, height=height, padding_ratio=padding.get(region.region_type, 0.03))
                 cropped = image.crop(tuple(padded))
                 file_name = f"{region.region_type}-{counters[region.region_type]}.png"

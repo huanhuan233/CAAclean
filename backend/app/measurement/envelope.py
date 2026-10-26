@@ -1,3 +1,4 @@
+# 生成选定实体包围盒尺寸和主轴方向尺寸，保留解析半径与包围盒投影两类估计方法。
 from __future__ import annotations
 
 import math
@@ -6,6 +7,7 @@ from app.measurement.axis_detector import dot, normalize, projected_length
 from app.measurement.schemas import EntityFact, MeasurementFact
 
 
+# 以第一个有包围盒的实体为尺寸作用域，并按主轴候选补充轴向跨度和径向直径。
 def build_envelope_measurements(entities: list[EntityFact], axis_feature) -> list[MeasurementFact]:
     scope = next((entity for entity in entities if entity.entity_type == "solid" and entity.bounding_box), None)
     if scope is None:
@@ -48,6 +50,7 @@ def build_envelope_measurements(entities: list[EntityFact], axis_feature) -> lis
     return measurements
 
 
+# 取与主轴近似平行的圆柱/圆的最大直径；未检查同轴或外壁，因此不能证明全模型最大外径。
 def _analytic_maximum_diameter(entities: list[EntityFact], axis: list[float]) -> tuple[float, list] | None:
     main_axis = normalize(axis)
     if main_axis is None:
@@ -73,6 +76,7 @@ def _analytic_maximum_diameter(entities: list[EntityFact], axis: list[float]) ->
     return diameter, source_ids
 
 
+# 取包围盒角点到给定轴线的最大径距乘二，属于包络估计而非实体表面的精确直径。
 def _maximum_radial_diameter(bbox: dict, axis: list[float], origin: list[float]) -> float:
     mins = bbox["min"]
     maxs = bbox["max"]
@@ -91,6 +95,7 @@ def _maximum_radial_diameter(bbox: dict, axis: list[float], origin: list[float])
     return max_radius * 2.0
 
 
+# 封装毫米尺寸、来源编号与方法名，以统一置信度生成可持久化事实。
 def _measurement(scope: EntityFact, measurement_type: str, value: float, method: str, source_ids) -> MeasurementFact:
     normalized = round(float(value), 9)
     return MeasurementFact(

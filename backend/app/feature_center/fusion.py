@@ -1,3 +1,4 @@
+# 将原生孔设计事实与导出 STEP 的几何验证并列保留；融合关联不补造原生建模历史。
 """Native CAA 与 B-Rep Hole Observation 的确定性融合。"""
 
 from __future__ import annotations
@@ -102,6 +103,7 @@ def fuse_native_holes(
             match = verifier.verify(feature, graph)
         native_observation_id = stable_id("OBS", shape_hash, native_id, "native_caa")
         brep_observation_id = stable_id("OBS", shape_hash, native_id, "brep_deterministic")
+        # 原生观察的 verified 表示原生解码语义成立；面定位与 B-Rep 尺寸可信度由另一观察独立表达。
         native_observation = Observation(
             observation_id=native_observation_id,
             part_id=part_id,

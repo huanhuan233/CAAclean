@@ -1,3 +1,6 @@
+# 装配空间关系核验：对可信世界坐标实体做距离、接触和干涉计算。
+# 包围盒只用于候选剔除；搭接/对接分类限定于经过尺寸和拓扑核验的矩形板子类。
+
 """Bounded world-placed STEP object relations in one isolated FreeCAD process."""
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ MAX_SOLIDS = 64
 MAX_PAIRS = 128
 
 
+# 计算轴对齐包围盒间的距离下界，用于快速排除远处对象，不作为最终表面间隙。
 def box_distance(left, right):
     a, b = left.BoundBox, right.BoundBox
     gaps = [max(0.0, other_lower - upper, lower - other_upper)
@@ -28,6 +32,7 @@ def box_distance(left, right):
     return math.sqrt(sum(gap * gap for gap in gaps))
 
 
+# 只累计相向外法向的共面裁剪面重叠；矩形回退先校验面积，避免把任意包围盒当接触面。
 def coplanar_contact_area(left, right, tolerance):
     area = 0.0
     regions = 0
@@ -78,7 +83,9 @@ def coplanar_contact_area(left, right, tolerance):
     return area, regions
 
 
+# 对六个平面、体积和面积均符合轴对齐长方体的对象，计算唯一接触轴上的重叠面积。
 def verified_box_contact_area(left, right, tolerance):
+    # 验证实体确实符合长方体条件，失败返回 None，阻止包围盒捷径用于一般几何。
     def box_dimensions(shape):
         box = shape.BoundBox
         dimensions = [box.XLength, box.YLength, box.ZLength]
@@ -105,8 +112,10 @@ def verified_box_contact_area(left, right, tolerance):
     return spans[0] * spans[1]
 
 
+# 按较小有限板面面积定义搭接比例；只有窄子类条件和比例阈值满足时才确认搭接几何。
 def orthogonal_plate_overlap(left, right, tolerance, minimum_fraction):
     """Customer lap rule, only for two validated axis-aligned rectangular plates."""
+    # 验证闭合六面体及其包围盒体积一致性，返回三个坐标区间供矩形板规则使用。
     def bounds(shape):
         box = shape.BoundBox
         spans = [box.XLength, box.YLength, box.ZLength]
@@ -144,6 +153,7 @@ def orthogonal_plate_overlap(left, right, tolerance, minimum_fraction):
             "minimum_fraction": minimum_fraction, "rule_version": "customer.lap.orthogonal_plate.v1"}
 
 
+# 核验同厚度方向、同厚度区间的板端接触；几何对接确认后，功能角色仍保留 needs_review。
 def orthogonal_plate_butt(left, right, tolerance):
     """Confirmed coplanar end-face contact for a narrow rectangular plate subclass."""
     boxes = [shape.BoundBox for shape in (left, right)]
@@ -183,6 +193,8 @@ def orthogonal_plate_butt(left, right, tolerance):
             "functional_role_status": "needs_review"}
 
 
+# 先求精确最近距离；零距离再核验实体有效性及布尔交，区分正间隙、面/线/点接触和体积干涉。
+# within_tolerance 只描述数值接近程度，微小正间隙不会因此升级为已相交。
 def evaluate_pair(left, right, tolerance, minimum_lap_fraction=0.5):
     distance, witnesses, _ = left.distToShape(right)
     if not math.isfinite(distance) or not witnesses:
@@ -247,6 +259,7 @@ def evaluate_pair(left, right, tolerance, minimum_lap_fraction=0.5):
     return result
 
 
+# 一次加载限定实例集合，按包围盒距离筛选不同实例对；超过实体、面或候选对预算就明确失败。
 def run(job):
     items = job.get("instances") or []
     tolerance = float(job.get("tolerance_mm", 0.01))
@@ -286,6 +299,7 @@ def run(job):
             "freecad_version": ".".join(str(value) for value in FreeCAD.Version()[:3])}
 
 
+# 读取隔离任务并写出状态/诊断；FreeCAD 版本和 OpenCascade 版本分别由 run 返回。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     try:

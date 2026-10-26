@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_CAAGEOMETRYEXTRACTOR_H
+﻿// 声明精确几何证据汇总入口，复用拓扑采集阶段的结果。
+#ifndef CADCAPTURE_CAA_CAAGEOMETRYEXTRACTOR_H
 #define CADCAPTURE_CAA_CAAGEOMETRYEXTRACTOR_H
 
 #include "model/ReconstructionPackage.h"

@@ -1,3 +1,6 @@
+# 裁剪几何证据工具：面内点、圆柱端部邻接与有限线段的材料区间。
+# 始终使用真实 B-Rep 裁剪边界；底层无限平面/曲面上的点不一定属于实际面。
+
 """Finite B-Rep point membership used by parser and interactive queries."""
 
 from __future__ import annotations
@@ -6,6 +9,7 @@ import FreeCAD
 import Part
 
 
+# 把有限线段与实体求交，返回从 start 起算的材料区间；不会用稀疏点探测跳过薄隔板。
 def solid_line_material_intervals(solid, start, end):
     """Exact material intervals along one finite line, measured from start."""
     direction = end-start
@@ -21,6 +25,7 @@ def solid_line_material_intervals(solid, start, end):
     return sorted(intervals)
 
 
+# 先求点到真实裁剪面的距离，再求边界距离，区分外部、边界和内部；内孔范围也会被排除。
 def trimmed_face_point_status(face, point, tolerance):
     """Classify a point against the trimmed face, including inner wires."""
     vertex = Part.Vertex(point)
@@ -36,6 +41,7 @@ def trimmed_face_point_status(face, point, tolerance):
             "method": "trimmed_face_and_finite_boundary_distance"}
 
 
+# 从圆柱壁两端的实际圆边寻找邻面；保留共享边身份，跳过周期缝导致的自身邻接。
 def cylinder_end_boundaries(wall_id, wall_entity, face_shapes, face_edge_ids,
                             edge_faces, edge_entities, face_entities, tolerance):
     """Return only faces sharing a real circular end edge with this wall."""
@@ -73,6 +79,8 @@ def cylinder_end_boundaries(wall_id, wall_entity, face_shapes, face_edge_ids,
     return results
 
 
+# 以重心和有限三角网格采样生成候选，再用裁剪面核验并按离边界余量排序。
+# 重心可能落在孔洞或凹面外部，必须验证后才能作为局部测量点。
 def trimmed_face_interior_points(face, tolerance, max_triangles=64):
     """Bounded representative points; never assume CenterOfMass lies on the face."""
     candidates = [face.CenterOfMass]

@@ -1,3 +1,4 @@
+# 远端产物必须通过名称、大小与摘要校验，才进入本次构建的本地工作目录。
 """Windows CATIA Worker 的 HTTP 客户端与稳定数据契约。"""
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import httpx
 class CatiaWorkerError(RuntimeError):
     """用途：保留 Worker 故障类型和阶段，供编排层稳定映射错误码。"""
 
+    # 保存 Worker 错误码及发生阶段，让上传编排保留失败来源。
     def __init__(self, code: str, message: str, stage: str = "dispatching_caa"):
         super().__init__(message)
         self.code = code
@@ -59,6 +61,7 @@ StageCallback = Callable[[dict], Awaitable[None]]
 class CatiaWorkerClient:
     """用途：上传 CATPart 字节、轮询 Windows Worker，并校验下载产物。"""
 
+    # 设置轮询期限与请求超时，并区分外部注入和自行创建的 HTTP 客户端所有权。
     def __init__(
         self,
         base_url: str,

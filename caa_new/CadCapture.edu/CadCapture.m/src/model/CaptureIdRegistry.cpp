@@ -1,8 +1,10 @@
+/* 以实体类别前缀和递增序号生成采集包内的引用标识。 */
 #include "model/CaptureIdRegistry.h"
 #include <sstream>
 
 namespace cadcapture {
 
+/* 为本次采集分别初始化各类实体的序号。 */
 CaptureIdRegistry::CaptureIdRegistry()
   : _document_index(1),
     _object_index(1),
@@ -19,6 +21,7 @@ CaptureIdRegistry::CaptureIdRegistry()
 {
 }
 
+/* 返回当前编号并推进计数器；不查询原生对象身份。 */
 std::string CaptureIdRegistry::Next(const char* prefix, long& value)
 {
   std::ostringstream out;
@@ -26,61 +29,73 @@ std::string CaptureIdRegistry::Next(const char* prefix, long& value)
   return out.str();
 }
 
+/* 使用文档专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextDocumentId()
 {
   return Next("doc_", _document_index);
 }
 
+/* 使用对象定义专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextObjectId()
 {
   return Next("object_", _object_index);
 }
 
+/* 使用对象树位置专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextOccurrenceId()
 {
   return Next("occurrence_", _occurrence_index);
 }
 
+/* 使用产品引用专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextProductReferenceId()
 {
   return Next("product_reference_", _product_reference_index);
 }
 
+/* 使用产品实例专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextProductOccurrenceId()
 {
   return Next("product_occurrence_", _product_occurrence_index);
 }
 
+/* 使用文档链接专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextDocumentLinkId()
 {
   return Next("document_link_", _document_link_index);
 }
 
+/* 使用属性事实专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextPropertyFactId()
 {
   return Next("property_fact_", _property_fact_index);
 }
 
+/* 使用语义切面专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextSemanticFacetId()
 {
   return Next("semantic_facet_", _semantic_facet_index);
 }
 
+/* 使用几何表示专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextGeometryId()
 {
   return Next("geometry_", _geometry_index);
 }
 
+/* 使用拓扑实体专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextTopologyId()
 {
   return Next("topology_", _topology_index);
 }
 
+/* 使用PMI 实体专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextPmiId()
 {
   return Next("pmi_", _pmi_index);
 }
 
+/* 使用诊断专属前缀与计数器分配标识。 */
 std::string CaptureIdRegistry::NextDiagnosticId()
 {
   return Next("diagnostic_", _diagnostic_index);

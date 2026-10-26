@@ -1,3 +1,4 @@
+# CAD HTTP 接口层：校验请求与转换业务异常，具体解析和数据操作交给服务。
 from __future__ import annotations
 
 from uuid import UUID
@@ -15,6 +16,7 @@ from app.db.session import get_session
 router = APIRouter(prefix="/api/cad", tags=["cad"])
 
 
+# 将请求会话与应用配置装配为 CAD 服务。
 def get_cad_service(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -22,6 +24,7 @@ def get_cad_service(
     return CadService(CadRepository(session), settings)
 
 
+# 接受 STEP/STP 文件并返回异步解析的受理结果。
 @router.post("/models", response_model=CadUploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_model(
     file: UploadFile = File(...),
@@ -37,6 +40,7 @@ async def upload_model(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+# 分页查询模型，可筛选已关联业务构建的记录。
 @router.get("/models", response_model=CadPagedResult)
 async def list_models(
     page: int = 1,
@@ -50,6 +54,7 @@ async def list_models(
     return await service.list_models(page, page_size)
 
 
+# 读取版本进度，将缺失版本转换为 404。
 @router.get("/revisions/{revision_id}/status", response_model=CadParseStatus)
 async def revision_status(revision_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     try:
@@ -58,16 +63,19 @@ async def revision_status(revision_id: UUID, service: CadService = Depends(get_c
         raise HTTPException(status_code=404, detail="revision not found") from exc
 
 
+# 返回该版本完整解析树。
 @router.get("/revisions/{revision_id}/tree", response_model=list[CadTreeNode])
 async def revision_tree(revision_id: UUID, service: CadService = Depends(get_cad_service)) -> list[dict]:
     return await service.get_revision_tree(revision_id)
 
 
+# 返回经过结构类别筛选的树，供装配浏览使用。
 @router.get("/revisions/{revision_id}/structure-tree", response_model=list[CadTreeNode])
 async def revision_structure_tree(revision_id: UUID, service: CadService = Depends(get_cad_service)) -> list[dict]:
     return await service.get_structure_tree(revision_id)
 
 
+# 传递实体分类、归属和搜索条件，复用仓库分页。
 @router.get("/revisions/{revision_id}/entities", response_model=CadPagedResult)
 async def revision_entities(
     revision_id: UUID,
@@ -90,6 +98,7 @@ async def revision_entities(
     )
 
 
+# 读取版本内实体详情，缺失或范围不符时返回 404。
 @router.get("/revisions/{revision_id}/entities/{entity_id}", response_model=CadEntityOut)
 async def revision_entity(revision_id: UUID, entity_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     try:
@@ -98,6 +107,7 @@ async def revision_entity(revision_id: UUID, entity_id: UUID, service: CadServic
         raise HTTPException(status_code=404, detail="entity not found") from exc
 
 
+# 按版本与对象范围读取已保存显示网格。
 @router.get("/revisions/{revision_id}/meshes", response_model=CadPagedResult)
 async def revision_meshes(
     revision_id: UUID,
@@ -116,16 +126,19 @@ async def revision_meshes(
     )
 
 
+# 查询面的边界边及相邻面。
 @router.get("/revisions/{revision_id}/faces/{face_id}/topology", response_model=CadTopologyResult)
 async def face_topology(revision_id: UUID, face_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     return await service.get_face_topology(revision_id, face_id)
 
 
+# 查询边的端点和关联面。
 @router.get("/revisions/{revision_id}/edges/{edge_id}/topology", response_model=CadTopologyResult)
 async def edge_topology(revision_id: UUID, edge_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     return await service.get_edge_topology(revision_id, edge_id)
 
 
+# 分页查询测量记录，保持类型、范围与置信度筛选独立。
 @router.get("/revisions/{revision_id}/measurements", response_model=CadPagedResult)
 async def revision_measurements(
     revision_id: UUID,
@@ -146,11 +159,13 @@ async def revision_measurements(
     )
 
 
+# 显式触发版本测量补算，普通详情请求不会调用此入口。
 @router.post("/revisions/{revision_id}/measurements/recompute")
 async def recompute_revision_measurements(revision_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     return await service.recompute_revision_measurements(revision_id)
 
 
+# 按版本读取单条测量，未找到时返回 404。
 @router.get("/revisions/{revision_id}/measurements/{measurement_id}")
 async def revision_measurement(revision_id: UUID, measurement_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     try:
@@ -159,6 +174,7 @@ async def revision_measurement(revision_id: UUID, measurement_id: UUID, service:
         raise HTTPException(status_code=404, detail="measurement not found") from exc
 
 
+# 分页读取候选特征及其真实状态。
 @router.get("/revisions/{revision_id}/features", response_model=CadPagedResult)
 async def revision_features(
     revision_id: UUID,
@@ -179,6 +195,7 @@ async def revision_features(
     )
 
 
+# 读取指定版本的特征详情。
 @router.get("/revisions/{revision_id}/features/{feature_id}")
 async def revision_feature(revision_id: UUID, feature_id: UUID, service: CadService = Depends(get_cad_service)) -> dict:
     try:
@@ -187,6 +204,7 @@ async def revision_feature(revision_id: UUID, feature_id: UUID, service: CadServ
         raise HTTPException(status_code=404, detail="feature not found") from exc
 
 
+# 保留接口兼容位置并明确返回未实现，不能当作导出成功。
 @router.post("/revisions/{revision_id}/exports/v2")
 async def export_v2(revision_id: UUID) -> None:
     raise HTTPException(

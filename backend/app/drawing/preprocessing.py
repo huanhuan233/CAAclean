@@ -1,3 +1,4 @@
+# 验证图像格式与大小，按 EXIF 方向转为 RGB，并生成等比例缩小的推理图。
 from __future__ import annotations
 
 import hashlib
@@ -11,6 +12,7 @@ from app.drawing.schemas import DrawingError, PreprocessResult
 SUPPORTED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
+# 按 1 MiB 分块计算文件摘要，供原图和裁剪图身份校验使用。
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -19,12 +21,15 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# 管理上传大小、原图边长和推理图边长限制。
 class DrawingImagePreprocessor:
+    # 保存字节大小与像素边长上限，两个边长限制用途不同。
     def __init__(self, *, max_image_mb: int = 20, max_side: int = 4096, inference_max_side: int = 2048):
         self.max_image_mb = max_image_mb
         self.max_side = max_side
         self.inference_max_side = inference_max_side
 
+    # 解码并检查图像，写出推理 PNG，返回原图与推理图的双向坐标比例。
     def preprocess(self, image_path: Path, output_dir: Path) -> PreprocessResult:
         image_path = Path(image_path)
         if image_path.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -47,6 +52,7 @@ class DrawingImagePreprocessor:
         if max(width, height) > self.max_side:
             raise DrawingError("drawing_too_large", "drawing image dimensions exceed configured side limit")
 
+        # 原图尺寸超限会拒绝；仅推理图按较小边长上限等比例缩小，不放大原图。
         inference = image.copy()
         if max(width, height) > self.inference_max_side:
             scale = self.inference_max_side / max(width, height)

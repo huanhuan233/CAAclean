@@ -1,3 +1,4 @@
+# 编排稳定拓扑、原生孔融合、独立几何识别和轻量网格，汇集阶段耗时与证据审查请求。
 """Feature Center Sidecar 的阶段编排服务。"""
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from .topology import build_stable_topology
 from .visual_review import route_visual_review
 
 
+# 仅在唯一、未陈旧的原生孔与已确认几何孔具有完全相同主体壁面集时合并，并保留各来源观察。
 def _associate_verified_geometry(fusion, recognition) -> None:
     """Join only exact same wall geometry; keep each source observation intact."""
     retained = []

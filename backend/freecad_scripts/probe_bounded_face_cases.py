@@ -1,3 +1,6 @@
+# 裁剪面点位回归探针：构造带孔板、偏心孔、凹多边形和完整圆盘。
+# 用于验证孔内点、边界点与实际材料面内部点不会被混淆，不注入业务列表。
+
 """Independent exact-face cases for trimmed point classification tests."""
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import Part
 from bounded_face_evidence import trimmed_face_point_status
 
 
+# 按预设构造坐标选取反例点，调用裁剪面判定并将逐案例证据写回测试结果。
 def main():
     job = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     v = FreeCAD.Vector

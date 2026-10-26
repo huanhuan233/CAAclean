@@ -1,4 +1,5 @@
-﻿#include "caa/CaaFtaExtractor.h"
+﻿// 递归读取文档 FTA 层级、标注语义及原生成员关系并记录读取诊断。
+#include "caa/CaaFtaExtractor.h"
 #include "caa/CaaGuards.h"
 #include "caa/CaaPropertyEvidence.h"
 #include "caa/CaaFtaTypedReader.h"
@@ -34,6 +35,7 @@
 
 namespace cadcapture {
 
+// 把 CATUnicodeString 复制为 UTF-8，输出缓冲区按字符数预留最大字节空间。
 static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
 {
   const size_t capacity = static_cast<size_t>(value.GetLengthInChar() + 1) * 4 + 1;
@@ -46,6 +48,7 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
+// 可选别名读取失败返回空串；别名只作展示，不能确定对象身份。
 static std::string ReadAlias(IUnknown* object)
 {
   if (!object) return "";
@@ -62,6 +65,7 @@ static std::string ReadAlias(IUnknown* object)
   return "";
 }
 
+// 创建视图或捕获子节点并追加 contains 关系，继承集合的所属文档证据。
 static std::string AddHierarchyChild(ReconstructionPackage& package, CaptureIdRegistry& ids,
                               const PmiEntity& parent, const char* kind,
                               const char* api, IUnknown* object, long index)
@@ -88,6 +92,8 @@ static std::string AddHierarchyChild(ReconstructionPackage& package, CaptureIdRe
   return child.pmi_id;
 }
 
+// 取得规范 IUnknown 地址后立即平衡 Release，仅将地址用于当前文档存活期间的身份比较。
+// 返回值不持有引用且不可当作长期可解引用指针保存。
 static IUnknown* NativeIdentity(IUnknown* object)
 {
   if (!object) return 0;
@@ -98,6 +104,7 @@ static IUnknown* NativeIdentity(IUnknown* object)
   return identity;
 }
 
+// 把三分量原值保存为逗号分隔文本，外层字段决定其坐标或方向含义。
 static std::string Triple(double x, double y, double z)
 {
   std::ostringstream out;
@@ -106,6 +113,7 @@ static std::string Triple(double x, double y, double z)
   return out.str();
 }
 
+// 读取文档局部平面的原点和基向量，并 delete 接口返回的平面对象。
 static void ReadViewPlane(CATITPSView* view, PmiEntity& entity)
 {
   CATMathPlane* plane = 0;
@@ -128,6 +136,7 @@ static void ReadViewPlane(CATITPSView* view, PmiEntity& entity)
   catch (...) { delete plane; entity.coordinate_frame_status = "exception"; }
 }
 
+// 仅确认原生相机引用存在并释放接口；尚未解析相机参数或建立相机 IR。
 static void ReadCaptureCamera(CATITPSCapture* capture, PmiEntity& entity)
 {
   CATI3DCamera* camera = 0;
@@ -143,6 +152,7 @@ static void ReadCaptureCamera(CATITPSCapture* capture, PmiEntity& entity)
   catch (...) { if (camera) camera->Release(); entity.camera_status = "exception"; }
 }
 
+// 按规范原生身份关联已采集标注；无法匹配时写诊断，不凭名称创建关联。
 static void LinkAnnotationMembers(CATITPSList* members, const std::string& owner_id,
                                   const char* role,
                                   const std::map<IUnknown*, std::string>& annotations,
@@ -172,6 +182,7 @@ static void LinkAnnotationMembers(CATITPSList* members, const std::string& owner
   }
 }
 
+// 沿集合的引用产品查找所属原生文档，再与已登记文档绑定匹配。
 static void ReadSetOwner(CATITPSSet* set_interface, CATDocument* scan_document,
                          const ReconstructionPackage& package, PmiEntity& entity)
 {
@@ -201,6 +212,7 @@ static void ReadSetOwner(CATITPSSet* set_interface, CATDocument* scan_document,
   catch (...) { entity.ownership_status = "read_exception"; }
 }
 
+// 异常或失败返回零并记录诊断；可选成功标志用于区分空集合和未读到数量。
 static long SafeListCount(CATITPSList* list,
                           ReconstructionPackage& package,
                           const std::string& subject_id,
@@ -231,6 +243,7 @@ static long SafeListCount(CATITPSList* list,
   return static_cast<long>(count);
 }
 
+// 只统计集合级几何引用，失败返回零并记录诊断，不建立逐标注拓扑关系。
 static long SafeGeometryListCount(CATITPSGeometryList* list,
                                   ReconstructionPackage& package,
                                   const std::string& subject_id)
@@ -260,6 +273,7 @@ static long SafeGeometryListCount(CATITPSGeometryList* list,
   return static_cast<long>(count);
 }
 
+// 由本次集合 ID 和一基成员位置生成语义 ID，不能用作跨采集稳定身份。
 static std::string SemanticId(const std::string& set_id, long one_based_index)
 {
   std::ostringstream out;
@@ -273,6 +287,7 @@ static std::string SemanticId(const std::string& set_id, long one_based_index)
   return out.str();
 }
 
+// 独立尝试一个文本接口，保存证据后释放返回数组；首个可用文本作为主要标注文本。
 template<class T> static void ReadAnnotationText(CATITPSComponent* component, const IID& iid,
                                                  const char* interface_name, const PmiEntity& set_entity,
                                                  FtaSemanticEntity& entity, CaptureIdRegistry& ids,
@@ -305,6 +320,7 @@ template<class T> static void ReadAnnotationText(CATITPSComponent* component, co
   }
 }
 
+// 将一个零基组件位置转换为语义记录，分别读取文本、语义校验和类型化字段。
 static void AppendFtaSemantic(CATITPSComponent* component,
                               const PmiEntity& set_entity,
                               long component_index,
@@ -419,6 +435,7 @@ static void AppendFtaSemantic(CATITPSComponent* component,
   package.pmi_associations.push_back(member);
 }
 
+// 使用已登记且仍打开的文档递归扫描；true 允许主流程继续，实际覆盖程度由实体状态与诊断表达。
 bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
                               CaptureIdRegistry& ids,
                               CaaCapabilityBroker& broker,
@@ -528,6 +545,7 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
       package.diagnostics.push_back(MakeDiagnostic("warning", "tps_set_owner_unresolved", pmi.pmi_id,
         "Set reference product could not be matched to a unique captured document", "fta_extractor"));
 
+    // 先记录视图和捕获 ID，再采集标注身份，最后读取成员列表建立真实关联。
     std::vector<std::string> view_ids;
     std::vector<std::string> capture_ids;
     std::map<IUnknown*, std::string> annotations_by_identity;
@@ -678,6 +696,7 @@ bool CaaFtaExtractor::Extract(CaaDocumentHandle& document_handle,
     }
     catch (...) { pmi.read_status = "partial"; }
 
+    // 集合几何数量是集合级证据，不推导任何单条标注的几何归属。
     CATITPSGeometryList* geometry_list = 0;
     try
     {

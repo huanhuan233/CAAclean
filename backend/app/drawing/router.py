@@ -1,3 +1,4 @@
+# 提供图纸任务、版面区域、图片与事实提取 HTTP 接口，后台任务使用独立数据库会话。
 from __future__ import annotations
 
 import uuid
@@ -23,6 +24,7 @@ from app.drawing.service import DrawingLayoutService
 router = APIRouter(prefix="/api/cad/spec", tags=["cad-spec"])
 
 
+# 按配置选择 MinerU、像素启发式、人工或自动降级供应商。
 def build_layout_provider(settings: Settings):
     mineru = MineruLayoutProvider(
         mode=settings.mineru_layout_mode,
@@ -40,6 +42,7 @@ def build_layout_provider(settings: Settings):
     return AutoLayoutProvider(mineru=mineru, vision=vision)
 
 
+# 从配置装配布局和提取仓库、裁剪参数及延迟创建的视觉客户端。
 def create_drawing_service(session: AsyncSession, settings: Settings) -> DrawingLayoutService:
     layout_repository = SqlAlchemyDrawingRepository(session)
     service = DrawingLayoutService(
@@ -61,10 +64,12 @@ def create_drawing_service(session: AsyncSession, settings: Settings) -> Drawing
     return service
 
 
+# 通过 FastAPI 依赖注入使用当前数据库会话和应用配置。
 def get_drawing_service(session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings)) -> DrawingLayoutService:
     return create_drawing_service(session, settings)
 
 
+# 接收上传图像与修订信息，写入临时文件后创建图纸任务。
 @router.post("/tasks", response_model=DrawingTaskOut, status_code=status.HTTP_202_ACCEPTED)
 async def create_spec_task(
     revision_id: uuid.UUID = Form(...),
@@ -85,6 +90,7 @@ async def create_spec_task(
         raise _http_error(exc) from exc
 
 
+# 返回全部任务或指定修订下的任务列表。
 @router.get("/tasks")
 async def list_spec_tasks(
     revision_id: uuid.UUID | None = None,
@@ -93,6 +99,7 @@ async def list_spec_tasks(
     return await service.list_tasks(revision_id=revision_id)
 
 
+# 确认任务存在后调度后台版面处理，立即返回已受理状态。
 @router.post("/tasks/{task_id}/layout", status_code=status.HTTP_202_ACCEPTED)
 async def start_layout(
     task_id: uuid.UUID,
@@ -109,6 +116,7 @@ async def start_layout(
         raise _http_error(exc) from exc
 
 
+# 查询布局阶段状态，并把业务异常转换为 HTTP 错误。
 @router.get("/tasks/{task_id}/layout/status", response_model=DrawingLayoutStatusOut)
 async def layout_status(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
     try:
@@ -117,6 +125,7 @@ async def layout_status(task_id: uuid.UUID, service: DrawingLayoutService = Depe
         raise _http_error(exc) from exc
 
 
+# 返回任务有效区域及数量。
 @router.get("/tasks/{task_id}/regions", response_model=DrawingRegionListOut)
 async def list_regions(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
     try:
@@ -126,6 +135,7 @@ async def list_regions(task_id: uuid.UUID, service: DrawingLayoutService = Depen
         raise _http_error(exc) from exc
 
 
+# 只允许访问任务当前有效区域的裁剪文件，无对应路径时返回 404。
 @router.get("/tasks/{task_id}/regions/{region_id}/image")
 async def region_image(task_id: uuid.UUID, region_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
     regions = await service.repository.list_active_regions(task_id)
@@ -135,6 +145,7 @@ async def region_image(task_id: uuid.UUID, region_id: uuid.UUID, service: Drawin
     return FileResponse(region.crop_file_path, media_type="image/png", filename=region.crop_file_name)
 
 
+# 提供原始源图或已生成的全页推理 PNG，缺失文件返回 404。
 @router.get("/tasks/{task_id}/drawing/image")
 async def drawing_image(
     task_id: uuid.UUID,
@@ -152,6 +163,7 @@ async def drawing_image(
     return FileResponse(path, media_type="image/png", filename="whole_inference.png")
 
 
+# 接收人工区域框并交给服务重新裁剪与替换有效区域。
 @router.put("/tasks/{task_id}/regions")
 async def put_regions(task_id: uuid.UUID, payload: ManualRegionsIn, service: DrawingLayoutService = Depends(get_drawing_service)):
     try:
@@ -160,6 +172,7 @@ async def put_regions(task_id: uuid.UUID, payload: ManualRegionsIn, service: Dra
         raise _http_error(exc) from exc
 
 
+# 确认任务存在后提交后台提取，目标参数随请求传给服务。
 @router.post("/tasks/{task_id}/extract", status_code=status.HTTP_202_ACCEPTED)
 async def extract_drawing(
     task_id: uuid.UUID,
@@ -177,11 +190,13 @@ async def extract_drawing(
         raise _http_error(exc) from exc
 
 
+# 返回事实提取阶段及错误信息。
 @router.get("/tasks/{task_id}/extraction/status", response_model=ExtractionStatusOut)
 async def extraction_status(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
     return await service.get_extraction_status(task_id)
 
 
+# 读取最近提取结果，未生成时将业务异常转换为 HTTP 错误。
 @router.get("/tasks/{task_id}/extraction")
 async def extraction_result(task_id: uuid.UUID, service: DrawingLayoutService = Depends(get_drawing_service)):
     try:
@@ -190,6 +205,7 @@ async def extraction_result(task_id: uuid.UUID, service: DrawingLayoutService = 
         raise _http_error(exc) from exc
 
 
+# 按类型、符号、目标行、复核状态和关键词查询分页事实。
 @router.get("/tasks/{task_id}/facts")
 async def drawing_facts(
     task_id: uuid.UUID,
@@ -216,6 +232,7 @@ async def drawing_facts(
     )
 
 
+# 仅在 failed 或 review_ready 状态调度强制重提任务。
 @router.post("/tasks/{task_id}/extract/retry", status_code=status.HTTP_202_ACCEPTED)
 async def retry_extract(
     task_id: uuid.UUID,
@@ -232,10 +249,12 @@ async def retry_extract(
         raise _http_error(exc) from exc
 
 
+# 在当前事件循环创建布局协程；此调度不具备独立任务队列持久性。
 def schedule_layout_task(task_id: uuid.UUID, settings: Settings) -> None:
     asyncio.create_task(run_layout_task(task_id, settings))
 
 
+# 在当前事件循环创建提取协程并传入目标信息。
 def schedule_extraction_task(
     task_id: uuid.UUID,
     settings: Settings,
@@ -247,6 +266,7 @@ def schedule_extraction_task(
     asyncio.create_task(run_extraction_task(task_id, settings, target_code=target_code, target_dn=target_dn, force=force))
 
 
+# 在独立会话中执行布局，未被服务处理的异常补记 layout_failed。
 async def run_layout_task(task_id: uuid.UUID, settings: Settings) -> None:
     async with SessionLocal() as session:
         service = create_drawing_service(session, settings)
@@ -258,6 +278,7 @@ async def run_layout_task(task_id: uuid.UUID, settings: Settings) -> None:
             await service.repository.update_task_status(task_id, "failed", "layout_failed", str(exc))
 
 
+# 在独立会话中执行事实提取，未知异常写入通用提取失败状态。
 async def run_extraction_task(
     task_id: uuid.UUID,
     settings: Settings,
@@ -276,6 +297,7 @@ async def run_extraction_task(
             await service.extraction_repository.set_status(task_id, "failed", 100, "failed", "drawing_extraction_failed", str(exc))
 
 
+# 默认映射为 400，人工布局冲突为 409，模型不支持图像为 422。
 def _http_error(exc: DrawingError) -> HTTPException:
     status_code = 400
     if exc.code in {"manual_layout_required"}:

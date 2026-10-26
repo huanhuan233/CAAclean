@@ -1,3 +1,4 @@
+# 按对象定义汇集复材属性和出现位置；层序来自专门的原生顺序事实，而非树遍历顺序。
 """Definition-level composite projection from captured R21 objects and facts.
 
 Tree occurrences locate a definition; they never establish laminate order.
@@ -24,6 +25,7 @@ _LENGTH_KEYS = frozenset({"composite_cured_thickness", "composite_uncured_thickn
 _AREA_KEYS = frozenset({"composite_area_m2"})
 
 
+# 保留原始值、读取状态及属性来源，仅对已知单位的长度、面积和角度做归一化。
 def _field(fact: dict[str, Any]) -> dict[str, Any]:
     key = str(fact.get("key") or "")
     unit = str(fact.get("raw_unit") or "")
@@ -51,6 +53,7 @@ def _field(fact: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# 关联定义、树位置和属性，保留未解析层序成员及诊断，再派生轮廓与名义方向。
 def build_composite_structure(
     objects: Iterable[dict[str, Any]], occurrences: Iterable[dict[str, Any]],
     facts: Iterable[dict[str, Any]],
@@ -125,6 +128,7 @@ def build_composite_structure(
         if len([value for value in ids if value is not None]) != len(set(value for value in ids if value is not None)):
             row["diagnostics"].append("duplicate_native_order_member")
             continue
+        # 保留空位和未解析身份，不能删除缺项后伪装成完整原生层序。
         row["ordered_child_object_ids"] = ids
         unresolved = any(value is None or value not in entities for value in ids)
         if unresolved:
@@ -158,6 +162,7 @@ def build_composite_structure(
             row["contour_planar_region"] = {"status": "unavailable", "diagnostics": ["ordered_contour_not_captured"]}
         from app.component_builds.composite_direction import derive_nominal_planar_direction
         row["nominal_direction"] = derive_nominal_planar_direction(row)
+        # 轮廓面积和名义方向属于计算投影，尚不足以证明存在可渲染的铺层网格。
         row["render_status"] = "unavailable_without_verified_ply_mesh"
         pieces_fact = row["fields"].get("composite_cut_piece_object_ids")
         if not pieces_fact or pieces_fact["read_status"] not in {"available", "partial"}:

@@ -1,3 +1,4 @@
+# 将图纸符号通过部件配置绑定到规格字段，并匹配几何测量；匹配状态与合规状态分别保存。
 from __future__ import annotations
 
 import uuid
@@ -14,6 +15,7 @@ ConformanceStatus = Literal["pass", "fail", "unknown", "not_applicable"]
 ReviewStatus = Literal["pending", "needs_review", "confirmed", "rejected"]
 
 
+# 同时保存图纸值、测量值、解析值、证据引用和四类状态，供持久化及人工复核。
 @dataclass
 class SpecFieldBinding:
     task_id: uuid.UUID
@@ -43,6 +45,7 @@ class SpecFieldBinding:
     id: uuid.UUID | None = None
 
 
+# 按选定配置逐符号建立绑定，同符号多事实标记歧义，未映射尺寸仍保留为通用字段。
 def bind_spec_fields(
     *,
     task_id: uuid.UUID,
@@ -67,6 +70,7 @@ def bind_spec_fields(
         if not matches:
             continue
         consumed_fact_ids.update(str(_id(match)) for match in matches if _id(match))
+        # 同符号多个事实时只以首条构建当前绑定，同时显式标 ambiguous；应先按目标行筛选。
         fact = matches[0]
         mapping_status: MappingStatus = "ambiguous" if len(matches) > 1 else "matched"
         bindings.append(
@@ -93,6 +97,7 @@ def bind_spec_fields(
     return bindings
 
 
+# 选择候选测量并记录几何匹配程度；解析值仍取图纸事实，合规结论保持 unknown。
 def _binding_for_mapping(
     *,
     task_id: uuid.UUID,
@@ -121,6 +126,7 @@ def _binding_for_mapping(
         symbol=mapping.symbol,
         drawing_value=drawing_value,
         measured_value=measured_value,
+        # 这里直接复用测量归一化值，不另做单位换算；调用方需保证与图纸值单位一致。
         normalized_measured_value=measured_value,
         resolved_value=drawing_value,
         unit=fact.get("unit") or (measurement.get("unit") if measurement else None),
@@ -145,6 +151,7 @@ def _binding_for_mapping(
     )
 
 
+# 为没有配置映射的尺寸创建待复核通用字段，明确无可用测量及合规结论。
 def _unmatched_binding(task_id, revision_id, profile_id: str, profile_version: str, fact: dict[str, Any]) -> SpecFieldBinding:
     symbol = str(fact.get("symbol") or "unknown").strip() or "unknown"
     return SpecFieldBinding(
@@ -175,6 +182,7 @@ def _unmatched_binding(task_id, revision_id, profile_id: str, profile_version: s
     )
 
 
+# 只考虑配置允许的测量类型，优先数值距离最小者，再按置信度降序打破平局。
 def _best_measurement(fact: dict[str, Any], mapping: FieldMapping, measurements: list[dict[str, Any]]) -> dict[str, Any] | None:
     allowed_types = set(mapping.measurement_types)
     if not allowed_types:
@@ -185,12 +193,14 @@ def _best_measurement(fact: dict[str, Any], mapping: FieldMapping, measurements:
     return sorted(candidates, key=lambda item: (_numeric_distance(fact.get("normalized_value"), _measurement_value(item)), -float(item.get("confidence") or 0)))[0]
 
 
+# 在匹配容差下比较图纸与测量值，支持等值、上下界和近似，区间值暂不可测。
 def _geometry_status(fact: dict[str, Any], measurement: dict[str, Any] | None, mapping: FieldMapping) -> GeometryMatchStatus:
     if measurement is None:
         return "not_measurable"
     operator = fact.get("operator") or "eq"
     drawing_value = fact.get("normalized_value")
     measured_value = _measurement_value(measurement)
+    # 此容差用于几何候选匹配，数值单位随输入；它不是独立的产品合规公差。
     tolerance = mapping.match_tolerance if mapping.match_tolerance is not None else 0.1
     if not isinstance(drawing_value, int | float) or not isinstance(measured_value, int | float):
         return "not_measurable"
@@ -198,6 +208,7 @@ def _geometry_status(fact: dict[str, Any], measurement: dict[str, Any] | None, m
         return "within_match_tolerance" if measured_value + tolerance >= drawing_value else "outside_match_tolerance"
     if operator == "lte":
         return "within_match_tolerance" if measured_value - tolerance <= drawing_value else "outside_match_tolerance"
+    # 近似比较允许至少 2% 的图纸值偏差，并与配置的绝对容差取较大者。
     if operator == "approx":
         return "within_match_tolerance" if abs(measured_value - drawing_value) <= max(tolerance, abs(drawing_value) * 0.02) else "outside_match_tolerance"
     if operator == "between":
@@ -205,6 +216,7 @@ def _geometry_status(fact: dict[str, Any], measurement: dict[str, Any] | None, m
     return "within_match_tolerance" if abs(measured_value - drawing_value) <= tolerance else "outside_match_tolerance"
 
 
+# 按符号、单位、数值、配置及几何证据累加启发式分数，并对歧义扣分。
 def _mapping_confidence(fact: dict[str, Any], measurement: dict[str, Any] | None, mapping: FieldMapping, mapping_status: str, geometry_status: str) -> float:
     score = 0.35
     if fact.get("symbol") == mapping.symbol:
@@ -223,6 +235,7 @@ def _mapping_confidence(fact: dict[str, Any], measurement: dict[str, Any] | None
     return max(0.0, min(1.0, round(score, 4)))
 
 
+# 根据候选测量是否存在、符号歧义和几何状态生成可解释原因码。
 def _reason(mapping_status: str, measurement: dict[str, Any] | None, geometry_status: str) -> str:
     if measurement is None:
         return "profile_symbol_matched_no_measurement_type_match"
@@ -231,6 +244,7 @@ def _reason(mapping_status: str, measurement: dict[str, Any] | None, geometry_st
     return f"profile_symbol_and_measurement_type_matched_geometry_{geometry_status}"
 
 
+# 去除符号首尾空白后分组，保留同符号的全部事实供歧义判断。
 def _group_by_symbol(facts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for fact in facts:
@@ -240,6 +254,7 @@ def _group_by_symbol(facts: list[dict[str, Any]]) -> dict[str, list[dict[str, An
     return grouped
 
 
+# 读取测量归一化值，兼容直接标量及含 value 键的对象。
 def _measurement_value(measurement: dict[str, Any] | None):
     if not measurement:
         return None
@@ -249,24 +264,28 @@ def _measurement_value(measurement: dict[str, Any] | None):
     return value
 
 
+# 两个值都为数值时计算绝对差，否则返回无穷大以降低候选优先级。
 def _numeric_distance(left, right) -> float:
     if isinstance(left, int | float) and isinstance(right, int | float):
         return abs(left - right)
     return float("inf")
 
 
+# 读取对象主键并转为 UUID，缺失时返回空值。
 def _id(item: dict[str, Any] | None) -> uuid.UUID | None:
     if not item or item.get("id") is None:
         return None
     return uuid.UUID(str(item["id"]))
 
 
+# 读取测量关联特征 UUID，缺失时返回空值。
 def _feature_id(item: dict[str, Any] | None) -> uuid.UUID | None:
     if not item or item.get("feature_id") is None:
         return None
     return uuid.UUID(str(item["feature_id"]))
 
 
+# 兼容字典、Pydantic 模型和 ORM 对象，只抽取绑定所需属性。
 def _as_dict(item) -> dict[str, Any]:
     if isinstance(item, dict):
         return item

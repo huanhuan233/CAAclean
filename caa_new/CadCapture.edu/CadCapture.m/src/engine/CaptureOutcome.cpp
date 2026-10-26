@@ -1,4 +1,5 @@
-﻿#include "engine/CaptureOutcome.h"
+﻿// 依据主树和必要阶段诊断生成整包采集状态，并执行严格模式检查。
+#include "engine/CaptureOutcome.h"
 
 namespace cadcapture {
 namespace {

@@ -1,4 +1,5 @@
-﻿#include "caa/CaaParameterReader.h"
+﻿// 读取知识参数的类型和值，区分 SI 数值、显示文本和读取失败状态。
+#include "caa/CaaParameterReader.h"
 #include "caa/CaaPropertyEvidence.h"
 #include <CATICkeParm.h>
 #include <CATICkeInst.h>
@@ -7,6 +8,7 @@
 #include <float.h>
 
 namespace cadcapture {
+// 按 SDK 基本量纲指数拼接单位；无量纲为 1，量纲接口缺失则保留空单位。
 static std::string SiUnit(CATICkeType* type)
 {
   CATICkeMKSUnit_var mks = type->MKS();
@@ -24,6 +26,7 @@ static std::string SiUnit(CATICkeType* type)
   return result.str().empty() ? "1" : result.str();
 }
 
+// 读取单个知识参数；类型或值不可读时返回带来源和状态的事实。
 PropertyFact ReadCaaParameter(CATICkeParm* parameter)
 {
   PropertyFact fact = evidence::Failure("unavailable", "CATICkeParm.Value");

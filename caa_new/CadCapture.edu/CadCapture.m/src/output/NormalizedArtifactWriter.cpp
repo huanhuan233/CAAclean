@@ -1,4 +1,5 @@
-﻿#include "output/NormalizedArtifactWriter.h"
+﻿// 把重建包与采集报告序列化为规范化 JSON 和 JSONL 文件。
+#include "output/NormalizedArtifactWriter.h"
 #include "platform/WindowsPathCodec.h"
 #include "output/JsonSupport.h"
 #include <fstream>
@@ -24,6 +25,7 @@ static bool EnsureDirectory(const std::string& path, std::string& error)
   return false;
 }
 
+// 按格式化开关生成每层两个空格的缩进。
 static std::string Indent(bool pretty, int depth)
 {
   if (!pretty)
@@ -31,11 +33,13 @@ static std::string Indent(bool pretty, int depth)
   return std::string(depth * 2, ' ');
 }
 
+// 普通 JSON 在格式化模式下换行，紧凑模式下不插入换行。
 static std::string NewLine(bool pretty)
 {
   return pretty ? "\n" : "";
 }
 
+// 用宽字符路径写出完整文本并检查流写入状态。
 static bool WriteText(const std::string& path, const std::string& text, std::string& error)
 {
   std::ofstream out(WindowsPathCodec::Decode(path).c_str(), std::ios::out | std::ios::binary);
@@ -53,6 +57,7 @@ static bool WriteText(const std::string& path, const std::string& text, std::str
   return true;
 }
 
+// 显式刷新并关闭流，任一步失败均阻止仓储进入发布阶段。
 static bool FinishStream(std::ofstream& out, const std::string& path, std::string& error)
 {
   out.flush();
@@ -70,16 +75,19 @@ static bool FinishStream(std::ofstream& out, const std::string& path, std::strin
   return true;
 }
 
+// 嵌入上游已编码 JSON；缺省为空对象，不再进行字符串加引号。
 static const char* RawJsonOrObject(const std::string& json)
 {
   return json.empty() ? "{}" : json.c_str();
 }
 
+// 嵌入上游已编码 JSON，缺失的可选数据写为 null。
 static const char* RawJsonOrNull(const std::string& json)
 {
   return json.empty() ? "null" : json.c_str();
 }
 
+// 逐项转义字符串数组，保证元素按 JSON 字符串输出。
 static void NormalizedWriteStringArray(std::ofstream& out, const std::vector<std::string>& values)
 {
   out << "[";
@@ -93,6 +101,7 @@ static void NormalizedWriteStringArray(std::ofstream& out, const std::vector<std
   out << "]";
 }
 
+// 按实体集合逐条写出规范化 JSONL；保持包内 ID、来源与读取状态。
 static bool WriteJsonLines(const ReconstructionPackage& package,
                            const std::string& output_dir,
                            std::string& error)
@@ -303,6 +312,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
                << JsonQuote("display_unit") << ":" << JsonQuote(fact.display_unit) << ","
                << JsonQuote("value_type") << ":" << JsonQuote(fact.value_type) << ","
                << JsonQuote("normalized_numeric_value") << ":";
+    // 缺失规范数值写 null，避免默认零值被消费为真实测量。
     if (fact.has_normalized_numeric_value)
       properties << fact.normalized_numeric_value;
     else
@@ -599,6 +609,7 @@ static bool WriteJsonLines(const ReconstructionPackage& package,
   return true;
 }
 
+// 汇总清单和报告后写出各实体流；成功仅表示写出完成，发布仍由仓储执行。
 bool NormalizedArtifactWriter::Write(const ReconstructionPackage& package,
                                      const CaptureReport& report,
                                      const std::string& output_dir,

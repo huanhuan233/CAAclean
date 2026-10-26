@@ -1,3 +1,4 @@
+# 封装 MinerU 版面与文档服务的不同协议；解析响应不等于确认图纸工程语义。
 from __future__ import annotations
 
 import asyncio
@@ -12,14 +13,18 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 
+# 保存可供业务层识别的错误码和说明，统一外部服务异常。
 class MineruError(Exception):
+    # 保留错误码，并把可读说明交给异常基类。
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
         self.message = message
 
 
+# 版面提取客户端，可使用 HTTP、命令行或注入的传输实现。
 class MineruClient:
+    # 保存调用模式、超时及传输配置，初始化时不执行解析。
     def __init__(
         self,
         *,
@@ -35,6 +40,7 @@ class MineruClient:
         self.timeout = timeout
         self.transport = transport
 
+    # 按模式发起提取，并将超时、连接和响应格式问题转换成稳定错误。
     async def fetch_payload(self, input_path: Path) -> dict:
         if self.mode == "disabled":
             raise MineruError("mineru_not_configured", "MinerU provider is disabled")
@@ -59,6 +65,7 @@ class MineruClient:
             raise MineruError("mineru_invalid_result", "MinerU returned an invalid JSON result")
         return payload
 
+    # 发送原始文件字节并解码 JSON，版面事实由后续适配层解释。
     def _http_fetch(self, input_path: Path) -> dict:
         if not self.url:
             raise MineruError("mineru_not_configured", "MINERU_LAYOUT_URL is not configured")
@@ -71,6 +78,7 @@ class MineruClient:
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    # 将文件路径作为命令参数，读取标准输出 JSON；取消时清理子进程。
     async def _command_fetch(self, input_path: Path) -> dict:
         if not self.command:
             raise MineruError("mineru_not_configured", "MINERU_LAYOUT_COMMAND is not configured")
@@ -98,11 +106,13 @@ class MineruClient:
         return json.loads(stdout.decode("utf-8"))
 
 
+# 适配同步文档接口，接收 Markdown 与 content_list，不在客户端融合工程字段。
 class MineruDocumentClient:
     """Client for the MinerU 3.x synchronous document parsing API."""
 
     MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 
+    # 保存服务地址、解析选项和可替换 HTTP 传输，便于隔离调用与测试。
     def __init__(
         self,
         *,
@@ -131,6 +141,7 @@ class MineruDocumentClient:
         self.timeout = timeout
         self.transport = transport
 
+    # 以 multipart 上传文档，根据响应头或 ZIP 标记选择对应解码路径。
     async def fetch_payload(self, input_path: Path) -> dict:
         if not self.endpoint_url.startswith(("http://", "https://")):
             raise MineruError("mineru_not_configured", "MINERU_API_URL is not configured")
@@ -180,6 +191,7 @@ class MineruDocumentClient:
         except (UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile, ValueError) as exc:
             raise MineruError("mineru_invalid_result", "MinerU returned an invalid document result") from exc
 
+    # 限制 ZIP 解压总量并在内存读取所需成员，不把压缩包路径落盘。
     @classmethod
     def _read_zip_payload(cls, content: bytes) -> dict:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
@@ -209,6 +221,7 @@ class MineruDocumentClient:
             raise MineruError("mineru_invalid_result", "MinerU result archive contains no text output")
         return payload
 
+    # 兼容服务结果嵌套和字符串化 content_list，返回第一个可用文档结果。
     @staticmethod
     def _normalize_json_payload(payload: Any) -> dict:
         if not isinstance(payload, dict):
@@ -234,5 +247,6 @@ class MineruDocumentClient:
         raise MineruError("mineru_invalid_result", "MinerU JSON result contains no text output")
 
 
+# 将开关转换为服务表单要求的小写布尔文本。
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"

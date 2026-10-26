@@ -1,3 +1,4 @@
+# 树节点数据库 UUID 由版本与原生节点 ID 共同决定，父子引用也使用相同生成规则。
 """CAA 原生树与 PostgreSQL `cad_entities` 之间的确定性投影。"""
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ def native_tree_rows(revision_id: UUID, payload: dict[str, Any]) -> list[dict[st
     return order_native_tree_rows(rows)
 
 
+# 校验重复身份、缺失父节点和父子环，再按父先子后排序满足外键写入顺序。
 def order_native_tree_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate the complete graph and order parents before children for FK writes."""
     by_id = {}
@@ -109,6 +111,7 @@ def build_database_tree(entities: Iterable[Any], *, total_node_count: int) -> di
     }
 
 
+# 根节点标记为 root，其余按实例类型区分零件、装配及原生特征。
 def _entity_type(node: dict[str, Any], parent_node_id: str) -> str:
     if not parent_node_id:
         return "root"
@@ -118,6 +121,7 @@ def _entity_type(node: dict[str, Any], parent_node_id: str) -> str:
     return "part" if startup_type in {"catpart", "mechanicalpart"} else "assembly"
 
 
+# 去掉数据库来源引用中的原生树前缀，恢复浏览器使用的节点身份。
 def _source_node_id(source_ref: str | None) -> str:
     value = str(source_ref or "")
     return value[len(NATIVE_SOURCE_PREFIX):] if value.startswith(NATIVE_SOURCE_PREFIX) else value

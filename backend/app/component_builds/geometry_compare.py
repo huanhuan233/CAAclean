@@ -1,3 +1,4 @@
+# 对比 STEP 与 CATPart 的轻量化结果，容差随模型尺寸变化，输出可定位的差异项。
 """同一零件的 STEP 与 CATPart Web 产物几何 Golden 对照。"""
 
 from __future__ import annotations
@@ -86,18 +87,22 @@ def _deduplicate_solids(solids: list[dict], tolerance_mm: float) -> list[dict]:
     return unique
 
 
+# 按绝对下限和双方相对容差比较有序实体体积；调用方先核对实体数量。
 def _volumes_close(left: list[float], right: list[float]) -> bool:
     return all(abs(a - b) <= max(0.01, abs(a) * 1e-5, abs(b) * 1e-5) for a, b in zip(left, right))
 
 
+# 先检查向量长度，再按逐分量绝对容差比较坐标或尺寸。
 def _vectors_close(left: list[float], right: list[float], tolerance: float) -> bool:
     return len(left) == len(right) and all(abs(float(a) - float(b)) <= tolerance for a, b in zip(left, right))
 
 
+# 要求包围盒含六个有限且未超界的坐标，拒绝异常几何范围。
 def _usable_box(box: dict | None) -> bool:
     values = list((box or {}).get("min", [])) + list((box or {}).get("max", []))
     return len(values) == 6 and all(math.isfinite(float(value)) and abs(float(value)) < 1e90 for value in values)
 
 
+# 计算包围盒对角线长度，作为整体及去重比较的尺度依据。
 def _diagonal(box: dict) -> float:
     return math.sqrt(sum((float(box["max"][index]) - float(box["min"][index])) ** 2 for index in range(3)))

@@ -1,3 +1,4 @@
+/* 采集零件最终体的拓扑、精确几何、面网格和特征 ResultOUT 关联证据。 */
 #include "caa/CaaTopologyExtractor.h"
 #include "caa/CaaGuards.h"
 
@@ -60,6 +61,7 @@
 
 namespace cadcapture {
 
+/* 网格器拥有接口引用，退出当前体的采集作用域时统一释放。 */
 class CgmTessellatorGuard
 {
 public:
@@ -291,6 +293,7 @@ static CATISpecObject* GetRootPartSpec(CaaDocumentHandle& document_handle,
   return retained;
 }
 
+/* 按维度收集体内单元的借用指针，使用期间须保持所属 CATBody 有效。 */
 static void LoadCellsByDimension(CATBody* body,
                                  short dimension,
                                  std::vector<CATCell*>& output)
@@ -304,6 +307,7 @@ static void LoadCellsByDimension(CATBody* body,
     output.push_back(cells[index]);
 }
 
+/* 以各组点数减去两个端点估算三角形数量，实际载荷数由后续展开统计。 */
 static long EstimateTrianglesFromPointGroups(CATLONG32 group_count, CATLONG32 point_count)
 {
   if (group_count <= 0 || point_count <= 0)
@@ -348,6 +352,7 @@ private:
   CATBoundedCellsIterator* _iterator;
 };
 
+/* 保留 SDK 点编号与坐标的映射，三角形索引不能直接当作连续数组下标。 */
 static void BuildTessPointMap(CATCGMTessPointIter* points, std::map<int, TessPointData>& out_points)
 {
   if (!points)
@@ -430,6 +435,7 @@ static void WriteJsonLongArray(std::ostream& out, const std::vector<long>& value
   out << ']';
 }
 
+/* 输出节点值、重数和次数等 NURBS 参数；SDK 节点重数索引从 1 开始。 */
 static void WriteKnotVectorJson(std::ostream& out, const char* name,
                                 const CATKnotVector* knot_vector)
 {
@@ -461,6 +467,7 @@ static void WriteKnotVectorJson(std::ostream& out, const char* name,
   out << '}';
 }
 
+/* 保留控制点、权重和原始参数化；部分可选调用异常时沿用局部默认值。 */
 static std::string NurbsCurveJson(CATNurbsCurve* nurbs)
 {
   if (!nurbs) return "";
@@ -501,6 +508,7 @@ static std::string NurbsCurveJson(CATNurbsCurve* nurbs)
   return out.str();
 }
 
+/* 按 U 外层、V 内层输出控制网和权重，同时保留两个方向的节点向量。 */
 static std::string NurbsSurfaceJson(CATNurbsSurface* nurbs)
 {
   if (!nurbs) return "";
@@ -590,6 +598,7 @@ static std::string GeometryBoundingBoxJson(CATGeometry* geometry)
   return "";
 }
 
+/* 记录支撑曲面的参数域及面片编号，裁剪边界另由拓扑线环表达。 */
 static std::string SurfaceParameterDomainJson(CATSurface* surface)
 {
   if (!surface) return "";
@@ -616,6 +625,7 @@ static std::string SurfaceParameterDomainJson(CATSurface* surface)
   return "";
 }
 
+/* 记录支撑曲线的参数范围和弧段编号，读取失败时返回空证据。 */
 static std::string CurveParameterDomainJson(CATCurve* curve)
 {
   if (!curve) return "";
@@ -640,6 +650,7 @@ static std::string CurveParameterDomainJson(CATCurve* curve)
 }
 
 template <class InterfaceT>
+/* 成功查询得到的引用必须由调用方释放，接口缺失或查询异常均返回空指针。 */
 static InterfaceT* QueryGeometryInterface(CATGeometry* geometry, const IID& iid)
 {
   if (!geometry) return 0;
@@ -683,6 +694,7 @@ static std::string ElementaryAxisJson(CATElementarySurface* surface)
   return out.str();
 }
 
+/* 按单元维度尝试公开的解析曲面、曲线和 NURBS 接口，未支持的几何保留部分状态。 */
 static void DecodeExactCellGeometry(ReconstructionPackage& package,
                                     CATCell* cell,
                                     TopologyEntity& entity)
@@ -840,6 +852,7 @@ static void DecodeExactCellGeometry(ReconstructionPackage& package,
     CATSurface* surface = QueryGeometryInterface<CATSurface>(geometry, IID_CATSurface);
     if (surface)
     {
+      /* 支撑面未直接暴露已知类型时，尝试其几何表示中的平面、圆柱面和圆环面。 */
       const CATSurface* geometric_rep = 0;
       try { geometric_rep = surface->GetGeometricRep(); } catch (...) { geometric_rep = 0; }
       CATGeometry* rep_geometry = const_cast<CATSurface*>(geometric_rep);
@@ -1010,6 +1023,7 @@ static void DecodeExactCellGeometry(ReconstructionPackage& package,
     entity.geometry_status = entity.dimension == 0 ? "partial" : "unknown";
 }
 
+/* 用顶点绕序的叉积计算单位法向；退化三角形不标记法向可用。 */
 static void ComputeTriangleNormal(MeshTriangleEntity& triangle)
 {
   const double* vertices = triangle.vertices_mm;
@@ -1038,6 +1052,7 @@ static std::string MakeIndexedId(const std::string& prefix, long index)
   return out.str();
 }
 
+/* 仅当三个点编号均可解析时追加载荷并递增计数，同时保留原始图元类型。 */
 static bool AppendMeshTriangle(ReconstructionPackage& package,
                                const GeometryEntity& geometry,
                                const std::map<int, TessPointData>& points,
@@ -1092,6 +1107,7 @@ static double Distance3(const double a[3], const double b[3])
 
 static void AddUniqueString(std::vector<std::string>& values, const std::string& value);
 
+/* 以中心和面积容差寻找结果面到最终面的候选关联；几何吻合不代表确定的拓扑继承。 */
 static void AppendFeatureTopologyLink(ReconstructionPackage& package,
                                       const NativeFeatureResultCellEntity& result_cell)
 {
@@ -1114,6 +1130,7 @@ static void AppendFeatureTopologyLink(ReconstructionPackage& package,
     return;
   }
 
+  /* 候选搜索遍历包内最终面；此处未按文档过滤，跨文档重合几何仍可能成为候选。 */
   double best_center = 0.0;
   double best_area = 0.0;
   size_t i;
@@ -1189,6 +1206,7 @@ static std::string CatSideName(CATSide side)
   return "unknown";
 }
 
+/* 从原生边界迭代器收集已登记单元 ID，异常时保留已读取部分并标记 partial。 */
 static void FillBoundaryCellIds(CATCell* cell,
                                 const std::map<CATCell*, std::string>& cell_ids,
                                 TopologyEntity& entity)
@@ -1219,6 +1237,7 @@ static void FillBoundaryCellIds(CATCell* cell,
   }
 }
 
+/* 在指定体中读取相邻单元，仅登记已有 ID 的邻居。 */
 static void FillAdjacentCellIds(CATBody* body,
                                 CATCell* cell,
                                 const std::map<CATCell*, std::string>& cell_ids,
@@ -1241,6 +1260,7 @@ static void FillAdjacentCellIds(CATBody* body,
   }
 }
 
+/* 面材料侧取自第一个有界单元的侧向信息，缺少接口结果时保持未知。 */
 static void FillMaterialSide(CATBody* body, CATCell* cell, TopologyEntity& entity)
 {
   if (!body || !cell || entity.dimension != 2)
@@ -1265,6 +1285,7 @@ static void FillMaterialSide(CATBody* body, CATCell* cell, TopologyEntity& entit
   }
 }
 
+/* 按边界迭代器的域分组生成线环与共边；首域标为外环，未另作几何包含判定。 */
 static void AppendFaceWires(ReconstructionPackage& package,
                             CATFace* face,
                             const std::string& body_id,
@@ -1423,6 +1444,7 @@ static void FinalizeBrepTopologyGraph(ReconstructionPackage& package,
       AddUniqueString(face->second->boundary_cell_ids, coedge.edge_cell_id);
   }
 
+  /* 按每环的采集顺序闭合共边前后链，再用相邻边共享顶点检查闭合证据。 */
   std::map<std::string, std::vector<size_t> >::iterator wire_group = coedges_by_wire.begin();
   for (; wire_group != coedges_by_wire.end(); ++wire_group)
   {
@@ -1484,6 +1506,7 @@ static void FinalizeBrepTopologyGraph(ReconstructionPackage& package,
   }
 }
 
+/* 逐项采集维度、中心、测度、精确几何及邻接信息，读取失败尽量保留部分实体。 */
 static void AppendCellEntity(ReconstructionPackage& package,
                              CATCell* cell,
                              CATBody* body,
@@ -1593,6 +1616,7 @@ static void AppendCellEntity(ReconstructionPackage& package,
   package.topology.push_back(entity);
 }
 
+/* 把独立三角形、条带、扇面和多边形展开为面载荷，估算数量与实际数量分别记录。 */
 static void AppendFaceTessellation(CaptureIdRegistry& ids,
                                    ReconstructionPackage& package,
                                    CATICGMBodyTessellator* tessellator,
@@ -1686,6 +1710,7 @@ static void AppendFaceTessellation(CaptureIdRegistry& ids,
           CATLONG32 strip_index = 0;
           for (strip_index = 0; strip_index < count - 2; ++strip_index)
           {
+            /* 条带相邻三角形交换前两个顶点，维持展开后的绕序一致。 */
             const int a = (strip_index % 2 == 0) ? ranks[static_cast<size_t>(strip_index)] : ranks[static_cast<size_t>(strip_index + 1)];
             const int b = (strip_index % 2 == 0) ? ranks[static_cast<size_t>(strip_index + 1)] : ranks[static_cast<size_t>(strip_index)];
             const int c = ranks[static_cast<size_t>(strip_index + 2)];
@@ -1730,6 +1755,7 @@ static void AppendFaceTessellation(CaptureIdRegistry& ids,
         {
           std::vector<int> ranks(static_cast<size_t>(count), 0);
           polygons->GetPolyNuPts(&ranks[0]);
+          /* 多边形以首点作扇形展开，此处没有针对凹多边形的额外三角剖分。 */
           CATLONG32 polygon_index = 1;
           for (; polygon_index < count - 1; ++polygon_index)
           {
@@ -1759,6 +1785,7 @@ static void AppendFaceTessellation(CaptureIdRegistry& ids,
   package.geometry.push_back(geometry);
 }
 
+/* 保留特征结果体及其单元测度，并生成到最终面的几何指纹候选关系。 */
 static void AppendResultOutBody(CaptureIdRegistry& ids,
                                 ReconstructionPackage& package,
                                 CATBody* body,
@@ -1881,6 +1908,7 @@ static void AppendResultOutBody(CaptureIdRegistry& ids,
   }
 }
 
+/* 沿 ShapeFeatureBody、ResultOUT 和 GeometricalElement 读取特征结果体。 */
 static void CaptureResultOutForSpec(CATISpecObject* spec,
                                     CaptureIdRegistry& ids,
                                     ReconstructionPackage& package,
@@ -1961,6 +1989,7 @@ static void CaptureResultOutForSpec(CATISpecObject* spec,
   AppendResultOutBody(ids, package, body, subject_id);
 }
 
+/* 沿 ListComponents 递归采集结果体；此路径依赖规格子树可终止，未维护循环检测集合。 */
 static void TraverseResultOutSpecs(CATISpecObject* spec,
                                    CaptureIdRegistry& ids,
                                    ReconstructionPackage& package,
@@ -2157,6 +2186,7 @@ bool CaaTopologyExtractor::ExtractForDocument(CaaDocumentHandle& document_handle
                                                  "topology_extractor"));
   }
 
+  /* 网格器创建或运行失败时仍继续记录拓扑，面网格由缺失状态表达。 */
   CATICGMBodyTessellator* tessellator = 0;
   try
   {
@@ -2181,6 +2211,7 @@ bool CaaTopologyExtractor::ExtractForDocument(CaaDocumentHandle& document_handle
   size_t i;
   long primitive_index = 1;
   long next_triangle = 0;
+  /* 先为全部维度单元分配 ID，再读取边界关系，避免前向引用因尚未登记而丢失。 */
   std::map<CATCell*, std::string> cell_ids;
   std::vector<std::string> face_ids;
   for (i = 0; i < faces.size(); ++i)

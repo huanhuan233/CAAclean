@@ -1,3 +1,4 @@
+/* 定义被采集文档及文档间引用链接的数据模型。 */
 #ifndef CADCAPTURE_MODEL_DOCUMENTGRAPH_H
 #define CADCAPTURE_MODEL_DOCUMENTGRAPH_H
 
@@ -6,6 +7,7 @@
 
 namespace cadcapture {
 
+/* 文档节点分别记录打开、加载和定义采集状态，不能仅凭节点存在判定可用。 */
 struct DocumentEntity
 {
   std::string document_id;
@@ -29,6 +31,7 @@ struct DocumentEntity
   }
 };
 
+/* 以文档 ID 连接来源和目标，并保留对应产品引用及读取证据。 */
 struct DocumentLink
 {
   std::string link_id;
@@ -43,11 +46,13 @@ struct DocumentLink
   DocumentLink() : link_status("unavailable"), value_source("unavailable"), read_status("unavailable") {}
 };
 
+/* 保存本次采集的文档节点和跨文档链接，不负责打开或关闭原生文档。 */
 struct DocumentGraph
 {
   std::vector<DocumentEntity> documents;
   std::vector<DocumentLink> links;
 
+  /* 追加一个文档节点；调用方负责去重和分配文档 ID。 */
   void AddDocument(const DocumentEntity& document)
   {
     documents.push_back(document);

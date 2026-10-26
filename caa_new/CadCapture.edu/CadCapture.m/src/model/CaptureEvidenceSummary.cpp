@@ -1,4 +1,5 @@
-﻿#include "model/CaptureEvidenceSummary.h"
+﻿// 根据重建包中的实际记录汇总各类采集证据的可用状态。
+#include "model/CaptureEvidenceSummary.h"
 #include <map>
 
 namespace cadcapture {

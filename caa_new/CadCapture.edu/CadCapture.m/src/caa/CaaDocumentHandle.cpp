@@ -1,4 +1,5 @@
-﻿#include "caa/CaaDocumentHandle.h"
+﻿// 实现 CATIA 文档只读打开、非 ASCII 目录别名回退及文档关闭。
+#include "caa/CaaDocumentHandle.h"
 #include "platform/WindowsPathCodec.h"
 
 #include <CATDocument.h>
@@ -126,6 +127,7 @@ void* CaaDocumentHandle::NativeDocumentForCaaOnly() const
   return _document;
 }
 
+// 显示名按 UTF-8 返回；未打开文档时返回空串供上游采用文件名。
 std::string CaaDocumentHandle::DisplayName() const
 {
   if (!_document)

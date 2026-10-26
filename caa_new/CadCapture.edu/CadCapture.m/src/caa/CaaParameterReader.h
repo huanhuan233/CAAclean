@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_PARAMETER_READER_H
+﻿// 声明知识参数到属性事实的统一读取接口。
+#ifndef CADCAPTURE_CAA_PARAMETER_READER_H
 #define CADCAPTURE_CAA_PARAMETER_READER_H
 #include "model/PropertyFacts.h"
 class CATICkeParm;

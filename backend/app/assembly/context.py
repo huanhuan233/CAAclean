@@ -1,3 +1,4 @@
+# 将实例引用解析为可信世界坐标实体，集中处理变换约定、范围和映射校验。
 """Resolve trustworthy imported-object scopes from one published STEP snapshot."""
 
 from __future__ import annotations
@@ -9,10 +10,12 @@ from app.measurement.geometry_snapshot import GeometrySnapshot
 from app.measurement.geometry_snapshot import transform_geometry
 
 
+# 表示实例范围、变换或几何映射不满足装配计算前提。
 class AssemblyContextError(ValueError):
     pass
 
 
+# 单个实例实体的不可变输入，保留资产路径、哈希与坐标约定。
 @dataclass(frozen=True)
 class InstanceSolid:
     instance_id: str
@@ -22,6 +25,7 @@ class InstanceSolid:
     coordinate_convention: str
 
 
+# 区分绝对变换和相对父级变换；绝对变换不再乘父矩阵，避免重复放置。
 def resolve_occurrence_matrix(occurrence: dict, parent_world: list[list[float]] | None = None) -> list[list[float]]:
     """CATIMovable absolute matrices are never multiplied by an ancestor matrix."""
     flat = occurrence.get("transform_4x4")
@@ -46,6 +50,7 @@ def resolve_occurrence_matrix(occurrence: dict, parent_world: list[list[float]] 
     return composed
 
 
+# 只接收已证明世界坐标放置的 STEP 实体，校验快照引用、实例覆盖与数量预算。
 def step_world_solids(snapshot: GeometrySnapshot, selected_ids: set[str] | None = None,
                       diagnostics: list[dict[str, str]] | None = None,
                       minimum_instances: int = 2) -> list[InstanceSolid]:

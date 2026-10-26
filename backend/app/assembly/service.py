@@ -1,3 +1,4 @@
+# 装配分析编排：复用几何快照与隔离计算，将运行版本和关系结果一致发布。
 """Run bounded assembly relations and atomically publish one revision-scoped result."""
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from app.measurement.repository import MeasurementRepository
 ALGORITHM_VERSION = "assembly.p6c.v3"
 
 
+# 统计实际返回的有效、未知与失败计算；任务结束不代表所有关系都已确认。
 def summarize_assembly_coverage(result: dict) -> dict:
     """Separate process completion from trustworthy conclusions for each candidate pair."""
     relations = result.get("relations")
@@ -44,12 +46,15 @@ def summarize_assembly_coverage(result: dict) -> dict:
             "budget_exceeded_pair_count": 0}
 
 
+# 组织辅助 B-Rep 装配分析与派生布尔结果，不宣称执行 CATIA 原生装配判定。
 class AssemblyAnalysisService:
+    # 注入会话并复用测量上下文和 CAD 证据仓库。
     def __init__(self, session: AsyncSession):
         self.session = session
         self.measurements = MeasurementRepository(session)
         self.cad = CadRepository(session)
 
+    # 校验实例与容差预算，批量计算关系，再按输入快照和配置生成版本并发布。
     async def analyze(self, build_id: UUID, settings: Settings, *, instance_ids: list[str] | None,
                       candidate_distance_mm: float, tolerance_mm: float,
                       source_policy: str = "auxiliary_brep", minimum_lap_fraction: float = 0.5) -> dict:
@@ -116,6 +121,7 @@ class AssemblyAnalysisService:
                                                    replace_all=False)
         return {"run": run, "relation_count": len(relations)}
 
+    # 对明确的两个实例实体执行派生布尔计算，校验产物后发布；壳体角色仍是请求声明。
     async def derive_boolean(self, build_id: UUID, settings: Settings, *,
                              shell_instance_id: str, other_instance_id: str,
                              operation: str, purpose: str) -> dict:
@@ -179,6 +185,7 @@ class AssemblyAnalysisService:
                                                    replace_all=False)
         return record
 
+    # 按构建当前版本分页读取派生结果历史，不重新执行布尔运算或核验快照当前性。
     async def list_booleans(self, build_id: UUID, *, offset: int, limit: int) -> dict:
         context = await self.measurements.get_build_context(build_id)
         if context is None:
@@ -191,6 +198,7 @@ class AssemblyAnalysisService:
         records = [row.payload for row in rows]
         return {"records": records, "total": total, "has_more": offset + len(records) < total}
 
+    # 只查询当前发布运行版本下的关系，避免混入其他轮次结果。
     async def list_relations(self, build_id: UUID, *, offset: int, limit: int,
                              contact_kind: str | None = None) -> dict:
         context = await self.measurements.get_build_context(build_id)
@@ -213,6 +221,7 @@ class AssemblyAnalysisService:
         return {"run": run.payload, "records": records, "total": total,
                 "has_more": offset + len(records) < total}
 
+    # 在当前运行版本内核对关系 ID 唯一性，缺失或重复返回明确业务错误。
     async def relation_detail(self, build_id: UUID, relation_id: str) -> dict:
         if not relation_id or len(relation_id) > 64:
             raise AssemblyContextError("invalid_input: relation ID")

@@ -1,3 +1,4 @@
+# 为稳定拓扑实体建立双向邻接和曲面索引，供参数引导定位与几何规则共享查询。
 """扩展属性邻接图的内存查询与引用校验。"""
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class EaagGraph:
     def shared_edge_ids(self, left_face_id: str, right_face_id: str) -> list[str]:
         return sorted(set(self.face_edge_ids(left_face_id)).intersection(self.face_edge_ids(right_face_id)))
 
+    # 读取从面出发的 bounded_by_edge 关系，返回排序后的边编号。
     def face_edge_ids(self, face_id: str) -> list[str]:
         return sorted(relation["target_entity_id"] for relation in self._outgoing.get(face_id, [])
                       if relation["relation_type"] == "bounded_by_edge")

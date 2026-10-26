@@ -1,3 +1,4 @@
+# 按解析回转几何的方向及支持面积提出主轴候选，缺少解析轴时降级到包围盒最长方向。
 from __future__ import annotations
 
 import math
@@ -9,6 +10,7 @@ from app.measurement.schemas import EntityFact, FeatureCandidateFact
 AXIAL_TYPES = {"cylinder", "cone", "torus"}
 
 
+# 将非零向量归一化并统一首个显著分量的符号，使反向轴按九位小数归入同一方向。
 def normalize(vector: list[float]) -> list[float] | None:
     length = math.sqrt(sum(component * component for component in vector))
     if length == 0:
@@ -20,10 +22,12 @@ def normalize(vector: list[float]) -> list[float] | None:
     return [round(component, 9) for component in normalized]
 
 
+# 计算分量乘积和，供方向匹配与轴向投影复用。
 def dot(left: list[float], right: list[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
 
 
+# 按规范化方向分组，以总面积优先、支持实体数次之选主轴候选；轴原点为支持中心均值。
 def detect_main_axis(entities: list[EntityFact]) -> FeatureCandidateFact | None:
     candidates = []
     for entity in entities:
@@ -67,6 +71,7 @@ def detect_main_axis(entities: list[EntityFact]) -> FeatureCandidateFact | None:
     )
 
 
+# 优先选择带包围盒的第一个实体，取最长坐标轴作为低置信度候选，不证明旋转对称性。
 def _detect_bounding_box_axis(entities: list[EntityFact]) -> FeatureCandidateFact | None:
     scope = next((entity for entity in entities if entity.entity_type == "solid" and entity.bounding_box), None)
     if scope is None:
@@ -95,10 +100,12 @@ def _detect_bounding_box_axis(entities: list[EntityFact]) -> FeatureCandidateFac
     )
 
 
+# 逐坐标计算支持点算术平均值，调用方保证至少存在一个点。
 def _average(points: list[list[float]]) -> list[float]:
     return [sum(point[index] for point in points) / len(points) for index in range(3)]
 
 
+# 沿已有父引用向上找到所属实体；没有实体祖先时返回可达的最上层记录。
 def _scope_for(entity: EntityFact, entities: list[EntityFact]) -> EntityFact:
     by_id = {item.id: item for item in entities}
     current = entity
@@ -110,6 +117,7 @@ def _scope_for(entity: EntityFact, entities: list[EntityFact]) -> EntityFact:
     return current
 
 
+# 投影包围盒八个角点得到方向跨度；斜轴下该值是包围盒投影，未沿真实曲面求极值。
 def projected_length(bounding_box: dict, axis: list[float]) -> float:
     mins = bounding_box["min"]
     maxs = bounding_box["max"]

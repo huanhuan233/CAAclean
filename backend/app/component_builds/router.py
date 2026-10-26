@@ -1,3 +1,4 @@
+# 提供构建管理、来源上传、规范融合及 Viewer 查询接口，把业务失败映射为稳定 HTTP 错误。
 from __future__ import annotations
 
 import asyncio
@@ -37,6 +38,7 @@ from app.drawing.service import DrawingLayoutService
 router = APIRouter(prefix="/api/component-builds", tags=["component-builds"])
 
 
+# 在同一请求会话中组装构建仓储、来源状态读取器与融合来源读取器。
 def get_component_build_service(session: AsyncSession = Depends(get_session)) -> ComponentBuildService:
     return ComponentBuildService(
         SqlAlchemyComponentBuildRepository(session),
@@ -45,6 +47,7 @@ def get_component_build_service(session: AsyncSession = Depends(get_session)) ->
     )
 
 
+# 先校验上传与目录选择，再创建构建并关联来源；已创建记录发生错误时保留失败状态。
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_component_build(
     category_code: str = Form(...),
@@ -92,6 +95,7 @@ async def create_component_build(
         raise HTTPException(status_code=500, detail=_error_detail(exc)) from exc
 
 
+# 确认构建存在后更新目录元数据和上传来源，失败时记录可查询的构建错误。
 @router.patch("/{build_id}", status_code=status.HTTP_202_ACCEPTED)
 async def update_component_build(
     build_id: UUID,
@@ -139,21 +143,25 @@ async def update_component_build(
         raise HTTPException(status_code=500, detail=_error_detail(exc)) from exc
 
 
+# 返回按图元库、分类、零件类型及构建版本组织的目录树。
 @router.get("/tree")
 async def component_build_tree(service: ComponentBuildService = Depends(get_component_build_service)) -> list[dict]:
     return await service.get_tree()
 
 
+# 返回服务器定义的可选目录与稳定节点 ID。
 @router.get("/catalog")
 async def component_build_catalog() -> dict:
     return catalog_payload()
 
 
+# 按构建 ID 读取聚合详情，不存在时转换为 404。
 @router.get("/{build_id}")
 async def component_build(build_id: UUID, service: ComponentBuildService = Depends(get_component_build_service)) -> dict:
     return await _get_build_or_404(service, build_id)
 
 
+# 调用资源清理服务删除构建，区分不存在与清理失败两类响应。
 @router.delete("/{build_id}", status_code=status.HTTP_200_OK)
 async def delete_component_build(
     build_id: UUID,
@@ -169,6 +177,7 @@ async def delete_component_build(
         raise HTTPException(status_code=500, detail={"code": "component_build_delete_failed", "message": str(exc)}) from exc
 
 
+# 读取模型与图纸来源共同投影的进度状态，构建不存在返回 404。
 @router.get("/{build_id}/status")
 async def component_build_status(build_id: UUID, service: ComponentBuildService = Depends(get_component_build_service)) -> dict:
     try:
@@ -177,6 +186,7 @@ async def component_build_status(build_id: UUID, service: ComponentBuildService 
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
 
+# 读取 Viewer 能力和资产 URL 契约，缺失来源或版本时返回 404。
 @router.get("/{build_id}/viewer")
 async def component_build_viewer(
     build_id: UUID,
@@ -188,6 +198,7 @@ async def component_build_viewer(
         raise HTTPException(status_code=404, detail={"code": "viewer_not_found", "message": str(exc)}) from exc
 
 
+# 仅允许下载已就绪且列在发布清单中的资产，并限制路径在当前任务目录内。
 @router.get("/{build_id}/viewer/assets/{asset_path:path}")
 async def component_build_viewer_asset(
     build_id: UUID,
@@ -211,6 +222,7 @@ async def component_build_viewer_asset(
     return FileResponse(path, media_type=media_type, filename=path.name)
 
 
+# 透传父节点、可见性和分页参数，查询已落库原生树的一层节点。
 @router.get("/{build_id}/viewer/native/tree")
 async def component_build_native_tree(
     build_id: UUID,
@@ -234,6 +246,7 @@ async def component_build_native_tree(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 查询单个原生树节点，区分节点缺失与整树不可用错误。
 @router.get("/{build_id}/viewer/native/nodes/{node_id}")
 async def component_build_native_node(
     build_id: UUID,
@@ -249,6 +262,7 @@ async def component_build_native_node(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 查询原生节点属性页签与语义详情，缺失节点或属性时给出明确错误码。
 @router.get("/{build_id}/viewer/native/nodes/{node_id}/properties")
 async def component_build_native_node_properties(
     build_id: UUID,
@@ -264,6 +278,7 @@ async def component_build_native_node_properties(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 读取当前构建关联版本的原生拓扑和几何记录，缺失时返回 404。
 @router.get("/{build_id}/viewer/native/topology")
 async def component_build_native_topology(
     build_id: UUID,
@@ -276,6 +291,7 @@ async def component_build_native_topology(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TOPOLOGY_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 按通道分页读取 DXF 数据，传 object_id 时改为精确对象查询。
 @router.get("/{build_id}/viewer/dxf/{kind}")
 async def component_build_dxf_records(
     build_id: UUID,
@@ -293,6 +309,7 @@ async def component_build_dxf_records(
         raise HTTPException(status_code=404, detail={"code": "DXF_RECORD_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 按通道和分页参数查询已发布证据，禁止将未采集通道当作空结果。
 @router.get("/{build_id}/viewer/native/evidence/{kind}")
 async def component_build_native_evidence(
     build_id: UUID,
@@ -307,6 +324,7 @@ async def component_build_native_evidence(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_EVIDENCE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 读取当前版本指定铺层组已发布的覆盖结果，缺失或过期时返回 404。
 @router.get("/{build_id}/viewer/composites/coverage/{group_id}")
 async def component_build_composite_coverage(
     build_id: UUID,
@@ -319,6 +337,7 @@ async def component_build_composite_coverage(
         raise HTTPException(status_code=404, detail={"code": "COMPOSITE_COVERAGE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 以毫米坐标查询覆盖区域；无法使用该点时返回 422。
 @router.get("/{build_id}/viewer/composites/coverage/{group_id}/at")
 async def component_build_composite_coverage_at(
     build_id: UUID,
@@ -334,6 +353,7 @@ async def component_build_composite_coverage_at(
         raise HTTPException(status_code=422, detail={"code": "COMPOSITE_POINT_UNAVAILABLE", "message": str(exc)}) from exc
 
 
+# 显式接收固化或未固化厚度口径，触发该组覆盖重算并报告不可计算原因。
 @router.post("/{build_id}/viewer/composites/coverage/{group_id}/recompute")
 async def recompute_component_build_composite_coverage(
     build_id: UUID,
@@ -348,6 +368,7 @@ async def recompute_component_build_composite_coverage(
         raise HTTPException(status_code=422, detail={"code": "COMPOSITE_COVERAGE_UNAVAILABLE", "message": str(exc)}) from exc
 
 
+# 按复材对象定义 ID 查询详情，不用树节点显示名匹配铺层。
 @router.get("/{build_id}/viewer/composites/{object_id}")
 async def component_build_composite_detail(
     build_id: UUID,
@@ -360,6 +381,7 @@ async def component_build_composite_detail(
         raise HTTPException(status_code=404, detail={"code": "COMPOSITE_OBJECT_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 接收标注类型、集合、视图、读取状态及文本筛选，返回分页标注。
 @router.get("/{build_id}/viewer/mbd/annotations")
 async def component_build_mbd_annotations(
     build_id: UUID,
@@ -380,6 +402,7 @@ async def component_build_mbd_annotations(
         raise HTTPException(status_code=404, detail={"code": "MBD_ANNOTATIONS_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 查询唯一标注、关联关系及几何映射状态，缺失时返回 404。
 @router.get("/{build_id}/viewer/mbd/annotations/{annotation_id}")
 async def component_build_mbd_annotation_detail(
     build_id: UUID,
@@ -392,6 +415,7 @@ async def component_build_mbd_annotation_detail(
         raise HTTPException(status_code=404, detail={"code": "MBD_ANNOTATION_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 查询 PMI 节点及关联关系，缺失或身份冲突时返回 404。
 @router.get("/{build_id}/viewer/mbd/nodes/{pmi_id}")
 async def component_build_mbd_node_detail(
     build_id: UUID,
@@ -404,6 +428,7 @@ async def component_build_mbd_node_detail(
         raise HTTPException(status_code=404, detail={"code": "MBD_NODE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 按 Feature Center 身份读取识别特征和测量，缺失时返回 404。
 @router.get("/{build_id}/viewer/recognized-features/{feature_center_id}")
 async def component_build_recognized_feature_detail(
     build_id: UUID,
@@ -416,6 +441,7 @@ async def component_build_recognized_feature_detail(
         raise HTTPException(status_code=404, detail={"code": "RECOGNIZED_FEATURE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 读取原生节点关联的选择候选，映射可信度由服务层判定。
 @router.get("/{build_id}/viewer/native/nodes/{node_id}/selection")
 async def component_build_native_node_selection(
     build_id: UUID,
@@ -431,6 +457,7 @@ async def component_build_native_node_selection(
         raise HTTPException(status_code=404, detail={"code": "NATIVE_TREE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+# 读取已保存规范文档或空白模板，构建不存在时返回 404。
 @router.get("/{build_id}/component-spec")
 async def component_spec_draft(build_id: UUID, service: ComponentBuildService = Depends(get_component_build_service)) -> dict:
     try:
@@ -439,6 +466,7 @@ async def component_spec_draft(build_id: UUID, service: ComponentBuildService = 
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
 
+# 保存规范数据与可选原始 YAML；两者不一致时返回 422。
 @router.put("/{build_id}/component-spec")
 async def save_component_spec(
     build_id: UUID,
@@ -461,6 +489,7 @@ async def save_component_spec(
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
 
+# 校验并生成 YAML 预览，不写入规范草稿。
 @router.post("/{build_id}/component-spec/preview")
 async def preview_component_spec(
     build_id: UUID,
@@ -484,6 +513,7 @@ async def preview_component_spec(
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
 
+# 按覆盖开关融合当前来源，完全无来源时返回冲突状态 409。
 @router.post("/{build_id}/fusion")
 async def fuse_component_build(
     build_id: UUID,
@@ -504,6 +534,7 @@ async def fuse_component_build(
         ) from exc
 
 
+# 刷新运行配置，按来源角色重排现有版本或图纸任务，保留原任务身份。
 @router.post("/{build_id}/retry", status_code=status.HTTP_202_ACCEPTED)
 async def retry_component_build(
     build_id: UUID,
@@ -551,10 +582,12 @@ async def retry_component_build(
     return result
 
 
+# 将旧 STEP 解析入口交给后台协程，HTTP 请求直接返回。
 def schedule_step_pipeline(revision_id: UUID, cad_service: CadService) -> None:
     asyncio.create_task(cad_service.parse_revision_in_background(revision_id))
 
 
+# 把图纸任务及目标构件、DN 信息传给独立后台处理流程。
 def schedule_drawing_pipeline(
     task_id: UUID,
     settings: Settings,
@@ -565,6 +598,7 @@ def schedule_drawing_pipeline(
     asyncio.create_task(run_drawing_pipeline(task_id, settings, target_code=target_code, target_dn=target_dn))
 
 
+# 以新数据库会话先做图纸布局，再抽取事实；只有布局就绪才进入抽取阶段。
 async def run_drawing_pipeline(
     task_id: UUID,
     settings: Settings,
@@ -598,6 +632,7 @@ async def run_drawing_pipeline(
             )
 
 
+# 拒绝同时提交新旧模型上传字段，并限制模型及图纸扩展名。
 def _validate_uploads(
     source_file: UploadFile | None,
     step_file: UploadFile | None,
@@ -619,6 +654,7 @@ def _validate_uploads(
         raise HTTPException(status_code=400, detail="only PNG, JPG, JPEG, or WEBP drawings are supported")
 
 
+# 保存上传并绑定模型版本；图纸只有在版本存在时建任务，否则暂存并返回等待状态。
 async def _apply_source_updates(
     build_id: UUID,
     *,
@@ -716,15 +752,18 @@ async def _apply_source_updates(
     return await build_service.get_build(build_id)
 
 
+# 按构建 UUID 隔离尚未关联模型的图纸暂存目录。
 def _pending_drawing_path(build_id: UUID, settings: Settings) -> Path:
     return Path(settings.cad_spec_work_dir) / "component-build-pending" / str(build_id) / "drawing"
 
 
+# 在该构建暂存目录寻找图纸文件，目录不存在返回空值。
 def _find_pending_drawing(build_id: UUID, settings: Settings) -> Path | None:
     parent = _pending_drawing_path(build_id, settings).parent
     return next(parent.glob("drawing.*"), None) if parent.exists() else None
 
 
+# 按上传扩展名复制图纸到构建专属暂存目录，供等待模型阶段保留原图。
 async def _stage_pending_drawing(
     build_id: UUID,
     drawing_file: UploadFile,
@@ -739,6 +778,7 @@ async def _stage_pending_drawing(
     return target
 
 
+# 用随机 UUID 文件名保存图纸，避免用户文件名冲突。
 async def _save_drawing_upload(drawing_file: UploadFile, settings: Settings) -> Path:
     suffix = Path(drawing_file.filename or "").suffix.lower()
     upload_dir = Path(settings.cad_spec_work_dir) / "uploads"
@@ -748,6 +788,7 @@ async def _save_drawing_upload(drawing_file: UploadFile, settings: Settings) -> 
     return drawing_path
 
 
+# 将服务层构建不存在异常转换为统一 404 响应。
 async def _get_build_or_404(service: ComponentBuildService, build_id: UUID) -> dict:
     try:
         return await service.get_build(build_id)
@@ -755,6 +796,7 @@ async def _get_build_or_404(service: ComponentBuildService, build_id: UUID) -> d
         raise HTTPException(status_code=404, detail={"code": "component_build_not_found", "message": str(exc)}) from exc
 
 
+# 保留业务错误码，并在对外消息中隐藏本地路径。
 def _error_detail(exc: Exception) -> dict:
     return {
         "code": getattr(exc, "code", "component_build_upload_failed"),
@@ -762,6 +804,7 @@ def _error_detail(exc: Exception) -> dict:
     }
 
 
+# 仅对已创建的构建记录失败状态；状态写入自身失败时不覆盖原上传异常。
 async def _mark_build_failed(service: ComponentBuildService, build_id: UUID | None, exc: Exception) -> None:
     if build_id is None:
         return

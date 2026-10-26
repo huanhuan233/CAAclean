@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_CAANATIVEBINDINGINDEX_H
+﻿// 为当前文档的原生规格对象绑定建立 ID、指针和等价引用索引。
+#ifndef CADCAPTURE_CAA_CAANATIVEBINDINGINDEX_H
 #define CADCAPTURE_CAA_CAANATIVEBINDINGINDEX_H
 
 #include "model/ReconstructionPackage.h"

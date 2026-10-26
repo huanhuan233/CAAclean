@@ -1,3 +1,4 @@
+/* 把已采集身份信息及原生图形、惯量和语义属性追加为可展示的属性事实。 */
 #include "caa/CaaPropertyExtractors.h"
 #include "caa/CaaSemanticPropertyExtractor.h"
 #include "caa/CaaNativeBindingIndex.h"
@@ -22,6 +23,7 @@
 
 namespace cadcapture {
 
+/* 按 17 位有效数字保存双精度文本，单位由具体属性通道解释。 */
 static std::string DoubleToString(double value)
 {
   std::ostringstream out;
@@ -30,6 +32,7 @@ static std::string DoubleToString(double value)
   return out.str();
 }
 
+/* 把整型计数或枚举原值转换为属性显示文本。 */
 static std::string LongToString(long value)
 {
   std::ostringstream out;
@@ -37,6 +40,7 @@ static std::string LongToString(long value)
   return out.str();
 }
 
+/* 复制 CAA Unicode 文本为 UTF-8，输出不依赖原字符串生命周期。 */
 static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
 {
   const size_t capacity = static_cast<size_t>(value.GetLengthInChar() + 1) * 4 + 1;
@@ -49,6 +53,8 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
+/* 跳过空值并追加可用事实；返回指针只适合在下一次 properties 扩容前立即补字段。 */
+/* 数值解析只识别文本，不进行物理单位换算。 */
 static PropertyFact* AddFact(CaptureIdRegistry& ids,
                              ReconstructionPackage& package,
                              const std::string& subject_id,
@@ -99,6 +105,7 @@ static PropertyFact* AddFact(CaptureIdRegistry& ids,
   return &package.properties.back();
 }
 
+/* 声明属性面板的展示页签，read_status 为 declared；这不是原生页签内容已读出的证据。 */
 static void AddTabDeclaration(CaptureIdRegistry& ids,
                               ReconstructionPackage& package,
                               const std::string& subject_id,
@@ -131,6 +138,7 @@ static void AddTabDeclaration(CaptureIdRegistry& ids,
   package.properties.push_back(fact);
 }
 
+/* 从真实接口采集别名、几何类型和坐标点证据；各通道异常只跳过相应证据。 */
 static void AddConnectionSourceFacts(CaptureIdRegistry& ids, ReconstructionPackage& package,
                                      const ObjectEntity& object, CATISpecObject* spec)
 {
@@ -211,6 +219,7 @@ static void AddConnectionSourceFacts(CaptureIdRegistry& ids, ReconstructionPacka
   catch (...) { if (coordinate_point) coordinate_point->Release(); }
 }
 
+/* 仅为展示页签选择做名称与类型字符串启发式判断，不构成可靠零件分类。 */
 static bool LooksLikePartOrProduct(const ObjectEntity& object)
 {
   const std::string text = object.startup_type + " " + object.object_kind + " " + object.internal_name;
@@ -220,6 +229,7 @@ static bool LooksLikePartOrProduct(const ObjectEntity& object)
          text.find("CATProduct") != std::string::npos;
 }
 
+/* 按展示对象类别追加页签元数据，具体属性另由读取通道提供。 */
 static void AddCatiaPropertyTabDeclarations(CaptureIdRegistry& ids,
                                             ReconstructionPackage& package,
                                             const ObjectEntity& object)
@@ -237,6 +247,7 @@ static void AddCatiaPropertyTabDeclarations(CaptureIdRegistry& ids,
   AddTabDeclaration(ids, package, object.object_id, "graphic", "Graphic", "graphic_properties", "Graphic properties", 3);
 }
 
+/* 保留原生 RGB 整数分量为逗号分隔文本。 */
 static std::string RgbToString(unsigned int red, unsigned int green, unsigned int blue)
 {
   std::ostringstream out;
@@ -244,6 +255,7 @@ static std::string RgbToString(unsigned int red, unsigned int green, unsigned in
   return out.str();
 }
 
+/* 针对一个图形域读取可用属性；不透明度换算为整数透明百分比，其余样式保留原值。 */
 static void AddGraphicFactsForGeomType(CaptureIdRegistry& ids,
                                        ReconstructionPackage& package,
                                        const ObjectEntity& object,
@@ -305,6 +317,7 @@ static void AddGraphicFactsForGeomType(CaptureIdRegistry& ids,
   }
 }
 
+/* 接口租约覆盖所有图形域和全局图层的读取，未支持接口时直接跳过。 */
 static void AddGraphicPropertyFacts(CaptureIdRegistry& ids,
                                     CaaCapabilityBroker& broker,
                                     ReconstructionPackage& package,
@@ -343,12 +356,15 @@ static void AddGraphicPropertyFacts(CaptureIdRegistry& ids,
   }
 }
 
+/* 从斜杠或反斜杠分隔的限定名中取末级显示名称。 */
 static std::string ParameterLeafName(const std::string& qualified_name)
 {
   const std::string::size_type separator = qualified_name.find_last_of("/\\");
   return separator == std::string::npos ? qualified_name : qualified_name.substr(separator + 1);
 }
 
+/* 读取惯量后保存 SI 质量、面积、体积和惯量矩阵，重心位置由米乘 1000 转为毫米。 */
+/* 失败与异常通过状态属性的值表达，不能把默认初始化的零值视为有效测量。 */
 static void AddMechanicalInertiaFacts(CaptureIdRegistry& ids,
                                       CaaCapabilityBroker& broker,
                                       ReconstructionPackage& package,
@@ -464,6 +480,7 @@ static void AddMechanicalInertiaFacts(CaptureIdRegistry& ids,
           "number", "CATIInertia.GetInertia", 1320);
 }
 
+/* 仅对指定文档读取原生证据，须在文档关闭及绑定失效之前执行。 */
 bool CaaPropertyExtractors::ExtractNativeFactsForDocument(CaptureIdRegistry& ids,
                                                           CaaCapabilityBroker& broker,
                                                           ReconstructionPackage& package,
@@ -487,6 +504,7 @@ bool CaaPropertyExtractors::ExtractNativeFactsForDocument(CaptureIdRegistry& ids
   return true;
 }
 
+/* 将文档、对象和实例记录投影为展示属性，同时补充仍可用的原生接口事实。 */
 bool CaaPropertyExtractors::Extract(CaptureIdRegistry& ids,
                                     CaaCapabilityBroker& broker,
                                     ReconstructionPackage& package)

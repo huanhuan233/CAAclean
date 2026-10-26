@@ -1,3 +1,4 @@
+/* 声明采集 Framework 使用的 R21 SDK 前置组件，供 RADE 解析框架依赖。 */
 AddPrereqComponent("System", Public);
 AddPrereqComponent("ObjectModelerBase", Public);
 AddPrereqComponent("ObjectSpecsModeler", Public);

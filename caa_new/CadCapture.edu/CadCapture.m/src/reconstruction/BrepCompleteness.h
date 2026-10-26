@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_RECONSTRUCTION_BREPCOMPLETENESS_H
+﻿// 定义逐实体 B-Rep 完整性结果与评估接口，避免跨实体拼凑重建证据。
+#ifndef CADCAPTURE_RECONSTRUCTION_BREPCOMPLETENESS_H
 #define CADCAPTURE_RECONSTRUCTION_BREPCOMPLETENESS_H
 
 #include "model/ReconstructionPackage.h"
@@ -7,6 +8,7 @@
 
 namespace cadcapture {
 
+// 保留单个实体的状态和首个不完整原因，便于诊断具体证据缺口。
 struct BrepBodyStatus
 {
   std::string body_id;
@@ -14,11 +16,13 @@ struct BrepBodyStatus
   std::string reason;
 };
 
+// 汇总逐实体结果，精确与不完整实体分别计数。
 struct BrepCompleteness
 {
   std::vector<BrepBodyStatus> bodies;
   size_t exact_body_count;
   size_t incomplete_body_count;
+  // 初始没有已核验实体，不能把空结果当作完整 B-Rep。
   BrepCompleteness() : exact_body_count(0), incomplete_body_count(0) {}
 };
 

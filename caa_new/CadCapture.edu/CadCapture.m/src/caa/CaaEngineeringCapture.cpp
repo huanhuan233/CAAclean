@@ -1,4 +1,5 @@
-﻿#include "caa/CaaEngineeringCapture.h"
+﻿// 采集公式和几何依赖并分析扫掠中心线，生成可追溯的几何弯曲数据。
+#include "caa/CaaEngineeringCapture.h"
 #include "caa/CaaGuards.h"
 #include "caa/CaaNativeBindingIndex.h"
 #include "caa/CaaPropertyEvidence.h"
@@ -52,6 +53,7 @@ void ProjectPaths(ReconstructionPackage& package)
   }
 }
 
+// 本批工程通道共享主体绑定索引；成员函数读取活对象，结果以值和已解析 ID 写入采集包。
 class Capture {
   CaptureIdRegistry& ids;
   ReconstructionPackage& package;
@@ -158,6 +160,7 @@ public:
     }
   }
   // Export actual 3D line endpoints in the absolute part coordinate system.
+  // 以零件绝对坐标保存毫米端点；测量失败写 unavailable，不输出默认坐标。
   void PreviewLine(CATISpecObject* spec,const std::string& subject)
   {
     CaaInterfaceGuard<CATIGSMLinePtPt> line;
@@ -302,6 +305,7 @@ public:
 void CaaEngineeringCapture::Extract(CaptureIdRegistry& ids,ReconstructionPackage& package,size_t first_binding)
 {
   Capture capture(ids,package,first_binding);
+  // 只读取本批新增绑定，避免在多文档流程中访问已经关闭文档的旧指针。
   for(size_t i=first_binding;i<package.native_object_bindings.size();++i) {
     const std::string subject=package.native_object_bindings[i].object_id;
     CATISpecObject* spec=static_cast<CATISpecObject*>(package.native_object_bindings[i].native_spec_object);

@@ -1,3 +1,4 @@
+/* 采集 CATPart 规格树定义并将出现模板投影到根零件或装配实例。 */
 #include "caa/CaaPartEnumerator.h"
 
 #include <CATBaseUnknown.h>
@@ -43,6 +44,7 @@ private:
   CATListValCATISpecObject_var* _list;
 };
 
+/* 容器枚举返回的序列元素逐个 Release，确保异常退出时也归还引用。 */
 class BaseUnknownSequenceGuard
 {
 public:
@@ -78,6 +80,7 @@ static std::string UnicodeToUtf8Local(const CATUnicodeString& value)
   return std::string(&buffer[0], byte_count);
 }
 
+/* 元数据读取异常降级为空串，不阻断整个规格树扫描。 */
 static std::string SafeSpecString(CATISpecObject* spec, const char* field)
 {
   if (!spec)
@@ -161,6 +164,7 @@ static bool EndsWithPathSegment(const std::string& path, const std::string& segm
   return path.size() == segment.size() || path[path.size() - segment.size() - 1] == '/';
 }
 
+/* 仅对“特征属性”节点的已知中文子项指定展示顺序，其他项沿用原始索引。 */
 static long FeaturePropertyChildOrder(const std::string& parent_tree_path, const std::string& display_name)
 {
   if (!EndsWithPathSegment(parent_tree_path, "\xE7\x89\xB9\xE5\xBE\x81\xE5\xB1\x9E\xE6\x80\xA7"))
@@ -188,6 +192,7 @@ static long FeaturePropertyChildOrder(const std::string& parent_tree_path, const
   return 0;
 }
 
+/* 为文档及容器创建结构节点，其身份只承诺在本次采集会话内有效。 */
 static ObjectEntity MakeStaticObject(CaptureIdRegistry& ids,
                                      const std::string& document_id,
                                      const std::string& object_kind,
@@ -241,6 +246,7 @@ static ObjectOccurrence MakeTemplateOccurrence(const std::string& template_id,
   return occurrence;
 }
 
+/* 按指针复用对象实体，按访问位置生成出现模板，并补充主树之外的容器发现。 */
 class PartDefinitionCrawler
 {
 public:
@@ -254,6 +260,7 @@ public:
   {
   }
 
+  /* 先登记当前出现，再用活动递归路径检测环；重复出现可保留，但停止循环子树展开。 */
   bool Visit(CATISpecObject* spec,
              const std::string& parent_template_id,
              const std::string& parent_tree_path,
@@ -290,6 +297,7 @@ public:
       object_id = object.object_id;
       _entity_ids[spec] = object_id;
       _package.objects.push_back(object);
+      /* 原生绑定借用规格对象指针，后续读取必须发生在文档关闭之前。 */
       if (_register_native_objects)
       {
         NativeObjectBinding binding;
@@ -326,6 +334,7 @@ public:
         tree_path = disambiguated.str();
       }
     }
+    /* 机器路径携带源索引；主树展示路径另用重复计数区分同名出现。 */
     const std::string occurrence_path = JoinMachinePath(parent_occurrence_path, occurrence_index, segment);
     const std::string template_id = NextTemplateId();
     _definition.occurrence_templates.push_back(MakeTemplateOccurrence(template_id, object_id, parent_template_id,
@@ -399,6 +408,7 @@ public:
                                                   "part_enumerator"));
   }
 
+  /* 最多沿 GetFather 追溯 16 层寻找已捕获的主树父节点，退出前释放取得的父引用。 */
   bool ResolvePrimaryParentByFather(CATISpecObject* spec,
                                     std::string& parent_template_id,
                                     std::string& parent_tree_path,
@@ -510,6 +520,7 @@ static std::string RootDocumentId(const ReconstructionPackage& package)
   return package.document_graph.documents[0].document_id;
 }
 
+/* 从零件根遍历主树，再枚举容器成员补漏；无法定位父节点的补充对象标为非主树。 */
 bool CaaPartEnumerator::CaptureDefinition(CaaDocumentHandle& document_handle,
                                           CaptureIdRegistry& ids,
                                           PartDefinition& definition,
@@ -685,6 +696,7 @@ bool CaaPartEnumerator::CaptureDefinition(CaaDocumentHandle& document_handle,
   return true;
 }
 
+/* 模板必须按父节点在前的顺序提供，投影时才能将父模板 ID 映射到新出现 ID。 */
 bool CaaPartEnumerator::ProjectDefinition(const PartDefinition& definition,
                                           const ProjectionContext& context,
                                           CaptureIdRegistry& ids,
@@ -719,6 +731,7 @@ bool CaaPartEnumerator::ProjectDefinition(const PartDefinition& definition,
   return true;
 }
 
+/* 根 CATPart 先采集一份定义，再以空路径前缀投影为包中的出现树。 */
 bool CaaPartEnumerator::Enumerate(CaaDocumentHandle& document_handle,
                                   CaptureIdRegistry& ids,
                                   ReconstructionPackage& package,

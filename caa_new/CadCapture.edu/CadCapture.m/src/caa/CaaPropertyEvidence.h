@@ -1,4 +1,5 @@
-﻿#ifndef CADCAPTURE_CAA_PROPERTY_EVIDENCE_H
+﻿// 提供属性事实的文本转换、状态构造和统一登记辅助函数。
+#ifndef CADCAPTURE_CAA_PROPERTY_EVIDENCE_H
 #define CADCAPTURE_CAA_PROPERTY_EVIDENCE_H
 
 #include "model/CaptureIdRegistry.h"
@@ -17,6 +18,7 @@ inline std::string Utf8(const CATUnicodeString& value)
   value.ConvertToUTF8(&buffer[0], &count);
   return std::string(&buffer[0], count < buffer.size() ? count : buffer.size() - 1);
 }
+// 固定经典区域设置和 17 位精度，避免小数点受系统语言影响。
 inline std::string Number(double value)
 {
   std::ostringstream out;
@@ -33,6 +35,7 @@ inline PropertyFact Text(const std::string& value, const std::string& api)
   fact.source_api = api;
   return fact;
 }
+// 失败事实只记录状态及来源，缺失值不替换为伪造的成功值。
 inline PropertyFact Failure(const std::string& status, const std::string& api)
 {
   PropertyFact fact;

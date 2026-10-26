@@ -1,4 +1,5 @@
-﻿#include "output/ArtifactRepository.h"
+﻿// 通过所有权校验、独占暂存、备份和回滚发布完整采集目录。
+#include "output/ArtifactRepository.h"
 #include "output/JsonSupport.h"
 #include "output/LegacyArtifactProjection.h"
 #include "output/NormalizedArtifactWriter.h"
@@ -297,12 +298,14 @@ static bool CreateOwnedStaging(const std::string& output_dir, std::string& stagi
   return false;
 }
 
+// 以实际文件打开结果检查可读性；这里只验证存在且可读，不解析内容。
 static bool ReadableFileExists(const std::string& path)
 {
   std::ifstream in(WindowsPathCodec::Decode(path).c_str(), std::ios::in | std::ios::binary);
   return !!in;
 }
 
+// 统计 JSONL 物理行数供实体数量核对，调用前由必需文件检查保证可读。
 static long CountLines(const std::string& path)
 {
   std::ifstream in(WindowsPathCodec::Decode(path).c_str(), std::ios::in | std::ios::binary);
@@ -313,6 +316,7 @@ static long CountLines(const std::string& path)
   return count;
 }
 
+// 核验必需产物、主要实体行数和旧版树关系端点；通过后才能进入目录替换。
 static bool VerifyStaging(const ReconstructionPackage& package,
                           const std::string& staging,
                           std::string& error)
@@ -561,6 +565,7 @@ static bool CommitStaging(const std::string& staging, const std::string& output_
       error = "cannot commit transaction staging directory";
     return false;
   }
+  // 新目录已落位即视为提交成功；标记或备份清理失败只报告保留位置，不回滚新产物。
   if (!WindowsPathCodec::DeleteUtf8File(JoinPath(output_dir, ".cadcapture_stage_owner")))
     error = "capture committed, but transaction marker remains in output: " + output_dir;
   if (had_output)

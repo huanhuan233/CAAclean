@@ -1,3 +1,4 @@
+# 读取 DXF 源语义，绑定修订与源文件摘要，并将原始实体、块实例和解析诊断分别保留。
 """Read DXF source semantics into JSON-safe, revision-bound records."""
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ MAX_OCCURRENCES = 50_000
 MAX_BLOCK_DEPTH = 8
 
 
+# 把三维坐标序列转换为可 JSON 序列化的浮点列表。
 def _point(value) -> list[float]:
     return [float(value[0]), float(value[1]), float(value[2])]
 
 
+# 在 ezdxf 补默认资源前扫描 ASCII 图层声明；二进制 DXF 无此来源判断。
 def _source_layer_names(source: bytes) -> set[str] | None:
     """Inspect ASCII TABLES tags before ezdxf adds required default resources."""
     if source.startswith(b"AutoCAD Binary DXF"):
@@ -49,11 +52,13 @@ def _source_layer_names(source: bytes) -> set[str] | None:
     return names
 
 
+# 保留已存在的 DXF 属性文本，但排除另行记录的句柄和所有者。
 def _attributes(entity) -> dict:
     return {key: str(value) for key, value in entity.dxf.all_existing_dxf_attribs().items()
             if key not in {"handle", "owner"}}
 
 
+# 为已变换的块子实体创建派生记录，以实例路径区分身份并保留定义句柄线索。
 def _virtual_record(entity, revision_id: str, layout: str, layer: str, occurrence_path: list[str],
                     definition_handle: str | None) -> dict:
     kind = entity.dxftype()
@@ -84,9 +89,11 @@ def _virtual_record(entity, revision_id: str, layout: str, layer: str, occurrenc
     return record
 
 
+# 递归展开块和阵列实例，限制递归深度及实例数量，并记录缺块、循环或变换失败。
 def _expand_insert(entity, drawing, revision_id: str, layout: str, path: list[str],
                    active_blocks: set[str], out: list[dict], diagnostics: list[dict]) -> None:
     name = entity.dxf.name
+    # 当前递归栈防止块循环，路径长度和全局实例计数限制展开规模。
     if name in active_blocks or len(path) > MAX_BLOCK_DEPTH:
         diagnostics.append({"code": "block_cycle_or_depth", "occurrence_path": path, "block": name})
         return
@@ -121,6 +128,7 @@ def _expand_insert(entity, drawing, revision_id: str, layout: str, path: list[st
                 _expand_insert(virtual, drawing, revision_id, layout, child_path,
                                active_blocks | {name}, out, diagnostics)
                 continue
+            # 定义句柄按子实体序号关联；派生实体的唯一身份仍由 occurrence_path 给出。
             definition_handle = definition[child_index].dxf.get("handle") if child_index < len(definition) else None
             try:
                 out.append(_virtual_record(virtual, revision_id, layout,
@@ -130,6 +138,7 @@ def _expand_insert(entity, drawing, revision_id: str, layout: str, path: list[st
                                     "message": str(exc)})
 
 
+# 校验文件头并逐实体解析源语义，保留局部失败诊断，最终附加单位与测量结果。
 def parse_source(path: Path, revision_id: str) -> dict:
     """Reject malformed input and preserve unsupported entities as explicit diagnostics."""
     source = path.read_bytes()
@@ -220,6 +229,7 @@ def parse_source(path: Path, revision_id: str) -> dict:
                     record.update(raw_text=entity.text, display_text=entity.plain_text(),
                                   insert=_point(entity.dxf.insert), text_height=float(entity.dxf.char_height),
                                   style=style, font_ref=font.dxf.get("font") if font else None)
+                # 标注覆盖文本、显示文本和几何测量分别保存，避免把显示覆盖值当作实测值。
                 elif kind == "DIMENSION":
                     raw_text = entity.dxf.get("text", "")
                     measured = entity.get_measurement()
@@ -248,6 +258,7 @@ def parse_source(path: Path, revision_id: str) -> dict:
                                   hatch_style=int(entity.dxf.get("hatch_style", 0)),
                                   pattern_scale=float(entity.dxf.get("pattern_scale", 1)),
                                   pattern_angle=float(entity.dxf.get("pattern_angle", 0)))
+                # 曲线离散点仅用于显示；0.05 容差使用图纸单位，此路径不计算精确弧长或面积。
                 elif kind in {"ELLIPSE", "SPLINE"}:
                     curve = dxf_path.make_path(entity)
                     record["display_points"] = [_point(point) for point in curve.flattening(distance=0.05, segments=8)]
@@ -261,11 +272,13 @@ def parse_source(path: Path, revision_id: str) -> dict:
                     record["status"] = "unsupported"
                     diagnostics.append({"code": "unsupported_entity", "object_id": record["object_id"],
                                         "type": kind, "layout": layout.name, "handle": handle})
+            # 单个实体解析失败仍保留对象身份及诊断，不使整个文档的其他实体丢失。
             except (TypeError, ValueError, AttributeError, ezdxf.DXFError) as exc:
                 record["status"] = "failed"
                 diagnostics.append({"code": "entity_parse_failed", "object_id": record["object_id"],
                                     "type": kind, "message": str(exc)})
             entities.append(record)
+    # 毫米归一化只依赖 DXF 的 INSUNITS，不从图名、标注文字或几何尺寸猜单位。
     units_code = int(drawing.header.get("$INSUNITS", 0))
     entities = [measure_entity(record, units_code) for record in entities]
     occurrences = [measure_entity(record, units_code) for record in occurrences]
